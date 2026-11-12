@@ -1,11 +1,13 @@
 //! Persisted automations, scheduling, event deduplication, and run history.
 use std::collections::HashMap;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use crate::orm::{self, Kind};
 use chrono::{Datelike, Local, TimeZone, Timelike};
 use std::path::Path;
+use toasty::Executor;
 
 pub mod review_drafts;
 pub mod review_setup;
@@ -266,45 +268,143 @@ fn default_actor() -> String {
     "anyone".into()
 }
 
-pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS automations (
-           id TEXT PRIMARY KEY,
-           definition_json TEXT NOT NULL,
-           enabled INTEGER NOT NULL,
-           next_run_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS automations_due_idx
-           ON automations (enabled, next_run_at);
-         CREATE TABLE IF NOT EXISTS automation_runs (
-           id TEXT PRIMARY KEY,
-           automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
-           created_at INTEGER NOT NULL,
-           run_json TEXT NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS automation_runs_history_idx
-           ON automation_runs (automation_id, created_at DESC);
-         CREATE TABLE IF NOT EXISTS automation_event_claims (
-           automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
-           event_key TEXT NOT NULL,
-           created_at INTEGER NOT NULL,
-           PRIMARY KEY (automation_id, event_key)
-         );
-         CREATE TABLE IF NOT EXISTS review_drafts (
-           run_id TEXT PRIMARY KEY,
-           automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
-           cwd TEXT NOT NULL,
-           title TEXT NOT NULL,
-           draft_json TEXT NOT NULL,
-           status TEXT NOT NULL,
-           created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL
-         );",
-    )?;
+/// A stored automation: its definition as JSON, with the columns the
+/// schedule poll filters on.
+#[derive(Debug, toasty::Model)]
+#[table = "automations"]
+#[index(name = "automations_due_idx", enabled, next_run_at)]
+pub(crate) struct AutomationRow {
+    #[key]
+    id: String,
+    definition_json: String,
+    enabled: bool,
+    next_run_at: i64,
+    updated_at: i64,
+}
 
-    // Backfill claims from pre-ledger run history. Invalid legacy rows should not
-    // prevent the session store from opening.
+/// A stored run. `automation_id` points at `automations`; [`CONSTRAINTS`]
+/// keeps it there.
+#[derive(Debug, toasty::Model)]
+#[table = "automation_runs"]
+#[index(name = "automation_runs_history_idx", automation_id, created_at)]
+pub(crate) struct AutomationRunRow {
+    #[key]
+    id: String,
+    automation_id: String,
+    created_at: i64,
+    run_json: String,
+}
+
+/// An Inbox event an automation has run for, kept after the run leaves
+/// history so the event never runs it twice.
+#[derive(Debug, toasty::Model)]
+#[table = "automation_event_claims"]
+#[key(automation_id, event_key)]
+pub(crate) struct EventClaimRow {
+    automation_id: String,
+    event_key: String,
+    created_at: i64,
+}
+
+/// A draft review a run left on a pull or merge request, until the user
+/// submits it or keeps it as a draft. `automation_id` points at
+/// `automations`; [`CONSTRAINTS`] keeps it there.
+#[derive(Debug, toasty::Model)]
+#[table = "review_drafts"]
+pub(crate) struct ReviewDraftRow {
+    #[key]
+    pub(crate) run_id: String,
+    pub(crate) automation_id: String,
+    pub(crate) cwd: String,
+    pub(crate) title: String,
+    pub(crate) draft_json: String,
+    pub(crate) status: String,
+    pub(crate) created_at: i64,
+    pub(crate) updated_at: i64,
+}
+
+/// The foreign keys the hand-made tables declared, which Toasty's DDL
+/// cannot: runs and claims need their automation, and deleting an automation
+/// deletes them (`ON DELETE CASCADE`).
+pub(crate) const CONSTRAINTS: &[&str] = &[
+    "CREATE TRIGGER IF NOT EXISTS automation_runs_need_their_automation
+     BEFORE INSERT ON automation_runs
+     WHEN NOT EXISTS (SELECT 1 FROM automations WHERE id = NEW.automation_id)
+     BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END",
+    "CREATE TRIGGER IF NOT EXISTS automation_event_claims_need_their_automation
+     BEFORE INSERT ON automation_event_claims
+     WHEN NOT EXISTS (SELECT 1 FROM automations WHERE id = NEW.automation_id)
+     BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END",
+    "CREATE TRIGGER IF NOT EXISTS automations_delete_their_runs_and_claims
+     AFTER DELETE ON automations
+     BEGIN
+       DELETE FROM automation_runs WHERE automation_id = OLD.id;
+       DELETE FROM automation_event_claims WHERE automation_id = OLD.id;
+     END",
+    "CREATE TRIGGER IF NOT EXISTS review_drafts_need_their_automation
+     BEFORE INSERT ON review_drafts
+     WHEN NOT EXISTS (SELECT 1 FROM automations WHERE id = NEW.automation_id)
+     BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END",
+    "CREATE TRIGGER IF NOT EXISTS automations_delete_their_review_drafts
+     AFTER DELETE ON automations
+     BEGIN DELETE FROM review_drafts WHERE automation_id = OLD.id; END",
+];
+
+/// The hand-made tables older builds created, for adoption tests.
+#[cfg(test)]
+pub(crate) const LEGACY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS automations (
+       id TEXT PRIMARY KEY,
+       definition_json TEXT NOT NULL,
+       enabled INTEGER NOT NULL,
+       next_run_at INTEGER NOT NULL,
+       updated_at INTEGER NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS automations_due_idx
+       ON automations (enabled, next_run_at);
+     CREATE TABLE IF NOT EXISTS automation_runs (
+       id TEXT PRIMARY KEY,
+       automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+       created_at INTEGER NOT NULL,
+       run_json TEXT NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS automation_runs_history_idx
+       ON automation_runs (automation_id, created_at DESC);;
+     CREATE TABLE IF NOT EXISTS review_drafts (
+       run_id TEXT PRIMARY KEY,
+       automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+       cwd TEXT NOT NULL,
+       title TEXT NOT NULL,
+       draft_json TEXT NOT NULL,
+       status TEXT NOT NULL,
+       created_at INTEGER NOT NULL,
+       updated_at INTEGER NOT NULL
+     )";
+
+/// The claims table as the hand-written store made it.
+const LEGACY_CLAIMS_TABLE: &str = "CREATE TABLE IF NOT EXISTS automation_event_claims (
+       automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+       event_key TEXT NOT NULL,
+       created_at INTEGER NOT NULL,
+       PRIMARY KEY (automation_id, event_key)
+     );";
+
+/// Adoption's legacy step. Builds from before the claims ledger kept only
+/// run history, so each event run there becomes a claim: the event never
+/// runs that automation again. Runs whose JSON no longer parses are skipped
+/// rather than blocking the file from opening.
+pub(crate) fn legacy_upgrade(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let has_runs = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'automation_runs'",
+            [],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !has_runs {
+        return Ok(());
+    }
+    conn.execute_batch(LEGACY_CLAIMS_TABLE)?;
     let mut statement =
         conn.prepare("SELECT automation_id, created_at, run_json FROM automation_runs")?;
     let rows = statement.query_map([], |row| {
@@ -332,6 +432,11 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// An error raised inside a database call, keeping `message` as its text.
+fn fail(message: impl std::fmt::Display) -> toasty::Error {
+    toasty::Error::from_args(format_args!("{message}"))
 }
 
 pub const REVIEW_PILOT_ERROR: &str = "A pull request review automation can't wake a Pilot.";
@@ -552,35 +657,30 @@ fn valid_time(value: &str) -> bool {
         && minute.parse::<u8>().is_ok_and(|value| value < 60)
 }
 
-fn list(conn: &Connection) -> Result<Vec<Automation>, String> {
-    let mut statement = conn
-        .prepare("SELECT definition_json FROM automations ORDER BY updated_at DESC, id")
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|error| error.to_string())?;
-    rows.map(|row| {
-        let value = row.map_err(|error| error.to_string())?;
-        parse_automation(value)
-    })
-    .collect()
+async fn list(ex: &mut dyn Executor) -> toasty::Result<Vec<Automation>> {
+    let automation = AutomationRow::fields();
+    AutomationRow::all()
+        .order_by((automation.updated_at().desc(), automation.id().asc()))
+        .exec(ex)
+        .await?
+        .into_iter()
+        .map(|row| parse_automation(row.definition_json).map_err(fail))
+        .collect()
 }
 
-fn get(conn: &Connection, id: &str) -> Result<Option<Automation>, String> {
-    let raw = conn
-        .query_row(
-            "SELECT definition_json FROM automations WHERE id = ?1",
-            [id],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(|error| error.to_string())?;
-    raw.map(parse_automation).transpose()
+async fn get(ex: &mut dyn Executor, id: &str) -> toasty::Result<Option<Automation>> {
+    AutomationRow::filter_by_id(id)
+        .first()
+        .exec(ex)
+        .await?
+        .map(|row| parse_automation(row.definition_json).map_err(fail))
+        .transpose()
 }
 
-fn write_automation(conn: &Connection, automation: &Automation) -> Result<(), String> {
-    let raw = serde_json::to_string(automation).map_err(|error| error.to_string())?;
-    conn.execute(
+/// An upsert that replaces every column: raw SQL.
+async fn write_automation(ex: &mut dyn Executor, automation: &Automation) -> toasty::Result<()> {
+    let raw = serde_json::to_string(automation).map_err(fail)?;
+    toasty::sql::statement(
         "INSERT INTO automations (id, definition_json, enabled, next_run_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5)
          ON CONFLICT(id) DO UPDATE SET
@@ -588,27 +688,31 @@ fn write_automation(conn: &Connection, automation: &Automation) -> Result<(), St
            enabled = excluded.enabled,
            next_run_at = excluded.next_run_at,
            updated_at = excluded.updated_at",
-        params![
-            automation.id,
-            raw,
-            automation.enabled,
-            automation.next_run_at,
-            automation.updated_at
-        ],
     )
-    .map_err(|error| error.to_string())?;
+    .bind(automation.id.clone())
+    .bind(raw)
+    .bind(automation.enabled)
+    .bind(automation.next_run_at)
+    .bind(automation.updated_at)
+    .exec(ex)
+    .await?;
     Ok(())
 }
 
-fn write_run(conn: &Connection, run: &AutomationRun) -> Result<(), String> {
-    let raw = serde_json::to_string(run).map_err(|error| error.to_string())?;
-    conn.execute(
+/// An upsert that keeps the run's automation and time: raw SQL.
+async fn write_run(ex: &mut dyn Executor, run: &AutomationRun) -> toasty::Result<()> {
+    let raw = serde_json::to_string(run).map_err(fail)?;
+    toasty::sql::statement(
         "INSERT INTO automation_runs (id, automation_id, created_at, run_json)
          VALUES (?1, ?2, ?3, ?4)
          ON CONFLICT(id) DO UPDATE SET run_json = excluded.run_json",
-        params![run.id, run.automation_id, run.created_at, raw],
     )
-    .map_err(|error| error.to_string())?;
+    .bind(run.id.clone())
+    .bind(run.automation_id.clone())
+    .bind(run.created_at)
+    .bind(raw)
+    .exec(ex)
+    .await?;
     Ok(())
 }
 
@@ -726,53 +830,42 @@ pub fn runs_per_day(runs: &[AutomationRun], days: usize, now: i64) -> Vec<usize>
     counts
 }
 
-fn list_runs(conn: &Connection, automation_id: &str) -> Result<Vec<AutomationRun>, String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT run_json FROM automation_runs WHERE automation_id = ?1
-             ORDER BY created_at DESC LIMIT 100",
-        )
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map([automation_id], |row| row.get::<_, String>(0))
-        .map_err(|error| error.to_string())?;
-    rows.map(|row| {
-        let value = row.map_err(|error| error.to_string())?;
-        serde_json::from_str(&value).map_err(|error| error.to_string())
-    })
-    .collect()
+async fn list_runs(
+    ex: &mut dyn Executor,
+    automation_id: &str,
+) -> toasty::Result<Vec<AutomationRun>> {
+    let run = AutomationRunRow::fields();
+    AutomationRunRow::filter(run.automation_id().eq(automation_id))
+        .order_by(run.created_at().desc())
+        .limit(100)
+        .exec(ex)
+        .await?
+        .into_iter()
+        .map(|row| serde_json::from_str(&row.run_json).map_err(fail))
+        .collect()
 }
 
-fn trim_history(conn: &Connection, automation_id: &str) -> Result<(), String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT id, run_json FROM automation_runs WHERE automation_id = ?1
-             ORDER BY created_at DESC, id DESC",
-        )
-        .map_err(|error| error.to_string())?;
-    let rows = statement
-        .query_map([automation_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|error| error.to_string())?;
+async fn trim_history(ex: &mut dyn Executor, automation_id: &str) -> toasty::Result<()> {
+    let run = AutomationRunRow::fields();
+    let rows = AutomationRunRow::filter(run.automation_id().eq(automation_id))
+        .order_by((run.created_at().desc(), run.id().desc()))
+        .exec(&mut *ex)
+        .await?;
     let mut delete_ids = Vec::new();
-    for (index, row) in rows.enumerate() {
-        let (id, raw) = row.map_err(|error| error.to_string())?;
-        if index < MAX_RUNS_PER_AUTOMATION as usize {
-            continue;
-        }
-        let run: AutomationRun = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    for row in rows.into_iter().skip(MAX_RUNS_PER_AUTOMATION as usize) {
+        let run: AutomationRun = serde_json::from_str(&row.run_json).map_err(fail)?;
         if matches!(
             run.status.as_str(),
             "succeeded" | "failed" | "skipped" | "cancelled"
         ) {
-            delete_ids.push(id);
+            delete_ids.push(row.id);
         }
     }
-    drop(statement);
     for id in delete_ids {
-        conn.execute("DELETE FROM automation_runs WHERE id = ?1", [id])
-            .map_err(|error| error.to_string())?;
+        AutomationRunRow::filter_by_id(id)
+            .delete()
+            .exec(&mut *ex)
+            .await?;
     }
     Ok(())
 }
@@ -792,39 +885,30 @@ fn apply_run_summary(automation: &mut Automation, run: &AutomationRun) {
 }
 
 /// Access to the tables and JSON, in the format older Tauri builds saved.
-/// Open with the session database path to preserve existing definitions and history.
+/// Open with the session database path to preserve existing definitions and
+/// history. Each service has its own Toasty database on the file.
 pub struct Service {
-    conn: Connection,
+    db: orm::Database,
 }
 impl Service {
     pub fn open(path: &Path) -> Result<Self, String> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-        }
-        let conn = Connection::open(path).map_err(|e| e.to_string())?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA foreign_keys=ON;")
-            .map_err(|e| e.to_string())?;
-        ensure_tables(&conn).map_err(|e| e.to_string())?;
-        Ok(Self { conn })
+        Ok(Self {
+            db: orm::open(Kind::Gespan, path)?,
+        })
     }
-    fn lock_conn(&mut self) -> Result<&mut Connection, String> {
-        Ok(&mut self.conn)
-    }
+
     pub fn list(&mut self) -> Result<Vec<Automation>, String> {
-        let conn = self.lock_conn()?;
-        list(conn)
+        self.db.run(|mut db| async move { list(&mut db).await })
     }
 
     pub fn upsert(&mut self, automation: AutomationUpsert) -> Result<Automation, String> {
         let now = now_millis();
         validate_upsert(&automation, now)?;
         let triggers = Some(normalize_triggers(&automation));
-        let conn = self.lock_conn()?;
-        let previous = get(conn, &automation.id)?;
+        let id = automation.id.clone();
+        let previous = self
+            .db
+            .run(|mut db| async move { get(&mut db, &id).await })?;
         // An automation belongs to one project for its whole life, so an event
         // always maps to the one automation set up for it there. Running it
         // somewhere else is a new automation (the editor's Duplicate).
@@ -891,36 +975,36 @@ impl Service {
             created_at,
             updated_at: now,
         };
-        write_automation(conn, &saved)?;
+        let to_write = &saved;
+        self.db
+            .run(|mut db| async move { write_automation(&mut db, to_write).await })?;
         Ok(saved)
     }
 
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         validate_id(id, "automation")?;
-        let conn = self.lock_conn()?;
-        conn.execute("DELETE FROM automations WHERE id = ?1", [id])
-            .map_err(|error| error.to_string())?;
-        Ok(())
+        self.db.run(
+            |mut db| async move { AutomationRow::filter_by_id(id).delete().exec(&mut db).await },
+        )
     }
 
     /// The latest runs across every automation, newest first. `limit` is
     /// clamped to 1..=500.
     pub fn recent_runs(&mut self, limit: usize) -> Result<Vec<AutomationRun>, String> {
-        let limit = limit.clamp(1, 500) as i64;
-        let conn = self.lock_conn()?;
-        let mut statement = conn
-            .prepare(
-                "SELECT run_json FROM automation_runs
-                 ORDER BY created_at DESC, id DESC LIMIT ?1",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([limit], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
+        let limit = limit.clamp(1, 500);
+        let rows = self.db.run(|mut db| async move {
+            let run = AutomationRunRow::fields();
+            AutomationRunRow::all()
+                .order_by((run.created_at().desc(), run.id().desc()))
+                .limit(limit)
+                .exec(&mut db)
+                .await
+        })?;
         let mut runs = rows
+            .into_iter()
             .map(|row| {
-                let value = row.map_err(|error| error.to_string())?;
-                serde_json::from_str::<AutomationRun>(&value).map_err(|error| error.to_string())
+                serde_json::from_str::<AutomationRun>(&row.run_json)
+                    .map_err(|error| error.to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
         // Launch prompts are only needed by restart recovery.
@@ -932,8 +1016,9 @@ impl Service {
 
     pub fn runs(&mut self, automation_id: &str) -> Result<Vec<AutomationRun>, String> {
         validate_id(automation_id, "automation")?;
-        let conn = self.lock_conn()?;
-        let mut runs = list_runs(conn, automation_id)?;
+        let mut runs = self
+            .db
+            .run(|mut db| async move { list_runs(&mut db, automation_id).await })?;
         // Launch prompts can be large and are only needed by restart recovery, not
         // by the run-history surface.
         for run in &mut runs {
@@ -947,86 +1032,83 @@ impl Service {
         started_before: i64,
         now: i64,
     ) -> Result<Vec<DueAutomationRun>, String> {
-        let conn = self.lock_conn()?;
-        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
-        let mut statement = tx
-            .prepare(
-                "SELECT run_json FROM automation_runs WHERE created_at <= ?1
-             ORDER BY created_at, id",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([started_before], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
-        let mut runs = Vec::new();
-        for row in rows {
-            let raw = row.map_err(|error| error.to_string())?;
-            runs.push(
-                serde_json::from_str::<AutomationRun>(&raw).map_err(|error| error.to_string())?,
-            );
-        }
-        drop(statement);
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let run = AutomationRunRow::fields();
+                let rows = AutomationRunRow::filter(run.created_at().le(started_before))
+                    .order_by((run.created_at().asc(), run.id().asc()))
+                    .exec(&mut *tx)
+                    .await?;
+                let runs = rows
+                    .into_iter()
+                    .map(|row| serde_json::from_str::<AutomationRun>(&row.run_json).map_err(fail))
+                    .collect::<toasty::Result<Vec<_>>>()?;
 
-        let mut due = Vec::new();
-        let mut changed_automation_ids = Vec::new();
-        for mut run in runs {
-            if run.status != "pending" && run.status != "running" {
-                continue;
-            }
-            let Some(mut automation) = get(&tx, &run.automation_id)? else {
-                continue;
-            };
-            if run.status == "running" {
-                run.status = "cancelled".into();
-                run.completed_at = Some(now);
-                run.error = Some("Interrupted when Gespan last stopped.".into());
-                apply_run_summary(&mut automation, &run);
-                write_run(&tx, &run)?;
-                write_automation(&tx, &automation)?;
-                changed_automation_ids.push(run.automation_id.clone());
-                continue;
-            }
-            if run.trigger == "event"
-                && run
-                    .prompt
-                    .as_deref()
-                    .is_none_or(|prompt| prompt.trim().is_empty())
-            {
-                run.status = "failed".into();
-                run.completed_at = Some(now);
-                run.error = Some("The Inbox event prompt was not available after restart.".into());
-                apply_run_summary(&mut automation, &run);
-                write_run(&tx, &run)?;
-                write_automation(&tx, &automation)?;
-                changed_automation_ids.push(run.automation_id.clone());
-                continue;
-            }
-            due.push(DueAutomationRun { automation, run });
-        }
-        changed_automation_ids.sort();
-        changed_automation_ids.dedup();
-        for automation_id in changed_automation_ids {
-            trim_history(&tx, &automation_id)?;
-        }
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(due)
+                let mut due = Vec::new();
+                let mut changed_automation_ids = Vec::new();
+                for mut run in runs {
+                    if run.status != "pending" && run.status != "running" {
+                        continue;
+                    }
+                    let Some(mut automation) = get(&mut *tx, &run.automation_id).await? else {
+                        continue;
+                    };
+                    if run.status == "running" {
+                        run.status = "cancelled".into();
+                        run.completed_at = Some(now);
+                        run.error = Some("Interrupted when Gespan last stopped.".into());
+                        apply_run_summary(&mut automation, &run);
+                        write_run(&mut *tx, &run).await?;
+                        write_automation(&mut *tx, &automation).await?;
+                        changed_automation_ids.push(run.automation_id.clone());
+                        continue;
+                    }
+                    if run.trigger == "event"
+                        && run
+                            .prompt
+                            .as_deref()
+                            .is_none_or(|prompt| prompt.trim().is_empty())
+                    {
+                        run.status = "failed".into();
+                        run.completed_at = Some(now);
+                        run.error =
+                            Some("The Inbox event prompt was not available after restart.".into());
+                        apply_run_summary(&mut automation, &run);
+                        write_run(&mut *tx, &run).await?;
+                        write_automation(&mut *tx, &automation).await?;
+                        changed_automation_ids.push(run.automation_id.clone());
+                        continue;
+                    }
+                    due.push(DueAutomationRun { automation, run });
+                }
+                changed_automation_ids.sort();
+                changed_automation_ids.dedup();
+                for automation_id in changed_automation_ids {
+                    trim_history(&mut *tx, &automation_id).await?;
+                }
+                Ok(due)
+            })
+        })
     }
 
     pub fn run_now(&mut self, automation_id: &str, now: i64) -> Result<AutomationRun, String> {
         validate_id(automation_id, "automation")?;
-        let conn = self.lock_conn()?;
-        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
-        let mut automation =
-            get(&tx, automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
-        let run = new_run(automation_id, "manual", now, now, &automation.prompt);
-        automation.last_run_at = Some(now);
-        automation.last_run_status = Some(run.status.clone());
-        automation.last_run_error = None;
-        write_run(&tx, &run)?;
-        write_automation(&tx, &automation)?;
-        trim_history(&tx, automation_id)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(run)
+        let automation_id = automation_id.to_owned();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let mut automation = get(&mut *tx, &automation_id)
+                    .await?
+                    .ok_or_else(|| fail("Automation not found."))?;
+                let run = new_run(&automation_id, "manual", now, now, &automation.prompt);
+                automation.last_run_at = Some(now);
+                automation.last_run_status = Some(run.status.clone());
+                automation.last_run_error = None;
+                write_run(&mut *tx, &run).await?;
+                write_automation(&mut *tx, &automation).await?;
+                trim_history(&mut *tx, &automation_id).await?;
+                Ok(run)
+            })
+        })
     }
 
     /// Claims the stored occurrence `expected_next_run_at` for the run due at
@@ -1044,50 +1126,56 @@ impl Service {
         if scheduled_for < expected_next_run_at || next_run_at <= scheduled_for {
             return Err("The following automation occurrence must advance the schedule.".into());
         }
-        let conn = self.lock_conn()?;
-        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
-        let current =
-            get(&tx, automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
-        if !has_time_trigger(&current) {
-            tx.rollback().map_err(|error| error.to_string())?;
-            return Ok(None);
-        }
-        let claimed = tx
-            .execute(
-                "UPDATE automations SET next_run_at = ?1
-             WHERE id = ?2 AND enabled = 1 AND next_run_at = ?3 AND next_run_at <= ?4",
-                params![next_run_at, automation_id, expected_next_run_at, now],
-            )
-            .map_err(|error| error.to_string())?;
-        if claimed == 0 {
-            tx.rollback().map_err(|error| error.to_string())?;
-            return Ok(None);
-        }
-        let mut automation =
-            get(&tx, automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
-        automation.next_run_at = next_run_at;
-        let mut run = new_run(
-            automation_id,
-            "scheduled",
-            scheduled_for,
-            now,
-            &automation.prompt,
-        );
-        let missed = now.saturating_sub(scheduled_for);
-        let dispatch = missed <= catch_up_ms(&automation);
-        if !dispatch {
-            run.status = "skipped".into();
-            run.completed_at = Some(now);
-            run.error = Some("Missed the scheduled run beyond its grace period.".into());
-        }
-        automation.last_run_at = Some(now);
-        automation.last_run_status = Some(run.status.clone());
-        automation.last_run_error = run.error.clone();
-        write_run(&tx, &run)?;
-        write_automation(&tx, &automation)?;
-        trim_history(&tx, automation_id)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(Some(DueAutomationRun { automation, run }))
+        let automation_id = automation_id.to_owned();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let current = get(&mut *tx, &automation_id)
+                    .await?
+                    .ok_or_else(|| fail("Automation not found."))?;
+                if !has_time_trigger(&current) {
+                    return Ok(None);
+                }
+                // A compare-and-set that reports whether it matched: raw SQL.
+                let claimed = toasty::sql::statement(
+                    "UPDATE automations SET next_run_at = ?1
+                     WHERE id = ?2 AND enabled = 1 AND next_run_at = ?3 AND next_run_at <= ?4",
+                )
+                .bind(next_run_at)
+                .bind(automation_id.clone())
+                .bind(expected_next_run_at)
+                .bind(now)
+                .exec(&mut *tx)
+                .await?;
+                if claimed == 0 {
+                    return Ok(None);
+                }
+                let mut automation = get(&mut *tx, &automation_id)
+                    .await?
+                    .ok_or_else(|| fail("Automation not found."))?;
+                automation.next_run_at = next_run_at;
+                let mut run = new_run(
+                    &automation_id,
+                    "scheduled",
+                    scheduled_for,
+                    now,
+                    &automation.prompt,
+                );
+                let missed = now.saturating_sub(scheduled_for);
+                let dispatch = missed <= catch_up_ms(&automation);
+                if !dispatch {
+                    run.status = "skipped".into();
+                    run.completed_at = Some(now);
+                    run.error = Some("Missed the scheduled run beyond its grace period.".into());
+                }
+                automation.last_run_at = Some(now);
+                automation.last_run_status = Some(run.status.clone());
+                automation.last_run_error = run.error.clone();
+                write_run(&mut *tx, &run).await?;
+                write_automation(&mut *tx, &automation).await?;
+                trim_history(&mut *tx, &automation_id).await?;
+                Ok(Some(DueAutomationRun { automation, run }))
+            })
+        })
     }
 
     pub fn claim_event(
@@ -1115,56 +1203,66 @@ impl Service {
         } else {
             now
         };
-        let conn = self.lock_conn()?;
-        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
-        let mut automation =
-            get(&tx, automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
-        if !automation.enabled || !has_event_trigger(&automation, &claim.event_kind, &claim.event) {
-            tx.rollback().map_err(|error| error.to_string())?;
-            return Ok(None);
-        }
-        let claimed = tx
-            .execute(
-                "INSERT OR IGNORE INTO automation_event_claims
-             (automation_id, event_key, created_at) VALUES (?1, ?2, ?3)",
-                params![automation_id, claim.event_key, now],
-            )
-            .map_err(|error| error.to_string())?;
-        if claimed == 0 {
-            tx.rollback().map_err(|error| error.to_string())?;
-            return Ok(None);
-        }
-        let mut run = new_event_run(
-            automation_id,
-            &claim.event_key,
-            &claim.event_kind,
-            &claim.event,
-            scheduled_for,
-            now,
-            &claim.prompt,
-        );
-        let title: String = claim.title.trim().chars().take(MAX_EVENT_TITLE).collect();
-        run.event_title = (!title.is_empty()).then_some(title);
-        automation.last_run_at = Some(now);
-        automation.last_run_status = Some(run.status.clone());
-        automation.last_run_error = None;
-        write_run(&tx, &run)?;
-        write_automation(&tx, &automation)?;
-        trim_history(&tx, automation_id)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(Some(DueAutomationRun { automation, run }))
+        let automation_id = automation_id.to_owned();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let mut automation = get(&mut *tx, &automation_id)
+                    .await?
+                    .ok_or_else(|| fail("Automation not found."))?;
+                if !automation.enabled
+                    || !has_event_trigger(&automation, &claim.event_kind, &claim.event)
+                {
+                    return Ok(None);
+                }
+                // Claims the event unless it already is: raw `INSERT OR IGNORE`.
+                let claimed = toasty::sql::statement(
+                    "INSERT OR IGNORE INTO automation_event_claims
+                     (automation_id, event_key, created_at) VALUES (?1, ?2, ?3)",
+                )
+                .bind(automation_id.clone())
+                .bind(claim.event_key.clone())
+                .bind(now)
+                .exec(&mut *tx)
+                .await?;
+                if claimed == 0 {
+                    return Ok(None);
+                }
+                let mut run = new_event_run(
+                    &automation_id,
+                    &claim.event_key,
+                    &claim.event_kind,
+                    &claim.event,
+                    scheduled_for,
+                    now,
+                    &claim.prompt,
+                );
+                let title: String = claim.title.trim().chars().take(MAX_EVENT_TITLE).collect();
+                run.event_title = (!title.is_empty()).then_some(title);
+                automation.last_run_at = Some(now);
+                automation.last_run_status = Some(run.status.clone());
+                automation.last_run_error = None;
+                write_run(&mut *tx, &run).await?;
+                write_automation(&mut *tx, &automation).await?;
+                trim_history(&mut *tx, &automation_id).await?;
+                Ok(Some(DueAutomationRun { automation, run }))
+            })
+        })
     }
 
     fn event_claimed(&mut self, automation_id: &str, event_key: &str) -> Result<bool, String> {
-        self.conn
-            .query_row(
-                "SELECT 1 FROM automation_event_claims WHERE automation_id = ?1 AND event_key = ?2",
-                params![automation_id, event_key],
-                |_| Ok(()),
+        let claim = self.db.run(|mut db| async move {
+            let claim = EventClaimRow::fields();
+            EventClaimRow::filter(
+                claim
+                    .automation_id()
+                    .eq(automation_id)
+                    .and(claim.event_key().eq(event_key)),
             )
-            .optional()
-            .map(|row| row.is_some())
-            .map_err(|error| error.to_string())
+            .first()
+            .exec(&mut db)
+            .await
+        })?;
+        Ok(claim.is_some())
     }
 
     pub fn update_run(
@@ -1216,44 +1314,42 @@ impl Service {
         ) {
             return Err("Invalid automation run status.".into());
         }
-        let conn = self.lock_conn()?;
-        let tx = crate::store::write_transaction(conn).map_err(|error| error.to_string())?;
-        let raw = tx
-            .query_row(
-                "SELECT run_json FROM automation_runs WHERE id = ?1",
-                [&run_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "Automation run not found.".to_string())?;
-        let mut run: AutomationRun =
-            serde_json::from_str(&raw).map_err(|error| error.to_string())?;
-        run.status = status.to_owned();
-        if run.status == "running" && run.started_at.is_none() {
-            run.started_at = Some(now);
-        }
-        if matches!(
-            run.status.as_str(),
-            "succeeded" | "failed" | "skipped" | "cancelled"
-        ) {
-            run.completed_at = Some(now);
-        }
-        if session_id.is_some() {
-            run.session_id = session_id;
-        }
-        if pilot_message_id.is_some() {
-            run.pilot_message_id = pilot_message_id;
-        }
-        run.error = error.filter(|value| !value.trim().is_empty());
-        let mut automation =
-            get(&tx, &run.automation_id)?.ok_or_else(|| "Automation not found.".to_string())?;
-        apply_run_summary(&mut automation, &run);
-        write_run(&tx, &run)?;
-        write_automation(&tx, &automation)?;
-        trim_history(&tx, &run.automation_id)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(run)
+        let (run_id, status) = (run_id.to_owned(), status.to_owned());
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let row = AutomationRunRow::filter_by_id(&run_id)
+                    .first()
+                    .exec(&mut *tx)
+                    .await?
+                    .ok_or_else(|| fail("Automation run not found."))?;
+                let mut run: AutomationRun = serde_json::from_str(&row.run_json).map_err(fail)?;
+                run.status = status;
+                if run.status == "running" && run.started_at.is_none() {
+                    run.started_at = Some(now);
+                }
+                if matches!(
+                    run.status.as_str(),
+                    "succeeded" | "failed" | "skipped" | "cancelled"
+                ) {
+                    run.completed_at = Some(now);
+                }
+                if session_id.is_some() {
+                    run.session_id = session_id;
+                }
+                if pilot_message_id.is_some() {
+                    run.pilot_message_id = pilot_message_id;
+                }
+                run.error = error.filter(|value| !value.trim().is_empty());
+                let mut automation = get(&mut *tx, &run.automation_id)
+                    .await?
+                    .ok_or_else(|| fail("Automation not found."))?;
+                apply_run_summary(&mut automation, &run);
+                write_run(&mut *tx, &run).await?;
+                write_automation(&mut *tx, &automation).await?;
+                trim_history(&mut *tx, &run.automation_id).await?;
+                Ok(run)
+            })
+        })
     }
 }
 
@@ -1646,7 +1742,10 @@ impl AutomationUpsert {
 
 impl Service {
     pub fn set_enabled(&mut self, id: &str, enabled: bool) -> Result<Automation, String> {
-        let automation = get(&self.conn, id)?.ok_or("Automation not found.")?;
+        let automation = self
+            .db
+            .run(|mut db| async move { get(&mut db, id).await })?
+            .ok_or("Automation not found.")?;
         let mut draft = AutomationUpsert::from_automation(&automation);
         draft.enabled = enabled;
         draft.sync_triggers(now_millis());
@@ -2052,6 +2151,38 @@ pub fn claim_inbox_events_retry(
 mod tests {
     use super::*;
 
+    // Synchronous forms of the store's helpers, for setting up rows.
+    pub(super) fn get(db: &orm::Database, id: &str) -> Result<Option<Automation>, String> {
+        db.run(|mut db| async move { super::get(&mut db, id).await })
+    }
+    pub(super) fn write_automation(
+        db: &orm::Database,
+        automation: &Automation,
+    ) -> Result<(), String> {
+        db.run(|mut db| async move { super::write_automation(&mut db, automation).await })
+    }
+    fn write_run(db: &orm::Database, run: &AutomationRun) -> Result<(), String> {
+        db.run(|mut db| async move { super::write_run(&mut db, run).await })
+    }
+    /// Runs raw SQL on the service's database, as another writer could.
+    fn execute(db: &orm::Database, sql: String) -> Result<u64, String> {
+        db.run(|mut db| async move { toasty::sql::statement(sql).exec(&mut db).await })
+    }
+    /// The first column of `sql`'s rows.
+    fn column(db: &orm::Database, sql: String) -> Vec<toasty::stmt::Value> {
+        db.run(|mut db| async move { toasty::sql::query(sql).exec(&mut db).await })
+            .unwrap()
+            .into_iter()
+            .map(|row| row.into_record().fields.swap_remove(0))
+            .collect()
+    }
+    fn count(db: &orm::Database, sql: String) -> i64 {
+        match column(db, sql).as_slice() {
+            [toasty::stmt::Value::I64(n)] => *n,
+            other => panic!("one count, got {other:?}"),
+        }
+    }
+
     fn local_at(value: &str) -> i64 {
         let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S").unwrap();
         Local
@@ -2344,11 +2475,11 @@ mod tests {
         failing.next_run_at = now - 1;
         healthy.updated_at = now + 1;
         failing.updated_at = now;
-        write_automation(&service.conn, &healthy).unwrap();
-        write_automation(&service.conn, &failing).unwrap();
-        service.conn.execute_batch(&format!(
+        write_automation(&service.db, &healthy).unwrap();
+        write_automation(&service.db, &failing).unwrap();
+        execute(&service.db, format!(
             "CREATE TRIGGER reject_one_automation_run BEFORE INSERT ON automation_runs
-             WHEN NEW.automation_id = '{}' BEGIN SELECT RAISE(ABORT, 'temporary write failure'); END;",
+             WHEN NEW.automation_id = '{}' BEGIN SELECT RAISE(ABORT, 'temporary write failure'); END",
             failing.id
         )).unwrap();
 
@@ -2357,18 +2488,12 @@ mod tests {
         assert_eq!(claimed[0].automation.id, healthy.id);
         assert_eq!(claimed[0].run.status, "pending");
         assert_eq!(
-            get(&service.conn, &failing.id)
-                .unwrap()
-                .unwrap()
-                .next_run_at,
+            get(&service.db, &failing.id).unwrap().unwrap().next_run_at,
             now - 1
         );
         assert!(service.runs(&failing.id).unwrap().is_empty());
 
-        service
-            .conn
-            .execute_batch("DROP TRIGGER reject_one_automation_run;")
-            .unwrap();
+        execute(&service.db, "DROP TRIGGER reject_one_automation_run".into()).unwrap();
         let retried = service.claim_due(now).unwrap();
         assert_eq!(retried.len(), 1);
         assert_eq!(retried[0].automation.id, failing.id);
@@ -2376,14 +2501,14 @@ mod tests {
     }
 
     fn move_schedule(service: &mut Service, automation: &Automation, next_run_at: i64) {
-        let mut automation = get(&service.conn, &automation.id).unwrap().unwrap();
+        let mut automation = get(&service.db, &automation.id).unwrap().unwrap();
         automation.next_run_at = next_run_at;
-        write_automation(&service.conn, &automation).unwrap();
+        write_automation(&service.db, &automation).unwrap();
     }
     fn watch_since(service: &mut Service, automation: &Automation, since: i64) {
-        let mut automation = get(&service.conn, &automation.id).unwrap().unwrap();
+        let mut automation = get(&service.db, &automation.id).unwrap().unwrap();
         automation.events_since = Some(since);
-        write_automation(&service.conn, &automation).unwrap();
+        write_automation(&service.db, &automation).unwrap();
     }
     fn github_issue(number: i64, created_at: i64) -> crate::inbox::Item {
         crate::inbox::Item {
@@ -2459,7 +2584,7 @@ mod tests {
         assert_eq!(runs.len(), 1, "{runs:?}");
         assert_eq!(runs[0].status, "skipped");
         assert_eq!(runs[0].scheduled_for, latest);
-        let saved = get(&service.conn, &automation.id).unwrap().unwrap();
+        let saved = get(&service.db, &automation.id).unwrap().unwrap();
         assert!(saved.next_run_at > now);
         assert!(service.claim_due(now).unwrap().is_empty());
         assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
@@ -2625,19 +2750,18 @@ mod tests {
             &mut service,
             vec![AutomationTrigger::new("github", "issue_opened")],
         );
-        let mut legacy = get(&service.conn, &automation.id).unwrap().unwrap();
+        let mut legacy = get(&service.db, &automation.id).unwrap().unwrap();
         legacy.events_since = None;
         legacy.created_at = now_millis() - HOUR;
-        write_automation(&service.conn, &legacy).unwrap();
-        let raw: String = service
-            .conn
-            .query_row(
-                "SELECT definition_json FROM automations WHERE id = ?1",
-                [&automation.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(!raw.contains("eventsSince"));
+        write_automation(&service.db, &legacy).unwrap();
+        let raw = column(
+            &service.db,
+            format!(
+                "SELECT definition_json FROM automations WHERE id = '{}'",
+                automation.id
+            ),
+        );
+        assert!(!raw[0].as_string_unwrap().contains("eventsSince"));
         let now = now_millis();
         let before = github_issue(5, now - 2 * HOUR);
         let after = github_issue(6, now - HOUR / 2);
@@ -2801,7 +2925,7 @@ mod tests {
             .to_string()
     }
     fn stored(service: &Service, id: &str) -> Automation {
-        get(&service.conn, id).unwrap().unwrap()
+        get(&service.db, id).unwrap().unwrap()
     }
 
     #[test]
@@ -2834,10 +2958,7 @@ mod tests {
             move_schedule(&mut service, &automation, now_millis() - 60_000);
         }
         assert!(service.claim_due(now_millis()).unwrap().is_empty());
-        let conn = &service.conn;
-        let runs: i64 = conn
-            .query_row("SELECT COUNT(*) FROM automation_runs", [], |row| row.get(0))
-            .unwrap();
+        let runs = count(&service.db, "SELECT COUNT(*) FROM automation_runs".into());
         assert_eq!(runs, 0);
     }
 
@@ -3812,14 +3933,13 @@ mod tests {
                 .update_run(&run.id, "succeeded", None, None, now_millis() + at)
                 .unwrap();
         }
-        let kept: i64 = service
-            .conn
-            .query_row(
-                "SELECT COUNT(*) FROM automation_runs WHERE id = ?1",
-                [&pending.id],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let kept = count(
+            &service.db,
+            format!(
+                "SELECT COUNT(*) FROM automation_runs WHERE id = '{}'",
+                pending.id
+            ),
+        );
         assert_eq!(kept, 1, "a pending run is never trimmed");
         // And restart recovery still finds it.
         let recovered = service.recover(now_millis() + HOUR, now_millis()).unwrap();
@@ -3869,7 +3989,7 @@ mod tests {
         .unwrap();
         let mut run = claimed[0].run.clone();
         run.prompt = None;
-        write_run(&service.conn, &run).unwrap();
+        write_run(&service.db, &run).unwrap();
         assert!(service
             .recover(now_millis() + 1, now_millis())
             .unwrap()
@@ -4024,7 +4144,7 @@ mod tests {
         };
         saved.review_results = Some(crate::review_policy::ReviewResults::Post);
         saved.enabled = true;
-        write_automation(&service.conn, &saved).unwrap();
+        write_automation(&service.db, &saved).unwrap();
         let id = saved.id.clone();
 
         assert!(!service.set_enabled(&id, false).unwrap().enabled);
@@ -4034,7 +4154,7 @@ mod tests {
         );
         assert!(!stored(&service, &id).enabled);
         service.delete(&id).unwrap();
-        assert!(get(&service.conn, &id).unwrap().is_none());
+        assert!(get(&service.db, &id).unwrap().is_none());
     }
 
     #[test]
@@ -4854,6 +4974,121 @@ mod tests {
                 gitlab(0)
             ],
             ["admin", "maintain", "write", "read", "read", "none"]
+        );
+    }
+
+    #[test]
+    fn deleting_an_automation_deletes_its_claims_and_runs_need_an_automation() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("gespan.db")).unwrap();
+        let automation = on_event(
+            &mut service,
+            "/repo",
+            AutomationTrigger::new("github", "issue_opened"),
+        );
+        let issue = github_issue(3, automation.events_since.unwrap());
+        assert_eq!(
+            claim_inbox_events(&mut service, &[issue], now_millis())
+                .unwrap()
+                .len(),
+            1
+        );
+        let claims = "SELECT COUNT(*) FROM automation_event_claims".to_string();
+        assert_eq!(count(&service.db, claims.clone()), 1);
+        service.delete(&automation.id).unwrap();
+        assert_eq!(count(&service.db, claims), 0);
+        // A run or a claim for an automation that is not there is refused.
+        let mut orphan = new_run(&automation.id, "manual", 1, 1, "Report");
+        orphan.id = "orphan".into();
+        assert!(write_run(&service.db, &orphan)
+            .unwrap_err()
+            .contains("FOREIGN KEY"));
+        assert!(execute(
+            &service.db,
+            format!(
+                "INSERT INTO automation_event_claims VALUES ('{}', 'github:issue:a/b:1', 1)",
+                automation.id
+            ),
+        )
+        .unwrap_err()
+        .contains("FOREIGN KEY"));
+    }
+
+    #[test]
+    fn a_hand_made_file_from_before_the_claims_ledger_is_adopted_with_its_claims() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("gespan.db");
+        // Saved through the service, then taken back to the hand-made shape.
+        let (automation, run) = {
+            let mut service = Service::open(&path).unwrap();
+            let automation = on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new("github", "issue_opened"),
+            );
+            let issue = github_issue(4, automation.events_since.unwrap());
+            let mut claimed = claim_inbox_events(&mut service, &[issue], now_millis()).unwrap();
+            (automation, claimed.remove(0).run)
+        };
+        let stored = |path: &Path, table: &str, column: &str| -> String {
+            rusqlite::Connection::open(path)
+                .unwrap()
+                .query_row(&format!("SELECT {column} FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap()
+        };
+        let definition = stored(&path, "automations", "definition_json");
+        let run_json = stored(&path, "automation_runs", "run_json");
+        let legacy = directory.path().join("legacy.db");
+        let conn = rusqlite::Connection::open(&legacy).unwrap();
+        conn.execute_batch(LEGACY_SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO automations VALUES (?1, ?2, 1, ?3, ?4)",
+            params![
+                automation.id,
+                definition,
+                automation.next_run_at,
+                automation.updated_at
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO automation_runs VALUES (?1, ?2, ?3, ?4)",
+            params![run.id, automation.id, run.created_at, run_json],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO automation_runs VALUES ('unreadable', ?1, 1, 'not json')",
+            [&automation.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut service = Service::open(&legacy).unwrap();
+        let listed = service.list().unwrap();
+        assert_eq!(
+            serde_json::to_value(&listed).unwrap(),
+            serde_json::json!([serde_json::from_str::<serde_json::Value>(&definition).unwrap()])
+        );
+        assert_eq!(
+            count(
+                &service.db,
+                "SELECT COUNT(*) FROM automation_event_claims".into()
+            ),
+            1
+        );
+        // The backfilled claim keeps the item from running the automation again.
+        let issue = github_issue(4, automation.events_since.unwrap());
+        assert!(claim_inbox_events(&mut service, &[issue], now_millis())
+            .unwrap()
+            .is_empty());
+        let other = github_issue(5, automation.events_since.unwrap());
+        assert_eq!(
+            claim_inbox_events(&mut service, &[other], now_millis())
+                .unwrap()
+                .len(),
+            1
         );
     }
 }

@@ -6,12 +6,16 @@ use crate::kind::{EdgeKind, NodeKind};
 pub enum GraphError {
     #[error("graph database: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("graph database: {0}")]
+    Toasty(#[from] toasty::Error),
     #[error("graph file: {0}")]
     Io(#[from] std::io::Error),
     #[error("graph props: {0}")]
     Props(#[from] serde_json::Error),
-    #[error("graph schema version {found} is newer than this build ({supported})")]
-    NewerSchema { found: i64, supported: i64 },
+    /// The file has migrations this build does not know: a newer build
+    /// wrote it. Nothing was written to it.
+    #[error("graph database has migrations this build does not know: {}", .0.join(", "))]
+    UnknownMigrations(Vec<String>),
     #[error("{edge:?} cannot join {src:?} to {dst:?}")]
     InvalidEndpoints {
         edge: EdgeKind,

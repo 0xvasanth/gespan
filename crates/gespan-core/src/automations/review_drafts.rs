@@ -1,9 +1,8 @@
 //! Draft reviews Gespan left on a pull or merge request, kept until the user
 //! submits them or keeps them as drafts.
 
-use super::Service;
+use super::{ReviewDraftRow, Service};
 use crate::review_draft::DraftReview;
-use rusqlite::params;
 
 /// Waiting for the user to submit it or keep it as a draft.
 pub const WAITING: &str = "waiting";
@@ -35,44 +34,58 @@ impl Service {
         now: i64,
     ) -> Result<(), String> {
         let json = serde_json::to_string(draft).map_err(|e| e.to_string())?;
-        self.conn
-            .execute(
+        let (run_id, automation_id, cwd, title) = (
+            run_id.to_owned(),
+            automation_id.to_owned(),
+            cwd.to_owned(),
+            title.to_owned(),
+        );
+        // Saving the same run again replaces it.
+        self.db.run(|mut db| async move {
+            toasty::sql::statement(
                 "INSERT OR REPLACE INTO review_drafts
                  (run_id, automation_id, cwd, title, draft_json, status, created_at, updated_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-                params![run_id, automation_id, cwd, title, json, WAITING, now],
             )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+            .bind(run_id)
+            .bind(automation_id)
+            .bind(cwd)
+            .bind(title)
+            .bind(json)
+            .bind(WAITING)
+            .bind(now)
+            .exec(&mut db)
+            .await
+            .map(drop)
+        })
     }
 
     /// Drafts still waiting on the user, oldest first. A row that no longer
     /// reads is skipped rather than hiding the others.
     pub fn waiting_review_drafts(&mut self) -> Result<Vec<SavedDraft>, String> {
-        let mut statement = self
-            .conn
-            .prepare(
-                "SELECT run_id, automation_id, cwd, title, draft_json, status, created_at
-                 FROM review_drafts WHERE status = ?1 ORDER BY created_at, run_id",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map([WAITING], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, i64>(6)?,
-                ))
+        let rows = self.db.run(|mut db| async move {
+            let row = ReviewDraftRow::fields();
+            ReviewDraftRow::filter(row.status().eq(WAITING))
+                .exec(&mut db)
+                .await
+        })?;
+        let mut rows: Vec<_> = rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.run_id,
+                    r.automation_id,
+                    r.cwd,
+                    r.title,
+                    r.draft_json,
+                    r.status,
+                    r.created_at,
+                )
             })
-            .map_err(|e| e.to_string())?;
+            .collect();
+        rows.sort_by(|a, b| (a.6, &a.0).cmp(&(b.6, &b.0)));
         let mut out = Vec::new();
-        for row in rows {
-            let (run_id, automation_id, cwd, title, json, status, created_at) =
-                row.map_err(|e| e.to_string())?;
+        for (run_id, automation_id, cwd, title, json, status, created_at) in rows {
             match serde_json::from_str(&json) {
                 Ok(draft) => out.push(SavedDraft {
                     run_id,
@@ -100,14 +113,19 @@ impl Service {
         if status != SUBMITTED && status != KEPT {
             return Err(format!("Unknown draft review status {status}"));
         }
-        let changed = self
-            .conn
-            .execute(
+        let (run_id, status) = (run_id.to_owned(), status.to_owned());
+        let changed = self.db.run(|mut db| async move {
+            toasty::sql::statement(
                 "UPDATE review_drafts SET status = ?1, updated_at = ?2
                  WHERE run_id = ?3 AND status = ?4",
-                params![status, now, run_id, WAITING],
             )
-            .map_err(|e| e.to_string())?;
+            .bind(status)
+            .bind(now)
+            .bind(run_id)
+            .bind(WAITING)
+            .exec(&mut db)
+            .await
+        })?;
         Ok(changed == 1)
     }
 }
@@ -180,6 +198,23 @@ mod tests {
             .unwrap());
         assert!(service.waiting_review_drafts().unwrap().is_empty());
         assert!(service.settle_review_draft("run-2", "deleted", 0).is_err());
+    }
+
+    #[test]
+    fn a_draft_for_an_automation_that_does_not_exist_is_refused() {
+        let (_directory, mut service, _automation) = service();
+        let error = service
+            .save_review_draft(
+                "run-9",
+                "no-such-automation",
+                "/repo",
+                "acme/app#9",
+                &draft(9),
+                5,
+            )
+            .unwrap_err();
+        assert!(error.contains("FOREIGN KEY"), "{error}");
+        assert!(service.waiting_review_drafts().unwrap().is_empty());
     }
 
     #[test]

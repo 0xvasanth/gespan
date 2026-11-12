@@ -1,0 +1,46 @@
+version = 1
+
+[schema]
+
+[[schema.tables]]
+id = 0
+name = "diagnostic_counters"
+primary_key = { columns = [{ table = 0, index = 0 }, { table = 0, index = 1 }, { table = 0, index = 2 }, { table = 0, index = 4 }], index = { table = 0, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 0, index = 0 }
+name = "day"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 1 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 2 }
+name = "error_kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 3 }
+name = "count"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 0, index = 4 }
+name = "app_version"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 0, index = 0 }
+name = "index_diagnostic_counters_by_day_and_name_and_error_kind_and_app_version"
+on = 0
+columns = [{ column = { table = 0, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 0, index = 1 }, op = "Eq", scope = "Local" }, { column = { table = 0, index = 2 }, op = "Eq", scope = "Local" }, { column = { table = 0, index = 4 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true

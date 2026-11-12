@@ -76,7 +76,7 @@ pub fn seeded_graph(
     }
     {
         let mut node = conn
-            .prepare("INSERT INTO graph_nodes (id, kind, key, label, created_at, updated_at) VALUES (?1, ?2, ?3, ?3, ?4, ?4)")
+            .prepare("INSERT INTO graph_nodes (id, kind, key, label, props_json, created_at, updated_at) VALUES (?1, ?2, ?3, ?3, '{}', ?4, ?4)")
             .unwrap();
         for i in 1..=nodes {
             let kind = if i < session_lo {
@@ -93,8 +93,8 @@ pub fn seeded_graph(
         let mut edge = conn
             .prepare(
                 "INSERT OR IGNORE INTO graph_edges
-                   (src, dst, kind, valid_from, valid_from_basis, valid_to, source, scope, created_at)
-                 VALUES (?1, ?2, ?3, ?4, 'native', ?5, 'backfill:blocks', ?6, ?4)",
+                   (src, dst, kind, props_json, valid_from, valid_from_basis, valid_to, source, scope, created_at)
+                 VALUES (?1, ?2, ?3, '{}', ?4, 'native', ?5, 'backfill:blocks', ?6, ?4)",
             )
             .unwrap();
         let mut written = 0;

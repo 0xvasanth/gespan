@@ -6,10 +6,14 @@
 //! label and field ids inside view specs, layouts, display options and
 //! auto-move rules are remapped to the new ids; a value with no match is
 //! dropped (the saved-view rule), and an auto-move target with no match stays.
-use crate::ops::{clean_text, db, new_id, write_tx, MAX_NAME};
-use crate::settings::{board_settings, BoardSettings};
-use crate::{list_fields, list_labels, list_views, now_millis, Board};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use crate::db::{args, err, execute, query, query_opt, with_db, with_tx, Conn, Ex};
+use crate::fields::list_fields_in;
+use crate::labels::list_labels_in;
+use crate::models::{BoardRow, ColumnRow, FieldRow, LabelRow, SettingsRow, TemplateRow, ViewRow};
+use crate::ops::{clean_text, get_board_in, new_id, MAX_NAME};
+use crate::settings::{board_settings_in, BoardSettings};
+use crate::views::list_views_in;
+use crate::{now_millis, Board};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -188,7 +192,7 @@ fn built_in_spec(id: &str) -> Option<TemplateSpec> {
 }
 
 /// Built-ins first, then saved templates by name.
-pub fn list_templates(conn: &Connection) -> Result<Vec<TemplateInfo>, String> {
+pub fn list_templates(conn: &Conn) -> Result<Vec<TemplateInfo>, String> {
     let mut templates: Vec<TemplateInfo> = BUILT_IN_TEMPLATES
         .iter()
         .map(|id| TemplateInfo {
@@ -197,20 +201,23 @@ pub fn list_templates(conn: &Connection) -> Result<Vec<TemplateInfo>, String> {
             built_in: true,
         })
         .collect();
-    let mut statement = conn
-        .prepare("SELECT id, name FROM board_templates ORDER BY lower(name), name, id")
-        .map_err(db)?;
-    let saved = statement
-        .query_map([], |r| {
+    let saved = with_db!(conn, |ex| {
+        query(
+            ex,
+            "SELECT id, name FROM board_templates ORDER BY lower(name), name, id",
+            args![],
+        )
+        .await?
+        .iter()
+        .map(|r| {
             Ok(TemplateInfo {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 built_in: false,
             })
         })
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
+        .collect::<Result<Vec<_>, String>>()
+    })?;
     templates.extend(saved);
     Ok(templates)
 }
@@ -362,24 +369,22 @@ impl Remap {
     }
 }
 
-fn create_from_spec(
-    tx: &Transaction<'_>,
+async fn create_from_spec(
+    ex: &mut Ex<'_>,
     name: &str,
     spec: &TemplateSpec,
 ) -> Result<Board, String> {
     let now = now_millis();
-    let board = Board {
-        id: new_id(),
-        name: name.to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-    tx.execute(
-        "INSERT INTO boards (id, name, card_seq, created_at, updated_at)
-         VALUES (?1, ?2, 0, ?3, ?3)",
-        params![board.id, board.name, now],
-    )
-    .map_err(db)?;
+    let board: Board = BoardRow::create()
+        .id(new_id())
+        .name(name)
+        .card_seq(0)
+        .created_at(now)
+        .updated_at(now)
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into();
     let mut remap = Remap {
         columns: IdMap::new(),
         labels: IdMap::new(),
@@ -387,141 +392,146 @@ fn create_from_spec(
     };
     for (position, column) in spec.columns.iter().enumerate() {
         let id = new_id();
-        tx.execute(
-            "INSERT INTO board_columns (id, board_id, name, position, role, color, wip_limit)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                id,
-                board.id,
-                column.name,
-                position as i64,
-                column.role,
-                column.color,
-                column.wip_limit
-            ],
-        )
-        .map_err(db)?;
+        ColumnRow::create()
+            .id(&id)
+            .board_id(&board.id)
+            .name(&column.name)
+            .position(position as i64)
+            .role(column.role.clone())
+            .color(column.color.clone())
+            .wip_limit(column.wip_limit)
+            .collapsed(false)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         remap.columns.insert(column.id.clone(), id);
     }
     for (position, label) in spec.labels.iter().enumerate() {
         let id = new_id();
-        tx.execute(
-            "INSERT INTO board_labels (id, board_id, name, color, position)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, board.id, label.name, label.color, position as i64],
-        )
-        .map_err(db)?;
+        LabelRow::create()
+            .id(&id)
+            .board_id(&board.id)
+            .name(&label.name)
+            .color(&label.color)
+            .position(position as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         remap.labels.insert(label.id.clone(), id);
     }
     for (position, field) in spec.fields.iter().enumerate() {
         let id = new_id();
-        tx.execute(
-            "INSERT INTO board_fields (id, board_id, name, kind, options_json, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                id,
-                board.id,
-                field.name,
-                field.kind,
-                field.options_json,
-                position as i64
-            ],
-        )
-        .map_err(db)?;
+        FieldRow::create()
+            .id(&id)
+            .board_id(&board.id)
+            .name(&field.name)
+            .kind(&field.kind)
+            .options_json(field.options_json.clone())
+            .position(position as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         remap.fields.insert(field.id.clone(), id);
     }
     let mut views = IdMap::new();
     for (position, view) in spec.views.iter().enumerate() {
         let id = new_id();
-        tx.execute(
-            "INSERT INTO board_views
-               (id, board_id, name, position, spec_json, layout_json, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-            params![
-                id,
-                board.id,
-                view.name,
-                position as i64,
-                remap.view_spec(&view.spec_json),
-                remap.layout(&view.layout_json),
-                now
-            ],
-        )
-        .map_err(db)?;
+        ViewRow::create()
+            .id(&id)
+            .board_id(&board.id)
+            .name(&view.name)
+            .position(position as i64)
+            .spec_json(remap.view_spec(&view.spec_json))
+            .layout_json(remap.layout(&view.layout_json))
+            .created_at(now)
+            .updated_at(now)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         views.insert(view.id.clone(), id);
     }
     let settings = &spec.settings;
-    tx.execute(
-        "INSERT INTO board_settings
-           (board_id, run_with, write_back, ticket_status_changes, auto_move_json,
-            icon, color, default_view_id, display_json, priority_json, run_in_worktree)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        params![
-            board.id,
-            i64::from(settings.run_with),
-            i64::from(settings.write_back),
-            i64::from(settings.ticket_status_changes),
+    SettingsRow::create()
+        .board_id(&board.id)
+        .run_with(settings.run_with)
+        .write_back(settings.write_back)
+        .ticket_status_changes(settings.ticket_status_changes)
+        .auto_move_json(
             settings
                 .auto_move_json
                 .as_deref()
                 .and_then(|raw| remap.auto_move(raw)),
-            settings.icon,
-            settings.color,
+        )
+        .icon(settings.icon.clone())
+        .color(settings.color.clone())
+        .default_view_id(
             settings
                 .default_view_id
                 .as_ref()
-                .and_then(|id| views.get(id)),
+                .and_then(|id| views.get(id))
+                .cloned(),
+        )
+        .display_json(
             settings
                 .display_json
                 .as_deref()
                 .and_then(|raw| remap.display(raw)),
-            settings.priority_json,
-            i64::from(settings.run_in_worktree)
-        ],
-    )
-    .map_err(db)?;
+        )
+        .priority_json(settings.priority_json.clone())
+        .run_in_worktree(Some(settings.run_in_worktree))
+        .run_worktree_choice(None::<bool>)
+        .exec(ex)
+        .await
+        .map_err(err)?;
     Ok(board)
 }
 
 /// Makes a board named `name` from a built-in or saved template.
 pub fn create_board_from_template(
-    conn: &Connection,
+    conn: &Conn,
     name: &str,
     template_id: &str,
 ) -> Result<Board, String> {
     let name = clean_text(name, "Board name", MAX_NAME)?;
-    let tx = write_tx(conn)?;
-    let spec = match built_in_spec(template_id) {
-        Some(spec) => spec,
-        None => {
-            let raw: String = tx
-                .query_row(
+    with_tx!(conn, |ex| {
+        let spec = match built_in_spec(template_id) {
+            Some(spec) => spec,
+            None => {
+                let raw: String = query_opt(
+                    ex,
                     "SELECT spec_json FROM board_templates WHERE id = ?1",
-                    [template_id],
-                    |r| r.get(0),
+                    args![template_id],
                 )
-                .optional()
-                .map_err(db)?
-                .ok_or_else(|| "Template not found".to_string())?;
-            serde_json::from_str(&raw).map_err(|_| "Template is not valid".to_string())?
-        }
-    };
-    let board = create_from_spec(&tx, &name, &spec)?;
-    tx.commit().map_err(db)?;
-    Ok(board)
+                .await?
+                .ok_or_else(|| "Template not found".to_string())?
+                .get(0)?;
+                serde_json::from_str(&raw).map_err(|_| "Template is not valid".to_string())?
+            }
+        };
+        create_from_spec(ex, &name, &spec).await
+    })
 }
 
 /// Saves the board's columns, labels, fields, views and settings (no cards)
 /// as a template named `name`.
 pub fn save_board_as_template(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     name: &str,
 ) -> Result<TemplateInfo, String> {
     let name = clean_text(name, "Template name", MAX_TEMPLATE_NAME)?;
-    let tx = write_tx(conn)?;
-    let settings = board_settings(&tx, board_id)?;
-    let columns = crate::get_board(&tx, board_id)?
+    with_tx!(conn, |ex| save_board_as_template_in(ex, board_id, name)
+        .await)
+}
+
+async fn save_board_as_template_in(
+    ex: &mut Ex<'_>,
+    board_id: &str,
+    name: String,
+) -> Result<TemplateInfo, String> {
+    let settings = board_settings_in(ex, board_id).await?;
+    let columns = get_board_in(ex, board_id)
+        .await?
         .columns
         .into_iter()
         .map(|column| TemplateColumn {
@@ -534,7 +544,8 @@ pub fn save_board_as_template(
         .collect();
     let spec = TemplateSpec {
         columns,
-        labels: list_labels(&tx, board_id)?
+        labels: list_labels_in(ex, board_id)
+            .await?
             .into_iter()
             .map(|label| TemplateLabel {
                 id: label.id,
@@ -542,7 +553,8 @@ pub fn save_board_as_template(
                 color: label.color,
             })
             .collect(),
-        fields: list_fields(&tx, board_id)?
+        fields: list_fields_in(ex, board_id)
+            .await?
             .into_iter()
             .map(|field| TemplateField {
                 id: field.id,
@@ -551,7 +563,8 @@ pub fn save_board_as_template(
                 options_json: field.options_json,
             })
             .collect(),
-        views: list_views(&tx, board_id)?
+        views: list_views_in(ex, board_id)
+            .await?
             .into_iter()
             .map(|view| TemplateView {
                 id: view.id,
@@ -567,27 +580,24 @@ pub fn save_board_as_template(
         name,
         built_in: false,
     };
-    tx.execute(
-        "INSERT INTO board_templates (id, name, spec_json, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            template.id,
-            template.name,
-            serde_json::to_string(&spec).map_err(|error| error.to_string())?,
-            now_millis()
-        ],
-    )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
+    TemplateRow::create()
+        .id(&template.id)
+        .name(&template.name)
+        .spec_json(serde_json::to_string(&spec).map_err(|error| error.to_string())?)
+        .created_at(now_millis())
+        .exec(ex)
+        .await
+        .map_err(err)?;
     Ok(template)
 }
 
-pub fn delete_template(conn: &Connection, id: &str) -> Result<(), String> {
+pub fn delete_template(conn: &Conn, id: &str) -> Result<(), String> {
     if BUILT_IN_TEMPLATES.contains(&id) {
         return Err("Built-in templates can't be deleted".into());
     }
-    let deleted = conn
-        .execute("DELETE FROM board_templates WHERE id = ?1", [id])
-        .map_err(db)?;
+    let deleted = with_db!(conn, |ex| {
+        execute(ex, "DELETE FROM board_templates WHERE id = ?1", args![id]).await
+    })?;
     if deleted == 0 {
         return Err("Template not found".into());
     }
@@ -595,7 +605,7 @@ pub fn delete_template(conn: &Connection, id: &str) -> Result<(), String> {
 }
 
 /// The built-in "blank" board, as `create_board` makes it.
-pub(crate) fn create_blank(tx: &Transaction<'_>, name: &str) -> Result<Board, String> {
+pub(crate) async fn create_blank(ex: &mut Ex<'_>, name: &str) -> Result<Board, String> {
     let spec = built_in_spec("blank").expect("blank is built in");
-    create_from_spec(tx, name, &spec)
+    create_from_spec(ex, name, &spec).await
 }

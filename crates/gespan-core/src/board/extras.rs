@@ -3,7 +3,6 @@
 //! these `Service` methods are the native app's handle on them.
 use super::{validate_id, Board, Card, Service};
 use gespan_board_store as store;
-use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 
 pub use gespan_board_store::{
@@ -18,55 +17,6 @@ use std::collections::BTreeMap;
 /// The most of a tracker description a "Run with..." prompt carries, in
 /// characters.
 const MAX_PROMPT_TICKET_BODY: usize = 10_000;
-
-/// The pre-v3 native tables. Nothing reads them now that board-store has
-/// copied them into its v3 tables; they are still created, and never dropped,
-/// for one release so a build from before v3 opening this file finds what it
-/// expects.
-pub(crate) fn ensure_legacy_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS board_native_meta (
-           card_id TEXT PRIMARY KEY REFERENCES board_cards(id) ON DELETE CASCADE,
-           priority INTEGER NOT NULL DEFAULT 0,
-           due_at INTEGER
-         );
-         CREATE TABLE IF NOT EXISTS board_native_projects (
-           card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE,
-           project TEXT NOT NULL,
-           PRIMARY KEY (card_id, project)
-         );
-         CREATE TABLE IF NOT EXISTS board_native_labels (
-           id TEXT PRIMARY KEY,
-           board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
-           name TEXT NOT NULL,
-           color TEXT NOT NULL
-         );
-         CREATE UNIQUE INDEX IF NOT EXISTS board_native_labels_name_idx
-           ON board_native_labels (board_id, lower(name));
-         CREATE TABLE IF NOT EXISTS board_native_card_labels (
-           card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE,
-           label_id TEXT NOT NULL REFERENCES board_native_labels(id) ON DELETE CASCADE,
-           PRIMARY KEY (card_id, label_id)
-         );
-         CREATE TABLE IF NOT EXISTS board_native_subtasks (
-           id TEXT PRIMARY KEY,
-           card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE,
-           title TEXT NOT NULL,
-           done INTEGER NOT NULL DEFAULT 0,
-           position INTEGER NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS board_native_subtasks_card_idx
-           ON board_native_subtasks (card_id, position);
-         CREATE TABLE IF NOT EXISTS board_native_comments (
-           id TEXT PRIMARY KEY,
-           card_id TEXT NOT NULL REFERENCES board_cards(id) ON DELETE CASCADE,
-           body TEXT NOT NULL,
-           created_at INTEGER NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS board_native_comments_card_idx
-           ON board_native_comments (card_id, created_at);",
-    )
-}
 
 impl Service {
     /// The one board the native app shows: the oldest, made on first use.

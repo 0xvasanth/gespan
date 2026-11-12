@@ -4,10 +4,11 @@
 //! The engine never reads the clock or the time zone. Callers pass `now_ms`
 //! and a local-day function (normally [`local_day_chrono`]), so date filters
 //! are the same in both apps and testable across midnight and DST changes.
+use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex, Row};
 use crate::meta::priority_of;
+use crate::models::ViewRow;
 use crate::now_millis;
-use crate::ops::{clean_text, db, new_id, write_tx};
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::ops::{clean_text, new_id};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -121,75 +122,62 @@ const LATEST_RUN_SQL: &str = "SELECT card_id, kind FROM (
 /// Card id to the kind of its newest run event (`started`, `needs_input`,
 /// `completed` or `failed`), for every card of the board that has one; the
 /// same rule the `linked: failed` filter uses. Read-only.
-pub fn latest_run_events(
-    conn: &Connection,
-    board_id: &str,
-) -> Result<HashMap<String, String>, String> {
-    let mut events = HashMap::new();
-    pairs(conn, LATEST_RUN_SQL, board_id, |card, kind| {
-        events.insert(card, kind);
-    })?;
-    Ok(events)
+pub fn latest_run_events(conn: &Conn, board_id: &str) -> Result<HashMap<String, String>, String> {
+    let pairs = with_db!(conn, |ex| pairs(ex, LATEST_RUN_SQL, board_id).await)?;
+    Ok(pairs.into_iter().collect())
 }
 
-fn pairs(
-    conn: &Connection,
+/// The (card, value) rows of a board-wide read keyed by `?1` = board id.
+async fn pairs(
+    ex: &mut Ex<'_>,
     sql: &str,
     board_id: &str,
-    mut each: impl FnMut(String, String),
-) -> Result<(), String> {
-    let mut statement = conn.prepare(sql).map_err(db)?;
-    let rows = statement
-        .query_map([board_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })
-        .map_err(db)?;
-    for row in rows {
-        let (card, value) = row.map_err(db)?;
-        each(card, value);
-    }
-    Ok(())
+) -> Result<Vec<(String, String)>, String> {
+    query(ex, sql, args![board_id])
+        .await?
+        .into_iter()
+        .map(|mut r| Ok((r.take::<String>(0)?, r.take::<String>(1)?)))
+        .collect()
 }
 
 /// Every live card on the board in manual order (column order, then
 /// position), read board-wide: one statement per table, never one per card.
-fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>, String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT c.id, c.column_id, c.number, c.title, c.body, c.created_at, c.updated_at,
-                    col.role, m.priority, m.due_at, m.start_at, m.estimate_minutes
-             FROM board_cards c
-             JOIN board_columns col ON col.id = c.column_id
-             LEFT JOIN board_card_meta m ON m.card_id = c.id
-             WHERE c.board_id = ?1 AND m.archived_at IS NULL
-             ORDER BY col.position, col.rowid, c.position, c.number",
-        )
-        .map_err(db)?;
-    let mut entries = statement
-        .query_map([board_id], |r| {
-            Ok(Entry {
-                row: CardIndexRow {
-                    card_id: r.get(0)?,
-                    column_id: r.get(1)?,
-                    number: r.get(2)?,
-                    title: r.get(3)?,
-                    created_at: r.get(5)?,
-                    updated_at: r.get(6)?,
-                    priority: priority_of(r.get::<_, Option<i64>>(8)?.unwrap_or(0)),
-                    due_at: r.get(9)?,
-                    start_at: r.get(10)?,
-                    estimate_minutes: r.get(11)?,
-                    ..CardIndexRow::default()
-                },
-                body: r.get(4)?,
-                role: r.get(7)?,
-                has_links: false,
-                last_run: None,
-            })
+async fn load(ex: &mut Ex<'_>, board_id: &str, with_runs: bool) -> Result<Vec<Entry>, String> {
+    let mut entries = query(
+        ex,
+        "SELECT c.id, c.column_id, c.number, c.title, c.body, c.created_at, c.updated_at,
+                col.role, m.priority, m.due_at, m.start_at, m.estimate_minutes
+         FROM board_cards c
+         JOIN board_columns col ON col.id = c.column_id
+         LEFT JOIN board_card_meta m ON m.card_id = c.id
+         WHERE c.board_id = ?1 AND m.archived_at IS NULL
+         ORDER BY col.position, col.rowid, c.position, c.number",
+        args![board_id],
+    )
+    .await?
+    .into_iter()
+    .map(|mut r: Row| {
+        Ok(Entry {
+            row: CardIndexRow {
+                card_id: r.take(0)?,
+                column_id: r.take(1)?,
+                number: r.take(2)?,
+                title: r.take(3)?,
+                created_at: r.take(5)?,
+                updated_at: r.take(6)?,
+                priority: priority_of(r.take::<Option<i64>>(8)?.unwrap_or(0)),
+                due_at: r.take(9)?,
+                start_at: r.take(10)?,
+                estimate_minutes: r.take(11)?,
+                ..CardIndexRow::default()
+            },
+            body: r.take(4)?,
+            role: r.take(7)?,
+            has_links: false,
+            last_run: None,
         })
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
+    })
+    .collect::<Result<Vec<_>, String>>()?;
     let at: HashMap<String, usize> = entries
         .iter()
         .enumerate()
@@ -198,55 +186,46 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
     let entry = |card: &str| at.get(card).copied();
 
     let scope = "SELECT id FROM board_cards WHERE board_id = ?1";
-    let mut labels = Vec::new();
-    pairs(
-        conn,
+    let labels = pairs(
+        ex,
         &format!(
             "SELECT cl.card_id, cl.label_id FROM board_card_labels cl
              JOIN board_labels l ON l.id = cl.label_id
              WHERE cl.card_id IN ({scope}) ORDER BY l.position, lower(l.name)"
         ),
         board_id,
-        |card, label| labels.push((card, label)),
-    )?;
+    )
+    .await?;
     for (card, label) in labels {
         if let Some(index) = entry(&card) {
             entries[index].row.labels.push(label);
         }
     }
-    let mut projects = Vec::new();
-    pairs(
-        conn,
+    let projects = pairs(
+        ex,
         &format!(
             "SELECT card_id, project FROM board_card_projects
              WHERE card_id IN ({scope}) ORDER BY project"
         ),
         board_id,
-        |card, project| projects.push((card, project)),
-    )?;
+    )
+    .await?;
     for (card, project) in projects {
         if let Some(index) = entry(&card) {
             entries[index].row.projects.push(project);
         }
     }
-    let mut statement = conn
-        .prepare(
-            "SELECT v.card_id, v.field_id, v.value_json FROM board_card_field_values v
-             JOIN board_fields f ON f.id = v.field_id
-             WHERE f.board_id = ?1",
-        )
-        .map_err(db)?;
-    let values = statement
-        .query_map([board_id], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        })
-        .map_err(db)?;
-    for value in values {
-        let (card, field, json) = value.map_err(db)?;
+    let values = query(
+        ex,
+        "SELECT v.card_id, v.field_id, v.value_json FROM board_card_field_values v
+         JOIN board_fields f ON f.id = v.field_id
+         WHERE f.board_id = ?1",
+        args![board_id],
+    )
+    .await?;
+    for mut value in values {
+        let (card, field, json): (String, String, String) =
+            (value.take(0)?, value.take(1)?, value.take(2)?);
         if let Some(index) = entry(&card) {
             entries[index].row.fields.insert(field, json);
         }
@@ -255,9 +234,8 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
         // A link an older build wrote only into the card's legacy
         // `link_kind`/`link_id` columns counts too, as it does for
         // `board_links` and `cards_for_link`.
-        let mut linked = Vec::new();
-        pairs(
-            conn,
+        let linked = pairs(
+            ex,
             &format!(
                 "SELECT card_id, kind FROM board_card_links
                  WHERE card_id IN ({scope})
@@ -266,17 +244,15 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
                  WHERE board_id = ?1 AND link_kind IS NOT NULL AND link_id IS NOT NULL"
             ),
             board_id,
-            |card, _| linked.push(card),
-        )?;
-        for card in linked {
+        )
+        .await?;
+        for (card, _) in linked {
             if let Some(index) = entry(&card) {
                 entries[index].has_links = true;
             }
         }
-        let mut runs = Vec::new();
-        pairs(conn, LATEST_RUN_SQL, board_id, |card, kind| {
-            runs.push((card, kind))
-        })?;
+        // `ROW_NUMBER() OVER`, so raw SQL.
+        let runs = pairs(ex, LATEST_RUN_SQL, board_id).await?;
         for (card, kind) in runs {
             if let Some(index) = entry(&card) {
                 entries[index].last_run = Some(kind);
@@ -287,8 +263,8 @@ fn load(conn: &Connection, board_id: &str, with_runs: bool) -> Result<Vec<Entry>
 }
 
 /// Every live card's index row, in manual order, in one board-wide read.
-pub fn card_index(conn: &Connection, board_id: &str) -> Result<Vec<CardIndexRow>, String> {
-    Ok(load(conn, board_id, false)?
+pub fn card_index(conn: &Conn, board_id: &str) -> Result<Vec<CardIndexRow>, String> {
+    Ok(with_db!(conn, |ex| load(ex, board_id, false).await)?
         .into_iter()
         .map(|entry| entry.row)
         .collect())
@@ -335,45 +311,53 @@ struct BoardFacts {
     fields: HashMap<String, Option<Vec<String>>>,
 }
 
-fn board_facts(conn: &Connection, board_id: &str, entries: &[Entry]) -> Result<BoardFacts, String> {
-    let ids = |sql: &str| -> Result<HashSet<String>, String> {
-        let mut statement = conn.prepare(sql).map_err(db)?;
-        let rows = statement
-            .query_map([board_id], |r| r.get::<_, String>(0))
-            .map_err(db)?
-            .collect::<rusqlite::Result<HashSet<_>>>()
-            .map_err(db);
-        rows
-    };
+async fn board_facts(
+    ex: &mut Ex<'_>,
+    board_id: &str,
+    entries: &[Entry],
+) -> Result<BoardFacts, String> {
     let mut fields = HashMap::new();
-    let mut statement = conn
-        .prepare("SELECT id, kind, options_json FROM board_fields WHERE board_id = ?1")
-        .map_err(db)?;
-    let rows = statement
-        .query_map([board_id], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, Option<String>>(2)?,
-            ))
-        })
-        .map_err(db)?;
-    for row in rows {
-        let (id, kind, options) = row.map_err(db)?;
+    for row in query(
+        ex,
+        "SELECT id, kind, options_json FROM board_fields WHERE board_id = ?1",
+        args![board_id],
+    )
+    .await?
+    {
+        let (id, kind, options): (String, String, Option<String>) =
+            (row.get(0)?, row.get(1)?, row.get(2)?);
         let options = (kind == "select" || kind == "multi-select")
             .then(|| options.and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok()))
             .flatten();
         fields.insert(id, options);
     }
     Ok(BoardFacts {
-        columns: ids("SELECT id FROM board_columns WHERE board_id = ?1")?,
-        labels: ids("SELECT id FROM board_labels WHERE board_id = ?1")?,
+        columns: ids(
+            ex,
+            "SELECT id FROM board_columns WHERE board_id = ?1",
+            board_id,
+        )
+        .await?,
+        labels: ids(
+            ex,
+            "SELECT id FROM board_labels WHERE board_id = ?1",
+            board_id,
+        )
+        .await?,
         projects: entries
             .iter()
             .flat_map(|entry| entry.row.projects.iter().cloned())
             .collect(),
         fields,
     })
+}
+
+async fn ids(ex: &mut Ex<'_>, sql: &str, board_id: &str) -> Result<HashSet<String>, String> {
+    query(ex, sql, args![board_id])
+        .await?
+        .iter()
+        .map(|r| r.get::<String>(0))
+        .collect()
 }
 
 /// The row's test, keeping only values that still exist. `None` when no
@@ -571,7 +555,7 @@ enum SortValue {
 /// Filter values that no longer exist on the board are dropped, and a row
 /// left with none is ignored.
 pub fn query_cards(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     spec: &ViewSpec,
     now_ms: i64,
@@ -579,8 +563,11 @@ pub fn query_cards(
     running: &HashSet<String>,
 ) -> Result<Vec<String>, String> {
     let needs_runs = spec.rows.iter().any(|row| row.field == "linked");
-    let entries = load(conn, board_id, needs_runs)?;
-    let facts = board_facts(conn, board_id, &entries)?;
+    let (entries, facts) = with_db!(conn, |ex| {
+        let entries = load(ex, board_id, needs_runs).await?;
+        let facts = board_facts(ex, board_id, &entries).await?;
+        Ok((entries, facts))
+    })?;
     let tests: Vec<(Op, Test)> = spec
         .rows
         .iter()
@@ -651,67 +638,88 @@ fn check_layout(raw: &str) -> Result<(), String> {
         .map_err(|_| "View layout is not valid JSON".into())
 }
 
-fn view_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<View> {
+fn view_from_row(r: &Row) -> Result<View, String> {
     Ok(View {
-        id: r.get("id")?,
-        board_id: r.get("board_id")?,
-        name: r.get("name")?,
-        position: r.get("position")?,
-        spec_json: r.get("spec_json")?,
-        layout_json: r.get("layout_json")?,
-        created_at: r.get("created_at")?,
-        updated_at: r.get("updated_at")?,
+        id: r.get(0)?,
+        board_id: r.get(1)?,
+        name: r.get(2)?,
+        position: r.get(3)?,
+        spec_json: r.get(4)?,
+        layout_json: r.get(5)?,
+        created_at: r.get(6)?,
+        updated_at: r.get(7)?,
     })
 }
 
-pub fn list_views(conn: &Connection, board_id: &str) -> Result<Vec<View>, String> {
-    let mut statement = conn
-        .prepare("SELECT * FROM board_views WHERE board_id = ?1 ORDER BY position, rowid")
-        .map_err(db)?;
-    let views = statement
-        .query_map([board_id], view_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    views
+impl From<ViewRow> for View {
+    fn from(row: ViewRow) -> Self {
+        View {
+            id: row.id,
+            board_id: row.board_id,
+            name: row.name,
+            position: row.position,
+            spec_json: row.spec_json,
+            layout_json: row.layout_json,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
 }
 
-fn view_board(conn: &Connection, view_id: &str) -> Result<String, String> {
-    conn.query_row(
-        "SELECT board_id FROM board_views WHERE id = ?1",
-        [view_id],
-        |r| r.get(0),
+pub(crate) async fn list_views_in(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<View>, String> {
+    query(
+        ex,
+        "SELECT id, board_id, name, position, spec_json, layout_json, created_at, updated_at
+         FROM board_views WHERE board_id = ?1 ORDER BY position, rowid",
+        args![board_id],
     )
-    .optional()
-    .map_err(db)?
-    .ok_or_else(|| "View not found".to_string())
+    .await?
+    .iter()
+    .map(view_from_row)
+    .collect()
 }
 
-fn view_ids(conn: &Connection, board_id: &str) -> Result<Vec<String>, String> {
-    let mut statement = conn
-        .prepare("SELECT id FROM board_views WHERE board_id = ?1 ORDER BY position, rowid")
-        .map_err(db)?;
-    let ids = statement
-        .query_map([board_id], |r| r.get(0))
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<String>>>()
-        .map_err(db);
-    ids
+pub fn list_views(conn: &Conn, board_id: &str) -> Result<Vec<View>, String> {
+    with_db!(conn, |ex| list_views_in(ex, board_id).await)
 }
 
-fn write_view_positions(conn: &Connection, ids: &[String]) -> Result<(), String> {
-    let mut statement = conn
-        .prepare("UPDATE board_views SET position = ?1 WHERE id = ?2 AND position <> ?1")
-        .map_err(db)?;
+async fn view_board(ex: &mut Ex<'_>, view_id: &str) -> Result<String, String> {
+    ViewRow::filter_by_id(view_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .map(|view| view.board_id)
+        .ok_or_else(|| "View not found".to_string())
+}
+
+async fn view_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, String> {
+    query(
+        ex,
+        "SELECT id FROM board_views WHERE board_id = ?1 ORDER BY position, rowid",
+        args![board_id],
+    )
+    .await?
+    .iter()
+    .map(|r| r.get(0))
+    .collect()
+}
+
+async fn write_view_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        statement.execute(params![index as i64, id]).map_err(db)?;
+        execute(
+            ex,
+            "UPDATE board_views SET position = ?1 WHERE id = ?2 AND position <> ?1",
+            args![index as i64, id],
+        )
+        .await?;
     }
     Ok(())
 }
 
 /// Adds a view at the end of the board's tabs.
 pub fn create_view(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     name: &str,
     spec_json: &str,
@@ -720,58 +728,42 @@ pub fn create_view(
     let name = clean_text(name, "View name", MAX_VIEW_NAME)?;
     check_spec(spec_json)?;
     check_layout(layout_json)?;
-    let tx = write_tx(conn)?;
-    let board_exists: bool = tx
-        .query_row(
+    with_tx!(conn, |ex| {
+        let board_exists: bool = query_value(
+            ex,
             "SELECT EXISTS(SELECT 1 FROM boards WHERE id = ?1)",
-            [board_id],
-            |r| r.get(0),
+            args![board_id],
         )
-        .map_err(db)?;
-    if !board_exists {
-        return Err("Board not found".into());
-    }
-    let position: i64 = tx
-        .query_row(
+        .await?;
+        if !board_exists {
+            return Err("Board not found".into());
+        }
+        let position: i64 = query_value(
+            ex,
             "SELECT COALESCE(MAX(position) + 1, 0) FROM board_views WHERE board_id = ?1",
-            [board_id],
-            |r| r.get(0),
+            args![board_id],
         )
-        .map_err(db)?;
-    let now = now_millis();
-    let view = View {
-        id: new_id(),
-        board_id: board_id.to_string(),
-        name,
-        position,
-        spec_json: spec_json.to_string(),
-        layout_json: layout_json.to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-    tx.execute(
-        "INSERT INTO board_views
-           (id, board_id, name, position, spec_json, layout_json, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            view.id,
-            view.board_id,
-            view.name,
-            view.position,
-            view.spec_json,
-            view.layout_json,
-            view.created_at,
-            view.updated_at
-        ],
-    )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
-    Ok(view)
+        .await?;
+        let now = now_millis();
+        ViewRow::create()
+            .id(new_id())
+            .board_id(board_id)
+            .name(name)
+            .position(position)
+            .spec_json(spec_json)
+            .layout_json(layout_json)
+            .created_at(now)
+            .updated_at(now)
+            .exec(ex)
+            .await
+            .map(View::from)
+            .map_err(err)
+    })
 }
 
 /// Changes the given parts of a view. Returns the owning board id.
 pub fn update_view(
-    conn: &Connection,
+    conn: &Conn,
     view_id: &str,
     name: Option<&str>,
     spec_json: Option<&str>,
@@ -782,60 +774,66 @@ pub fn update_view(
         .transpose()?;
     spec_json.map(check_spec).transpose()?;
     layout_json.map(check_layout).transpose()?;
-    let tx = write_tx(conn)?;
-    let board_id = view_board(&tx, view_id)?;
-    tx.execute(
-        "UPDATE board_views SET name = COALESCE(?1, name), spec_json = COALESCE(?2, spec_json),
-           layout_json = COALESCE(?3, layout_json), updated_at = ?4
-         WHERE id = ?5",
-        params![name, spec_json, layout_json, now_millis(), view_id],
-    )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+    with_tx!(conn, |ex| {
+        let board_id = view_board(ex, view_id).await?;
+        execute(
+            ex,
+            "UPDATE board_views SET name = COALESCE(?1, name), spec_json = COALESCE(?2, spec_json),
+               layout_json = COALESCE(?3, layout_json), updated_at = ?4
+             WHERE id = ?5",
+            args![name, spec_json, layout_json, now_millis(), view_id],
+        )
+        .await?;
+        Ok(board_id)
+    })
 }
 
 /// Returns the owning board id. A board whose default view this was goes
 /// back to "All cards".
-pub fn delete_view(conn: &Connection, view_id: &str) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let board_id = view_board(&tx, view_id)?;
-    tx.execute("DELETE FROM board_views WHERE id = ?1", [view_id])
-        .map_err(db)?;
-    tx.execute(
-        "UPDATE board_settings SET default_view_id = NULL
-         WHERE board_id = ?1 AND default_view_id = ?2",
-        params![board_id, view_id],
-    )
-    .map_err(db)?;
-    write_view_positions(&tx, &view_ids(&tx, &board_id)?)?;
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+pub fn delete_view(conn: &Conn, view_id: &str) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let board_id = view_board(ex, view_id).await?;
+        ViewRow::filter_by_id(view_id)
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        execute(
+            ex,
+            "UPDATE board_settings SET default_view_id = NULL
+             WHERE board_id = ?1 AND default_view_id = ?2",
+            args![&board_id, view_id],
+        )
+        .await?;
+        let ids = view_ids(ex, &board_id).await?;
+        write_view_positions(ex, &ids).await?;
+        Ok(board_id)
+    })
 }
 
 /// Moves a view to `index` (clamped) among its board's views. Returns the
 /// owning board id.
-pub fn move_view(conn: &Connection, view_id: &str, index: usize) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let board_id = view_board(&tx, view_id)?;
-    let mut ids = view_ids(&tx, &board_id)?;
-    ids.retain(|id| id != view_id);
-    ids.insert(index.min(ids.len()), view_id.to_string());
-    write_view_positions(&tx, &ids)?;
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+pub fn move_view(conn: &Conn, view_id: &str, index: usize) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let board_id = view_board(ex, view_id).await?;
+        let mut ids = view_ids(ex, &board_id).await?;
+        ids.retain(|id| id != view_id);
+        ids.insert(index.min(ids.len()), view_id.to_string());
+        write_view_positions(ex, &ids).await?;
+        Ok(board_id)
+    })
 }
 
 /// Rewrites every saved view on the board inside the caller's transaction:
 /// `edit` gets each view's parsed spec and layout and changes them in place.
 /// Only views that changed are written. A view whose stored JSON doesn't
 /// parse is left as it is (the engine already reads it as empty).
-pub(crate) fn rewrite_views(
-    conn: &Connection,
+pub(crate) async fn rewrite_views(
+    ex: &mut Ex<'_>,
     board_id: &str,
     mut edit: impl FnMut(&mut serde_json::Value, &mut serde_json::Value),
 ) -> Result<(), String> {
-    let views = list_views(conn, board_id)?;
+    let views = list_views_in(ex, board_id).await?;
     let now = now_millis();
     for view in views {
         let (Ok(mut spec), Ok(mut layout)) = (
@@ -849,12 +847,14 @@ pub(crate) fn rewrite_views(
         if spec == spec_before && layout == layout_before {
             continue;
         }
-        conn.execute(
-            "UPDATE board_views SET spec_json = ?1, layout_json = ?2, updated_at = ?3
-             WHERE id = ?4",
-            params![spec.to_string(), layout.to_string(), now, view.id],
-        )
-        .map_err(db)?;
+        ViewRow::filter_by_id(&view.id)
+            .update()
+            .spec_json(spec.to_string())
+            .layout_json(layout.to_string())
+            .updated_at(now)
+            .exec(ex)
+            .await
+            .map_err(err)?;
     }
     Ok(())
 }

@@ -8,10 +8,9 @@
 //! It always creates a new board (from the blank template) and never edits an
 //! existing one. Prints the new board's id.
 use gespan_board_store::seed::{seed_board, SeedReport, SeedSpec};
-use gespan_board_store::{create_board_from_template, delete_board, ensure_tables};
+use gespan_board_store::{create_board_from_template, delete_board, testing, Conn};
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 const USAGE: &str =
     "Usage: seed_board --db <path to gespan.db> [--cards 1000] [--name \"<board name>\"]";
@@ -35,7 +34,7 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<String, String> {
 /// board exists.
 pub fn run_with(
     args: impl IntoIterator<Item = String>,
-    seed: impl FnOnce(&Connection, &str, &SeedSpec) -> Result<SeedReport, String>,
+    seed: impl FnOnce(&Conn, &str, &SeedSpec) -> Result<SeedReport, String>,
 ) -> Result<String, String> {
     let mut db: Option<PathBuf> = None;
     let mut cards = SeedSpec::default().cards;
@@ -72,26 +71,19 @@ pub fn run_with(
             db.display()
         ));
     }
-    // Open without CREATE, so a path that vanished is never made anew.
-    let conn = Connection::open_with_flags(
-        &db,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|e| e.to_string())?;
-    conn.busy_timeout(Duration::from_secs(5))
-        .map_err(|e| e.to_string())?;
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-        .map_err(|e| e.to_string())?;
-    ensure_tables(&conn).map_err(|e| e.to_string())?;
+    // The board tables as the app keeps them (a file the app never adopted
+    // gets the legacy upgrade first).
+    let fixture = testing::open(&db)?;
+    let conn = fixture.conn();
     let name = name.unwrap_or_else(|| format!("Scale test ({cards} cards)"));
-    let board = create_board_from_template(&conn, &name, "blank")?;
+    let board = create_board_from_template(conn, &name, "blank")?;
     let spec = SeedSpec {
         cards,
         ..SeedSpec::default()
     };
-    if let Err(error) = seed(&conn, &board.id, &spec) {
+    if let Err(error) = seed(conn, &board.id, &spec) {
         // Leave no half-made board behind: remove the one just created.
-        if let Err(cleanup) = delete_board(&conn, &board.id) {
+        if let Err(cleanup) = delete_board(conn, &board.id) {
             return Err(format!(
                 "{error}. The new board {} could not be removed: {cleanup}",
                 board.id

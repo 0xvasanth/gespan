@@ -2,7 +2,6 @@
 //! like every timing test. The statement-count budgets are in `scale.rs`.
 use gespan_board_store::seed::{seed_board, SeedSpec};
 use gespan_board_store::*;
-use rusqlite::Connection;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -18,10 +17,7 @@ fn row(field: &str, values: &[&str]) -> FilterRow {
 
 #[test]
 fn query_cards_on_1000_cards_meets_the_budget() {
-    // No trace callback on this connection: it would add to every statement.
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
+    let conn = gespan_board_store::testing::fresh();
     let board = create_board(&conn, "Scale").unwrap();
     let report = seed_board(&conn, &board.id, &SeedSpec::default()).unwrap();
     // A 3-row filter (label, priority, linked: failed) and a priority sort.

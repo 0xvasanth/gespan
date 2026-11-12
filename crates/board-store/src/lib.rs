@@ -2,17 +2,26 @@
 //! on them. The native app's `gespan_core::board::Service` calls these
 //! functions. Only Native writes now, but the format stays compatible with the
 //! data older Tauri builds saved.
+//!
+//! The tables are Toasty models ([`models`]) in gespan-core's `gespan`
+//! database, which registers them ([`register_models`]), runs their
+//! [`CONSTRAINTS`] and, when it adopts an old file, the hand-made schema's
+//! [`migrate::legacy_upgrade`]. Every function takes a [`Conn`].
 use serde::Serialize;
 
 mod agent;
 mod auto_move;
 mod card_ops;
 mod comments;
+mod constraints;
+mod db;
 mod fields;
 mod labels;
 mod links;
 mod meta;
 pub mod migrate;
+#[doc(hidden)]
+pub mod models;
 mod ops;
 mod relations;
 mod schema;
@@ -21,6 +30,8 @@ pub mod seed;
 mod settings;
 mod subtasks;
 mod templates;
+#[doc(hidden)]
+pub mod testing;
 mod views;
 
 pub use agent::{
@@ -34,6 +45,8 @@ pub use card_ops::{convert_subtask, duplicate_card, move_card_to_board};
 pub use comments::{
     add_comment, edit_comment, is_comment_author, list_comments, Comment, COMMENT_AUTHORS,
 };
+pub use constraints::CONSTRAINTS;
+pub use db::{Arg, Conn, Ex, FromValue, Job, Row, Runner};
 pub use fields::{
     create_field, delete_field, field_distinct_values, field_values, list_fields, move_field,
     rename_field_option, set_field_value, update_field, validate_value, Field, FieldValue,
@@ -53,6 +66,7 @@ pub use meta::{
     column_card_counts, restore_card, set_due, set_estimate, set_priority, set_priority_many,
     set_projects, set_start, unarchive_card, CardExtras, CardMeta, PRIORITIES,
 };
+pub use models::register_models;
 pub use ops::{
     cards_for_link, create_board, create_card, create_column, delete_archived_card, delete_board,
     delete_card, delete_column, get_board, get_card, link_card, list_activity, list_boards,
@@ -62,7 +76,7 @@ pub use ops::{
 pub use relations::{
     add_relation, blocked_cards, card_relations, remove_relation, Relation, RELATION_KINDS,
 };
-pub use schema::{ensure_tables, VERSION as SCHEMA_VERSION};
+pub use schema::VERSION as SCHEMA_VERSION;
 pub use settings::{
     board_settings, check_session_key, display_options, may_change_ticket_status, priority_scheme,
     session_status_setting, set_board_settings, set_session_status_setting, update_board_settings,

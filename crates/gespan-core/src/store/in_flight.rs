@@ -1,9 +1,9 @@
 //! Chats with a turn in flight, kept current while they run so a quit or a
 //! crash can continue them on the next launch. The desktop table is the one
 //! older Tauri builds wrote.
-use super::{shared::has_table, Store};
+use super::db::args;
+use super::Store;
 use crate::interrupted;
-use rusqlite::params;
 
 const LEGACY_KEY: &str = "in-flight";
 const TABLE: &str = "in_flight_sessions";
@@ -16,29 +16,23 @@ impl Store {
             let ids: Vec<i64> = ids.iter().copied().filter(|id| *id > 0).collect();
             return self.save_setting(LEGACY_KEY, &serde_json::to_string(&ids).unwrap());
         }
-        if !has_table(&self.conn, TABLE)? {
-            return Ok(());
-        }
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM in_flight_sessions", [])
-            .map_err(|e| e.to_string())?;
+        self.shared_writable()?;
+        let db = self.sql()?;
+        let tx = db.begin()?;
+        db.execute(&format!("DELETE FROM {TABLE}"), args![])?;
         let mut index = 0_i64;
         for id in ids.iter().filter(|id| **id > 0) {
             let Ok(persisted) = self.persisted_session_id(*id) else {
                 continue;
             };
-            index += tx
-                .execute(
-                    "INSERT OR REPLACE INTO in_flight_sessions(session_id,cwd,sort_index)
-                     SELECT id,cwd,?2 FROM sessions WHERE id=?1",
-                    params![persisted, index],
-                )
-                .map_err(|e| e.to_string())? as i64;
+            // Copies the session's cwd in the same statement: INSERT ... SELECT.
+            index += db.execute(
+                "INSERT OR REPLACE INTO in_flight_sessions(session_id,cwd,sort_index)
+                 SELECT id,cwd,?2 FROM sessions WHERE id=?1",
+                args![persisted, index],
+            )? as i64;
         }
-        tx.commit().map_err(|e| e.to_string())
+        tx.commit()
     }
 
     /// Read and clear the list, so a second window or launch cannot take it twice.
@@ -51,23 +45,19 @@ impl Store {
             self.save_setting(LEGACY_KEY, "")?;
             return Ok(ids);
         }
-        if !has_table(&self.conn, TABLE)? {
-            return Ok(Vec::new());
-        }
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .map_err(|e| e.to_string())?;
-        let persisted = tx
-            .prepare("SELECT session_id FROM in_flight_sessions ORDER BY sort_index, session_id")
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM in_flight_sessions", [])
-            .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())?;
+        self.shared_writable()?;
+        let db = self.sql()?;
+        let tx = db.begin()?;
+        let persisted = db
+            .query(
+                &format!("SELECT session_id FROM {TABLE} ORDER BY sort_index, session_id"),
+                args![],
+            )?
+            .iter()
+            .map(|row| row.get::<String>(0))
+            .collect::<Result<Vec<_>, _>>()?;
+        db.execute(&format!("DELETE FROM {TABLE}"), args![])?;
+        tx.commit()?;
         Ok(persisted
             .iter()
             .filter_map(|id| self.resolve_existing_session_id(id))

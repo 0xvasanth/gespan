@@ -3,8 +3,8 @@
 //! stay on this machine; nothing here sends.
 //!
 //! Before [`open`] runs (unit tests, `--check-data`) every call is a no-op.
+use crate::orm::{self, Kind};
 use chrono::{NaiveDate, Utc};
-use rusqlite::{params, Connection};
 use std::{
     cell::RefCell,
     io,
@@ -155,8 +155,37 @@ fn valid_name(name: &str) -> bool {
         })
 }
 
+/// One `diagnostic_counters` row as stored.
+#[derive(Debug, toasty::Model)]
+#[table = "diagnostic_counters"]
+#[key(day, name, error_kind, app_version)]
+pub(crate) struct DiagnosticCounter {
+    day: String,
+    name: String,
+    error_kind: String,
+    count: i64,
+    app_version: String,
+}
+
+/// The hand-made table older builds created, for adoption tests.
+#[cfg(test)]
+pub(crate) const LEGACY_SCHEMA: &str = "CREATE TABLE diagnostic_counters (
+    day TEXT NOT NULL,
+    name TEXT NOT NULL,
+    error_kind TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    app_version TEXT NOT NULL,
+    PRIMARY KEY (day, name, error_kind, app_version)
+) WITHOUT ROWID;";
+
+/// The ORM runtime's own threads. A count recorded on one (a panic there,
+/// say) is dropped: `orm::run` cannot be called from inside it.
+fn on_orm_thread() -> bool {
+    std::thread::current().name() == Some("gespan-orm")
+}
+
 pub struct Counters {
-    conn: Connection,
+    db: orm::Database,
     version: String,
 }
 
@@ -167,40 +196,31 @@ impl Counters {
                 "Failure counters never go in the shared {SHARED_DATABASE}."
             ));
         }
-        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let conn = Connection::open(path).map_err(|e| e.to_string())?;
-        conn.busy_timeout(Duration::from_millis(250))
-            .map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
-            .map_err(|e| e.to_string())?;
-        Self::with(conn, version)
+        let db = orm::open(Kind::Counters, path)?;
+        // A count is never worth a long wait: give up on a busy file quickly
+        // and skip the full sync, as the hand-made store did. The pool keeps
+        // its one connection, so these last.
+        db.run(|mut db| async move {
+            for pragma in ["PRAGMA busy_timeout=250", "PRAGMA synchronous=NORMAL"] {
+                toasty::sql::query(pragma).exec(&mut db).await?;
+            }
+            Ok(())
+        })?;
+        Ok(Self::with(db, version))
     }
 
     pub fn open_in_memory(version: &str) -> Result<Self, String> {
-        Self::with(
-            Connection::open_in_memory().map_err(|e| e.to_string())?,
+        Ok(Self::with(
+            orm::open(Kind::Counters, Path::new(":memory:"))?,
             version,
-        )
+        ))
     }
 
-    fn with(conn: Connection, version: &str) -> Result<Self, String> {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS diagnostic_counters (
-                day TEXT NOT NULL,
-                name TEXT NOT NULL,
-                error_kind TEXT NOT NULL,
-                count INTEGER NOT NULL,
-                app_version TEXT NOT NULL,
-                PRIMARY KEY (day, name, error_kind, app_version)
-            ) WITHOUT ROWID;",
-        )
-        .map_err(|e| e.to_string())?;
-        Ok(Self {
-            conn,
+    fn with(db: orm::Database, version: &str) -> Self {
+        Self {
+            db,
             version: version.to_owned(),
-        })
+        }
     }
 
     /// Adds one to `(day, name, kind)` for this app version. `None` is a success.
@@ -217,59 +237,55 @@ impl Counters {
                 name.len()
             ));
         }
-        self.conn
-            .execute(
-                "INSERT INTO diagnostic_counters (day, name, error_kind, count, app_version)
-                 VALUES (?1, ?2, ?3, 1, ?4)
-                 ON CONFLICT (day, name, error_kind, app_version)
-                 DO UPDATE SET count = count + 1",
-                params![
-                    day.to_string(),
-                    name,
-                    kind.map_or(SUCCESS, ErrorKind::code),
-                    self.version
-                ],
-            )
+        if on_orm_thread() {
+            return Err("A failure counter cannot be recorded on the ORM runtime.".into());
+        }
+        // Adds to the stored count in one statement, which needs raw SQL.
+        let upsert = toasty::sql::statement(
+            "INSERT INTO diagnostic_counters (day, name, error_kind, count, app_version)
+             VALUES (?1, ?2, ?3, 1, ?4)
+             ON CONFLICT (day, name, error_kind, app_version)
+             DO UPDATE SET count = count + 1",
+        )
+        .bind(day.to_string())
+        .bind(name.to_owned())
+        .bind(kind.map_or(SUCCESS, ErrorKind::code))
+        .bind(self.version.clone());
+        self.db
+            .run(|mut db| async move { upsert.exec(&mut db).await })
             .map(|_| ())
-            .map_err(|e| e.to_string())
     }
 
     /// Rows from `first` on, by day, name, kind code and version.
     pub fn since(&self, first: NaiveDate) -> Result<Vec<Count>, String> {
-        let mut statement = self
-            .conn
-            .prepare(
-                "SELECT day, name, error_kind, count, app_version FROM diagnostic_counters
-                 WHERE day >= ?1 ORDER BY day, name, error_kind, app_version",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map([first.to_string()], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, String>(4)?,
+        let rows = self.db.run(|mut db| async move {
+            let counter = DiagnosticCounter::fields();
+            DiagnosticCounter::filter(counter.day().ge(first.to_string()))
+                .order_by((
+                    counter.day().asc(),
+                    counter.name().asc(),
+                    counter.error_kind().asc(),
+                    counter.app_version().asc(),
                 ))
-            })
-            .map_err(|e| e.to_string())?;
-        let mut counts = Vec::new();
+                .exec(&mut db)
+                .await
+        })?;
+        let mut counts = Vec::with_capacity(rows.len());
         for row in rows {
-            let (day, name, kind, count, app_version) = row.map_err(|e| e.to_string())?;
-            let kind = match kind.as_str() {
+            let kind = match row.error_kind.as_str() {
                 SUCCESS => None,
                 // A code from a newer build: keep the count, under `other`.
                 code => Some(ErrorKind::from_code(code).unwrap_or(ErrorKind::Other)),
             };
             counts.push(Count {
-                day: day
+                day: row
+                    .day
                     .parse()
-                    .map_err(|_| format!("Bad counter day {day:?}"))?,
-                name,
+                    .map_err(|_| format!("Bad counter day {:?}", row.day))?,
+                name: row.name,
                 kind,
-                count: u64::try_from(count).unwrap_or(0),
-                app_version,
+                count: u64::try_from(row.count).unwrap_or(0),
+                app_version: row.app_version,
             });
         }
         Ok(counts)
@@ -337,6 +353,9 @@ fn record(name: &str, kind: Option<ErrorKind>) {
 /// Counts a crash panic, from the panic hook. It waits only briefly for the
 /// lock: the panicking thread may be the one holding it.
 pub(super) fn record_panic() {
+    if on_orm_thread() {
+        return;
+    }
     let name = "panic";
     let kind = Some(ErrorKind::Panic);
     let today = Utc::now().date_naive();
@@ -407,6 +426,16 @@ mod tests {
     fn day(n: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 10, n).unwrap()
     }
+    /// The first column of `sql`'s rows, as text.
+    fn texts(counters: &Counters, sql: &'static str) -> Vec<String> {
+        counters
+            .db
+            .run(|mut db| async move { toasty::sql::query(sql).exec(&mut db).await })
+            .unwrap()
+            .into_iter()
+            .map(|row| row.into_record().fields[0].as_string_unwrap().to_owned())
+            .collect()
+    }
     fn rows(counters: &Counters) -> Vec<(NaiveDate, String, Option<ErrorKind>, u64)> {
         counters
             .since(day(1))
@@ -447,13 +476,10 @@ mod tests {
         let counters = Counters::open_in_memory("1.0.0").unwrap();
         counters.record(day(20), "app_update.check", None).unwrap();
         counters.record(day(20), "app_update.check", None).unwrap();
-        let stored: String = counters
-            .conn
-            .query_row("SELECT error_kind FROM diagnostic_counters", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(stored, "ok");
+        assert_eq!(
+            texts(&counters, "SELECT error_kind FROM diagnostic_counters"),
+            ["ok"]
+        );
         assert_eq!(
             rows(&counters),
             [(day(20), "app_update.check".into(), None, 2)]
@@ -642,15 +668,10 @@ mod tests {
     #[test]
     fn the_table_has_the_specified_columns() {
         let counters = Counters::open_in_memory("1.0.0").unwrap();
-        let mut statement = counters
-            .conn
-            .prepare("SELECT name FROM pragma_table_info('diagnostic_counters')")
-            .unwrap();
-        let columns: Vec<String> = statement
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect();
+        let columns = texts(
+            &counters,
+            "SELECT name FROM pragma_table_info('diagnostic_counters')",
+        );
         assert_eq!(
             columns,
             ["day", "name", "error_kind", "count", "app_version"]
@@ -680,7 +701,7 @@ mod tests {
         let shared = dir.path().join("gespan.db");
         drop(crate::store::Store::open_gespan(&shared).unwrap());
         let schema = |path: &Path| -> Vec<(String, String)> {
-            let conn = Connection::open(path).unwrap();
+            let conn = rusqlite::Connection::open(path).unwrap();
             let mut statement = conn
                 .prepare("SELECT type, name FROM sqlite_master ORDER BY type, name")
                 .unwrap();
@@ -747,5 +768,62 @@ mod tests {
         // A panic raised while this thread records a count must not deadlock.
         let _held = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
         record_panic();
+    }
+
+    #[test]
+    fn a_count_on_the_orm_runtime_is_refused_instead_of_panicking() {
+        let counters = Counters::open_in_memory("1.0.0").unwrap();
+        // A panic hook or a tracked call on one of the ORM's own threads
+        // must not call back into it.
+        let refused = std::thread::Builder::new()
+            .name("gespan-orm".into())
+            .spawn(|| {
+                let counters = counters;
+                let refused = counters.record(day(20), "panic", Some(ErrorKind::Panic));
+                (refused, counters)
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        let (refused, counters) = refused;
+        assert!(refused.is_err());
+        assert!(rows(&counters).is_empty());
+        counters
+            .record(day(20), "panic", Some(ErrorKind::Panic))
+            .unwrap();
+        assert_eq!(rows(&counters).len(), 1);
+    }
+
+    #[test]
+    fn a_hand_made_counters_file_keeps_its_counts_when_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan-native.db");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(LEGACY_SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO diagnostic_counters VALUES
+               ('2026-10-20', 'worktree.create', 'io', 4, '1.0.0'),
+               ('2026-10-20', 'worktree.create', 'ok', 9, '1.0.0'),
+               ('2026-10-21', 'panic', 'some_new_kind', 2, '1.0.0');",
+        )
+        .unwrap();
+        drop(conn);
+        let counters = Counters::open(&path, "1.0.0").unwrap();
+        counters
+            .record(day(20), "worktree.create", Some(ErrorKind::Io))
+            .unwrap();
+        assert_eq!(
+            rows(&counters),
+            [
+                (day(20), "worktree.create".into(), Some(ErrorKind::Io), 5),
+                (day(20), "worktree.create".into(), None, 9),
+                (day(21), "panic".into(), Some(ErrorKind::Other), 2),
+            ]
+        );
+        drop(counters);
+        // Reopening an adopted file changes nothing more.
+        let counters = Counters::open(&path, "1.0.0").unwrap();
+        assert_eq!(rows(&counters).len(), 3);
+        assert!(dir.path().join("gespan-native.db.bak-pre-toasty").exists());
     }
 }

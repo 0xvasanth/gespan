@@ -5,8 +5,9 @@
 //! Both apps write settings at once (one toggles write-back while the other
 //! renames the board), so writes are patches: [`update_board_settings`]
 //! changes only the fields it is given.
-use crate::ops::{check_color, db, write_tx};
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::db::{args, execute, query_opt, query_value, with_db, with_tx, Arg, Conn, Ex};
+use crate::models::SessionSettingRow;
+use crate::ops::check_color;
 use serde::{Deserialize, Serialize};
 
 /// The icons a board can show.
@@ -253,35 +254,39 @@ pub fn priority_scheme(settings: &BoardSettings) -> PriorityScheme {
         .unwrap_or_default()
 }
 
-pub fn board_settings(conn: &Connection, board_id: &str) -> Result<BoardSettings, String> {
-    let row = conn
-        .query_row(
-            "SELECT s.run_with, s.write_back, s.ticket_status_changes, s.auto_move_json,
-                    s.icon, s.color, s.default_view_id, s.display_json, s.priority_json,
-                    s.run_in_worktree, s.run_worktree_choice
-             FROM boards b LEFT JOIN board_settings s ON s.board_id = b.id
-             WHERE b.id = ?1",
-            [board_id],
-            |r| {
-                let on = |value: Option<i64>| value.is_none_or(|v| v != 0);
-                Ok(BoardSettings {
-                    run_with: on(r.get(0)?),
-                    write_back: on(r.get(1)?),
-                    ticket_status_changes: on(r.get(2)?),
-                    auto_move_json: r.get(3)?,
-                    icon: r.get(4)?,
-                    color: r.get(5)?,
-                    default_view_id: r.get(6)?,
-                    display_json: r.get(7)?,
-                    priority_json: r.get(8)?,
-                    run_in_worktree: r.get::<_, Option<i64>>(9)?.is_some_and(|v| v != 0),
-                    run_worktree_choice: r.get::<_, Option<i64>>(10)?.map(|v| v != 0),
-                })
-            },
-        )
-        .optional()
-        .map_err(db)?;
-    row.ok_or_else(|| "Board not found".into())
+pub(crate) async fn board_settings_in(
+    ex: &mut Ex<'_>,
+    board_id: &str,
+) -> Result<BoardSettings, String> {
+    let row = query_opt(
+        ex,
+        "SELECT s.run_with, s.write_back, s.ticket_status_changes, s.auto_move_json,
+                s.icon, s.color, s.default_view_id, s.display_json, s.priority_json,
+                s.run_in_worktree, s.run_worktree_choice
+         FROM boards b LEFT JOIN board_settings s ON s.board_id = b.id
+         WHERE b.id = ?1",
+        args![board_id],
+    )
+    .await?
+    .ok_or_else(|| "Board not found".to_string())?;
+    let on = |value: Option<i64>| value.is_none_or(|v| v != 0);
+    Ok(BoardSettings {
+        run_with: on(row.get(0)?),
+        write_back: on(row.get(1)?),
+        ticket_status_changes: on(row.get(2)?),
+        auto_move_json: row.get(3)?,
+        icon: row.get(4)?,
+        color: row.get(5)?,
+        default_view_id: row.get(6)?,
+        display_json: row.get(7)?,
+        priority_json: row.get(8)?,
+        run_in_worktree: row.get::<Option<i64>>(9)?.is_some_and(|v| v != 0),
+        run_worktree_choice: row.get::<Option<i64>>(10)?.map(|v| v != 0),
+    })
+}
+
+pub fn board_settings(conn: &Conn, board_id: &str) -> Result<BoardSettings, String> {
+    with_db!(conn, |ex| board_settings_in(ex, board_id).await)
 }
 
 /// Checks every value the patch sets that needs no database. Returns the
@@ -324,87 +329,78 @@ fn check_patch(patch: &SettingsPatch) -> Result<Option<Option<String>>, String> 
 
 /// Changes only the fields `patch` names and returns the settings after.
 pub fn update_board_settings(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     patch: &SettingsPatch,
 ) -> Result<BoardSettings, String> {
     let priority_json = check_patch(patch)?;
-    let tx = write_tx(conn)?;
-    let exists: bool = tx
-        .query_row(
+    with_tx!(conn, |ex| {
+        let exists: bool = query_value(
+            ex,
             "SELECT EXISTS(SELECT 1 FROM boards WHERE id = ?1)",
-            [board_id],
-            |r| r.get(0),
+            args![board_id],
         )
-        .map_err(db)?;
-    if !exists {
-        return Err("Board not found".into());
-    }
-    if let Some(Some(view_id)) = &patch.default_view_id {
-        let on_board: bool = tx
-            .query_row(
+        .await?;
+        if !exists {
+            return Err("Board not found".into());
+        }
+        if let Some(Some(view_id)) = &patch.default_view_id {
+            let on_board: bool = query_value(
+                ex,
                 "SELECT EXISTS(SELECT 1 FROM board_views WHERE id = ?1 AND board_id = ?2)",
-                params![view_id, board_id],
-                |r| r.get(0),
+                args![view_id, board_id],
             )
-            .map_err(db)?;
-        if !on_board {
-            return Err("The default view must be a view on this board".into());
+            .await?;
+            if !on_board {
+                return Err("The default view must be a view on this board".into());
+            }
         }
-    }
-    tx.execute(
-        "INSERT OR IGNORE INTO board_settings (board_id) VALUES (?1)",
-        [board_id],
-    )
-    .map_err(db)?;
-    let flag = |value: Option<bool>| value.map(i64::from);
-    let set = |value: &Option<Option<String>>| value.clone();
-    let choice = patch.run_worktree_choice.map(|choice| {
-        choice.map_or(rusqlite::types::Value::Null, |value| {
-            i64::from(value).into()
-        })
-    });
-    let assignments: [(&str, Option<rusqlite::types::Value>); 11] = [
-        ("run_with", flag(patch.run_with).map(Into::into)),
-        (
-            "run_in_worktree",
-            flag(patch.run_in_worktree).map(Into::into),
-        ),
-        ("run_worktree_choice", choice),
-        ("write_back", flag(patch.write_back).map(Into::into)),
-        (
-            "ticket_status_changes",
-            flag(patch.ticket_status_changes).map(Into::into),
-        ),
-        ("auto_move_json", set(&patch.auto_move_json).map(Into::into)),
-        ("icon", set(&patch.icon).map(Into::into)),
-        ("color", set(&patch.color).map(Into::into)),
-        (
-            "default_view_id",
-            set(&patch.default_view_id).map(Into::into),
-        ),
-        ("display_json", set(&patch.display_json).map(Into::into)),
-        ("priority_json", priority_json.map(Into::into)),
-    ];
-    for (column, value) in assignments {
-        if let Some(value) = value {
-            tx.execute(
-                &format!("UPDATE board_settings SET {column} = ?1 WHERE board_id = ?2"),
-                params![value, board_id],
-            )
-            .map_err(db)?;
+        // The values the hand-made table's defaults gave a new row.
+        execute(
+            ex,
+            "INSERT OR IGNORE INTO board_settings
+               (board_id, run_with, write_back, ticket_status_changes)
+             VALUES (?1, 1, 1, 1)",
+            args![board_id],
+        )
+        .await?;
+        let flag = |value: Option<bool>| value.map(Arg::from);
+        let set = |value: &Option<Option<String>>| value.clone().map(Arg::from);
+        let assignments: [(&str, Option<Arg>); 11] = [
+            ("run_with", flag(patch.run_with)),
+            ("run_in_worktree", flag(patch.run_in_worktree)),
+            (
+                "run_worktree_choice",
+                patch.run_worktree_choice.map(Arg::from),
+            ),
+            ("write_back", flag(patch.write_back)),
+            ("ticket_status_changes", flag(patch.ticket_status_changes)),
+            ("auto_move_json", set(&patch.auto_move_json)),
+            ("icon", set(&patch.icon)),
+            ("color", set(&patch.color)),
+            ("default_view_id", set(&patch.default_view_id)),
+            ("display_json", set(&patch.display_json)),
+            ("priority_json", priority_json.map(Arg::from)),
+        ];
+        for (column, value) in assignments {
+            if let Some(value) = value {
+                execute(
+                    ex,
+                    &format!("UPDATE board_settings SET {column} = ?1 WHERE board_id = ?2"),
+                    vec![value, Arg::from(board_id)],
+                )
+                .await?;
+            }
         }
-    }
-    let settings = board_settings(&tx, board_id)?;
-    tx.commit().map_err(db)?;
-    Ok(settings)
+        board_settings_in(ex, board_id).await
+    })
 }
 
 /// Overwrites every field of the board's settings with `settings` (a patch
 /// naming all of them), including any another app changed meanwhile. For a
 /// partial change, call [`update_board_settings`] with just those fields.
 pub fn set_board_settings(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     settings: &BoardSettings,
 ) -> Result<(), String> {
@@ -424,51 +420,54 @@ pub fn check_session_key(session_key: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn override_of(conn: &Connection, session_key: &str) -> rusqlite::Result<Option<bool>> {
-    Ok(conn
-        .query_row(
-            "SELECT may_change_status FROM board_session_settings WHERE session_key = ?1",
-            [session_key],
-            |r| r.get::<_, Option<i64>>(0),
-        )
-        .optional()?
-        .flatten()
-        .map(|value| value != 0))
+async fn override_of(ex: &mut Ex<'_>, session_key: &str) -> Result<Option<bool>, String> {
+    Ok(SessionSettingRow::filter_by_session_key(session_key)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(crate::db::err)?
+        .and_then(|row| row.may_change_status))
 }
 
 /// The session's own "may change ticket status" override; `Ok(None)` when it
 /// follows its boards. A read that fails is an error, never `Ok(None)`, so a
 /// caller can't mistake it for "follow the boards" ([`may_change_ticket_status`]
 /// refuses in that case rather than falling back to the boards).
-pub fn session_status_setting(
-    conn: &Connection,
-    session_key: &str,
-) -> Result<Option<bool>, String> {
-    override_of(conn, session_key).map_err(db)
+pub fn session_status_setting(conn: &Conn, session_key: &str) -> Result<Option<bool>, String> {
+    with_db!(conn, |ex| override_of(ex, session_key).await)
 }
 
 /// Sets the session's override, or with `None` makes it follow its boards.
 pub fn set_session_status_setting(
-    conn: &Connection,
+    conn: &Conn,
     session_key: &str,
     may_change: Option<bool>,
 ) -> Result<(), String> {
     check_session_key(session_key)?;
-    match may_change {
-        Some(value) => conn.execute(
-            "INSERT INTO board_session_settings (session_key, may_change_status)
-             VALUES (?1, ?2)
-             ON CONFLICT (session_key) DO UPDATE SET
-               may_change_status = excluded.may_change_status",
-            params![session_key, i64::from(value)],
-        ),
-        None => conn.execute(
-            "DELETE FROM board_session_settings WHERE session_key = ?1",
-            [session_key],
-        ),
-    }
-    .map(drop)
-    .map_err(db)
+    with_db!(conn, |ex| {
+        match may_change {
+            Some(value) => {
+                execute(
+                    ex,
+                    "INSERT INTO board_session_settings (session_key, may_change_status)
+                     VALUES (?1, ?2)
+                     ON CONFLICT (session_key) DO UPDATE SET
+                       may_change_status = excluded.may_change_status",
+                    args![session_key, value],
+                )
+                .await
+            }
+            None => {
+                execute(
+                    ex,
+                    "DELETE FROM board_session_settings WHERE session_key = ?1",
+                    args![session_key],
+                )
+                .await
+            }
+        }
+        .map(drop)
+    })
 }
 
 /// Whether the agent in this session may change its ticket's status: the
@@ -476,22 +475,26 @@ pub fn set_session_status_setting(
 /// the boards whose cards link the session (through `board_card_links` or
 /// the card's own legacy `link_kind`/`link_id` columns); else `true`. A read
 /// that fails answers `false`.
-pub fn may_change_ticket_status(conn: &Connection, session_key: &str) -> bool {
-    match override_of(conn, session_key) {
-        Ok(Some(value)) => return value,
-        Ok(None) => {}
-        Err(_) => return false,
-    }
-    conn.query_row(
-        "SELECT COALESCE(MIN(COALESCE(s.ticket_status_changes, 1)), 1)
-         FROM board_cards c
-         LEFT JOIN board_settings s ON s.board_id = c.board_id
-         WHERE c.id IN (SELECT card_id FROM board_card_links
-                        WHERE kind = 'session' AND ref = ?1)
-            OR (c.link_kind = 'session' AND c.link_id = ?1)",
-        [session_key],
-        |r| r.get::<_, i64>(0),
-    )
-    .map(|value| value != 0)
+pub fn may_change_ticket_status(conn: &Conn, session_key: &str) -> bool {
+    with_db!(conn, |ex| {
+        match override_of(ex, session_key).await {
+            Ok(Some(value)) => return Ok(value),
+            Ok(None) => {}
+            Err(_) => return Ok(false),
+        }
+        Ok(query_value::<i64>(
+            ex,
+            "SELECT COALESCE(MIN(COALESCE(s.ticket_status_changes, 1)), 1)
+             FROM board_cards c
+             LEFT JOIN board_settings s ON s.board_id = c.board_id
+             WHERE c.id IN (SELECT card_id FROM board_card_links
+                            WHERE kind = 'session' AND ref = ?1)
+                OR (c.link_kind = 'session' AND c.link_id = ?1)",
+            args![session_key],
+        )
+        .await
+        .map(|value| value != 0)
+        .unwrap_or(false))
+    })
     .unwrap_or(false)
 }

@@ -9,12 +9,20 @@ publish = false
 # so nothing here inherits from either workspace.
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# Only the legacy upgrade (run while gespan-core adopts an old file) and the
+# test fixture's side connection use rusqlite directly.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
-
-[dev-dependencies]
-# `trace` lets the scale tests count SQL statements per read. Dev only.
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks", "trace"] }
+# The board tables are Toasty models of gespan-core's `gespan` database. The
+# pins match gespan-core's, so both crates share one Toasty.
+toasty = { version = "=0.11.0", features = ["sqlite"] }
+toasty-core = "=0.11.0"
+toasty-driver-sqlite = "=0.11.0"
+async-trait = "0.1"
+# `testing` (the tests and the seed example) runs Toasty on a runtime of its
+# own and keeps its database in a temporary directory. The app runs the board
+# on gespan-core's ORM runtime instead.
+tokio = { version = "1", features = ["rt-multi-thread"] }
 tempfile = "3"

@@ -1,11 +1,12 @@
 //! Per-card properties in `board_card_meta` and `board_card_projects`, archive,
 //! and the per-card summary the board face shows.
+use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex};
+use crate::models::{CardMetaRow, CardProjectRow};
 use crate::ops::{
-    card_from_row, column_card_ids, db, get_card, get_column, is_archived, log_activity, log_edit,
-    touch, write_card_positions, write_tx, NewActivity, LIVE,
+    cards_from_rows, column_card_ids, get_card_in, get_column, is_archived, log_activity, log_edit,
+    touch, write_card_positions, NewActivity, LIVE,
 };
 use crate::{now_millis, Card};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 
@@ -42,65 +43,69 @@ pub(crate) fn priority_of(stored: i64) -> u8 {
 }
 
 /// A card without a meta row has the defaults.
-pub fn card_meta(conn: &Connection, card_id: &str) -> Result<CardMeta, String> {
-    let meta = conn
-        .query_row(
-            "SELECT priority, due_at, start_at, estimate_minutes, archived_at, completed_at
-             FROM board_card_meta WHERE card_id = ?1",
-            [card_id],
-            |r| {
-                Ok(CardMeta {
-                    priority: priority_of(r.get(0)?),
-                    due_at: r.get(1)?,
-                    start_at: r.get(2)?,
-                    estimate_minutes: r.get(3)?,
-                    archived_at: r.get(4)?,
-                    completed_at: r.get(5)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(db)?;
-    Ok(meta.unwrap_or_default())
+pub(crate) async fn card_meta_in(ex: &mut Ex<'_>, card_id: &str) -> Result<CardMeta, String> {
+    let meta = CardMetaRow::filter_by_card_id(card_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    Ok(meta
+        .map(|row| CardMeta {
+            priority: priority_of(row.priority),
+            due_at: row.due_at,
+            start_at: row.start_at,
+            estimate_minutes: row.estimate_minutes,
+            archived_at: row.archived_at,
+            completed_at: row.completed_at,
+        })
+        .unwrap_or_default())
 }
 
-fn write_meta(
-    tx: &Transaction<'_>,
+pub fn card_meta(conn: &Conn, card_id: &str) -> Result<CardMeta, String> {
+    with_db!(conn, |ex| card_meta_in(ex, card_id).await)
+}
+
+/// Sets one `board_card_meta` column, adding the row when the card has none.
+/// A new row's priority is 0, as the hand-made table's default had it.
+pub(crate) async fn write_meta(
+    ex: &mut Ex<'_>,
     card_id: &str,
     column: &str,
     value: Option<i64>,
 ) -> Result<(), String> {
-    tx.execute(
-        &format!(
-            "INSERT INTO board_card_meta (card_id, {column}) VALUES (?1, ?2)
+    let sql = if column == "priority" {
+        "INSERT INTO board_card_meta (card_id, priority) VALUES (?1, ?2)
+         ON CONFLICT (card_id) DO UPDATE SET priority = excluded.priority"
+            .to_string()
+    } else {
+        format!(
+            "INSERT INTO board_card_meta (card_id, priority, {column}) VALUES (?1, 0, ?2)
              ON CONFLICT (card_id) DO UPDATE SET {column} = excluded.{column}"
-        ),
-        params![card_id, value],
-    )
-    .map(drop)
-    .map_err(db)
+        )
+    };
+    execute(ex, &sql, args![card_id, value]).await.map(drop)
 }
 
 /// Shared shape of the single-value meta setters: no row and no activity
 /// when the value is unchanged. Returns the owning board id.
 fn set_meta(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     column: &str,
     value: Option<i64>,
-    current: impl Fn(&CardMeta) -> Option<i64>,
-    detail: impl Fn(Option<i64>) -> String,
+    current: impl Fn(&CardMeta) -> Option<i64> + Send + Sync,
+    detail: impl Fn(Option<i64>) -> String + Send + Sync,
 ) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    if current(&card_meta(&tx, card_id)?) == value {
-        return Ok(card.board_id);
-    }
-    write_meta(&tx, card_id, column, value)?;
-    touch(&tx, card_id)?;
-    log_edit(&tx, &card.board_id, card_id, &detail(value))?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        if current(&card_meta_in(ex, card_id).await?) == value {
+            return Ok(card.board_id);
+        }
+        write_meta(ex, card_id, column, value).await?;
+        touch(ex, card_id).await?;
+        log_edit(ex, &card.board_id, card_id, &detail(value)).await?;
+        Ok(card.board_id)
+    })
 }
 
 fn day_detail(label: &str, at: Option<i64>) -> String {
@@ -110,7 +115,7 @@ fn day_detail(label: &str, at: Option<i64>) -> String {
     }
 }
 
-pub fn set_priority(conn: &Connection, card_id: &str, priority: u8) -> Result<String, String> {
+pub fn set_priority(conn: &Conn, card_id: &str, priority: u8) -> Result<String, String> {
     if PRIORITIES.get(priority as usize).is_none() {
         return Err(format!("Unknown priority: {priority}"));
     }
@@ -125,7 +130,7 @@ pub fn set_priority(conn: &Connection, card_id: &str, priority: u8) -> Result<St
     )
 }
 
-pub fn set_due(conn: &Connection, card_id: &str, due_at: Option<i64>) -> Result<String, String> {
+pub fn set_due(conn: &Conn, card_id: &str, due_at: Option<i64>) -> Result<String, String> {
     set_meta(
         conn,
         card_id,
@@ -136,11 +141,7 @@ pub fn set_due(conn: &Connection, card_id: &str, due_at: Option<i64>) -> Result<
     )
 }
 
-pub fn set_start(
-    conn: &Connection,
-    card_id: &str,
-    start_at: Option<i64>,
-) -> Result<String, String> {
+pub fn set_start(conn: &Conn, card_id: &str, start_at: Option<i64>) -> Result<String, String> {
     set_meta(
         conn,
         card_id,
@@ -151,11 +152,7 @@ pub fn set_start(
     )
 }
 
-pub fn set_estimate(
-    conn: &Connection,
-    card_id: &str,
-    minutes: Option<i64>,
-) -> Result<String, String> {
+pub fn set_estimate(conn: &Conn, card_id: &str, minutes: Option<i64>) -> Result<String, String> {
     if minutes.is_some_and(|m| !(1..=MAX_ESTIMATE_MINUTES).contains(&m)) {
         return Err("Estimate is out of range".into());
     }
@@ -173,132 +170,129 @@ pub fn set_estimate(
 }
 
 /// The values one card holds in a set table, such as its projects.
-pub(crate) fn card_set(
-    conn: &Connection,
+pub(crate) async fn card_set(
+    ex: &mut Ex<'_>,
     sql: &str,
     card_id: &str,
 ) -> Result<BTreeSet<String>, String> {
-    let mut statement = conn.prepare(sql).map_err(db)?;
-    let rows = statement
-        .query_map([card_id], |r| r.get::<_, String>(0))
-        .map_err(db)?
-        .collect::<rusqlite::Result<BTreeSet<_>>>()
-        .map_err(db);
-    rows
+    query(ex, sql, args![card_id])
+        .await?
+        .iter()
+        .map(|r| r.get::<String>(0))
+        .collect()
 }
 
-pub fn set_projects(
-    conn: &Connection,
-    card_id: &str,
-    projects: &[String],
-) -> Result<String, String> {
+pub fn set_projects(conn: &Conn, card_id: &str, projects: &[String]) -> Result<String, String> {
     let projects: BTreeSet<&str> = projects
         .iter()
         .map(|p| p.trim())
         .filter(|p| !p.is_empty())
         .collect();
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    let current = card_set(
-        &tx,
-        "SELECT project FROM board_card_projects WHERE card_id = ?1",
-        card_id,
-    )?;
-    if current
-        .iter()
-        .map(String::as_str)
-        .eq(projects.iter().copied())
-    {
-        return Ok(card.board_id);
-    }
-    tx.execute(
-        "DELETE FROM board_card_projects WHERE card_id = ?1",
-        [card_id],
-    )
-    .map_err(db)?;
-    for project in &projects {
-        tx.execute(
-            "INSERT INTO board_card_projects (card_id, project) VALUES (?1, ?2)",
-            params![card_id, project],
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        let current = card_set(
+            ex,
+            "SELECT project FROM board_card_projects WHERE card_id = ?1",
+            card_id,
         )
-        .map_err(db)?;
-    }
-    touch(&tx, card_id)?;
-    log_edit(
-        &tx,
-        &card.board_id,
-        card_id,
-        &format!("projects: {}", projects.len()),
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+        .await?;
+        if current
+            .iter()
+            .map(String::as_str)
+            .eq(projects.iter().copied())
+        {
+            return Ok(card.board_id);
+        }
+        CardProjectRow::filter_by_card_id(card_id)
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        for project in &projects {
+            CardProjectRow::create()
+                .card_id(card_id)
+                .project(*project)
+                .exec(ex)
+                .await
+                .map_err(err)?;
+        }
+        touch(ex, card_id).await?;
+        log_edit(
+            ex,
+            &card.board_id,
+            card_id,
+            &format!("projects: {}", projects.len()),
+        )
+        .await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Takes the card off the board view. Its column closes the gap; the card keeps
 /// its column so unarchiving puts it back there. Returns the owning board id.
-pub fn archive_card(conn: &Connection, card_id: &str) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    if is_archived(&tx, card_id)? {
-        return Ok(card.board_id);
-    }
-    write_meta(&tx, card_id, "archived_at", Some(now_millis()))?;
-    let ids = column_card_ids(&tx, &card.column_id)?;
-    write_card_positions(&tx, &ids)?;
-    touch(&tx, card_id)?;
-    log_edit(&tx, &card.board_id, card_id, "archived")?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+pub fn archive_card(conn: &Conn, card_id: &str) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        if is_archived(ex, card_id).await? {
+            return Ok(card.board_id);
+        }
+        write_meta(ex, card_id, "archived_at", Some(now_millis())).await?;
+        let ids = column_card_ids(ex, &card.column_id).await?;
+        write_card_positions(ex, &ids).await?;
+        touch(ex, card_id).await?;
+        log_edit(ex, &card.board_id, card_id, "archived").await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Puts an archived card back at the end of its column. Returns the owning board id.
-pub fn unarchive_card(conn: &Connection, card_id: &str) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    if !is_archived(&tx, card_id)? {
-        return Ok(card.board_id);
-    }
-    let mut ids = column_card_ids(&tx, &card.column_id)?;
-    write_meta(&tx, card_id, "archived_at", None)?;
-    ids.push(card.id.clone());
-    write_card_positions(&tx, &ids)?;
-    touch(&tx, card_id)?;
-    log_edit(&tx, &card.board_id, card_id, "unarchived")?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+pub fn unarchive_card(conn: &Conn, card_id: &str) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        if !is_archived(ex, card_id).await? {
+            return Ok(card.board_id);
+        }
+        let mut ids = column_card_ids(ex, &card.column_id).await?;
+        write_meta(ex, card_id, "archived_at", None).await?;
+        ids.push(card.id.clone());
+        write_card_positions(ex, &ids).await?;
+        touch(ex, card_id).await?;
+        log_edit(ex, &card.board_id, card_id, "unarchived").await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Archives several cards in one transaction. Each column closes its gap once
 /// and every card that changed gets an "archived" row; cards already archived
 /// are skipped. All cards must be on one board. Returns that board id.
-pub fn archive_cards(conn: &Connection, card_ids: &[String]) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let (board_id, cards) = cards_on_one_board(&tx, card_ids, "No cards to archive")?;
-    let mut columns: Vec<String> = Vec::new();
-    for card in &cards {
-        if is_archived(&tx, &card.id)? {
-            continue;
+pub fn archive_cards(conn: &Conn, card_ids: &[String]) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let (board_id, cards) = cards_on_one_board(ex, card_ids, "No cards to archive").await?;
+        let mut columns: Vec<String> = Vec::new();
+        for card in &cards {
+            if is_archived(ex, &card.id).await? {
+                continue;
+            }
+            write_meta(ex, &card.id, "archived_at", Some(now_millis())).await?;
+            touch(ex, &card.id).await?;
+            log_edit(ex, &board_id, &card.id, "archived").await?;
+            if !columns.contains(&card.column_id) {
+                columns.push(card.column_id.clone());
+            }
         }
-        write_meta(&tx, &card.id, "archived_at", Some(now_millis()))?;
-        touch(&tx, &card.id)?;
-        log_edit(&tx, &board_id, &card.id, "archived")?;
-        if !columns.contains(&card.column_id) {
-            columns.push(card.column_id.clone());
+        for column_id in &columns {
+            let ids = column_card_ids(ex, column_id).await?;
+            write_card_positions(ex, &ids).await?;
         }
-    }
-    for column_id in &columns {
-        let ids = column_card_ids(&tx, column_id)?;
-        write_card_positions(&tx, &ids)?;
-    }
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+        Ok(board_id)
+    })
 }
 
 /// The distinct cards named, in the order given, and the one board they are
 /// all on. Errors when a card is missing, the cards span boards, or there are
 /// none (with `none_error`).
-pub(crate) fn cards_on_one_board(
-    tx: &Transaction<'_>,
+pub(crate) async fn cards_on_one_board(
+    ex: &mut Ex<'_>,
     card_ids: &[String],
     none_error: &str,
 ) -> Result<(String, Vec<Card>), String> {
@@ -307,7 +301,7 @@ pub(crate) fn cards_on_one_board(
         if cards.iter().any(|card| &card.id == card_id) {
             continue;
         }
-        let card = get_card(tx, card_id)?;
+        let card = get_card_in(ex, card_id).await?;
         if cards
             .first()
             .is_some_and(|first| first.board_id != card.board_id)
@@ -324,116 +318,115 @@ pub(crate) fn cards_on_one_board(
 
 /// Sets one priority on several cards (all on one board) in one transaction,
 /// with one "priority: …" row per card that changed. Returns the board id.
-pub fn set_priority_many(
-    conn: &Connection,
-    card_ids: &[String],
-    priority: u8,
-) -> Result<String, String> {
+pub fn set_priority_many(conn: &Conn, card_ids: &[String], priority: u8) -> Result<String, String> {
     if PRIORITIES.get(priority as usize).is_none() {
         return Err(format!("Unknown priority: {priority}"));
     }
-    let tx = write_tx(conn)?;
-    let (board_id, cards) = cards_on_one_board(&tx, card_ids, "No cards to edit")?;
-    let detail = format!("priority: {}", PRIORITIES[priority as usize]);
-    for card in &cards {
-        if card_meta(&tx, &card.id)?.priority == priority {
-            continue;
+    with_tx!(conn, |ex| {
+        let (board_id, cards) = cards_on_one_board(ex, card_ids, "No cards to edit").await?;
+        let detail = format!("priority: {}", PRIORITIES[priority as usize]);
+        for card in &cards {
+            if card_meta_in(ex, &card.id).await?.priority == priority {
+                continue;
+            }
+            write_meta(ex, &card.id, "priority", Some(i64::from(priority))).await?;
+            touch(ex, &card.id).await?;
+            log_edit(ex, &board_id, &card.id, &detail).await?;
         }
-        write_meta(&tx, &card.id, "priority", Some(i64::from(priority)))?;
-        touch(&tx, &card.id)?;
-        log_edit(&tx, &board_id, &card.id, &detail)?;
-    }
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+        Ok(board_id)
+    })
 }
 
 /// Unarchives a card and places it at `index` (clamped) in `column_id`, in one
 /// transaction. Logs "unarchived", plus "moved" when the column differs from
 /// the one the card was archived from. Returns the owning board id.
 pub fn restore_card(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     column_id: &str,
     index: usize,
 ) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    let target = match get_column(&tx, column_id) {
-        Ok(column) if column.board_id == card.board_id => column,
-        _ => return Err("Column not on this board".into()),
-    };
-    let source = get_column(&tx, &card.column_id)?;
-    let was_archived = is_archived(&tx, card_id)?;
-    let same_column = card.column_id == column_id;
-    if was_archived {
-        write_meta(&tx, card_id, "archived_at", None)?;
-    }
-    if !same_column {
-        tx.execute(
-            "UPDATE board_cards SET column_id = ?1 WHERE id = ?2",
-            params![column_id, card_id],
-        )
-        .map_err(db)?;
-        let source_ids = column_card_ids(&tx, &card.column_id)?;
-        write_card_positions(&tx, &source_ids)?;
-    }
-    let mut ids = column_card_ids(&tx, column_id)?;
-    ids.retain(|id| id != card_id);
-    let at = index.min(ids.len());
-    ids.insert(at, card_id.to_string());
-    write_card_positions(&tx, &ids)?;
-    touch(&tx, card_id)?;
-    if was_archived {
-        log_edit(&tx, &card.board_id, card_id, "unarchived")?;
-    }
-    if !same_column {
-        log_activity(
-            &tx,
-            NewActivity {
-                board_id: &card.board_id,
-                card_id: Some(card_id),
-                kind: "moved",
-                actor: "user",
-                from_column: Some(&source.name),
-                to_column: Some(&target.name),
-                detail: None,
-            },
-        )?;
-    }
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        let target = match get_column(ex, column_id).await {
+            Ok(column) if column.board_id == card.board_id => column,
+            _ => return Err("Column not on this board".into()),
+        };
+        let source = get_column(ex, &card.column_id).await?;
+        let was_archived = is_archived(ex, card_id).await?;
+        let same_column = card.column_id == column_id;
+        if was_archived {
+            write_meta(ex, card_id, "archived_at", None).await?;
+        }
+        if !same_column {
+            execute(
+                ex,
+                "UPDATE board_cards SET column_id = ?1 WHERE id = ?2",
+                args![column_id, card_id],
+            )
+            .await?;
+            let source_ids = column_card_ids(ex, &card.column_id).await?;
+            write_card_positions(ex, &source_ids).await?;
+        }
+        let mut ids = column_card_ids(ex, column_id).await?;
+        ids.retain(|id| id != card_id);
+        let at = index.min(ids.len());
+        ids.insert(at, card_id.to_string());
+        write_card_positions(ex, &ids).await?;
+        touch(ex, card_id).await?;
+        if was_archived {
+            log_edit(ex, &card.board_id, card_id, "unarchived").await?;
+        }
+        if !same_column {
+            log_activity(
+                ex,
+                NewActivity {
+                    board_id: &card.board_id,
+                    card_id: Some(card_id),
+                    kind: "moved",
+                    actor: "user",
+                    from_column: Some(&source.name),
+                    to_column: Some(&target.name),
+                    detail: None,
+                },
+            )
+            .await?;
+        }
+        Ok(card.board_id)
+    })
 }
 
 /// A column's `(live, archived)` card counts.
-pub fn column_card_count(conn: &Connection, column_id: &str) -> Result<(usize, usize), String> {
-    get_column(conn, column_id)?;
-    let archived: i64 = conn
-        .query_row(
+pub fn column_card_count(conn: &Conn, column_id: &str) -> Result<(usize, usize), String> {
+    with_db!(conn, |ex| {
+        get_column(ex, column_id).await?;
+        let archived: i64 = query_value(
+            ex,
             "SELECT COUNT(*) FROM board_cards c JOIN board_card_meta m ON m.card_id = c.id
              WHERE c.column_id = ?1 AND m.archived_at IS NOT NULL",
-            [column_id],
-            |row| row.get(0),
+            args![column_id],
         )
-        .map_err(db)?;
-    let total: i64 = conn
-        .query_row(
+        .await?;
+        let total: i64 = query_value(
+            ex,
             "SELECT COUNT(*) FROM board_cards WHERE column_id = ?1",
-            [column_id],
-            |row| row.get(0),
+            args![column_id],
         )
-        .map_err(db)?;
-    Ok(((total - archived) as usize, archived as usize))
+        .await?;
+        Ok(((total - archived) as usize, archived as usize))
+    })
 }
 
 /// Every column's `(live, archived)` card counts on a board, keyed by column
 /// id, in one statement: each value equals [`column_card_count`] for that
 /// column. A board with no columns gives an empty map.
 pub fn column_card_counts(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
 ) -> Result<HashMap<String, (usize, usize)>, String> {
-    let mut statement = conn
-        .prepare(
+    let rows = with_db!(conn, |ex| {
+        query(
+            ex,
             "SELECT b.id, col.id,
                     COUNT(c.id) - COUNT(m.archived_at), COUNT(m.archived_at)
              FROM boards b
@@ -442,19 +435,19 @@ pub fn column_card_counts(
              LEFT JOIN board_card_meta m ON m.card_id = c.id
              WHERE b.id = ?1
              GROUP BY b.id, col.id",
+            args![board_id],
         )
-        .map_err(db)?;
-    let rows = statement
-        .query_map([board_id], |r| {
+        .await?
+        .iter()
+        .map(|r| {
             Ok((
-                r.get::<_, Option<String>>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, i64>(3)?,
+                r.get::<Option<String>>(1)?,
+                r.get::<i64>(2)?,
+                r.get::<i64>(3)?,
             ))
         })
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
+        .collect::<Result<Vec<_>, String>>()
+    })?;
     if rows.is_empty() {
         return Err("Board not found".into());
     }
@@ -467,114 +460,104 @@ pub fn column_card_counts(
 }
 
 /// A board's archived cards, most recently archived first.
-pub fn archived_cards(conn: &Connection, board_id: &str) -> Result<Vec<Card>, String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT c.* FROM board_cards c JOIN board_card_meta m ON m.card_id = c.id
-             WHERE c.board_id = ?1 AND m.archived_at IS NOT NULL
-             ORDER BY m.archived_at DESC, c.number DESC",
+pub fn archived_cards(conn: &Conn, board_id: &str) -> Result<Vec<Card>, String> {
+    with_db!(conn, |ex| {
+        cards_from_rows(
+            query(
+                ex,
+                "SELECT c.id, c.board_id, c.column_id, c.number, c.title, c.body, c.position,
+                        c.link_kind, c.link_id, c.created_at, c.updated_at
+                 FROM board_cards c JOIN board_card_meta m ON m.card_id = c.id
+                 WHERE c.board_id = ?1 AND m.archived_at IS NOT NULL
+                 ORDER BY m.archived_at DESC, c.number DESC",
+                args![board_id],
+            )
+            .await?,
         )
-        .map_err(db)?;
-    let cards = statement
-        .query_map([board_id], card_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    cards
+    })
 }
 
 /// Every live card's extras on a board, keyed by card id. Cards with none are absent.
-pub fn card_extras(
-    conn: &Connection,
+pub fn card_extras(conn: &Conn, board_id: &str) -> Result<HashMap<String, CardExtras>, String> {
+    with_db!(conn, |ex| card_extras_in(ex, board_id).await)
+}
+
+async fn card_extras_in(
+    ex: &mut Ex<'_>,
     board_id: &str,
 ) -> Result<HashMap<String, CardExtras>, String> {
     let mut extras: HashMap<String, CardExtras> = HashMap::new();
     let scope = format!("SELECT id FROM board_cards WHERE board_id = ?1 AND {LIVE}");
-    let mut meta = conn
-        .prepare(&format!(
+    for mut r in query(
+        ex,
+        &format!(
             "SELECT card_id, priority, due_at FROM board_card_meta WHERE card_id IN ({scope})"
-        ))
-        .map_err(db)?;
-    for row in meta
-        .query_map([board_id], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-            ))
-        })
-        .map_err(db)?
+        ),
+        args![board_id],
+    )
+    .await?
     {
-        let (card, priority, due_at) = row.map_err(db)?;
-        let entry = extras.entry(card).or_default();
-        entry.priority = priority_of(priority);
-        entry.due_at = due_at;
+        let entry = extras.entry(r.take::<String>(0)?).or_default();
+        entry.priority = priority_of(r.get::<i64>(1)?);
+        entry.due_at = r.get(2)?;
     }
-    let mut projects = conn
-        .prepare(&format!(
+    for mut r in query(
+        ex,
+        &format!(
             "SELECT card_id, project FROM board_card_projects WHERE card_id IN ({scope}) ORDER BY project"
-        ))
-        .map_err(db)?;
-    for row in projects
-        .query_map([board_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })
-        .map_err(db)?
+        ),
+        args![board_id],
+    )
+    .await?
     {
-        let (card, project) = row.map_err(db)?;
-        extras.entry(card).or_default().projects.push(project);
+        extras
+            .entry(r.take::<String>(0)?)
+            .or_default()
+            .projects
+            .push(r.take(1)?);
     }
-    let mut labels = conn
-        .prepare(&format!(
+    for mut r in query(
+        ex,
+        &format!(
             "SELECT cl.card_id, cl.label_id FROM board_card_labels cl
              JOIN board_labels l ON l.id = cl.label_id
              WHERE cl.card_id IN ({scope}) ORDER BY l.position, lower(l.name)"
-        ))
-        .map_err(db)?;
-    for row in labels
-        .query_map([board_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        })
-        .map_err(db)?
+        ),
+        args![board_id],
+    )
+    .await?
     {
-        let (card, label) = row.map_err(db)?;
-        extras.entry(card).or_default().labels.push(label);
+        extras
+            .entry(r.take::<String>(0)?)
+            .or_default()
+            .labels
+            .push(r.take(1)?);
     }
-    let mut subtasks = conn
-        .prepare(&format!(
+    for mut r in query(
+        ex,
+        &format!(
             "SELECT card_id, SUM(done), COUNT(*) FROM board_subtasks
              WHERE card_id IN ({scope}) GROUP BY card_id"
-        ))
-        .map_err(db)?;
-    for row in subtasks
-        .query_map([board_id], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
-        })
-        .map_err(db)?
+        ),
+        args![board_id],
+    )
+    .await?
     {
-        let (card, done, total) = row.map_err(db)?;
-        let entry = extras.entry(card).or_default();
-        entry.subtasks_done = done.max(0) as usize;
-        entry.subtasks_total = total.max(0) as usize;
+        let entry = extras.entry(r.take::<String>(0)?).or_default();
+        entry.subtasks_done = r.get::<i64>(1)?.max(0) as usize;
+        entry.subtasks_total = r.get::<i64>(2)?.max(0) as usize;
     }
-    let mut comments = conn
-        .prepare(&format!(
+    for mut r in query(
+        ex,
+        &format!(
             "SELECT card_id, COUNT(*) FROM board_comments
              WHERE card_id IN ({scope}) GROUP BY card_id"
-        ))
-        .map_err(db)?;
-    for row in comments
-        .query_map([board_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-        })
-        .map_err(db)?
+        ),
+        args![board_id],
+    )
+    .await?
     {
-        let (card, count) = row.map_err(db)?;
-        extras.entry(card).or_default().comments = count.max(0) as usize;
+        extras.entry(r.take::<String>(0)?).or_default().comments = r.get::<i64>(1)?.max(0) as usize;
     }
     Ok(extras)
 }

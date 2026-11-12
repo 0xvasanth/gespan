@@ -1,23 +1,20 @@
 //! v6: `board_cards.title_from_ticket`.
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::Connection;
 
-fn open(path: &std::path::Path) -> Connection {
-    let conn = Connection::open(path).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
-        .unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn open(path: &std::path::Path) -> Fixture {
+    testing::open(path).unwrap()
 }
 
-fn has_column(conn: &Connection) -> bool {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('board_cards')
+fn has_column(conn: &Fixture) -> bool {
+    conn.raw()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('board_cards')
                        WHERE name = 'title_from_ticket')",
-        [],
-        |row| row.get(0),
-    )
-    .unwrap()
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
 }
 
 #[test]
@@ -50,27 +47,36 @@ fn v6_migration_from_v5_adds_the_ticket_title_mark_idempotently() {
         Some(r#"{"tracker":"plane","key":"P-1","title":"Something else"}"#),
     )
     .unwrap();
-    // Turn it back into a v5 database.
-    conn.execute_batch(
-        "ALTER TABLE board_cards DROP COLUMN title_from_ticket;
-         UPDATE board_schema SET version = 5;",
-    )
-    .unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 5);
+    // Turn it back into a hand-made v5 database, without the columns v6 to v8
+    // added.
+    conn.raw()
+        .execute_batch(
+            "ALTER TABLE board_cards DROP COLUMN title_from_ticket;
+         ALTER TABLE board_cards DROP COLUMN body_from_ticket;
+         ALTER TABLE board_settings DROP COLUMN run_in_worktree;
+         ALTER TABLE board_settings DROP COLUMN run_worktree_choice;
+         DROP TABLE __toasty_migrations;
+         CREATE TABLE board_schema (version INTEGER NOT NULL);
+         INSERT INTO board_schema (version) VALUES (5);",
+        )
+        .unwrap();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), 5);
     assert!(!has_column(&conn));
     // A v5 build still writes cards without the column.
-    conn.execute(
-        "INSERT INTO board_cards (id, board_id, column_id, number, title, body, position,
+    conn.raw()
+        .execute(
+            "INSERT INTO board_cards (id, board_id, column_id, number, title, body, position,
                                   created_at, updated_at)
          VALUES ('old', ?1, ?2, 99, 'Old build card', '', 9, 1, 1)",
-        [&board.id, &column],
-    )
-    .unwrap();
+            [&board.id, &column],
+        )
+        .unwrap();
 
-    ensure_tables(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    let conn = conn.reopen();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     assert!(has_column(&conn));
     let schema_rows: i64 = conn
+        .raw()
         .query_row("SELECT COUNT(*) FROM board_schema", [], |row| row.get(0))
         .unwrap();
     assert_eq!(schema_rows, 1);
@@ -109,14 +115,13 @@ fn v6_migration_from_v5_adds_the_ticket_title_mark_idempotently() {
     let card =
         create_card_from_ticket(&conn, &column, r#"{"tracker":"jira","key":"ABC-2"}"#).unwrap();
     assert!(title_from_ticket(&conn, &card.id).unwrap());
-    migrate::run(&conn).unwrap();
-    ensure_tables(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    let conn = conn.reopen();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     assert!(title_from_ticket(&conn, &card.id).unwrap());
 
     // A second connection opening the same file finds the work done.
     let other = open(path.path());
-    assert_eq!(migrate::version(&other).unwrap(), SCHEMA_VERSION);
+    assert_eq!(migrate::version(other.raw()).unwrap(), SCHEMA_VERSION);
     assert!(title_from_ticket(&other, &card.id).unwrap());
 }
 
@@ -124,7 +129,10 @@ fn v6_migration_from_v5_adds_the_ticket_title_mark_idempotently() {
 fn a_fresh_database_marks_no_card_until_one_comes_from_a_ticket() {
     let path = tempfile::NamedTempFile::new().unwrap();
     let conn = open(path.path());
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    // A new database never had the hand-made versions: it starts with the
+    // column.
+    assert_eq!(migrate::version(conn.raw()).unwrap(), 0);
+    assert!(has_column(&conn));
     let board = create_board(&conn, "Work").unwrap();
     let column = get_board(&conn, &board.id).unwrap().columns[0].id.clone();
     let card = create_card(&conn, &column, "Mine", "").unwrap();

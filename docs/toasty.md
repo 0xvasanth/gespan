@@ -1,0 +1,101 @@
+# Toasty in gespan-core
+
+Gespan's own SQLite databases move from hand-written rusqlite to the
+[Toasty](https://github.com/tokio-rs/toasty) ORM, pinned to `=0.11.0`. The code
+is in `crates/gespan-core/src/orm/`, and the migrations are in
+`crates/gespan-core/migrations/<kind>/`.
+
+## Opening and querying
+
+```rust
+let database = gespan_core::orm::open(Kind::Gespan, &path)?; // or ":memory:"
+
+// Typed queries. `run` blocks until the future finishes.
+let task = database.run(|mut db| async move {
+    MyTask::filter_by_key(key).first().exec(&mut db).await
+})?;
+
+// Raw SQL for things Toasty cannot express. Placeholders are ?1, ?2 and so on.
+let n = database.run(|mut db| async move {
+    toasty::sql::statement("UPDATE my_tasks SET status = 'withdrawn' WHERE asked_at < ?1")
+        .bind(at)
+        .exec(&mut db)
+        .await
+})?;
+
+// One BEGIN IMMEDIATE transaction. It commits on Ok and rolls back on Err.
+database.transaction(|tx| Box::pin(async move {
+    TaskDecision::create().project(p).statement(s).why(w)
+        .created_at(t).updated_at(t).exec(tx).await?;
+    Ok(())
+}))?;
+```
+
+The pool has one connection. Inside a transaction, run everything through
+`tx`. Calling the database from inside the transaction deadlocks.
+`orm::run(fut)` drives any Toasty future from synchronous code. It is safe to
+call from inside another tokio runtime, but not from inside a future that
+`run` is already driving.
+
+`Store` holds the gespan database next to its rusqlite connection.
+`Store::orm()` opens it on first use. Store code calls
+`self.orm()?.run(...)`.
+
+Store code that needs raw SQL uses `Store::sql()` (`store/db.rs`): `query`,
+`row`, `optional`, `value` and `execute` with `args![...]`, and `begin()`
+for a `BEGIN IMMEDIATE` transaction that the store's other statements join
+(the pool has one connection). Run only raw SQL inside `begin()`: some typed
+statements start their own transaction, which SQLite refuses there. A
+read-only store (`Store::read_gespan`, the search reader) runs the same SQL
+on a read-only SQLite connection, and reads a file not adopted yet through
+an adopted copy, so the file itself never changes.
+
+## Adding a model
+
+1. Write a `#[derive(toasty::Model)]` struct with `#[table = "<existing name>"]`
+   and every column the table has ever had, using the exact names (rename with
+   `#[column("...")]`). A column left out of the model is dropped when a file
+   is adopted.
+2. Register the model in `Kind::models` in `src/orm/kind.rs`.
+3. If the table had older hand-made shapes, move the store's
+   `ALTER TABLE` / `pragma_table_info` upgrades into that kind's
+   `Kind::legacy_upgrade`. Adoption runs them before it rebuilds the table.
+4. Generate the migration:
+
+   ```sh
+   cargo run --manifest-path crates/gespan-core/Cargo.toml --bin toasty-migrate -- gespan add_notes
+   ```
+
+   This writes `migrations/gespan/migrations/NNNN_add_notes.sql`, the
+   snapshot it leads to, and the `history.toml` entry. Commit all three.
+   While a kind's migrations have not shipped, regenerate them as one first
+   migration with `--reset` (`toasty-migrate gespan init --reset`). Adoption
+   only rebuilds tables that the *first* migration creates.
+5. `cargo test` runs `orm::tests::models_match_the_last_migration`. It fails
+   when a model and the last snapshot differ.
+
+## What happens on open
+
+- **Backup:** before adoption or any pending migration changes an existing
+  file, the file is copied to `<file>.bak-pre-toasty` with `VACUUM INTO`. The
+  copy replaces any older backup.
+- **Adoption:** this runs when a file has tables but no `__toasty_migrations`.
+  It is one transaction with foreign keys off. It runs the legacy upgrade,
+  then rebuilds each table the first migration creates into exactly that DDL:
+  create the new table, copy the shared columns, drop the old one, rename.
+  Then it creates the indexes and records the first migration as applied.
+- **Migrate:** `MigrationSet::apply` applies everything else.
+
+## Toasty 0.11 limits to know
+
+- Generated DDL has no `DEFAULT`, no `REFERENCES` and no `DESC` index columns.
+  The model must set every value. Foreign keys are not enforced by the schema.
+- An `#[auto]` integer key is stored as a 4-byte `INTEGER ... AUTOINCREMENT`
+  column.
+- Field-level `#[index]` cannot be named. Use a struct-level
+  `#[index(name = "...", field)]` to keep an existing index name.
+- Conditional upserts (`ON CONFLICT ... WHERE`), updates that return a
+  count, CTEs, `json_*` and window functions go through `toasty::sql`.
+  Binding a NULL needs `bind_typed`.
+- Toasty brings `PartialEq` impls for tuples into scope. An
+  `assert_eq!(x, [])` on a tuple vector may then need a type annotation.

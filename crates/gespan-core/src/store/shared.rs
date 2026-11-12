@@ -1,5 +1,7 @@
-//! A view adapter over the desktop schema: no imported sessions, replacement IDs,
-//! persistent native_* tables, or history conversion on open.
+//! The desktop schema's sessions as native ones: no imported sessions,
+//! replacement IDs, native_* tables, or history conversion on open. The
+//! tables are Toasty models (`store::schema`); statements run through
+//! `store::db` on the Toasty database.
 mod accounts;
 pub(super) mod blocks;
 pub(crate) mod claude_shell;
@@ -10,13 +12,14 @@ mod tests;
 mod window;
 pub use window::{HistoryPage, PAGE_TURNS};
 
+use super::db::{args, Sql, SqlRow};
 use super::{Reminder, Session, Store};
 use crate::{
     agent::Settings,
     context::Usage,
     transcript::{Row, Transcript},
 };
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{Connection, OpenFlags};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -26,17 +29,17 @@ use std::{
 };
 
 pub(super) struct Shared {
-    columns: HashSet<String>,
     ids: RefCell<HashMap<i64, String>>,
     extras: RefCell<BTreeMap<String, String>>,
-    extras_db: Option<Connection>,
+    /// The Settings database; `None` when read-only or in memory.
+    extras_db: Option<crate::orm::Database>,
     snapshots: RefCell<HashMap<i64, HistoryRevision>>,
     /// The first block sequence of each indexed Pilot's row numbering.
     windows: RefCell<HashMap<i64, i64>>,
     queues: RefCell<HashMap<i64, String>>,
     account_source: RefCell<Option<crate::accounts::Book>>,
     preferences: std::sync::Arc<crate::desktop_preferences::DesktopPreferences>,
-    read_only: bool,
+    pub(super) read_only: bool,
 }
 
 /// A revision guard, rather than another owned copy of every rich source block.
@@ -132,13 +135,38 @@ pub(crate) fn handle(id: &str) -> i64 {
     let bytes = Sha256::digest(id.as_bytes());
     (i64::from_le_bytes(bytes[..8].try_into().unwrap()) & ((1_i64 << 53) - 1)).max(1)
 }
-pub(super) fn has_table(conn: &Connection, table: &str) -> Result<bool, String> {
-    sql(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
-        [table],
+/// Whether every Gespan migration has been applied to the file `conn` reads.
+/// A file Gespan never opened, or one an older build left, has not.
+fn adopted(conn: &Connection) -> Result<bool, String> {
+    let tracked: bool = sql(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='__toasty_migrations')",
+        [],
         |r| r.get(0),
-    ))
+    ))?;
+    if !tracked {
+        return Ok(false);
+    }
+    let applied = sql(sql(conn.prepare("SELECT id FROM __toasty_migrations"))?
+        .query_map([], |r| r.get::<_, i64>(0)))?
+    .collect::<rusqlite::Result<HashSet<_>>>()
+    .map_err(|e| e.to_string())?;
+    Ok(crate::orm::Kind::Gespan
+        .migrations()
+        .migrations()
+        .iter()
+        .all(|migration| applied.contains(&(migration.id() as i64))))
 }
+/// The columns `shared_session` reads, in its order: twelve of them, so a
+/// query's own extra columns start at index 12.
+const SESSION_COLUMNS: &str = "id,title,harness,cwd,provider_session_id,updated_at,\
+    has_user_message,archived,pinned,linked_work_item_json,sidebar_hidden,created_at";
+/// The `sessions` columns a new row names, ending with the ones whose values
+/// [`INSERT_DEFAULTS`] gives: Toasty's DDL has no DEFAULT.
+const INSERT_COLUMNS: &str = "id,cwd,harness,model,model_settings,runtime_mode,title,\
+    blocks_json,created_at,updated_at,archived,has_user_message,pinned,worktree_removed,is_draft,\
+    queued_messages_json,sidebar_hidden";
+/// The values Tauri's schema defaulted, in [`INSERT_COLUMNS`] order.
+const INSERT_DEFAULTS: &str = "0,0,0,0,0,'[]',0";
 /// Clock slack between a prompt's send time and its run's start.
 const START_SLACK_MS: u64 = 1_000;
 /// A prompt's run start. No run starts before its prompt was sent: an earlier
@@ -207,8 +235,9 @@ pub(super) fn project_turns(
 }
 
 impl Store {
-    /// Open the same sessions, notes and reminders as the desktop app. Only a
-    /// brand-new file gets a schema; existing schema/data is not migrated.
+    /// Open the sessions, notes and reminders the desktop app saved. Gespan
+    /// owns the file: one an older Tauri build left is adopted into the
+    /// Toasty schema (`store::schema`), its rows kept and a backup written.
     pub fn open_gespan(path: &Path) -> Result<Self, String> {
         Self::open_shared(path, false, None)
     }
@@ -229,61 +258,79 @@ impl Store {
     ) -> Result<Self, String> {
         Self::open_shared(path, false, Some(preferences))
     }
+    /// A writable store adopts and migrates the file through Toasty (see
+    /// `store::schema`); a brand-new file gets the current schema. A read-only
+    /// store never changes the file: one Gespan has not adopted yet is read
+    /// through an adopted copy.
     fn open_shared(
         path: &Path,
         read_only: bool,
         preferences: Option<std::sync::Arc<crate::desktop_preferences::DesktopPreferences>>,
     ) -> Result<Self, String> {
         let memory = path == Path::new(":memory:");
-        let exists = !memory && path.exists();
-        if !read_only && !exists {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let (conn, orm_path, database, snapshot) = if read_only {
+            let open = |path: &Path| {
+                let conn = sql(Connection::open_with_flags(
+                    path,
+                    OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+                ))?;
+                sql(conn.busy_timeout(std::time::Duration::from_secs(5)))?;
+                Ok::<_, String>(conn)
+            };
+            let conn = open(path)?;
+            if adopted(&conn)? {
+                (conn, path.to_path_buf(), None, None)
+            } else {
+                let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+                let copy = dir.path().join("gespan.db");
+                sql(conn.execute("VACUUM INTO ?1", [copy.to_string_lossy()]))?;
+                drop(conn);
+                drop(crate::orm::open(crate::orm::Kind::Gespan, &copy)?);
+                (open(&copy)?, copy, None, Some(dir))
             }
-        }
-        let flags = if read_only {
-            OpenFlags::SQLITE_OPEN_READ_ONLY
         } else {
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
-        };
-        let conn = sql(Connection::open_with_flags(path, flags))?;
-        sql(conn.busy_timeout(std::time::Duration::from_secs(5)))?;
-        sql(conn.execute_batch("PRAGMA foreign_keys=ON;"))?;
-        if !exists && !read_only {
-            sql(conn.execute_batch("PRAGMA journal_mode=WAL;"))?;
-            let tx = sql(super::write_transaction(&conn))?;
-            sql(tx.execute_batch(include_str!("shared_schema.sql")))?;
-            sql(tx.commit())?;
-        }
-        let columns = sql(sql(conn.prepare("PRAGMA table_info(sessions)"))?
-            .query_map([], |r| r.get::<_, String>(1)))?
-        .collect::<rusqlite::Result<HashSet<_>>>()
-        .map_err(|e| e.to_string())?;
-        for required in [
-            "id",
-            "cwd",
-            "harness",
-            "model",
-            "model_settings",
-            "runtime_mode",
-            "title",
-            "provider_session_id",
-            "blocks_json",
-            "created_at",
-            "updated_at",
-        ] {
-            if !columns.contains(required) {
-                return Err(format!(
-                    "Unsupported Gespan database: missing sessions.{required}. No schema changes were made."
-                ));
+            let fresh = memory || !path.exists();
+            let orm_path = if memory {
+                super::memory_path()
+            } else {
+                path.to_path_buf()
+            };
+            // In memory, this connection keeps the shared database alive.
+            let keeper = if memory {
+                Some(sql(Connection::open(&orm_path))?)
+            } else {
+                None
+            };
+            let database = crate::orm::open(crate::orm::Kind::Gespan, &orm_path)?;
+            if fresh {
+                // An older Tauri build that opens this file must not run its
+                // migrations again: they predate every column here.
+                database.run(|mut db| async move {
+                    super::schema::TauriMigration::create()
+                        .version(19)
+                        .applied_at(0)
+                        .exec(&mut db)
+                        .await
+                        .map(drop)
+                })?;
             }
-        }
+            let conn = match keeper {
+                Some(conn) => conn,
+                None => sql(Connection::open_with_flags(
+                    path,
+                    OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI,
+                ))?,
+            };
+            sql(conn.busy_timeout(std::time::Duration::from_secs(5)))?;
+            sql(conn.execute_batch("PRAGMA foreign_keys=ON;"))?;
+            (conn, orm_path, Some(database), None)
+        };
         let (extras, extras_db) = settings::open(path, read_only)?;
         let store = Self {
             conn,
             path: path.into(),
+            orm_path,
             shared: Some(Shared {
-                columns,
                 ids: RefCell::new(HashMap::new()),
                 extras: RefCell::new(extras),
                 extras_db,
@@ -301,13 +348,13 @@ impl Store {
                 }),
                 read_only,
             }),
+            orm: database.map(std::cell::OnceCell::from).unwrap_or_default(),
+            _snapshot: snapshot,
         };
         // Register only identities here. No blocks_json is read at startup.
-        let mut query = sql(store.conn.prepare("SELECT id FROM sessions"))?;
-        for id in sql(query.query_map([], |r| r.get::<_, String>(0)))? {
-            store.shared_register(&sql(id)?)?;
+        for row in store.sql()?.query("SELECT id FROM sessions", args![])? {
+            store.shared_register(&row.get::<String>(0)?)?;
         }
-        drop(query);
         Ok(store)
     }
     pub fn uses_gespan_schema(&self) -> bool {
@@ -336,11 +383,11 @@ impl Store {
     pub fn resolve_existing_session_id(&self, id: &str) -> Option<i64> {
         if self.shared.is_some() {
             let exists = self
-                .conn
-                .query_row(
+                .sql()
+                .ok()?
+                .value::<bool>(
                     "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
-                    [id],
-                    |r| r.get::<_, bool>(0),
+                    args![id],
                 )
                 .ok()?;
             return exists.then(|| self.shared_register(id).ok()).flatten();
@@ -384,11 +431,10 @@ impl Store {
             {
                 return Ok(*key);
             }
-            if sql(self.conn.query_row(
+            if self.sql()?.value::<bool>(
                 "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
-                [id],
-                |r| r.get::<_, bool>(0),
-            ))? {
+                args![id],
+            )? {
                 return self.shared_register(id);
             }
         }
@@ -410,12 +456,9 @@ impl Store {
             Ok(())
         }
     }
-    pub(super) fn shared_field(&self, name: &str, fallback: &str) -> String {
-        if self.shared.as_ref().unwrap().columns.contains(name) {
-            name.into()
-        } else {
-            fallback.into()
-        }
+    /// Where a shared store's SQL runs.
+    pub(super) fn db(&self) -> Result<Sql<'_>, String> {
+        self.sql()
     }
     /// One session's linked work item, read by its own row.
     pub(super) fn shared_work_item(
@@ -423,25 +466,19 @@ impl Store {
         id: i64,
     ) -> Result<Option<crate::session_groups::WorkItem>, String> {
         let original = self.persisted_session_id(id)?;
-        let column = self.shared_field("linked_work_item_json", "NULL");
-        let raw: Option<String> = sql(self
-            .conn
-            .query_row(
-                &format!("SELECT {column} FROM sessions WHERE id=?1"),
-                [&original],
-                |r| r.get(0),
-            )
-            .optional())?
-        .ok_or("Session no longer exists")?;
+        let raw: Option<String> = self
+            .db()?
+            .optional(
+                "SELECT linked_work_item_json FROM sessions WHERE id=?1",
+                args![&original],
+            )?
+            .ok_or("Session no longer exists")?
+            .get(0)?;
         Ok(raw.and_then(|raw| parse(&raw).ok()))
     }
     pub(super) fn shared_patch(&self, id: i64, fields: &[(&str, Value)]) -> Result<(), String> {
         self.shared_writable()?;
         let id = self.persisted_session_id(id)?;
-        let fields: Vec<_> = fields
-            .iter()
-            .filter(|(name, _)| self.shared.as_ref().unwrap().columns.contains(*name))
-            .collect();
         if fields.is_empty() {
             return Ok(());
         }
@@ -451,18 +488,18 @@ impl Store {
             .map(|(ix, (name, _))| format!("{name}=?{}", ix + 2))
             .collect::<Vec<_>>()
             .join(",");
-        let mut values = vec![rusqlite::types::Value::Text(id)];
+        let mut values = vec![toasty::stmt::Value::String(id)];
         values.extend(fields.iter().map(|(_, v)| match v {
-            Value::Null => rusqlite::types::Value::Null,
-            Value::Bool(v) => rusqlite::types::Value::Integer(i64::from(*v)),
-            Value::Number(v) => rusqlite::types::Value::Integer(v.as_i64().unwrap_or(i64::MAX)),
-            Value::String(v) => rusqlite::types::Value::Text(v.clone()),
-            v => rusqlite::types::Value::Text(v.to_string()),
+            Value::Null => toasty::stmt::Value::Null,
+            Value::Bool(v) => toasty::stmt::Value::I64(i64::from(*v)),
+            Value::Number(v) => toasty::stmt::Value::I64(v.as_i64().unwrap_or(i64::MAX)),
+            Value::String(v) => toasty::stmt::Value::String(v.clone()),
+            v => toasty::stmt::Value::String(v.to_string()),
         }));
-        sql(self.conn.execute(
+        self.db()?.execute(
             &format!("UPDATE sessions SET {updates} WHERE id=?1"),
-            rusqlite::params_from_iter(values),
-        ))?;
+            values,
+        )?;
         Ok(())
     }
     pub(super) fn shared_setting(&self, key: &str) -> Result<Option<String>, String> {
@@ -496,109 +533,66 @@ impl Store {
         {
             return Ok(());
         }
-        if let Some(conn) = &shared.extras_db {
-            sql(conn.execute(
-                "INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                params![key, value],
-            ))?;
+        if let Some(database) = &shared.extras_db {
+            settings::save(database, key, value)?;
         }
         // Publish only committed values. A failed save must remain retryable.
         shared.extras.borrow_mut().insert(key.into(), value.into());
         Ok(())
     }
-    /// The columns `shared_session` reads, in its order: twelve of them, so a
-    /// query's own extra columns start at index 12.
-    fn shared_session_columns(&self) -> String {
-        [
-            "id",
-            "title",
-            "harness",
-            "cwd",
-            "provider_session_id",
-            "updated_at",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .chain(
-            [
-                (
-                    "has_user_message",
-                    "CASE WHEN blocks_json!='[]' THEN 1 ELSE 0 END",
-                ),
-                ("archived", "0"),
-                ("pinned", "0"),
-                ("linked_work_item_json", "NULL"),
-                ("sidebar_hidden", "0"),
-                ("created_at", "0"),
-            ]
-            .into_iter()
-            .map(|(name, default)| self.shared_field(name, default)),
-        )
-        .collect::<Vec<_>>()
-        .join(",")
-    }
-    /// The session, its original ID, and whether it is hidden from the sidebar.
-    fn shared_session(&self, row: &rusqlite::Row) -> Result<(Session, String, bool), String> {
-        let original: String = sql(row.get(0))?;
+    /// The session, its original ID, and whether it is hidden from the sidebar,
+    /// from a row that starts with [`SESSION_COLUMNS`].
+    fn shared_session(&self, row: &SqlRow) -> Result<(Session, String, bool), String> {
+        let original: String = row.get(0)?;
         let id = self.shared_register(&original)?;
         Ok((
             Session {
                 id,
-                title: sql(row.get(1))?,
-                provider: sql(row.get(2))?,
-                cwd: sql(row.get(3))?,
-                provider_id: sql(row.get(4))?,
-                updated_at: sql(row.get::<_, i64>(5))?.max(0) as u64,
-                has_messages: sql(row.get(6))?,
-                archived: sql(row.get(7))?,
-                pinned: sql(row.get(8))?,
-                created_at: sql(row.get::<_, i64>(11))?.max(0) as u64,
-                work_item: sql(row.get::<_, Option<String>>(9))?.and_then(|raw| parse(&raw).ok()),
+                title: row.get(1)?,
+                provider: row.get(2)?,
+                cwd: row.get(3)?,
+                provider_id: row.get(4)?,
+                updated_at: row.get::<i64>(5)?.max(0) as u64,
+                has_messages: row.get(6)?,
+                archived: row.get(7)?,
+                pinned: row.get(8)?,
+                created_at: row.get::<i64>(11)?.max(0) as u64,
+                work_item: row
+                    .get::<Option<String>>(9)?
+                    .and_then(|raw| parse(&raw).ok()),
             },
             original,
-            sql(row.get::<_, bool>(10))?,
+            row.get::<bool>(10)?,
         ))
-    }
-    pub(super) fn shared_supports_inbox_ask(&self) -> bool {
-        self.shared.as_ref().unwrap().columns.contains("inbox_ask")
     }
     /// Ask sessions with their raw context, which `shared_sessions` hides.
     pub(super) fn shared_inbox_asks(&self) -> Result<Vec<(Session, String)>, String> {
-        if !self.shared_supports_inbox_ask() {
-            return Ok(Vec::new());
-        }
-        let columns = self.shared_session_columns();
-        let mut query = sql(self.conn.prepare(&format!(
-            "SELECT {columns},inbox_ask FROM sessions WHERE inbox_ask IS NOT NULL ORDER BY updated_at DESC,id"
-        )))?;
-        let mut rows = sql(query.query([]))?;
+        let rows = self.db()?.query(
+            &format!(
+                "SELECT {SESSION_COLUMNS},inbox_ask FROM sessions WHERE inbox_ask IS NOT NULL ORDER BY updated_at DESC,id"
+            ),
+            args![],
+        )?;
         let mut result = Vec::new();
-        while let Some(row) = sql(rows.next())? {
-            result.push((self.shared_session(row)?.0, sql(row.get(12))?));
+        for row in &rows {
+            result.push((self.shared_session(row)?.0, row.get(12)?));
         }
         Ok(result)
     }
     pub(super) fn shared_sessions(&self) -> Result<Vec<Session>, String> {
-        let columns = self.shared_session_columns();
-        let index = if sql(self.conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='sessions_cwd_cover_idx')",[],|r|r.get::<_,bool>(0)))? {
-            " INDEXED BY sessions_cwd_cover_idx"
-        } else { "" };
-        let mut filters = vec!["1=1".to_string()];
-        if self.shared_supports_inbox_ask() {
-            filters.push("id NOT IN (SELECT id FROM sessions WHERE inbox_ask IS NOT NULL)".into());
-        }
-        if has_table(&self.conn, "orchestration_workers")? {
-            filters.push("id NOT IN (SELECT session_id FROM orchestration_workers)".into());
-        }
-        let mut query = sql(self.conn.prepare(&format!(
-            "SELECT {columns} FROM sessions{index} WHERE {} ORDER BY updated_at DESC,id",
-            filters.join(" AND ")
-        )))?;
-        let mut rows = sql(query.query([]))?;
+        let rows = self.db()?.query(
+            &format!(
+                "SELECT {SESSION_COLUMNS} FROM sessions INDEXED BY sessions_cwd_cover_idx
+                 WHERE id NOT IN (SELECT id FROM sessions WHERE inbox_ask IS NOT NULL)
+                 AND id NOT IN (SELECT session_id FROM orchestration_workers)
+                 ORDER BY updated_at DESC,id"
+            ),
+            args![],
+        )?;
         let mut result = Vec::new();
         let mut hidden = HashSet::new();
         let mut originals = HashMap::new();
-        while let Some(row) = sql(rows.next())? {
+        for row in &rows {
             let (session, original, is_hidden) = self.shared_session(row)?;
             if is_hidden {
                 hidden.insert(session.id);
@@ -637,11 +631,10 @@ impl Store {
             .ok_or_else(|| format!("Unknown provider: {provider}"))?
             .label();
         let id = self.shared_register(original)?;
-        let exists: bool = sql(self.conn.query_row(
+        let exists: bool = self.db()?.value(
             "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
-            [original],
-            |row| row.get(0),
-        ))?;
+            args![original],
+        )?;
         if exists {
             let existing = self
                 .shared_sessions()?
@@ -657,9 +650,20 @@ impl Store {
         }
         let now = crate::time::now_ms().min(i64::MAX as u64) as i64;
         let title = format!("New {label} session");
-        sql(self.conn.execute("INSERT INTO sessions(id,cwd,harness,model,model_settings,runtime_mode,title,blocks_json,created_at,updated_at)
-            VALUES(?1,?2,?3,?4,'{}','supervised',?5,'[]',?6,?6)",
-            params![original,cwd,provider,format!("{provider}:default"),title,now]))?;
+        self.db()?.execute(
+            &format!(
+                "INSERT INTO sessions({INSERT_COLUMNS})
+            VALUES(?1,?2,?3,?4,'{{}}','supervised',?5,'[]',?6,?6,{INSERT_DEFAULTS})"
+            ),
+            args![
+                original,
+                cwd,
+                provider,
+                format!("{provider}:default"),
+                &title,
+                now
+            ],
+        )?;
         Ok((
             Session {
                 id,
@@ -678,45 +682,28 @@ impl Store {
         ))
     }
     pub(super) fn shared_agent(&self, id: i64) -> Result<Option<Settings>, String> {
-        let fields = ["harness", "model", "model_settings", "runtime_mode"]
-            .into_iter()
-            .map(str::to_owned)
-            .chain(
-                ["worktree_cwd", "worktree_removed", "provider_account_id"]
-                    .into_iter()
-                    .map(|name| self.shared_field(name, "NULL")),
-            )
-            .chain([
-                "cwd".to_owned(),
-                "provider_session_id".to_owned(),
-                self.shared_field(
-                    "has_user_message",
-                    "CASE WHEN blocks_json!='[]' THEN 1 ELSE 0 END",
-                ),
-            ])
-            .collect::<Vec<_>>()
-            .join(",");
-        let raw = sql(self
-            .conn
-            .query_row(
-                &format!("SELECT {fields} FROM sessions WHERE id=?1"),
-                [self.persisted_session_id(id)?],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, Option<String>>(4)?,
-                        r.get::<_, Option<bool>>(5)?,
-                        r.get::<_, Option<String>>(6)?,
-                        r.get::<_, String>(7)?,
-                        r.get::<_, Option<String>>(8)?,
-                        r.get::<_, bool>(9)?,
-                    ))
-                },
-            )
-            .optional())?;
+        let raw = self
+            .db()?
+            .optional(
+                "SELECT harness,model,model_settings,runtime_mode,worktree_cwd,worktree_removed,
+                 provider_account_id,cwd,provider_session_id,has_user_message FROM sessions WHERE id=?1",
+                args![self.persisted_session_id(id)?],
+            )?
+            .map(|r| {
+                Ok::<_, String>((
+                    r.get::<String>(0)?,
+                    r.get::<String>(1)?,
+                    r.get::<String>(2)?,
+                    r.get::<String>(3)?,
+                    r.get::<Option<String>>(4)?,
+                    r.get::<Option<bool>>(5)?,
+                    r.get::<Option<String>>(6)?,
+                    r.get::<String>(7)?,
+                    r.get::<Option<String>>(8)?,
+                    r.get::<bool>(9)?,
+                ))
+            })
+            .transpose()?;
         let Some((
             provider,
             model,
@@ -862,11 +849,11 @@ impl Store {
             ("worktree_removed", json!(settings.worktree_removed)),
             ("provider_account_id", json!(settings.account.id)),
         ];
-        let (provider, saved_model): (String, String) = sql(self.conn.query_row(
+        let row = self.db()?.row(
             "SELECT harness,model FROM sessions WHERE id=?1",
-            [self.persisted_session_id(id)?],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        ))?;
+            args![self.persisted_session_id(id)?],
+        )?;
+        let (provider, saved_model): (String, String) = (row.get(0)?, row.get(1)?);
         if settings.model != super::gespan_import::native_model(&saved_model, &provider) {
             let model = settings.model.as_deref().unwrap_or("default");
             let model = if provider == "claude" {
@@ -890,7 +877,7 @@ impl Store {
             return Ok(());
         }
         self.shared_writable()?;
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         let mut blocks = self.shared_blocks(id)?;
         if self
             .shared
@@ -903,11 +890,11 @@ impl Store {
         {
             return Err("This conversation changed in another window. Reopen it before saving; its data was preserved.".into());
         }
-        let (session_provider, session_model): (String, String) = sql(self.conn.query_row(
+        let row = self.db()?.row(
             "SELECT harness,model FROM sessions WHERE id=?1",
-            [self.persisted_session_id(id)?],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ))?;
+            args![self.persisted_session_id(id)?],
+        )?;
+        let (session_provider, session_model): (String, String) = (row.get(0)?, row.get(1)?);
         let mut offset = 0;
         let mut changed = false;
         for block in &mut blocks {
@@ -998,7 +985,7 @@ impl Store {
         if changed {
             self.shared_store_blocks(id, &blocks)?;
         }
-        sql(tx.commit())?;
+        tx.commit()?;
         if changed {
             self.shared
                 .as_ref()
@@ -1010,16 +997,11 @@ impl Store {
         Ok(())
     }
     pub(super) fn shared_context(&self, id: i64) -> Result<Option<Usage>, String> {
-        let fields = format!(
-            "{},{}",
-            self.shared_field("context_used", "NULL"),
-            self.shared_field("context_window", "NULL")
-        );
-        let (used, window) = sql(self.conn.query_row(
-            &format!("SELECT {fields} FROM sessions WHERE id=?1"),
-            [self.persisted_session_id(id)?],
-            |r| Ok((r.get::<_, Option<i64>>(0)?, r.get::<_, Option<i64>>(1)?)),
-        ))?;
+        let row = self.db()?.row(
+            "SELECT context_used,context_window FROM sessions WHERE id=?1",
+            args![self.persisted_session_id(id)?],
+        )?;
+        let (used, window) = (row.get::<Option<i64>>(0)?, row.get::<Option<i64>>(1)?);
         Ok(used.filter(|u| *u >= 0).map(|used| Usage {
             used: used as u64,
             window: window.filter(|w| *w > 0).map(|w| w as u64),
@@ -1033,11 +1015,10 @@ impl Store {
         if let Some(from) = self.shared_window(id, &original)? {
             self.shared_indexed_blocks(&original, from, i64::MAX)
         } else {
-            let raw: String = sql(self.conn.query_row(
+            let raw: String = self.db()?.value(
                 "SELECT blocks_json FROM sessions WHERE id=?1",
-                [original],
-                |r| r.get(0),
-            ))?;
+                args![original],
+            )?;
             parse(&raw)
         }
     }
@@ -1047,20 +1028,20 @@ impl Store {
             // Project one source block at a time. A long Pilot must not retain
             // a second complete JSON history alongside its display rows.
             // The scalar count and the rows share one SQLite read snapshot.
-            let mut query = sql(self.conn.prepare(
+            let records = self.db()?.query(
                 "SELECT block_json,(SELECT count(*) FROM pilot_blocks WHERE session_id=?1 AND seq>=?2)
                  FROM pilot_blocks WHERE session_id=?1 AND seq>=?2 ORDER BY seq",
-            ))?;
-            let mut records = sql(query.query(params![original, from]))?;
+                args![&original, from],
+            )?;
             let mut rows = Vec::new();
             let mut digest = HistoryRevision::start(0);
             let mut first = true;
-            while let Some(record) = sql(records.next())? {
+            for record in records {
                 if first {
-                    digest = HistoryRevision::start(sql(record.get::<_, i64>(1))? as usize);
+                    digest = HistoryRevision::start(record.get::<i64>(1)? as usize);
                     first = false;
                 }
-                let raw: String = sql(record.get(0))?;
+                let raw: String = record.get(0)?;
                 let block: Value = parse(&raw)?;
                 HistoryRevision::push(&mut digest, &block);
                 rows.extend(blocks::project(std::slice::from_ref(&block))?);
@@ -1092,11 +1073,12 @@ impl Store {
         let Ok(original) = self.persisted_session_id(id) else {
             return;
         };
-        let session = self.conn.query_row(
-            "SELECT provider_session_id FROM sessions WHERE id=?1 AND harness='claude'",
-            [original],
-            |row| row.get::<_, Option<String>>(0),
-        );
+        let session = self.db().and_then(|db| {
+            db.value::<Option<String>>(
+                "SELECT provider_session_id FROM sessions WHERE id=?1 AND harness='claude'",
+                args![original],
+            )
+        });
         let (Ok(Some(session)), Ok(Some(settings))) = (session, self.shared_agent(id)) else {
             return;
         };
@@ -1114,12 +1096,12 @@ impl Store {
         let (has_user, draft) = if let Some(from) = self.shared_window(id, &original)? {
             self.shared_store_indexed_blocks(&original, from, blocks)?;
             // Blocks before the window count too, and were never read.
-            sql(self.conn.query_row(
+            let row = self.db()?.row(
                 "SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND is_user=1),
                  EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND is_user=1 AND is_draft=1)",
-                [&original],
-                |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
-            ))?
+                args![&original],
+            )?;
+            (row.get::<bool>(0)?, row.get::<bool>(1)?)
         } else {
             self.shared_patch(id, &[("blocks_json", json!(encode(&blocks)?))])?;
             (
@@ -1145,26 +1127,25 @@ impl Store {
         from: i64,
         blocks: &[Value],
     ) -> Result<(), String> {
-        let mut query = sql(self.conn.prepare(
-            "SELECT seq,block_id,block_json FROM pilot_blocks WHERE session_id=?1 AND seq>=?2 ORDER BY seq",
-        ))?;
+        let db = self.db()?;
         let mut old = HashMap::new();
         // New blocks always land inside the window, after everything stored.
         let first = from.max(1);
-        let mut max_seq = sql(self.conn.query_row(
-            "SELECT coalesce(max(seq),0) FROM pilot_blocks WHERE session_id=?1",
-            [original],
-            |row| row.get::<_, i64>(0),
-        ))?
-        .max(first - 1);
-        for row in sql(query.query_map(params![original, from], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-            ))
-        }))? {
-            let (seq, id, raw) = sql(row)?;
+        let mut max_seq = db
+            .value::<i64>(
+                "SELECT coalesce(max(seq),0) FROM pilot_blocks WHERE session_id=?1",
+                args![original],
+            )?
+            .max(first - 1);
+        for row in db.query(
+            "SELECT seq,block_id,block_json FROM pilot_blocks WHERE session_id=?1 AND seq>=?2 ORDER BY seq",
+            args![original, from],
+        )? {
+            let (seq, id, raw) = (
+                row.get::<i64>(0)?,
+                row.get::<String>(1)?,
+                row.get::<String>(2)?,
+            );
             old.insert(id, (seq, parse::<Value>(&raw)?));
         }
         let retained: HashSet<_> = blocks.iter().filter_map(|b| b["id"].as_str()).collect();
@@ -1187,27 +1168,27 @@ impl Store {
         if resequence {
             // An explicit insertion/reorder changes turn positions. Payloads
             // and block identities survive, in one enclosing transaction.
-            sql(self.conn.execute(
+            db.execute(
                 "DELETE FROM pilot_turns WHERE session_id=?1 AND seq>=?2",
-                params![original, from],
-            ))?;
-            sql(self.conn.execute(
+                args![original, from],
+            )?;
+            db.execute(
                 "DELETE FROM pilot_blocks WHERE session_id=?1 AND seq>=?2",
-                params![original, from],
-            ))?;
+                args![original, from],
+            )?;
             old.clear();
             max_seq = first - 1;
         } else {
             for (id, (seq, _)) in &old {
                 if !retained.contains(id.as_str()) {
-                    sql(self.conn.execute(
+                    db.execute(
                         "DELETE FROM pilot_turns WHERE session_id=?1 AND seq=?2",
-                        params![original, seq],
-                    ))?;
-                    sql(self.conn.execute(
+                        args![original, seq],
+                    )?;
+                    db.execute(
                         "DELETE FROM pilot_blocks WHERE session_id=?1 AND block_id=?2",
-                        params![original, id],
-                    ))?;
+                        args![original, id],
+                    )?;
                 }
             }
         }
@@ -1237,20 +1218,20 @@ impl Store {
                 .collect::<Vec<_>>()
                 .join("\n")
                 .to_lowercase();
-                sql(self.conn.execute("INSERT INTO pilot_blocks(session_id,seq,block_id,block_json,search_text,is_user,is_draft)
+                db.execute("INSERT INTO pilot_blocks(session_id,seq,block_id,block_json,search_text,is_user,is_draft)
                     VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(session_id,seq) DO UPDATE SET block_json=excluded.block_json,
                     search_text=excluded.search_text,is_user=excluded.is_user,is_draft=excluded.is_draft",
-                    params![original,seq,id,encode(block)?,search,block["role"]=="user",block["draft"]==true]))?;
+                    args![original,seq,id,encode(block)?,search,block["role"]=="user",block["draft"]==true])?;
             }
             if ix == 0
                 || after_handoff
                 || (block["role"] == "user" && block["internal"] != true)
                 || block.get("pilotHabit").is_some()
             {
-                sql(self.conn.execute(
+                db.execute(
                     "INSERT OR IGNORE INTO pilot_turns(session_id,seq) VALUES(?1,?2)",
-                    params![original, seq],
-                ))?;
+                    args![original, seq],
+                )?;
             }
             after_handoff = block["role"] == "handoff";
         }
@@ -1264,7 +1245,7 @@ impl Store {
         message_id: Option<&str>,
     ) -> Result<(), String> {
         self.shared_writable()?;
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         let current = self.shared_blocks(id)?;
         if self
             .shared
@@ -1291,12 +1272,10 @@ impl Store {
         self.shared_store_blocks(id, &next)?;
         let mut next_queue = None;
         if let Some(message) = message_id {
-            let field = self.shared_field("queued_messages_json", "'[]'");
-            let raw: String = sql(self.conn.query_row(
-                &format!("SELECT {field} FROM sessions WHERE id=?1"),
-                [self.persisted_session_id(id)?],
-                |r| r.get(0),
-            ))?;
+            let raw: String = self.db()?.value(
+                "SELECT queued_messages_json FROM sessions WHERE id=?1",
+                args![self.persisted_session_id(id)?],
+            )?;
             let mut queued: Vec<Value> = parse(&raw)?;
             queued.retain(|m| m["id"].as_str() != Some(message));
             let encoded = encode(&queued)?;
@@ -1307,7 +1286,7 @@ impl Store {
         if !rows.is_empty() {
             self.shared_patch(id, &[("updated_at", json!(crate::time::now_ms()))])?;
         }
-        sql(tx.commit())?;
+        tx.commit()?;
         if let Some(queue) = next_queue {
             self.shared
                 .as_ref()
@@ -1327,10 +1306,10 @@ impl Store {
     }
     pub(super) fn shared_trim_rows(&self, id: i64, from: usize) -> Result<(), String> {
         self.shared_writable()?;
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         let next = blocks::trim(&self.shared_blocks(id)?, from)?;
         self.shared_store_blocks(id, &next)?;
-        sql(tx.commit())?;
+        tx.commit()?;
         self.shared
             .as_ref()
             .unwrap()
@@ -1345,16 +1324,16 @@ impl Store {
         expected: Option<&str>,
     ) -> Result<(), String> {
         self.shared_writable()?;
-        sql(self.conn.execute("UPDATE sessions SET provider_session_id=NULL WHERE id=?1 AND provider_session_id IS ?2",
-            params![self.persisted_session_id(id)?,expected]))?;
+        self.db()?.execute("UPDATE sessions SET provider_session_id=NULL WHERE id=?1 AND provider_session_id IS ?2",
+            args![self.persisted_session_id(id)?,expected])?;
         Ok(())
     }
     pub(super) fn shared_change_provider(&self, id: i64, provider: &str) -> Result<(), String> {
         self.shared_writable()?;
-        sql(self.conn.execute(
+        self.db()?.execute(
             "UPDATE sessions SET harness=?2,provider_session_id=NULL WHERE id=?1 AND harness<>?2",
-            params![self.persisted_session_id(id)?, provider],
-        ))?;
+            args![self.persisted_session_id(id)?, provider],
+        )?;
         Ok(())
     }
     pub(super) fn shared_replace_title(
@@ -1364,45 +1343,41 @@ impl Store {
         title: &str,
     ) -> Result<bool, String> {
         self.shared_writable()?;
-        sql(self.conn.execute(
-            "UPDATE sessions SET title=?3 WHERE id=?1 AND title=?2",
-            params![self.persisted_session_id(id)?, expected, title],
-        ))
-        .map(|n| n == 1)
+        self.db()?
+            .execute(
+                "UPDATE sessions SET title=?3 WHERE id=?1 AND title=?2",
+                args![self.persisted_session_id(id)?, expected, title],
+            )
+            .map(|n| n == 1)
     }
     pub(super) fn shared_worktrees(&self) -> Result<HashMap<i64, Option<String>>, String> {
-        let mut query = sql(self.conn.prepare(&format!(
-            "SELECT id,{} FROM sessions",
-            self.shared_field("worktree_cwd", "NULL")
-        )))?;
         let mut out = HashMap::new();
-        for row in sql(query.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
-        }))? {
-            let (id, path) = sql(row)?;
+        for row in self
+            .db()?
+            .query("SELECT id,worktree_cwd FROM sessions", args![])?
+        {
+            let (id, path) = (row.get::<String>(0)?, row.get::<Option<String>>(1)?);
             out.insert(self.shared_register(&id)?, path);
         }
         Ok(out)
     }
     pub(super) fn shared_sidebar_hidden(&self) -> Result<HashSet<i64>, String> {
-        let mut query = sql(self.conn.prepare(&format!(
-            "SELECT id FROM sessions WHERE {}!=0",
-            self.shared_field("sidebar_hidden", "0")
-        )))?;
         let mut out = HashSet::new();
-        for id in sql(query.query_map([], |r| r.get::<_, String>(0)))? {
-            out.insert(self.shared_register(&sql(id)?)?);
+        for row in self
+            .db()?
+            .query("SELECT id FROM sessions WHERE sidebar_hidden!=0", args![])?
+        {
+            out.insert(self.shared_register(&row.get::<String>(0)?)?);
         }
         Ok(out)
     }
     pub(super) fn shared_started_links(&self) -> Result<HashMap<i64, i64>, String> {
-        let mut query = sql(self.conn.prepare(&format!(
-            "SELECT id,{} FROM sessions",
-            self.shared_field("sidebar_hidden", "0")
-        )))?;
-        let rows: Vec<(String, bool)> = sql(query.query_map([], |r| Ok((r.get(0)?, r.get(1)?))))?
-            .collect::<rusqlite::Result<_>>()
-            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, bool)> = self
+            .db()?
+            .query("SELECT id,sidebar_hidden FROM sessions", args![])?
+            .iter()
+            .map(|r| Ok((r.get(0)?, r.get(1)?)))
+            .collect::<Result<_, String>>()?;
         let ids = rows.iter().map(|(id, _)| id.clone()).collect();
         let shown = rows
             .iter()
@@ -1417,11 +1392,11 @@ impl Store {
             .collect()
     }
     pub(super) fn shared_pins(&self, ids: &[i64], pinned: bool) -> Result<(), String> {
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         for id in ids {
             self.shared_patch(*id, &[("pinned", json!(pinned))])?;
         }
-        sql(tx.commit())
+        tx.commit()
     }
     pub(super) fn shared_settings_with_prefix(
         &self,
@@ -1440,13 +1415,12 @@ impl Store {
             .collect())
     }
     pub(super) fn shared_drafts(&self) -> Result<HashSet<i64>, String> {
-        let mut query = sql(self.conn.prepare(&format!(
-            "SELECT id FROM sessions WHERE {}!=0",
-            self.shared_field("is_draft", "0")
-        )))?;
         let mut out = HashSet::new();
-        for id in sql(query.query_map([], |r| r.get::<_, String>(0)))? {
-            out.insert(self.shared_register(&sql(id)?)?);
+        for row in self
+            .db()?
+            .query("SELECT id FROM sessions WHERE is_draft!=0", args![])?
+        {
+            out.insert(self.shared_register(&row.get::<String>(0)?)?);
         }
         Ok(out)
     }
@@ -1464,15 +1438,15 @@ impl Store {
     pub(super) fn shared_ui_state(&self) -> Result<Option<String>, String> {
         let saved = self.shared_setting("workspace")?;
         let mut workspace = saved.as_deref().map(parse::<Value>).transpose()?;
-        if has_table(&self.conn, "workspace_snapshot")? {
-            let raw: Option<String> = sql(self
-                .conn
-                .query_row(
+        {
+            let raw: Option<String> = self
+                .db()?
+                .optional(
                     "SELECT snapshot_json FROM workspace_snapshot WHERE id=1",
-                    [],
-                    |r| r.get(0),
-                )
-                .optional())?;
+                    args![],
+                )?
+                .map(|row| row.get(0))
+                .transpose()?;
             if let Some(raw) = raw {
                 let snapshot: Value = parse(&raw)?;
                 if workspace.is_none() {
@@ -1502,21 +1476,16 @@ impl Store {
         }
     }
     pub(super) fn shared_reminders(&self) -> Result<Vec<Reminder>, String> {
-        if !has_table(&self.conn, "session_reminders")? {
-            return Ok(Vec::new());
-        }
-        let mut query = sql(self.conn.prepare(
-            "SELECT session_id,due_at,fired_at FROM session_reminders ORDER BY due_at,session_id",
-        ))?;
         let mut out = Vec::new();
-        for row in sql(query.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-            ))
-        }))? {
-            let (id, due, fired) = sql(row)?;
+        for row in self.db()?.query(
+            "SELECT session_id,due_at,fired_at FROM session_reminders ORDER BY due_at,session_id",
+            args![],
+        )? {
+            let (id, due, fired) = (
+                row.get::<String>(0)?,
+                row.get::<i64>(1)?,
+                row.get::<Option<i64>>(2)?,
+            );
             out.push(Reminder {
                 session_id: self.shared_register(&id)?,
                 due_at: due.max(0) as u64,
@@ -1527,18 +1496,18 @@ impl Store {
     }
     pub(super) fn shared_set_reminders(&self, ids: &[i64], due: u64) -> Result<(), String> {
         self.shared_writable()?;
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         for id in ids {
-            sql(self.conn.execute(
+            self.db()?.execute(
                 "INSERT INTO session_reminders(session_id,due_at,fired_at) VALUES(?1,?2,NULL)
                 ON CONFLICT(session_id) DO UPDATE SET due_at=excluded.due_at,fired_at=NULL",
-                params![
+                args![
                     self.persisted_session_id(*id)?,
                     due.min(i64::MAX as u64) as i64
                 ],
-            ))?;
+            )?;
         }
-        sql(tx.commit())
+        tx.commit()
     }
     pub(super) fn shared_snooze_reminder_if(
         &self,
@@ -1547,8 +1516,8 @@ impl Store {
         new_due: u64,
     ) -> Result<bool, String> {
         self.shared_writable()?;
-        sql(self.conn.execute("UPDATE session_reminders SET due_at=?3,fired_at=NULL WHERE session_id=?1 AND due_at=?2",
-            params![self.persisted_session_id(id)?, expected_due.min(i64::MAX as u64) as i64, new_due.min(i64::MAX as u64) as i64])).map(|changed|changed==1)
+        self.db()?.execute("UPDATE session_reminders SET due_at=?3,fired_at=NULL WHERE session_id=?1 AND due_at=?2",
+            args![self.persisted_session_id(id)?, expected_due.min(i64::MAX as u64) as i64, new_due.min(i64::MAX as u64) as i64]).map(|changed|changed==1)
     }
     pub(super) fn shared_clear_reminders(
         &self,
@@ -1557,13 +1526,13 @@ impl Store {
     ) -> Result<(), String> {
         self.shared_writable()?;
         for id in ids {
-            sql(self.conn.execute(
+            self.db()?.execute(
                 "DELETE FROM session_reminders WHERE session_id=?1 AND (?2 IS NULL OR due_at=?2)",
-                params![
+                args![
                     self.persisted_session_id(*id)?,
                     expected.map(|at| at.min(i64::MAX as u64) as i64)
                 ],
-            ))?;
+            )?;
         }
         Ok(())
     }
@@ -1573,22 +1542,26 @@ impl Store {
         now: u64,
     ) -> Result<Vec<Reminder>, String> {
         self.shared_writable()?;
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         let mut fired = Vec::new();
         for reminder in due {
-            let changed=sql(self.conn.execute("UPDATE session_reminders SET fired_at=?2 WHERE session_id=?1 AND fired_at IS NULL AND due_at=?3",
-                params![self.persisted_session_id(reminder.session_id)?, now.min(i64::MAX as u64) as i64, reminder.due_at.min(i64::MAX as u64) as i64]))?;
+            let changed=self.db()?.execute("UPDATE session_reminders SET fired_at=?2 WHERE session_id=?1 AND fired_at IS NULL AND due_at=?3",
+                args![self.persisted_session_id(reminder.session_id)?, now.min(i64::MAX as u64) as i64, reminder.due_at.min(i64::MAX as u64) as i64])?;
             if changed == 1 {
                 fired.push(reminder.clone());
             }
         }
-        sql(tx.commit())?;
+        tx.commit()?;
         Ok(fired)
     }
     pub(super) fn shared_delete(&self, id: i64) -> Result<(), String> {
         self.shared_writable()?;
         let original = self.persisted_session_id(id)?;
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let db = self.db()?;
+        let tx = db.begin()?;
+        // The cascade triggers (`store::schema::CONSTRAINTS`) would remove
+        // most of these; deleting each explicitly keeps tables with no
+        // foreign key (in-flight, orchestration) clean too.
         for (table, column) in [
             ("session_reminders", "session_id"),
             ("pilot_blocks", "session_id"),
@@ -1599,17 +1572,13 @@ impl Store {
             ("orchestration_sidebar", "lead_id"),
             ("orchestration_runs", "lead_id"),
         ] {
-            if has_table(&self.conn, table)? {
-                sql(self.conn.execute(
-                    &format!("DELETE FROM {table} WHERE {column}=?1"),
-                    [&original],
-                ))?;
-            }
+            db.execute(
+                &format!("DELETE FROM {table} WHERE {column}=?1"),
+                args![&original],
+            )?;
         }
-        sql(self
-            .conn
-            .execute("DELETE FROM sessions WHERE id=?1", [original]))?;
-        sql(tx.commit())?;
+        db.execute("DELETE FROM sessions WHERE id=?1", args![original])?;
+        tx.commit()?;
         self.shared
             .as_ref()
             .unwrap()
@@ -1623,7 +1592,7 @@ impl Store {
         path: &str,
         main: &str,
     ) -> Result<Vec<(Session, Settings)>, String> {
-        let tx = sql(super::write_transaction(&self.conn))?;
+        let tx = self.db()?.begin()?;
         let mut out = Vec::new();
         for mut session in self.shared_sessions()? {
             let mut settings = self.shared_agent(session.id)?.unwrap_or_default();
@@ -1650,7 +1619,7 @@ impl Store {
             self.shared_save_agent_preferences(session.id, &settings)?;
             out.push((session, settings));
         }
-        sql(tx.commit())?;
+        tx.commit()?;
         Ok(out)
     }
     pub(super) fn shared_search(
@@ -1662,10 +1631,15 @@ impl Store {
         if query.trim().is_empty() || cancel.load(Ordering::Acquire) {
             return Ok((Vec::new(), false));
         }
+        // A read-only search reader can interrupt a long statement; the
+        // Toasty database is checked between sessions and rows.
+        let reader = self.shared.as_ref().unwrap().read_only;
         let flag = cancel.clone();
-        sql(self
-            .conn
-            .progress_handler(2000, Some(move || flag.load(Ordering::Acquire))))?;
+        if reader {
+            sql(self
+                .conn
+                .progress_handler(2000, Some(move || flag.load(Ordering::Acquire))))?;
+        }
         let result = (|| {
             let summaries = self.shared_sessions()?;
             let mut hits = Vec::new();
@@ -1719,7 +1693,9 @@ impl Store {
             hits.extend(crate::search::titles(&summaries, query));
             Ok((hits, truncated))
         })();
-        sql(self.conn.progress_handler(0, None::<fn() -> bool>))?;
+        if reader {
+            sql(self.conn.progress_handler(0, None::<fn() -> bool>))?;
+        }
         if cancel.load(Ordering::Acquire) {
             Ok((Vec::new(), false))
         } else {
@@ -1727,16 +1703,11 @@ impl Store {
         }
     }
     pub(crate) fn shared_follow_ups(&self, id: i64) -> Result<crate::follow_up::State, String> {
-        let fields = format!(
-            "{},{}",
-            self.shared_field("queued_messages_json", "'[]'"),
-            self.shared_field("queue_status", "NULL")
-        );
-        let (raw, status) = sql(self.conn.query_row(
-            &format!("SELECT {fields} FROM sessions WHERE id=?1"),
-            [self.persisted_session_id(id)?],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
-        ))?;
+        let row = self.db()?.row(
+            "SELECT queued_messages_json,queue_status FROM sessions WHERE id=?1",
+            args![self.persisted_session_id(id)?],
+        )?;
+        let (raw, status) = (row.get::<String>(0)?, row.get::<Option<String>>(1)?);
         let mut state: crate::follow_up::State = self
             .shared_setting(&format!("follow-up:{id}"))?
             .map(|raw| parse(&raw))
@@ -1773,13 +1744,11 @@ impl Store {
         if previous.revision > state.revision {
             return Ok(());
         }
-        let tx = sql(super::write_transaction(&self.conn))?;
-        let fields = self.shared_field("queued_messages_json", "'[]'");
-        let raw: String = sql(self.conn.query_row(
-            &format!("SELECT {fields} FROM sessions WHERE id=?1"),
-            [self.persisted_session_id(id)?],
-            |r| r.get(0),
-        ))?;
+        let tx = self.db()?.begin()?;
+        let raw: String = self.db()?.value(
+            "SELECT queued_messages_json FROM sessions WHERE id=?1",
+            args![self.persisted_session_id(id)?],
+        )?;
         if self
             .shared
             .as_ref()
@@ -1847,7 +1816,7 @@ impl Store {
             blocks.insert(at, value);
         }
         self.shared_store_blocks(id, &blocks)?;
-        sql(tx.commit())?;
+        tx.commit()?;
         self.shared
             .as_ref()
             .unwrap()

@@ -1,13 +1,14 @@
 //! The board, over the `board*` tables in `gespan.db`. The storage itself
-//! (tables, reads, writes, validation) is the `gespan-board-store` crate; this
-//! module adds the native app's `Service` handle.
+//! (models, reads, writes, validation) is the `gespan-board-store` crate; this
+//! module adds the native app's `Service` handle. The tables are Toasty models
+//! of the `gespan` database (`orm::Kind::Gespan`), so opening the service
+//! adopts and migrates the file like every other store.
 use gespan_board_store::validate_id;
 use gespan_board_store::{
     cards_for_link, create_board, create_card, create_column, delete_board, delete_card,
     delete_column, get_board, get_card, link_card, list_activity, list_boards, move_card,
-    move_column, record_card, rename_board, update_card, update_column,
+    move_column, record_card, rename_board, update_card, update_column, Conn,
 };
-use rusqlite::Connection;
 use std::path::Path;
 
 use crate::tickets::TicketRef;
@@ -17,36 +18,30 @@ pub mod auto_move;
 pub mod extras;
 pub mod linked_turns;
 
-/// The shared board tables, migrated to the current version, plus the
-/// pre-v3 native tables kept for one release.
-pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    gespan_board_store::ensure_tables(conn)?;
-    extras::ensure_legacy_tables(conn)
+/// Adoption's legacy step for the board: brings a hand-made board schema up
+/// to its last version (8), copying the pre-v3 `board_native_*` extras, then
+/// drops those tables and the `board_schema` version table, which a fresh
+/// install never has. Runs inside the adoption transaction.
+pub(crate) fn legacy_upgrade(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    gespan_board_store::migrate::legacy_upgrade(conn)?;
+    gespan_board_store::migrate::drop_legacy_tables(conn)
 }
 
 /// The native app's handle on the shared board tables. Open it with the
 /// session database path so boards made in either app are the same boards.
 pub struct Service {
-    conn: Connection,
+    conn: Conn,
 }
 
 impl Service {
+    /// Opens the `gespan` database at `path` (adopting and migrating it, see
+    /// `orm::open`): one Toasty connection, with WAL and a five second busy
+    /// timeout, so two writers wait rather than fail.
     pub fn open(path: &Path) -> Result<Self, String> {
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-        }
-        let conn = Connection::open(path).map_err(|e| e.to_string())?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(|e| e.to_string())?;
-        // WAL, as the native store opens this file, so two
-        // writers wait on the busy timeout rather than on rollback-journal
-        // file locks, which on Windows can outlast it.
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .map_err(|e| e.to_string())?;
-        ensure_tables(&conn).map_err(|e| e.to_string())?;
-        Ok(Self { conn })
+        let database = crate::orm::open(crate::orm::Kind::Gespan, path)?;
+        Ok(Self {
+            conn: Conn::new(database.db(), |job| crate::orm::run(job)),
+        })
     }
 
     pub fn list(&mut self) -> Result<Vec<Board>, String> {
@@ -249,10 +244,17 @@ impl Service {
 
     /// SQLite's counter of commits made by other connections; a change means
     /// another app or window wrote to the database.
+    ///
+    /// The counter belongs to a connection, so it is read on the service's
+    /// own Toasty connection: the pool has one, kept for the service's life,
+    /// and this service's own commits leave its counter alone. Should the
+    /// pool ever replace that connection, the counter reads differently once
+    /// and the caller reloads once, which is harmless.
     pub fn data_version(&mut self) -> Result<i64, String> {
-        self.conn
-            .query_row("PRAGMA data_version", [], |row| row.get(0))
-            .map_err(|e| e.to_string())
+        let rows = self.conn.query_sql("PRAGMA data_version", Vec::new())?;
+        rows.first()
+            .ok_or_else(|| "PRAGMA data_version returned no row".to_string())?
+            .get(0)
     }
 }
 
@@ -260,6 +262,14 @@ impl Service {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    impl Service {
+        /// One raw statement on the service's own connection, for tests that
+        /// need something only that connection sees (a temporary trigger).
+        pub(crate) fn execute_on_own_connection(&self, sql: &str) {
+            self.conn.execute_sql(sql, Vec::new()).unwrap();
+        }
+    }
 
     #[test]
     fn card_ticket_round_trips_through_the_service() {

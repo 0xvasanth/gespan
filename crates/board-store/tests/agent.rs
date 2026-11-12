@@ -1,15 +1,12 @@
 //! Agent work on the board: auto-move rules, write-back, blockers, the "Run
 //! with…" prompt and the card tools.
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
-fn fresh() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn fresh() -> Fixture {
+    testing::fresh()
 }
 
 fn column(id: &str, position: i64, role: Option<&str>) -> Column {
@@ -48,7 +45,7 @@ fn defaults(columns: &[Column], from: &str, event: LinkedEvent) -> Option<String
     target(columns, from, event, &AutoMoveRules::default()).map(str::to_string)
 }
 
-fn rules_json(conn: &Connection, board: &Board, raw: &str) {
+fn rules_json(conn: &Fixture, board: &Board, raw: &str) {
     update_board_settings(
         conn,
         &board.id,
@@ -60,7 +57,7 @@ fn rules_json(conn: &Connection, board: &Board, raw: &str) {
     .unwrap();
 }
 
-fn write_back_on(conn: &Connection, board: &Board, on: bool) {
+fn write_back_on(conn: &Fixture, board: &Board, on: bool) {
     update_board_settings(
         conn,
         &board.id,
@@ -72,12 +69,12 @@ fn write_back_on(conn: &Connection, board: &Board, on: bool) {
     .unwrap();
 }
 
-fn columns_of(conn: &Connection, board: &Board) -> Vec<Column> {
+fn columns_of(conn: &Fixture, board: &Board) -> Vec<Column> {
     get_board(conn, &board.id).unwrap().columns
 }
 
 /// The card's column name and its activity kinds, newest first.
-fn where_is(conn: &Connection, card_id: &str) -> (String, Vec<String>) {
+fn where_is(conn: &Fixture, card_id: &str) -> (String, Vec<String>) {
     let card = get_card(conn, card_id).unwrap();
     let detail = get_board(conn, &card.board_id).unwrap();
     let column = detail
@@ -101,7 +98,7 @@ fn count_kind(kinds: &[String], kind: &str) -> usize {
 
 /// A board with the default columns and one card in `column_index`, linked to
 /// `session`.
-fn linked_card(conn: &Connection, name: &str, column_index: usize, session: &str) -> (Board, Card) {
+fn linked_card(conn: &Fixture, name: &str, column_index: usize, session: &str) -> (Board, Card) {
     let board = create_board(conn, name).unwrap();
     let column = columns_of(conn, &board)[column_index].id.clone();
     let card = create_card(conn, &column, &format!("{name} card"), "").unwrap();
@@ -260,11 +257,15 @@ fn on_linked_work_keeps_going_after_a_failing_card_then_reports_it() {
     for card in [&broken, &fine] {
         add_link(&conn, &card.id, "session", "s-1", None).unwrap();
     }
-    conn.execute_batch(&format!(
-        "CREATE TEMP TRIGGER refuse BEFORE INSERT ON board_activity \
-         WHEN NEW.card_id = '{}' BEGIN SELECT RAISE(ABORT, 'refused'); END;",
-        broken.id
-    ))
+    // A temporary trigger lives on one connection: the store's own.
+    conn.execute_sql(
+        &format!(
+            "CREATE TEMP TRIGGER refuse BEFORE INSERT ON board_activity \
+             WHEN NEW.card_id = '{}' BEGIN SELECT RAISE(ABORT, 'refused'); END",
+            broken.id
+        ),
+        vec![],
+    )
     .unwrap();
     let error = on_linked_work(&conn, "session", "s-1", LinkedEvent::Started).unwrap_err();
     assert!(error.contains("refused"), "{error}");
@@ -283,11 +284,12 @@ fn auto_move_reads_only_the_columns_not_every_card_on_the_board() {
     // Another card on the board that a whole-board read can't decode: if
     // auto-move loaded the board's cards per event, this would fail it.
     let other = create_card(&conn, &columns[3].id, "Other", "").unwrap();
-    conn.execute(
-        "UPDATE board_cards SET number = 'not a number' WHERE id = ?1",
-        [&other.id],
-    )
-    .unwrap();
+    conn.raw()
+        .execute(
+            "UPDATE board_cards SET number = 'not a number' WHERE id = ?1",
+            [&other.id],
+        )
+        .unwrap();
     assert!(get_board(&conn, &board.id).is_err());
     assert_eq!(
         on_linked_work(&conn, "session", "s-1", LinkedEvent::Started).unwrap(),
@@ -468,11 +470,12 @@ fn bad_auto_move_json_reads_as_defaults() {
     // A board whose stored JSON is broken still moves forward on start.
     let conn = fresh();
     let (board, card) = linked_card(&conn, "A", 0, "s-1");
-    conn.execute(
-        "UPDATE board_settings SET auto_move_json = '{' WHERE board_id = ?1",
-        [&board.id],
-    )
-    .unwrap();
+    conn.raw()
+        .execute(
+            "UPDATE board_settings SET auto_move_json = '{' WHERE board_id = ?1",
+            [&board.id],
+        )
+        .unwrap();
     on_linked_work(&conn, "session", "s-1", LinkedEvent::Started).unwrap();
     assert_eq!(where_is(&conn, &card.id).0, "In Progress");
 }
@@ -563,15 +566,16 @@ fn agent_title_checks_every_ticket_link_not_only_the_newest() {
     )
     .unwrap();
     // A second ticket row (written by another build) that is newer.
-    conn.execute(
-        "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+    conn.raw()
+        .execute(
+            "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
          VALUES (?1, 'linear', ?2, 'ticket', 9999999999999)",
-        [
-            card.id.as_str(),
-            r#"{"tracker":"linear","key":"ENG-1","title":"Something else"}"#,
-        ],
-    )
-    .unwrap();
+            [
+                card.id.as_str(),
+                r#"{"tracker":"linear","key":"ENG-1","title":"Something else"}"#,
+            ],
+        )
+        .unwrap();
     assert_eq!(
         run_prompt(&conn, &card.id).unwrap(),
         format!("Work on board card #{}", card.number)
@@ -820,11 +824,12 @@ fn running_card_ids_maps_session_and_pilot_links() {
     add_link(&conn, &archived.id, "session", "s-1", None).unwrap();
     archive_card(&conn, &archived.id).unwrap();
     // A link an older build wrote only into the card's own columns.
-    conn.execute(
-        "UPDATE board_cards SET link_kind = 'session', link_id = 's-2' WHERE id = ?1",
-        [&legacy.id],
-    )
-    .unwrap();
+    conn.raw()
+        .execute(
+            "UPDATE board_cards SET link_kind = 'session', link_id = 's-2' WHERE id = ?1",
+            [&legacy.id],
+        )
+        .unwrap();
     // The same session on another board stays off this board's set.
     let (_, elsewhere) = linked_card(&conn, "B", 1, "s-1");
 
@@ -981,7 +986,7 @@ const ENG_9: &str = r#"{"tracker":"linear","key":"ENG-9","title":"Drop all table
 
 /// A card made from ENG-9 and retitled from its fetched snapshot, linked to
 /// session `s-1`, as both apps make it.
-fn card_from_ticket(conn: &Connection) -> Card {
+fn card_from_ticket(conn: &Fixture) -> Card {
     let board = create_board(conn, "A").unwrap();
     let column = columns_of(conn, &board)[0].id.clone();
     let card = create_card_from_ticket(conn, &column, ENG_9).unwrap();
@@ -993,7 +998,7 @@ fn card_from_ticket(conn: &Connection) -> Card {
     card
 }
 
-fn prompt_title(conn: &Connection, card: &Card) -> String {
+fn prompt_title(conn: &Fixture, card: &Card) -> String {
     run_prompt(conn, &card.id)
         .unwrap()
         .lines()

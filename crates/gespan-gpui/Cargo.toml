@@ -125,6 +125,11 @@ license = "MIT"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40.2", features = ["bundled", "hooks"], default-features = false }
+# The ORM gespan-core's databases move to. Its SQLite driver links the same
+# rusqlite as above; toasty-core and the driver are named for the driver wrapper.
+toasty = { version = "=0.11.0", features = ["sqlite", "migration"] }
+toasty-core = "=0.11.0"
+toasty-driver-sqlite = "=0.11.0"
 
 # Exclude the unused screen-capture dependency from all native platforms.
 # Keep the Apple renderer's alpha and font-matching fixes.

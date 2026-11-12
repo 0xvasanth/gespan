@@ -2,103 +2,138 @@
 //! answer, and the project decisions saved from those answers.
 use super::Store;
 use crate::tasks::{Kind, SavedDecision, Status, TaskRecord};
-use rusqlite::{params, Connection, OptionalExtension, Row};
 
 /// The most past tasks the Answered tab lists.
 pub const PAST_TASKS_LIMIT: usize = 500;
 
-pub fn ensure_my_task_tables(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS task_decisions (
-           id INTEGER PRIMARY KEY,
-           project TEXT NOT NULL,
-           statement TEXT NOT NULL,
-           why TEXT NOT NULL DEFAULT '',
-           created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL,
-           archived_at INTEGER
-         );
-         CREATE TABLE IF NOT EXISTS my_tasks (
-           key TEXT PRIMARY KEY,
-           kind TEXT NOT NULL,
-           project TEXT NOT NULL,
-           origin TEXT NOT NULL,
-           source_label TEXT NOT NULL,
-           headline TEXT NOT NULL,
-           request_json TEXT NOT NULL,
-           asked_at INTEGER NOT NULL,
-           status TEXT NOT NULL,
-           answer TEXT,
-           answer_json TEXT,
-           closed_at INTEGER,
-           decision_id INTEGER REFERENCES task_decisions(id)
-         );
-         CREATE INDEX IF NOT EXISTS my_tasks_closed_idx ON my_tasks (status, closed_at DESC);
-         CREATE INDEX IF NOT EXISTS my_tasks_decision_idx ON my_tasks (decision_id);",
-    )
+/// A request that waited on the user, with the answer once there is one.
+#[derive(Debug, toasty::Model)]
+#[table = "my_tasks"]
+#[index(name = "my_tasks_closed_idx", status, closed_at)]
+#[index(name = "my_tasks_decision_idx", decision_id)]
+pub(crate) struct MyTask {
+    #[key]
+    key: String,
+    kind: String,
+    project: String,
+    origin: String,
+    source_label: String,
+    headline: String,
+    request_json: String,
+    asked_at: i64,
+    status: String,
+    answer: Option<String>,
+    answer_json: Option<String>,
+    closed_at: Option<i64>,
+    decision_id: Option<i64>,
+}
+
+/// A project decision saved from the answers that point at it.
+#[derive(Debug, toasty::Model)]
+#[table = "task_decisions"]
+pub(crate) struct TaskDecision {
+    #[key]
+    #[auto]
+    id: i64,
+    project: String,
+    statement: String,
+    why: String,
+    created_at: i64,
+    updated_at: i64,
+    archived_at: Option<i64>,
+}
+
+/// The hand-made tables older builds created, for adoption tests.
+#[cfg(test)]
+pub(crate) const LEGACY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS task_decisions (
+       id INTEGER PRIMARY KEY,
+       project TEXT NOT NULL,
+       statement TEXT NOT NULL,
+       why TEXT NOT NULL DEFAULT '',
+       created_at INTEGER NOT NULL,
+       updated_at INTEGER NOT NULL,
+       archived_at INTEGER
+     );
+     CREATE TABLE IF NOT EXISTS my_tasks (
+       key TEXT PRIMARY KEY,
+       kind TEXT NOT NULL,
+       project TEXT NOT NULL,
+       origin TEXT NOT NULL,
+       source_label TEXT NOT NULL,
+       headline TEXT NOT NULL,
+       request_json TEXT NOT NULL,
+       asked_at INTEGER NOT NULL,
+       status TEXT NOT NULL,
+       answer TEXT,
+       answer_json TEXT,
+       closed_at INTEGER,
+       decision_id INTEGER REFERENCES task_decisions(id)
+     );
+     CREATE INDEX IF NOT EXISTS my_tasks_closed_idx ON my_tasks (status, closed_at DESC);
+     CREATE INDEX IF NOT EXISTS my_tasks_decision_idx ON my_tasks (decision_id);";
+
+/// Adoption's legacy step. These tables only ever had the one hand-made
+/// shape above, so there is nothing to bring up to date.
+pub(crate) fn legacy_upgrade(_conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    Ok(())
 }
 
 fn ms(at: u64) -> i64 {
     i64::try_from(at).unwrap_or(i64::MAX)
 }
 
-const COLUMNS: &str = "key, kind, project, origin, source_label, headline, request_json,
-    asked_at, status, answer, answer_json, closed_at, decision_id";
+fn at(ms: i64) -> u64 {
+    ms.max(0) as u64
+}
 
-fn record(row: &Row<'_>) -> rusqlite::Result<Option<TaskRecord>> {
-    let json = |text: Option<String>| text.and_then(|text| serde_json::from_str(&text).ok());
-    let (Some(kind), Some(status)) = (
-        Kind::from_id(&row.get::<_, String>(1)?),
-        Status::from_id(&row.get::<_, String>(8)?),
-    ) else {
-        return Ok(None);
-    };
-    Ok(Some(TaskRecord {
-        key: row.get(0)?,
-        kind,
-        project: row.get(2)?,
-        origin: row.get(3)?,
-        source_label: row.get(4)?,
-        headline: row.get(5)?,
-        request: json(Some(row.get(6)?)).unwrap_or_default(),
-        asked_at: row.get::<_, i64>(7)?.max(0) as u64,
-        status,
-        answer: row.get(9)?,
-        answer_value: json(row.get(10)?),
-        closed_at: row.get::<_, Option<i64>>(11)?.map(|at| at.max(0) as u64),
-        decision: row.get(12)?,
-    }))
+impl MyTask {
+    fn record(self) -> Option<TaskRecord> {
+        let json = |text: &str| serde_json::from_str(text).ok();
+        Some(TaskRecord {
+            kind: Kind::from_id(&self.kind)?,
+            status: Status::from_id(&self.status)?,
+            request: json(&self.request_json).unwrap_or_default(),
+            answer_value: self.answer_json.as_deref().and_then(json),
+            key: self.key,
+            project: self.project,
+            origin: self.origin,
+            source_label: self.source_label,
+            headline: self.headline,
+            asked_at: at(self.asked_at),
+            answer: self.answer,
+            closed_at: self.closed_at.map(at),
+            decision: self.decision_id,
+        })
+    }
+}
+
+fn records(rows: Vec<MyTask>) -> Vec<TaskRecord> {
+    rows.into_iter().filter_map(MyTask::record).collect()
 }
 
 impl Store {
-    fn my_task_tables(&self) -> Result<&Connection, String> {
-        ensure_my_task_tables(&self.conn).map_err(|e| e.to_string())?;
-        Ok(&self.conn)
-    }
-
     /// Keeps a request that started waiting. One already answered is left
     /// as it is; one withdrawn is open again, since it is waiting again (a
     /// Pilot's choices outlive a restart).
     pub fn open_task(&self, task: &TaskRecord) -> Result<(), String> {
-        self.my_task_tables()?
-            .execute(
-                "INSERT INTO my_tasks (key, kind, project, origin, source_label,
-                   headline, request_json, asked_at, status)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open')
-                 ON CONFLICT(key) DO UPDATE SET status = 'open', closed_at = NULL
-                   WHERE status = 'withdrawn'",
-                params![
-                    task.key,
-                    task.kind.id(),
-                    task.project,
-                    task.origin,
-                    task.source_label,
-                    task.headline,
-                    task.request.to_string(),
-                    ms(task.asked_at),
-                ],
-            )
-            .map_err(|e| e.to_string())?;
+        // A conditional upsert: raw SQL on the same database.
+        let insert = toasty::sql::statement(
+            "INSERT INTO my_tasks (key, kind, project, origin, source_label,
+               headline, request_json, asked_at, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open')
+             ON CONFLICT(key) DO UPDATE SET status = 'open', closed_at = NULL
+               WHERE status = 'withdrawn'",
+        )
+        .bind(task.key.clone())
+        .bind(task.kind.id())
+        .bind(task.project.clone())
+        .bind(task.origin.clone())
+        .bind(task.source_label.clone())
+        .bind(task.headline.clone())
+        .bind(task.request.to_string())
+        .bind(ms(task.asked_at));
+        self.orm()?
+            .run(|mut db| async move { insert.exec(&mut db).await })?;
         Ok(())
     }
 
@@ -106,88 +141,95 @@ impl Store {
     /// been kept yet (answered within a refresh), so it is written whole;
     /// one already kept keeps the time it started waiting.
     pub fn answer_task(&self, task: &TaskRecord) -> Result<(), String> {
-        self.my_task_tables()?
-            .execute(
-                "INSERT INTO my_tasks (key, kind, project, origin, source_label, headline,
-                   request_json, asked_at, status, answer, answer_json, closed_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'answered', ?9, ?10, ?11)
-                 ON CONFLICT(key) DO UPDATE SET status = 'answered',
-                   answer = excluded.answer, answer_json = excluded.answer_json,
-                   closed_at = excluded.closed_at",
-                params![
-                    task.key,
-                    task.kind.id(),
-                    task.project,
-                    task.origin,
-                    task.source_label,
-                    task.headline,
-                    task.request.to_string(),
-                    ms(task.asked_at),
-                    task.answer,
-                    task.answer_value.as_ref().map(|value| value.to_string()),
-                    ms(task.closed_at.unwrap_or(task.asked_at)),
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        let task = task.clone();
+        self.orm()?.transaction(|tx| {
+            Box::pin(async move {
+                let answer_json = task.answer_value.as_ref().map(|value| value.to_string());
+                let closed_at = Some(ms(task.closed_at.unwrap_or(task.asked_at)));
+                match MyTask::filter_by_key(&task.key).first().exec(tx).await? {
+                    Some(mut kept) => {
+                        kept.update()
+                            .status("answered")
+                            .answer(task.answer)
+                            .answer_json(answer_json)
+                            .closed_at(closed_at)
+                            .exec(tx)
+                            .await?
+                    }
+                    None => {
+                        MyTask::create()
+                            .key(task.key)
+                            .kind(task.kind.id())
+                            .project(task.project)
+                            .origin(task.origin)
+                            .source_label(task.source_label)
+                            .headline(task.headline)
+                            .request_json(task.request.to_string())
+                            .asked_at(ms(task.asked_at))
+                            .status("answered")
+                            .answer(task.answer)
+                            .answer_json(answer_json)
+                            .closed_at(closed_at)
+                            .exec(tx)
+                            .await?;
+                    }
+                }
+                Ok(())
+            })
+        })
     }
 
     /// Marks requests that stopped waiting with no answer. An answered one
     /// stays answered.
     pub fn withdraw_tasks(&self, keys: &[String], at: u64) -> Result<(), String> {
-        let conn = self.my_task_tables()?;
-        let tx = super::write_transaction(conn).map_err(|e| e.to_string())?;
-        for key in keys {
-            tx.execute(
-                "UPDATE my_tasks SET status = 'withdrawn', closed_at = ?2
-                 WHERE key = ?1 AND status = 'open'",
-                params![key, ms(at)],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        tx.commit().map_err(|e| e.to_string())
+        let keys = keys.to_vec();
+        self.orm()?.transaction(|tx| {
+            Box::pin(async move {
+                let task = MyTask::fields();
+                for key in keys {
+                    MyTask::filter(task.key().eq(key).and(task.status().eq("open")))
+                        .update()
+                        .status("withdrawn")
+                        .closed_at(Some(ms(at)))
+                        .exec(tx)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
     }
 
     /// Requests left open by an earlier run of Gespan: their agents are gone.
     pub fn withdraw_tasks_before(&self, at: u64) -> Result<usize, String> {
-        self.my_task_tables()?
-            .execute(
-                "UPDATE my_tasks SET status = 'withdrawn', closed_at = ?1
-                 WHERE status = 'open' AND asked_at < ?1",
-                params![ms(at)],
-            )
-            .map_err(|e| e.to_string())
+        let withdraw = toasty::sql::statement(
+            "UPDATE my_tasks SET status = 'withdrawn', closed_at = ?1
+             WHERE status = 'open' AND asked_at < ?1",
+        )
+        .bind(ms(at));
+        let count = self
+            .orm()?
+            .run(|mut db| async move { withdraw.exec(&mut db).await })?;
+        Ok(count as usize)
     }
 
     pub fn task(&self, key: &str) -> Result<Option<TaskRecord>, String> {
-        self.my_task_tables()?
-            .query_row(
-                &format!("SELECT {COLUMNS} FROM my_tasks WHERE key = ?1"),
-                [key],
-                record,
-            )
-            .optional()
-            .map(Option::flatten)
-            .map_err(|e| e.to_string())
+        let row = self
+            .orm()?
+            .run(|mut db| async move { MyTask::filter_by_key(key).first().exec(&mut db).await })?;
+        Ok(row.and_then(MyTask::record))
     }
 
     /// Answered and withdrawn requests, most recently closed first.
     pub fn past_tasks(&self) -> Result<Vec<TaskRecord>, String> {
-        let conn = self.my_task_tables()?;
-        let mut statement = conn
-            .prepare(&format!(
-                "SELECT {COLUMNS} FROM my_tasks WHERE status != 'open'
-                 ORDER BY closed_at DESC, asked_at DESC LIMIT ?1"
-            ))
-            .map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map([PAST_TASKS_LIMIT as i64], record)
-            .map_err(|e| e.to_string())?;
-        let mut tasks = Vec::new();
-        for row in rows {
-            tasks.extend(row.map_err(|e| e.to_string())?);
-        }
-        Ok(tasks)
+        let task = MyTask::fields();
+        let rows = self.orm()?.run(|mut db| async move {
+            MyTask::filter(task.status().ne("open"))
+                .order_by((task.closed_at().desc(), task.asked_at().desc()))
+                .limit(PAST_TASKS_LIMIT)
+                .exec(&mut db)
+                .await
+        })?;
+        Ok(records(rows))
     }
 
     /// Saves a decision for `project` from the answers under `sources`.
@@ -203,24 +245,28 @@ impl Store {
         if statement.is_empty() {
             return Err("A decision needs a statement".into());
         }
-        let conn = self.my_task_tables()?;
-        let tx = super::write_transaction(conn).map_err(|e| e.to_string())?;
-        tx.execute(
-            "INSERT INTO task_decisions (project, statement, why, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![project, statement, why.trim(), ms(at)],
-        )
-        .map_err(|e| e.to_string())?;
-        let id = tx.last_insert_rowid();
-        for key in sources {
-            tx.execute(
-                "UPDATE my_tasks SET decision_id = ?1 WHERE key = ?2",
-                params![id, key],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        tx.commit().map_err(|e| e.to_string())?;
-        Ok(id)
+        let (project, statement, why) = (project.to_owned(), statement.to_owned(), why.trim());
+        let (why, sources) = (why.to_owned(), sources.to_vec());
+        self.orm()?.transaction(|tx| {
+            Box::pin(async move {
+                let decision = TaskDecision::create()
+                    .project(project)
+                    .statement(statement)
+                    .why(why)
+                    .created_at(ms(at))
+                    .updated_at(ms(at))
+                    .exec(tx)
+                    .await?;
+                for key in sources {
+                    MyTask::filter_by_key(key)
+                        .update()
+                        .decision_id(Some(decision.id))
+                        .exec(tx)
+                        .await?;
+                }
+                Ok(decision.id)
+            })
+        })
     }
 
     pub fn edit_decision(&self, id: i64, statement: &str, at: u64) -> Result<(), String> {
@@ -228,66 +274,55 @@ impl Store {
         if statement.is_empty() {
             return Err("A decision needs a statement".into());
         }
-        self.my_task_tables()?
-            .execute(
-                "UPDATE task_decisions SET statement = ?2, updated_at = ?3 WHERE id = ?1",
-                params![id, statement, ms(at)],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.orm()?.run(|mut db| async move {
+            TaskDecision::filter_by_id(id)
+                .update()
+                .statement(statement)
+                .updated_at(ms(at))
+                .exec(&mut db)
+                .await
+        })
     }
 
     /// Takes a decision off the list; its answers stay in the history.
     pub fn archive_decision(&self, id: i64, at: u64) -> Result<(), String> {
-        self.my_task_tables()?
-            .execute(
-                "UPDATE task_decisions SET archived_at = ?2 WHERE id = ?1",
-                params![id, ms(at)],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.orm()?.run(|mut db| async move {
+            TaskDecision::filter_by_id(id)
+                .update()
+                .archived_at(Some(ms(at)))
+                .exec(&mut db)
+                .await
+        })
     }
 
     /// Decisions not archived, most recently changed first, each with the
     /// answers it came from.
     pub fn decisions(&self) -> Result<Vec<SavedDecision>, String> {
-        let conn = self.my_task_tables()?;
-        let mut statement = conn
-            .prepare(
-                "SELECT id, project, statement, why, created_at, updated_at FROM task_decisions
-                 WHERE archived_at IS NULL ORDER BY updated_at DESC, id DESC",
-            )
-            .map_err(|e| e.to_string())?;
-        let mut decisions = statement
-            .query_map([], |row| {
-                Ok(SavedDecision {
-                    id: row.get(0)?,
-                    project: row.get(1)?,
-                    statement: row.get(2)?,
-                    why: row.get(3)?,
-                    created_at: row.get::<_, i64>(4)?.max(0) as u64,
-                    updated_at: row.get::<_, i64>(5)?.max(0) as u64,
-                    sources: Vec::new(),
-                })
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        let mut sources = conn
-            .prepare(&format!(
-                "SELECT {COLUMNS} FROM my_tasks WHERE decision_id = ?1
-                 ORDER BY closed_at DESC"
-            ))
-            .map_err(|e| e.to_string())?;
-        for decision in &mut decisions {
-            for row in sources
-                .query_map([decision.id], record)
-                .map_err(|e| e.to_string())?
-            {
-                decision.sources.extend(row.map_err(|e| e.to_string())?);
+        self.orm()?.run(|mut db| async move {
+            let decision = TaskDecision::fields();
+            let task = MyTask::fields();
+            let rows = TaskDecision::filter(decision.archived_at().is_none())
+                .order_by((decision.updated_at().desc(), decision.id().desc()))
+                .exec(&mut db)
+                .await?;
+            let mut decisions = Vec::with_capacity(rows.len());
+            for row in rows {
+                let sources = MyTask::filter(task.decision_id().eq(Some(row.id)))
+                    .order_by(task.closed_at().desc())
+                    .exec(&mut db)
+                    .await?;
+                decisions.push(SavedDecision {
+                    id: row.id,
+                    project: row.project,
+                    statement: row.statement,
+                    why: row.why,
+                    created_at: at(row.created_at),
+                    updated_at: at(row.updated_at),
+                    sources: records(sources),
+                });
             }
-        }
-        Ok(decisions)
+            Ok(decisions)
+        })
     }
 }
 

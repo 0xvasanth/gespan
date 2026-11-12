@@ -2,23 +2,82 @@
 //! blobs with mirrored indexed columns, like `automations`.
 use super::definition::{validate_flow, Flow};
 use super::run::{FlowRun, FlowVisit};
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::orm::{self, Kind};
 use std::path::Path;
 
-/// Exact DDL, pinned by `tests/shared_contracts.rs`.
-pub const FLOWS_DDL: &str = "CREATE TABLE IF NOT EXISTS flows (
+/// A stored Flow definition.
+#[derive(Debug, toasty::Model)]
+#[table = "flows"]
+pub(crate) struct FlowRow {
+    #[key]
+    id: String,
+    definition_json: String,
+    updated_at: i64,
+}
+
+/// A stored run. `flow_id` points at `flows`; [`CONSTRAINTS`] keeps it there.
+#[derive(Debug, toasty::Model)]
+#[table = "flow_runs"]
+#[index(name = "flow_runs_history_idx", flow_id, created_at)]
+#[index(name = "flow_runs_status_idx", status)]
+pub(crate) struct FlowRunRow {
+    #[key]
+    id: String,
+    flow_id: String,
+    status: String,
+    created_at: i64,
+    run_json: String,
+}
+
+/// A stored visit, unique by `(run_id, seq)`. `run_id` points at `flow_runs`.
+#[derive(Debug, toasty::Model)]
+#[table = "flow_visits"]
+#[unique(name = "flow_visits_order_idx", run_id, seq)]
+pub(crate) struct FlowVisitRow {
+    #[key]
+    id: String,
+    run_id: String,
+    seq: i64,
+    state_id: String,
+    status: String,
+    visit_json: String,
+}
+
+/// The foreign keys the hand-made tables declared, which Toasty's DDL
+/// cannot: a run needs its Flow and a visit its run, and deleting a Flow
+/// deletes its runs and their visits (`ON DELETE CASCADE`).
+pub(crate) const CONSTRAINTS: &[&str] = &[
+    "CREATE TRIGGER IF NOT EXISTS flow_runs_need_their_flow
+     BEFORE INSERT ON flow_runs
+     WHEN NOT EXISTS (SELECT 1 FROM flows WHERE id = NEW.flow_id)
+     BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END",
+    "CREATE TRIGGER IF NOT EXISTS flow_visits_need_their_run
+     BEFORE INSERT ON flow_visits
+     WHEN NOT EXISTS (SELECT 1 FROM flow_runs WHERE id = NEW.run_id)
+     BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END",
+    "CREATE TRIGGER IF NOT EXISTS flows_delete_their_runs
+     AFTER DELETE ON flows
+     BEGIN DELETE FROM flow_runs WHERE flow_id = OLD.id; END",
+    "CREATE TRIGGER IF NOT EXISTS flow_runs_delete_their_visits
+     AFTER DELETE ON flow_runs
+     BEGIN DELETE FROM flow_visits WHERE run_id = OLD.id; END",
+];
+
+/// The hand-made tables older builds created, for adoption tests.
+#[cfg(test)]
+pub(crate) const LEGACY_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS flows (
   id TEXT PRIMARY KEY,
   definition_json TEXT NOT NULL,
   updated_at INTEGER NOT NULL
-)";
-pub const FLOW_RUNS_DDL: &str = "CREATE TABLE IF NOT EXISTS flow_runs (
+);
+CREATE TABLE IF NOT EXISTS flow_runs (
   id TEXT PRIMARY KEY,
   flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   run_json TEXT NOT NULL
-)";
-pub const FLOW_VISITS_DDL: &str = "CREATE TABLE IF NOT EXISTS flow_visits (
+);
+CREATE TABLE IF NOT EXISTS flow_visits (
   id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL REFERENCES flow_runs(id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
@@ -26,12 +85,10 @@ pub const FLOW_VISITS_DDL: &str = "CREATE TABLE IF NOT EXISTS flow_visits (
   status TEXT NOT NULL,
   visit_json TEXT NOT NULL,
   UNIQUE (run_id, seq)
-)";
-pub const FLOW_INDEXES_DDL: [&str; 3] = [
-    "CREATE INDEX IF NOT EXISTS flow_runs_history_idx ON flow_runs (flow_id, created_at DESC)",
-    "CREATE INDEX IF NOT EXISTS flow_runs_status_idx ON flow_runs (status)",
-    "CREATE INDEX IF NOT EXISTS flow_visits_order_idx ON flow_visits (run_id, seq)",
-];
+);
+CREATE INDEX IF NOT EXISTS flow_runs_history_idx ON flow_runs (flow_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS flow_runs_status_idx ON flow_runs (status);
+CREATE INDEX IF NOT EXISTS flow_visits_order_idx ON flow_visits (run_id, seq);";
 
 const MAX_RUNS: usize = 50;
 const ACTIVE: &str = "status IN ('running', 'waiting-approval')";
@@ -43,70 +100,65 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-pub fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
-    for ddl in [FLOWS_DDL, FLOW_RUNS_DDL, FLOW_VISITS_DDL]
-        .into_iter()
-        .chain(FLOW_INDEXES_DDL)
-    {
-        conn.execute_batch(&format!("{ddl};"))?;
-    }
-    Ok(())
+fn json_error(error: serde_json::Error) -> toasty::Error {
+    toasty::Error::from_args(format_args!("{error}"))
 }
 
-fn err(e: impl ToString) -> String {
-    e.to_string()
-}
-
-/// Reads `(id, json)` rows. A row whose JSON no longer parses is skipped and
-/// logged, so one bad record cannot hide every other one.
-fn readable<T: serde::de::DeserializeOwned>(
-    st: &mut rusqlite::Statement<'_>,
-    params: impl rusqlite::Params,
-    table: &str,
-) -> Result<Vec<T>, String> {
-    let rows = st
-        .query_map(params, |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+/// `(id, json)` pairs from a raw query selecting those two text columns.
+fn text_pairs(rows: Vec<toasty::stmt::Value>) -> Vec<(String, String)> {
+    rows.into_iter()
+        .filter_map(|row| {
+            let mut fields = row.into_record().fields.into_iter();
+            match (fields.next(), fields.next()) {
+                (Some(toasty::stmt::Value::String(id)), Some(toasty::stmt::Value::String(raw))) => {
+                    Some((id, raw))
+                }
+                _ => None,
+            }
         })
-        .map_err(err)?;
+        .collect()
+}
+
+/// Parses `(id, json)` rows. A row whose JSON no longer parses is skipped
+/// and logged, so one bad record cannot hide every other one.
+fn readable<T: serde::de::DeserializeOwned>(
+    rows: impl IntoIterator<Item = (String, String)>,
+    table: &str,
+) -> Vec<T> {
     let mut out = Vec::new();
-    for row in rows {
-        let (id, raw) = row.map_err(err)?;
+    for (id, raw) in rows {
         match serde_json::from_str(&raw) {
             Ok(value) => out.push(value),
             Err(error) => tracing::warn!(table, id = %id, %error, "skipped an unreadable row"),
         }
     }
-    Ok(out)
+    out
 }
 
-/// Own connection to `gespan.db`, like `automations::Service`.
+/// Its own Toasty database on `gespan.db`, like `automations::Service`.
 pub struct FlowStore {
-    conn: Connection,
+    db: orm::Database,
 }
 
 impl FlowStore {
     pub fn open(db: &Path) -> Result<Self, String> {
-        if let Some(parent) = db.parent() {
-            if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(err)?;
-            }
-        }
-        let conn = Connection::open(db).map_err(err)?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(err)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .map_err(err)?;
-        ensure_tables(&conn).map_err(err)?;
-        Ok(Self { conn })
+        Ok(Self {
+            db: orm::open(Kind::Gespan, db)?,
+        })
     }
 
     pub fn list(&self) -> Result<Vec<Flow>, String> {
-        let mut st = self
-            .conn
-            .prepare("SELECT id, definition_json FROM flows ORDER BY updated_at DESC, id")
-            .map_err(err)?;
-        readable(&mut st, [], "flows")
+        let rows = self.db.run(|mut db| async move {
+            let flow = FlowRow::fields();
+            FlowRow::all()
+                .order_by((flow.updated_at().desc(), flow.id().asc()))
+                .exec(&mut db)
+                .await
+        })?;
+        Ok(readable(
+            rows.into_iter().map(|row| (row.id, row.definition_json)),
+            "flows",
+        ))
     }
 
     /// Flows a Pilot owns; user Flows and other Pilots' Flows are excluded.
@@ -168,141 +220,179 @@ impl FlowStore {
             return Err(format!("Flow is invalid: {}", errors.join("; ")));
         }
         let now = now_millis();
-        let previous: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT definition_json FROM flows WHERE id = ?1",
-                [&flow.id],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(err)?;
-        let created_at = match previous {
-            Some(raw) => serde_json::from_str::<Flow>(&raw).map_err(err)?.created_at,
-            None if flow.created_at > 0 => flow.created_at,
-            None => now,
-        };
         let mut saved = flow.clone();
-        saved.created_at = created_at;
-        saved.updated_at = now;
-        self.conn
-            .execute(
-                "INSERT INTO flows (id, definition_json, updated_at) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(id) DO UPDATE SET
-                   definition_json = excluded.definition_json,
-                   updated_at = excluded.updated_at",
-                params![saved.id, serde_json::to_string(&saved).map_err(err)?, now],
-            )
-            .map_err(err)?;
-        Ok(saved)
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let previous = FlowRow::filter_by_id(&saved.id).first().exec(tx).await?;
+                saved.created_at = match &previous {
+                    Some(row) => {
+                        serde_json::from_str::<Flow>(&row.definition_json)
+                            .map_err(json_error)?
+                            .created_at
+                    }
+                    None if saved.created_at > 0 => saved.created_at,
+                    None => now,
+                };
+                saved.updated_at = now;
+                let raw = serde_json::to_string(&saved).map_err(json_error)?;
+                match previous {
+                    Some(mut row) => {
+                        row.update()
+                            .definition_json(raw)
+                            .updated_at(now)
+                            .exec(tx)
+                            .await?
+                    }
+                    None => {
+                        FlowRow::create()
+                            .id(saved.id.clone())
+                            .definition_json(raw)
+                            .updated_at(now)
+                            .exec(tx)
+                            .await?;
+                    }
+                }
+                Ok(saved)
+            })
+        })
     }
 
     /// Cascades to runs and visits. Refused while a run is active.
     pub fn delete(&self, id: &str) -> Result<(), String> {
-        let active: i64 = self
-            .conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM flow_runs WHERE flow_id = ?1 AND {ACTIVE}"),
-                [id],
-                |r| r.get(0),
-            )
-            .map_err(err)?;
-        if active > 0 {
-            return Err("Flow has an active run".into());
-        }
-        self.conn
-            .execute("DELETE FROM flows WHERE id = ?1", [id])
-            .map_err(err)?;
-        Ok(())
+        let id = id.to_owned();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let run = FlowRunRow::fields();
+                let active = FlowRunRow::filter(
+                    run.flow_id().eq(&id).and(
+                        run.status()
+                            .in_list(["running".to_owned(), "waiting-approval".to_owned()]),
+                    ),
+                )
+                .first()
+                .exec(tx)
+                .await?;
+                if active.is_some() {
+                    return Ok(Err("Flow has an active run".to_owned()));
+                }
+                FlowRow::filter_by_id(&id).delete().exec(tx).await?;
+                Ok(Ok(()))
+            })
+        })?
     }
 
-    /// Newest first, at most 50.
+    /// Newest first, at most 50. Runs made in the same millisecond come
+    /// newest-saved first, which needs `rowid`: raw SQL.
     pub fn runs(&self, flow_id: &str, limit: usize) -> Result<Vec<FlowRun>, String> {
-        let limit = limit.min(MAX_RUNS) as i64;
-        let mut st = self
-            .conn
-            .prepare(
-                "SELECT id, run_json FROM flow_runs WHERE flow_id = ?1
-                 ORDER BY created_at DESC, rowid DESC LIMIT ?2",
-            )
-            .map_err(err)?;
-        readable(&mut st, params![flow_id, limit], "flow_runs")
+        let query = toasty::sql::query(
+            "SELECT id, run_json FROM flow_runs WHERE flow_id = ?1
+             ORDER BY created_at DESC, rowid DESC LIMIT ?2",
+        )
+        .bind(flow_id.to_owned())
+        .bind(limit.min(MAX_RUNS) as i64);
+        let rows = self
+            .db
+            .run(|mut db| async move { query.exec(&mut db).await })?;
+        Ok(readable(text_pairs(rows), "flow_runs"))
     }
 
-    /// Runs that are `running` or `waiting-approval`, across all Flows.
+    /// Runs that are `running` or `waiting-approval`, across all Flows, in
+    /// the order they were saved.
     pub fn active_runs(&self) -> Result<Vec<FlowRun>, String> {
-        let mut st = self
-            .conn
-            .prepare(&format!(
-                "SELECT id, run_json FROM flow_runs WHERE {ACTIVE} ORDER BY created_at, rowid"
-            ))
-            .map_err(err)?;
-        readable(&mut st, [], "flow_runs")
+        let query = toasty::sql::query(format!(
+            "SELECT id, run_json FROM flow_runs WHERE {ACTIVE} ORDER BY created_at, rowid"
+        ));
+        let rows = self
+            .db
+            .run(|mut db| async move { query.exec(&mut db).await })?;
+        Ok(readable(text_pairs(rows), "flow_runs"))
     }
 
     pub fn run(&self, id: &str) -> Result<Option<FlowRun>, String> {
-        let raw: Option<String> = self
-            .conn
-            .query_row("SELECT run_json FROM flow_runs WHERE id = ?1", [id], |r| {
-                r.get(0)
-            })
-            .optional()
-            .map_err(err)?;
-        raw.map(|raw| serde_json::from_str(&raw).map_err(err))
+        let row = self.db.run(|mut db| async move {
+            FlowRunRow::filter_by_id(id).first().exec(&mut db).await
+        })?;
+        row.map(|row| serde_json::from_str(&row.run_json).map_err(|e| e.to_string()))
             .transpose()
     }
 
     /// Upsert by id. Fails if the Flow does not exist.
     pub fn save_run(&self, run: &FlowRun) -> Result<(), String> {
-        self.conn
-            .execute(
-                "INSERT INTO flow_runs (id, flow_id, status, created_at, run_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(id) DO UPDATE SET
-                   status = excluded.status,
-                   run_json = excluded.run_json",
-                params![
-                    run.id,
-                    run.flow_id,
-                    run.status.as_str(),
-                    run.created_at,
-                    serde_json::to_string(run).map_err(err)?
-                ],
-            )
-            .map_err(err)?;
-        Ok(())
+        let raw = serde_json::to_string(run).map_err(|e| e.to_string())?;
+        let run = run.clone();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let status = run.status.as_str().to_owned();
+                match FlowRunRow::filter_by_id(&run.id).first().exec(tx).await? {
+                    // The Flow and creation time stay as first saved.
+                    Some(mut row) => row.update().status(status).run_json(raw).exec(tx).await?,
+                    None => {
+                        FlowRunRow::create()
+                            .id(run.id)
+                            .flow_id(run.flow_id)
+                            .status(status)
+                            .created_at(run.created_at)
+                            .run_json(raw)
+                            .exec(tx)
+                            .await?;
+                    }
+                }
+                Ok(())
+            })
+        })
     }
 
     /// By `seq`.
     pub fn visits(&self, run_id: &str) -> Result<Vec<FlowVisit>, String> {
-        let mut st = self
-            .conn
-            .prepare("SELECT id, visit_json FROM flow_visits WHERE run_id = ?1 ORDER BY seq")
-            .map_err(err)?;
-        readable(&mut st, [run_id], "flow_visits")
+        let rows = self.db.run(|mut db| async move {
+            let visit = FlowVisitRow::fields();
+            FlowVisitRow::filter(visit.run_id().eq(run_id))
+                .order_by(visit.seq().asc())
+                .exec(&mut db)
+                .await
+        })?;
+        Ok(readable(
+            rows.into_iter().map(|row| (row.id, row.visit_json)),
+            "flow_visits",
+        ))
     }
 
     /// Upsert by id; `(run_id, seq)` is unique.
     pub fn save_visit(&self, visit: &FlowVisit) -> Result<(), String> {
-        self.conn
-            .execute(
-                "INSERT INTO flow_visits (id, run_id, seq, state_id, status, visit_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(id) DO UPDATE SET
-                   state_id = excluded.state_id,
-                   status = excluded.status,
-                   visit_json = excluded.visit_json",
-                params![
-                    visit.id,
-                    visit.run_id,
-                    visit.seq,
-                    visit.state_id,
-                    visit.status.as_str(),
-                    serde_json::to_string(visit).map_err(err)?
-                ],
-            )
-            .map_err(err)?;
-        Ok(())
+        let raw = serde_json::to_string(visit).map_err(|e| e.to_string())?;
+        let visit = visit.clone();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let status = visit.status.as_str().to_owned();
+                match FlowVisitRow::filter_by_id(&visit.id)
+                    .first()
+                    .exec(tx)
+                    .await?
+                {
+                    // The run and its place in it stay as first saved.
+                    Some(mut row) => {
+                        row.update()
+                            .state_id(visit.state_id)
+                            .status(status)
+                            .visit_json(raw)
+                            .exec(tx)
+                            .await?
+                    }
+                    None => {
+                        FlowVisitRow::create()
+                            .id(visit.id)
+                            .run_id(visit.run_id)
+                            .seq(i64::from(visit.seq))
+                            .state_id(visit.state_id)
+                            .status(status)
+                            .visit_json(raw)
+                            .exec(tx)
+                            .await?;
+                    }
+                }
+                Ok(())
+            })
+        })
     }
 }
 
@@ -314,10 +404,22 @@ mod tests {
     use std::collections::HashMap;
 
     fn store() -> FlowStore {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        ensure_tables(&conn).unwrap();
-        FlowStore { conn }
+        FlowStore::open(Path::new(":memory:")).unwrap()
+    }
+
+    /// Runs raw SQL on the store's database, as another writer could.
+    fn execute(s: &FlowStore, sql: &'static str) {
+        s.db.run(|mut db| async move { toasty::sql::statement(sql).exec(&mut db).await })
+            .unwrap();
+    }
+
+    /// The first column of `sql`'s rows, as text.
+    fn texts(s: &FlowStore, sql: &'static str) -> Vec<String> {
+        s.db.run(|mut db| async move { toasty::sql::query(sql).exec(&mut db).await })
+            .unwrap()
+            .into_iter()
+            .map(|row| row.into_record().fields[0].as_string_unwrap().to_owned())
+            .collect()
     }
 
     fn flow(id: &str) -> Flow {
@@ -576,13 +678,10 @@ mod tests {
         r.error = Some("x".into());
         s.save_run(&r).unwrap();
         assert_eq!(s.run("r1").unwrap().unwrap(), r);
-        let col: String = s
-            .conn
-            .query_row("SELECT status FROM flow_runs WHERE id='r1'", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(col, "waiting-approval");
+        assert_eq!(
+            texts(&s, "SELECT status FROM flow_runs WHERE id='r1'"),
+            ["waiting-approval"]
+        );
         assert!(s.run("missing").unwrap().is_none());
     }
 
@@ -632,12 +731,10 @@ mod tests {
     fn listings_skip_a_row_whose_json_does_not_parse() {
         let s = store();
         let good = s.upsert(&flow("f1")).unwrap();
-        s.conn
-            .execute(
-                "INSERT INTO flows (id, definition_json, updated_at) VALUES ('bad', '{', 0)",
-                [],
-            )
-            .unwrap();
+        execute(
+            &s,
+            "INSERT INTO flows (id, definition_json, updated_at) VALUES ('bad', '{', 0)",
+        );
         let mut listed = Ok(Vec::new());
         let logged = crate::diagnostics::test_capture(|| listed = s.list());
         assert_eq!(listed.unwrap(), vec![good.clone()]);
@@ -650,46 +747,120 @@ mod tests {
 
         let running = run("r1", &good, RunStatus::Running, 1);
         s.save_run(&running).unwrap();
-        s.conn
-            .execute(
-                "INSERT INTO flow_runs (id, flow_id, status, created_at, run_json)
-                 VALUES ('r-bad', 'f1', 'running', 2, 'not json')",
-                [],
-            )
-            .unwrap();
+        execute(
+            &s,
+            "INSERT INTO flow_runs (id, flow_id, status, created_at, run_json)
+             VALUES ('r-bad', 'f1', 'running', 2, 'not json')",
+        );
         assert_eq!(s.active_runs().unwrap(), vec![running.clone()]);
         assert_eq!(s.runs("f1", 10).unwrap(), vec![running]);
 
         let v1 = visit("v1", "r1", 1);
         s.save_visit(&v1).unwrap();
-        s.conn
-            .execute(
-                "INSERT INTO flow_visits (id, run_id, seq, state_id, status, visit_json)
-                 VALUES ('v-bad', 'r1', 2, 'plan', 'running', '[]')",
-                [],
-            )
-            .unwrap();
+        execute(
+            &s,
+            "INSERT INTO flow_visits (id, run_id, seq, state_id, status, visit_json)
+             VALUES ('v-bad', 'r1', 2, 'plan', 'running', '[]')",
+        );
         assert_eq!(s.visits("r1").unwrap(), vec![v1]);
     }
 
     #[test]
-    fn ensure_tables_is_idempotent_alongside_other_native_tables() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        crate::automations::ensure_tables(&conn).unwrap();
-        ensure_tables(&conn).unwrap();
-        ensure_tables(&conn).unwrap();
-        crate::automations::ensure_tables(&conn).unwrap();
-        let names: Vec<String> = conn
-            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .map(Result::unwrap)
-            .collect();
-        for t in ["automations", "flows", "flow_runs", "flow_visits"] {
+    fn flows_and_automations_share_one_file_through_their_own_databases() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let flows = FlowStore::open(&path).unwrap();
+        let mut automations = crate::automations::Service::open(&path).unwrap();
+        let again = FlowStore::open(&path).unwrap();
+        let f = flows.upsert(&flow("f1")).unwrap();
+        let mut draft = crate::automations::AutomationUpsert::new(
+            "/repo".into(),
+            "codex".into(),
+            "model".into(),
+        );
+        draft.name = "Nightly".into();
+        draft.prompt = "Report".into();
+        let automation = automations.upsert(draft).unwrap();
+        again
+            .save_run(&run("r1", &f, RunStatus::Running, 1))
+            .unwrap();
+        assert_eq!(flows.run("r1").unwrap().unwrap().id, "r1");
+        assert_eq!(automations.list().unwrap()[0].id, automation.id);
+        let names = texts(
+            &flows,
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+        );
+        for t in [
+            "automation_event_claims",
+            "automation_runs",
+            "automations",
+            "flow_runs",
+            "flow_visits",
+            "flows",
+            "my_tasks",
+        ] {
             assert!(names.iter().any(|n| n == t), "{t} in {names:?}");
         }
+    }
+
+    #[test]
+    fn a_hand_made_flows_file_keeps_its_rows_and_its_foreign_keys_when_adopted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        let f = flow("f1");
+        let r = run("r1", &f, RunStatus::Succeeded, 7);
+        let v = visit("v1", "r1", 1);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(LEGACY_SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO flows VALUES (?1, ?2, 5)",
+            rusqlite::params![f.id, serde_json::to_string(&f).unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO flow_runs VALUES ('r1', 'f1', 'succeeded', 7, ?1)",
+            [serde_json::to_string(&r).unwrap()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO flow_visits VALUES ('v1', 'r1', 1, 'plan', 'running', ?1)",
+            [serde_json::to_string(&v).unwrap()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let s = FlowStore::open(&path).unwrap();
+        assert_eq!(s.list().unwrap(), vec![f.clone()]);
+        assert_eq!(s.runs("f1", 10).unwrap(), vec![r]);
+        assert_eq!(s.visits("r1").unwrap(), vec![v]);
+        // The adopted tables still refuse orphans and duplicate places.
+        assert!(s
+            .save_run(&run("r2", &flow("ghost"), RunStatus::Running, 1))
+            .is_err());
+        assert!(s.save_visit(&visit("v2", "r1", 1)).is_err());
+        // And deleting the Flow still takes its runs and their visits.
+        s.delete("f1").unwrap();
+        assert_eq!(texts(&s, "SELECT id FROM flow_runs"), Vec::<String>::new());
+        assert_eq!(
+            texts(&s, "SELECT id FROM flow_visits"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_raw_insert_cannot_add_a_visit_to_a_missing_run_either() {
+        // The foreign keys are triggers on the tables, not checks in this
+        // store, so any writer on the file meets them.
+        let s = store();
+        let refused = s.db.run(|mut db| async move {
+            toasty::sql::statement(
+                "INSERT INTO flow_visits (id, run_id, seq, state_id, status, visit_json)
+                 VALUES ('v', 'no-run', 1, 'plan', 'running', '{}')",
+            )
+            .exec(&mut db)
+            .await
+        });
+        assert!(refused.unwrap_err().contains("FOREIGN KEY"));
     }
 
     #[test]

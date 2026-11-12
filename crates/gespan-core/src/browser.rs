@@ -16,8 +16,9 @@ pub use gespan_browser::protocol::{
 /// What the UI says about the connection and the browsers it offers.
 pub use gespan_browser::view;
 pub use gespan_browser::BrowserHost;
-use gespan_browser::Embedder;
-use rusqlite::Connection;
+use gespan_browser::{BrowserDb, DbJob, Embedder};
+
+use crate::orm::{self, Kind};
 
 mod live_pane;
 pub mod toolkit;
@@ -36,13 +37,22 @@ static STARTING: Mutex<()> = Mutex::new(());
 
 /// The app as the browser module sees it.
 struct GespanEmbedder {
-    db: Mutex<Connection>,
+    db: orm::Database,
+}
+
+/// Waits on the browser module's database work.
+fn wait(job: DbJob<'_>) {
+    orm::run(job);
+}
+
+/// The browser database as the module takes it.
+fn browser_db(database: &orm::Database) -> BrowserDb {
+    BrowserDb::new(database.db(), wait)
 }
 
 impl Embedder for GespanEmbedder {
-    fn with_db(&self, f: &mut dyn FnMut(&Connection)) {
-        let conn = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        f(&conn);
+    fn with_db(&self, f: &mut dyn FnMut(&BrowserDb)) {
+        f(&browser_db(&self.db));
     }
 
     fn state_changed(&self, state: &BrowserState) {
@@ -103,12 +113,11 @@ fn embedder(data_dir: Option<&Path>) -> Result<(Arc<GespanEmbedder>, Option<Path
     let db = match &folder {
         Some(folder) => {
             std::fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-            Connection::open(folder.join(DATABASE))
+            orm::open(Kind::Browser, &folder.join(DATABASE))
         }
-        None => Connection::open_in_memory(),
-    }
-    .map_err(|e| e.to_string())?;
-    Ok((Arc::new(GespanEmbedder { db: Mutex::new(db) }), folder))
+        None => orm::open(Kind::Browser, Path::new(":memory:")),
+    }?;
+    Ok((Arc::new(GespanEmbedder { db }), folder))
 }
 
 /// App exit: the Gespan browser goes with the app.
@@ -463,6 +472,89 @@ pub(crate) mod tests {
     /// Settings an earlier build stored (your own browser, a private one, a
     /// window, a chosen browser) load as the in-app browser, headless, and
     /// the database is fixed too. The rest of what was stored is kept.
+    /// A `browser.db` the hand-written module made is adopted on open: its
+    /// rows survive, the newest-first session index Toasty cannot declare is
+    /// back, and the file is backed up first.
+    #[test]
+    fn a_browser_db_from_before_toasty_is_adopted_with_its_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join(FOLDER);
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join(DATABASE);
+        let legacy = rusqlite::Connection::open(&path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE browser_audit (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
+                   session_id TEXT NOT NULL, request_id TEXT NOT NULL,
+                   global_epoch TEXT NOT NULL, session_epoch TEXT NOT NULL,
+                   action TEXT NOT NULL, tab_id TEXT, url TEXT, params TEXT NOT NULL,
+                   outcome TEXT NOT NULL, reason TEXT, duration_ms INTEGER NOT NULL,
+                   commands_sent INTEGER NOT NULL DEFAULT 0);
+                 CREATE INDEX browser_audit_session_ts ON browser_audit (session_id, ts DESC);
+                 CREATE INDEX browser_audit_ts ON browser_audit (ts);
+                 CREATE TABLE browser_events (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL,
+                   kind TEXT NOT NULL, actor TEXT NOT NULL, session_id TEXT, detail TEXT);
+                 CREATE INDEX browser_events_ts ON browser_events (ts);
+                 CREATE TABLE browser_leases (
+                   tab_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, target_id TEXT NOT NULL,
+                   session_id TEXT NOT NULL, opened_by TEXT, url TEXT NOT NULL,
+                   created_at INTEGER NOT NULL, closed_at INTEGER);
+                 CREATE TABLE browser_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .unwrap();
+        let now = gespan_browser::policy::now_ms();
+        legacy
+            .execute(
+                "INSERT INTO browser_audit (ts, session_id, request_id, global_epoch,
+                   session_epoch, action, params, outcome, duration_ms)
+                 VALUES (?1, 's1', 'r1', '1:1', '1:1', 'click', '{}', 'done', 7)",
+                [now],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "INSERT INTO browser_settings (key, value) VALUES ('run_counter', '41')",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+
+        let host = open(dir.path()).unwrap();
+        let rows = host.audit_list(Some("s1"), 50);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].request_id, "r1");
+        assert_eq!(rows[0].commands_sent, 0, "the old DEFAULT's value is kept");
+        drop(host);
+
+        let check = rusqlite::Connection::open(&path).unwrap();
+        let run: String = check
+            .query_row(
+                "SELECT value FROM browser_settings WHERE key = 'run_counter'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(run, "42", "the run counter carried on from the old file");
+        let index: String = check
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = 'browser_audit_session_ts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(index.contains("ts DESC"), "{index}");
+        let applied: i64 = check
+            .query_row("SELECT count(*) FROM __toasty_migrations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            applied as usize,
+            Kind::Browser.migrations().migrations().len()
+        );
+        assert!(folder.join("browser.db.bak-pre-toasty").is_file());
+    }
+
     #[test]
     fn settings_an_earlier_build_stored_load_as_the_in_app_browser() {
         let stored = [
@@ -475,9 +567,10 @@ pub(crate) mod tests {
         for text in stored {
             let dir = tempfile::tempdir().unwrap();
             drop(open(dir.path()).unwrap());
-            let db = Connection::open(dir.path().join(FOLDER).join(DATABASE)).unwrap();
+            let path = dir.path().join(FOLDER).join(DATABASE);
+            let db = orm::open(Kind::Browser, &path).unwrap();
             let blob: BrowserSettings = serde_json::from_str(text).unwrap();
-            gespan_browser::audit::save_settings(&db, &blob).unwrap();
+            gespan_browser::audit::save_settings(&browser_db(&db), &blob).unwrap();
             drop(db);
 
             let host = open(dir.path()).unwrap();
@@ -497,8 +590,10 @@ pub(crate) mod tests {
             );
             assert!(args.contains(&"--headless=new".to_string()), "{text}");
             drop(host);
-            let db = Connection::open(dir.path().join(FOLDER).join(DATABASE)).unwrap();
-            let kept = gespan_browser::audit::load_settings(&db).unwrap().unwrap();
+            let db = orm::open(Kind::Browser, &path).unwrap();
+            let kept = gespan_browser::audit::load_settings(&browser_db(&db))
+                .unwrap()
+                .unwrap();
             assert_eq!(kept, settings, "the database holds the fixed settings");
         }
     }

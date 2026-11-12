@@ -19,23 +19,17 @@ impl Store {
                 .into_iter()
                 .collect());
         }
-        let field = self.shared_field("automation_id", "NULL");
-        let mut query = self
-            .conn
-            .prepare(&format!(
-                "SELECT id,{field} FROM sessions WHERE {field} IS NOT NULL"
-            ))
-            .map_err(|error| error.to_string())?;
-        let rows = query
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        self.sql()?
+            .query(
+                "SELECT id,automation_id FROM sessions WHERE automation_id IS NOT NULL",
+                super::db::args![],
+            )?
+            .iter()
+            .map(|row| {
+                let (id, automation) = (row.get::<String>(0)?, row.get::<String>(1)?);
+                Ok((self.shared_register(&id)?, automation))
             })
-            .map_err(|error| error.to_string())?;
-        rows.map(|row| {
-            let (id, automation) = row.map_err(|error| error.to_string())?;
-            Ok((self.shared_register(&id)?, automation))
-        })
-        .collect()
+            .collect()
     }
 }
 

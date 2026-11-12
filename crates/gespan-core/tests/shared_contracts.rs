@@ -317,52 +317,15 @@ fn agent_run_and_wake_marker_json_names_match() {
 
 #[test]
 fn flow_ddl_is_pinned() {
-    use gespan_core::flow::store::{
-        ensure_tables, FLOWS_DDL, FLOW_INDEXES_DDL, FLOW_RUNS_DDL, FLOW_VISITS_DDL,
-    };
-    // Literal copies: the Phase 3 Tauri twin must create exactly this text.
-    assert_eq!(
-        FLOWS_DDL,
-        "CREATE TABLE IF NOT EXISTS flows (
-  id TEXT PRIMARY KEY,
-  definition_json TEXT NOT NULL,
-  updated_at INTEGER NOT NULL
-)"
-    );
-    assert_eq!(
-        FLOW_RUNS_DDL,
-        "CREATE TABLE IF NOT EXISTS flow_runs (
-  id TEXT PRIMARY KEY,
-  flow_id TEXT NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
-  status TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  run_json TEXT NOT NULL
-)"
-    );
-    assert_eq!(
-        FLOW_VISITS_DDL,
-        "CREATE TABLE IF NOT EXISTS flow_visits (
-  id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL REFERENCES flow_runs(id) ON DELETE CASCADE,
-  seq INTEGER NOT NULL,
-  state_id TEXT NOT NULL,
-  status TEXT NOT NULL,
-  visit_json TEXT NOT NULL,
-  UNIQUE (run_id, seq)
-)"
-    );
-    assert_eq!(
-        FLOW_INDEXES_DDL,
-        [
-            "CREATE INDEX IF NOT EXISTS flow_runs_history_idx ON flow_runs (flow_id, created_at DESC)",
-            "CREATE INDEX IF NOT EXISTS flow_runs_status_idx ON flow_runs (status)",
-            "CREATE INDEX IF NOT EXISTS flow_visits_order_idx ON flow_visits (run_id, seq)",
-        ]
-    );
-    // What SQLite actually stored matches too.
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    ensure_tables(&conn).unwrap();
-    ensure_tables(&conn).unwrap();
+    // The Flow tables as Toasty's first `gespan` migration makes them, plus
+    // the triggers that stand in for their foreign keys. A change here is a
+    // schema change: it needs a migration, not just a new pin.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    drop(gespan_core::flow::FlowStore::open(&path).unwrap());
+    // Opening again must leave the schema as it is.
+    drop(gespan_core::flow::FlowStore::open(&path).unwrap());
+    let conn = rusqlite::Connection::open(&path).unwrap();
     let sql = |name: &str| -> String {
         conn.query_row(
             "SELECT sql FROM sqlite_master WHERE name = ?1",
@@ -371,14 +334,68 @@ fn flow_ddl_is_pinned() {
         )
         .unwrap()
     };
-    assert_eq!(sql("flows"), FLOWS_DDL.replace(" IF NOT EXISTS", ""));
+    assert_eq!(
+        sql("flows"),
+        r#"CREATE TABLE "flows" (
+    "id" TEXT NOT NULL,
+    "definition_json" TEXT NOT NULL,
+    "updated_at" BIGINT NOT NULL,
+    PRIMARY KEY ("id")
+)"#
+    );
     assert_eq!(
         sql("flow_runs"),
-        FLOW_RUNS_DDL.replace(" IF NOT EXISTS", "")
+        r#"CREATE TABLE "flow_runs" (
+    "id" TEXT NOT NULL,
+    "flow_id" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "created_at" BIGINT NOT NULL,
+    "run_json" TEXT NOT NULL,
+    PRIMARY KEY ("id")
+)"#
     );
     assert_eq!(
         sql("flow_visits"),
-        FLOW_VISITS_DDL.replace(" IF NOT EXISTS", "")
+        r#"CREATE TABLE "flow_visits" (
+    "id" TEXT NOT NULL,
+    "run_id" TEXT NOT NULL,
+    "seq" BIGINT NOT NULL,
+    "state_id" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "visit_json" TEXT NOT NULL,
+    PRIMARY KEY ("id")
+)"#
+    );
+    assert_eq!(
+        [
+            sql("flow_runs_history_idx"),
+            sql("flow_runs_status_idx"),
+            sql("flow_visits_order_idx"),
+        ],
+        [
+            r#"CREATE INDEX "flow_runs_history_idx" ON "flow_runs" ("flow_id", "created_at")"#,
+            r#"CREATE INDEX "flow_runs_status_idx" ON "flow_runs" ("status")"#,
+            r#"CREATE UNIQUE INDEX "flow_visits_order_idx" ON "flow_visits" ("run_id", "seq")"#,
+        ]
+    );
+    let triggers: Vec<String> = conn
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'
+             AND (tbl_name LIKE 'flow%') ORDER BY name",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        triggers,
+        [
+            "flow_runs_delete_their_visits",
+            "flow_runs_need_their_flow",
+            "flow_visits_need_their_run",
+            "flows_delete_their_runs",
+        ]
     );
 }
 
@@ -424,13 +441,10 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_shared_board_tabl
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    // The shared tables are board-store's, which the Tauri app creates too.
-    // The pre-v3 native tables stay for one release and nothing reads them.
-    let (native, shared): (Vec<_>, Vec<_>) = names
-        .iter()
-        .partition(|name| name.starts_with("board_native_"));
+    // The shared tables are board-store's Toasty models. A new database has
+    // no hand-made `board_schema` version and no pre-v3 native tables.
     assert_eq!(
-        shared,
+        names,
         [
             "board_activity",
             "board_card_field_values",
@@ -444,7 +458,6 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_shared_board_tabl
             "board_comments",
             "board_fields",
             "board_labels",
-            "board_schema",
             "board_session_settings",
             "board_settings",
             "board_subtasks",
@@ -453,21 +466,6 @@ fn opening_the_gespan_store_then_the_board_service_creates_the_shared_board_tabl
             "boards",
         ]
     );
-    assert_eq!(
-        native,
-        [
-            "board_native_card_labels",
-            "board_native_comments",
-            "board_native_labels",
-            "board_native_meta",
-            "board_native_projects",
-            "board_native_subtasks",
-        ]
-    );
-    let version: i64 = conn
-        .query_row("SELECT version FROM board_schema", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, gespan_board_store::SCHEMA_VERSION);
     // v6: the mark that a card's title came from a ticket.
     let marked: bool = conn
         .query_row(
@@ -515,18 +513,18 @@ fn both_apps_title_ticket_cards_through_the_marking_store_calls() {
     }
 }
 
-/// A database board-store wrote (as the Tauri app does) opens in the native
-/// board service, which reads every v3 value back.
+/// A database board-store wrote (as the Tauri app did) opens in the native
+/// board service, which reads every v3 value back. Board-store writes through
+/// its own handle on the `gespan` database, a second connection.
 #[test]
 fn a_database_written_by_board_store_opens_in_the_native_board_service() {
     use gespan_board_store as store;
+    use gespan_core::orm;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gespan.db");
     let (board, card, label) = {
-        let conn = rusqlite::Connection::open(&path).unwrap();
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .unwrap();
-        store::ensure_tables(&conn).unwrap();
+        let database = orm::open(orm::Kind::Gespan, &path).unwrap();
+        let conn = store::Conn::new(database.db(), |job| orm::run(job));
         let board = store::create_board(&conn, "Shared").unwrap();
         let column = store::get_board(&conn, &board.id).unwrap().columns[0].clone();
         let card = store::create_card(&conn, &column.id, "Task", "").unwrap();

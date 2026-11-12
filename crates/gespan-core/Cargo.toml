@@ -10,6 +10,11 @@ serde.workspace = true
 # Stored floats must reload exactly, or saved revisions stop matching.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 rusqlite.workspace = true
+toasty.workspace = true
+toasty-core.workspace = true
+toasty-driver-sqlite.workspace = true
+# The ORM driver wrapper implements Toasty's async driver traits.
+async-trait = "0.1"
 async-channel = "2"
 shlex = "2"
 url = "2"
@@ -63,6 +68,8 @@ gespan-redact = { path = "../gespan-redact" }
 gespan-mcp-config = { path = "../gespan-mcp-config" }
 mcp-hub = { path = "../mcp-hub" }
 gespan-browser = { path = "../gespan-browser" }
+# Only for its models, registered as the Graph database kind.
+gespan-graph = { path = "../gespan-graph" }
 herdr-link = { path = "../herdr-link" }
 zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
 

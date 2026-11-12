@@ -9,12 +9,16 @@ description = "Gespan's browser module: a thin CDP client, the access policy and
 [features]
 # The fake CDP endpoint and `BrowserHost::for_tests`, for the app's own tests.
 # Only ever enabled from a dev-dependency.
-testing = []
+testing = ["dep:tokio"]
 
 [dependencies]
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
-rusqlite = { version = "0.40.2", features = ["bundled", "hooks"], default-features = false }
+# The browser tables are Toasty models; the app opens and migrates them.
+# `sqlite` is for the tests' in-memory database. Same pin as gespan-core.
+toasty = { version = "=0.11.0", features = ["sqlite"] }
+# The tests' in-memory database runs on a runtime of its own (`testing`).
+tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 uuid = { version = "1", features = ["v4"] }
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 base64 = "0.22"

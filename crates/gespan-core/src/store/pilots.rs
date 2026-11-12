@@ -1,5 +1,5 @@
+use super::db::args;
 use super::{Session, Store};
-use rusqlite::OptionalExtension;
 
 impl Store {
     /// Look up an existing Pilot conversation independently of the sidebar.
@@ -12,45 +12,30 @@ impl Store {
                 .find(|session| session.id == id));
         }
         let original = self.persisted_session_id(id)?;
-        let columns = [
-            "title".to_string(),
-            "harness".into(),
-            "cwd".into(),
-            "provider_session_id".into(),
-            "updated_at".into(),
-            self.shared_field(
-                "has_user_message",
-                "CASE WHEN blocks_json!='[]' THEN 1 ELSE 0 END",
-            ),
-            self.shared_field("archived", "0"),
-            self.shared_field("pinned", "0"),
-            self.shared_field("linked_work_item_json", "NULL"),
-        ]
-        .join(",");
-        self.conn
-            .query_row(
-                &format!("SELECT {columns} FROM sessions WHERE id=?1"),
-                [original],
-                |row| {
-                    Ok(Session {
-                        id,
-                        title: row.get(0)?,
-                        provider: row.get(1)?,
-                        cwd: row.get(2)?,
-                        provider_id: row.get(3)?,
-                        updated_at: row.get::<_, i64>(4)?.max(0) as u64,
-                        has_messages: row.get(5)?,
-                        archived: row.get(6)?,
-                        pinned: row.get(7)?,
-                        created_at: 0,
-                        work_item: row
-                            .get::<_, Option<String>>(8)?
-                            .and_then(|raw| serde_json::from_str(&raw).ok()),
-                    })
-                },
-            )
-            .optional()
-            .map_err(|e| e.to_string())
+        self.sql()?
+            .optional(
+                "SELECT title,harness,cwd,provider_session_id,updated_at,has_user_message,
+                 archived,pinned,linked_work_item_json FROM sessions WHERE id=?1",
+                args![original],
+            )?
+            .map(|row| {
+                Ok(Session {
+                    id,
+                    title: row.get(0)?,
+                    provider: row.get(1)?,
+                    cwd: row.get(2)?,
+                    provider_id: row.get(3)?,
+                    updated_at: row.get::<i64>(4)?.max(0) as u64,
+                    has_messages: row.get(5)?,
+                    archived: row.get(6)?,
+                    pinned: row.get(7)?,
+                    created_at: 0,
+                    work_item: row
+                        .get::<Option<String>>(8)?
+                        .and_then(|raw| serde_json::from_str(&raw).ok()),
+                })
+            })
+            .transpose()
     }
     /// Cheap freshness token; the blocks themselves are loaded only on change.
     pub fn pilot_work_revision(&self, id: i64) -> Result<Option<(u64, u64, u64)>, String> {
@@ -58,31 +43,21 @@ impl Store {
             return Ok(None);
         }
         let original = self.persisted_session_id(id)?;
-        let updated: i64 = self
-            .conn
-            .query_row(
-                "SELECT updated_at FROM sessions WHERE id=?1",
-                [original],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let notes = if super::shared::has_table(&self.conn, "notes")? {
-            self.conn
-                .query_row(
-                    "SELECT updated_at FROM notes ORDER BY updated_at DESC LIMIT 1",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        let version = self
-            .conn
-            .query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0))
-            .map_err(|e| e.to_string())?;
+        let db = self.sql()?;
+        let updated: i64 = db.value(
+            "SELECT updated_at FROM sessions WHERE id=?1",
+            args![original],
+        )?;
+        let notes = db
+            .optional(
+                "SELECT updated_at FROM notes ORDER BY updated_at DESC LIMIT 1",
+                args![],
+            )?
+            .map(|row| row.get::<i64>(0))
+            .transpose()?
+            .unwrap_or(0);
+        // Commits by other connections, as seen by this store's one.
+        let version: i64 = db.value("PRAGMA data_version", args![])?;
         Ok(Some((
             updated.max(0) as u64,
             notes.max(0) as u64,
@@ -98,36 +73,30 @@ impl Store {
         id: &str,
         body: bool,
     ) -> Result<Option<crate::pilot::Document>, String> {
-        if !self.uses_gespan_schema() || !super::shared::has_table(&self.conn, "notes")? {
+        if !self.uses_gespan_schema() {
             return Ok(None);
         }
-        let has_kind: bool = self.conn.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('notes') WHERE name='artifact_kind')", [], |r| r.get(0)).map_err(|e| e.to_string())?;
-        let kind = if has_kind {
-            "COALESCE(artifact_kind,'document')"
-        } else {
-            "'document'"
-        };
         let body_column = if body { "body" } else { "''" };
-        self.conn
-            .query_row(
+        self.sql()?
+            .optional(
                 &format!(
-                    "SELECT id,{kind},title,{body_column},created_at,updated_at FROM notes WHERE id=?1"
+                    "SELECT id,COALESCE(artifact_kind,'document'),title,{body_column},created_at,updated_at
+                     FROM notes WHERE id=?1"
                 ),
-                [id],
-                |r| {
-                    Ok(crate::pilot::Document {
-                        id: r.get(0)?,
-                        kind: r.get(1)?,
-                        title: r.get(2)?,
-                        summary: String::new(),
-                        body: r.get(3)?,
-                        created_at: r.get::<_, i64>(4)?.max(0) as u64,
-                        updated_at: r.get::<_, i64>(5)?.max(0) as u64,
-                    })
-                },
-            )
-            .optional()
-            .map_err(|e| e.to_string())
+                args![id],
+            )?
+            .map(|r| {
+                Ok(crate::pilot::Document {
+                    id: r.get(0)?,
+                    kind: r.get(1)?,
+                    title: r.get(2)?,
+                    summary: String::new(),
+                    body: r.get(3)?,
+                    created_at: r.get::<i64>(4)?.max(0) as u64,
+                    updated_at: r.get::<i64>(5)?.max(0) as u64,
+                })
+            })
+            .transpose()
     }
     /// Metadata comes from the saved conversation, in both indexed Pilot history
     /// and older sessions.blocks_json. No provider rollout is opened here.
@@ -136,15 +105,10 @@ impl Store {
             return Ok(None);
         }
         let original = self.persisted_session_id(id)?;
-        let indexed = super::shared::has_table(&self.conn, "pilot_transcripts")?
-            && self
-                .conn
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
-                    [&original],
-                    |r| r.get::<_, bool>(0),
-                )
-                .map_err(|e| e.to_string())?;
+        let indexed: bool = self.sql()?.value(
+            "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
+            args![&original],
+        )?;
         // Return only references and confirmed app receipts from SQLite. A Pilot
         // can have megabytes of prose/tools; none of that crosses this boundary.
         let source = if indexed {
@@ -161,14 +125,10 @@ impl Store {
             OR (json_extract(block,'$.role')='tool' AND json_extract(block,'$.tool.status') IN ('completed','success')
                 AND COALESCE(json_extract(block,'$.tool.preview.title'),json_extract(block,'$.tool.title'),json_extract(block,'$.text'),'') LIKE '%gespan%app%sessions.%') ORDER BY seq"#
         );
-        let mut statement = self.conn.prepare(&query).map_err(|e| e.to_string())?;
-        let values = statement
-            .query_map([&original], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?;
         let mut blocks = Vec::new();
-        for value in values {
+        for row in self.sql()?.query(&query, args![&original])? {
             blocks.push(
-                serde_json::from_str::<serde_json::Value>(&value.map_err(|e| e.to_string())?)
+                serde_json::from_str::<serde_json::Value>(&row.get::<String>(0)?)
                     .map_err(|e| e.to_string())?,
             );
         }
@@ -271,9 +231,8 @@ mod tests {
                 {"id":"user","role":"user","text":"Write it","artifactCards":[{"id":"existing-artifact","kind":"html","title":"Original title","summary":"Overview"}],"pilotSpawnedSessions":[{"sessionId":child_id,"cwd":"/old-project","title":"Launch title","harness":"claude","model":"opus"}]},
                 {"id":"assistant","role":"assistant","text":"Done"}
             ]);
-            store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,created_at,updated_at,content_kind,artifact_kind) VALUES('existing-artifact','existing-artifact','Saved title','<h1>Actual HTML</h1>','[]',10,20,'artifact','html')", []).unwrap();
+            store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,slug_pending,created_at,updated_at,content_kind,artifact_kind) VALUES('existing-artifact','existing-artifact','Saved title','<h1>Actual HTML</h1>','[]',0,10,20,'artifact','html')", []).unwrap();
             if indexed {
-                store.conn.execute_batch("CREATE TABLE pilot_transcripts(session_id TEXT PRIMARY KEY); CREATE TABLE pilot_blocks(session_id TEXT,seq INTEGER,block_json TEXT);").unwrap();
                 store
                     .conn
                     .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
@@ -282,11 +241,14 @@ mod tests {
                     store
                         .conn
                         .execute(
-                            "INSERT INTO pilot_blocks VALUES(?1,?2,?3)",
+                            "INSERT INTO pilot_blocks(session_id,seq,block_id,block_json,search_text,is_user,is_draft)
+                             VALUES(?1,?2,?3,?4,'',?5,0)",
                             rusqlite::params![
                                 original,
                                 i64::try_from(seq).unwrap(),
-                                block.to_string()
+                                block["id"].as_str().unwrap(),
+                                block.to_string(),
+                                block["role"] == "user"
                             ],
                         )
                         .unwrap();

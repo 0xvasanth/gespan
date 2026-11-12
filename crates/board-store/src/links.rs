@@ -1,12 +1,13 @@
 //! A card's links to sessions, pilots, runs, PRs, worktrees and tickets. The
 //! single link both apps show today (`link_card`) is the row with role
 //! `primary`; `board_cards.link_kind`/`link_id` mirror it for older readers.
+use crate::db::{args, err, execute, query, query_opt, with_db, with_tx, Conn, Ex, Row};
+use crate::models::{CardRow, LinkRow};
 use crate::ops::{
-    check_body, clean_text, create_card_in, db, get_card, log_activity, touch, write_tx,
-    NewActivity, LINK_KINDS, MAX_TITLE,
+    check_body, clean_text, create_card_in, get_card_in, log_activity, touch, NewActivity,
+    LINK_KINDS, MAX_TITLE,
 };
 use crate::{now_millis, Card};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 
 const MAX_REF: usize = 10_000;
@@ -24,15 +25,25 @@ pub struct CardLink {
     pub created_at: i64,
 }
 
-fn log_link(
-    tx: &rusqlite::Transaction<'_>,
+fn link_from_row(r: &Row) -> Result<CardLink, String> {
+    Ok(CardLink {
+        card_id: r.get(0)?,
+        kind: r.get(1)?,
+        reference: r.get(2)?,
+        role: r.get(3)?,
+        created_at: r.get(4)?,
+    })
+}
+
+async fn log_link(
+    ex: &mut Ex<'_>,
     board_id: &str,
     card_id: &str,
     kind: &str,
     detail: &str,
 ) -> Result<(), String> {
     log_activity(
-        tx,
+        ex,
         NewActivity {
             board_id,
             card_id: Some(card_id),
@@ -43,13 +54,14 @@ fn log_link(
             detail: Some(detail),
         },
     )
+    .await
 }
 
 /// Adds an extra link; adding one the card already has changes nothing.
 /// The primary link is set only through `link_card`, which keeps the legacy
 /// link columns in step. Returns the owning board id.
 pub fn add_link(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     kind: &str,
     reference: &str,
@@ -70,28 +82,29 @@ pub fn add_link(
     if role == Some(PRIMARY_ROLE) {
         return Err("Use link_card for the primary link".into());
     }
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    let added = tx
-        .execute(
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        let added = execute(
+            ex,
             "INSERT OR IGNORE INTO board_card_links (card_id, kind, ref, role, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![card_id, kind, reference, role, now_millis()],
+            args![card_id, kind, reference, role, now_millis()],
         )
-        .map_err(db)?;
-    if added == 0 {
-        return Ok(card.board_id);
-    }
-    touch(&tx, card_id)?;
-    log_link(
-        &tx,
-        &card.board_id,
-        card_id,
-        "linked",
-        &format!("{kind}:{reference}"),
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+        .await?;
+        if added == 0 {
+            return Ok(card.board_id);
+        }
+        touch(ex, card_id).await?;
+        log_link(
+            ex,
+            &card.board_id,
+            card_id,
+            "linked",
+            &format!("{kind}:{reference}"),
+        )
+        .await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Removes a link. The card's primary link (the legacy `link_kind`/`link_id`
@@ -101,135 +114,126 @@ pub fn add_link(
 /// `link_card`) leaves the primary in place, now as its `primary` row, the
 /// same state as setting the primary first. Returns the owning board id.
 pub fn remove_link(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     kind: &str,
     reference: &str,
 ) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    // `None`: no row; `Some(role)`: the row's role.
-    let row: Option<Option<String>> = tx
-        .query_row(
-            "SELECT role FROM board_card_links WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
-            params![card_id, kind, reference],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(db)?;
-    let is_primary =
-        card.link_kind.as_deref() == Some(kind) && card.link_id.as_deref() == Some(reference);
-    match &row {
-        None if !is_primary => return Ok(card.board_id),
-        // A ticket row is never turned into the primary link.
-        Some(role)
-            if is_primary
-                && role.as_deref() != Some(PRIMARY_ROLE)
-                && role.as_deref() != Some(TICKET_ROLE) =>
-        {
-            tx.execute(
-                "UPDATE board_card_links SET role = ?4
-                 WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
-                params![card_id, kind, reference, PRIMARY_ROLE],
-            )
-            .map_err(db)?;
-        }
-        Some(role) => {
-            tx.execute(
-                "DELETE FROM board_card_links WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
-                params![card_id, kind, reference],
-            )
-            .map_err(db)?;
-            if is_primary && role.as_deref() == Some(PRIMARY_ROLE) {
-                clear_primary_columns(&tx, card_id)?;
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        // `None`: no row; `Some(role)`: the row's role.
+        let row: Option<Option<String>> =
+            LinkRow::filter_by_card_id_and_kind_and_reference(card_id, kind, reference)
+                .first()
+                .exec(ex)
+                .await
+                .map_err(err)?
+                .map(|link| link.role);
+        let is_primary =
+            card.link_kind.as_deref() == Some(kind) && card.link_id.as_deref() == Some(reference);
+        match &row {
+            None if !is_primary => return Ok(card.board_id),
+            // A ticket row is never turned into the primary link.
+            Some(role)
+                if is_primary
+                    && role.as_deref() != Some(PRIMARY_ROLE)
+                    && role.as_deref() != Some(TICKET_ROLE) =>
+            {
+                execute(
+                    ex,
+                    "UPDATE board_card_links SET role = ?4
+                     WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
+                    args![card_id, kind, reference, PRIMARY_ROLE],
+                )
+                .await?;
             }
+            Some(role) => {
+                LinkRow::filter_by_card_id_and_kind_and_reference(card_id, kind, reference)
+                    .delete()
+                    .exec(ex)
+                    .await
+                    .map_err(err)?;
+                if is_primary && role.as_deref() == Some(PRIMARY_ROLE) {
+                    clear_primary_columns(ex, card_id).await?;
+                }
+            }
+            None => clear_primary_columns(ex, card_id).await?,
         }
-        None => clear_primary_columns(&tx, card_id)?,
-    }
-    touch(&tx, card_id)?;
-    log_link(
-        &tx,
-        &card.board_id,
-        card_id,
-        "unlinked",
-        &format!("{kind}:{reference}"),
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+        touch(ex, card_id).await?;
+        log_link(
+            ex,
+            &card.board_id,
+            card_id,
+            "unlinked",
+            &format!("{kind}:{reference}"),
+        )
+        .await?;
+        Ok(card.board_id)
+    })
 }
 
-fn clear_primary_columns(tx: &rusqlite::Transaction<'_>, card_id: &str) -> Result<(), String> {
-    tx.execute(
+async fn clear_primary_columns(ex: &mut Ex<'_>, card_id: &str) -> Result<(), String> {
+    execute(
+        ex,
         "UPDATE board_cards SET link_kind = NULL, link_id = NULL WHERE id = ?1",
-        [card_id],
+        args![card_id],
     )
+    .await
     .map(drop)
-    .map_err(db)
 }
 
-pub fn card_links(conn: &Connection, card_id: &str) -> Result<Vec<CardLink>, String> {
-    let mut statement = conn
-        .prepare(
+pub fn card_links(conn: &Conn, card_id: &str) -> Result<Vec<CardLink>, String> {
+    with_db!(conn, |ex| {
+        query(
+            ex,
             "SELECT card_id, kind, ref, role, created_at FROM board_card_links
              WHERE card_id = ?1 ORDER BY kind, ref",
+            args![card_id],
         )
-        .map_err(db)?;
-    let rows = statement
-        .query_map([card_id], |r| {
-            Ok(CardLink {
-                card_id: r.get(0)?,
-                kind: r.get(1)?,
-                reference: r.get(2)?,
-                role: r.get(3)?,
-                created_at: r.get(4)?,
-            })
-        })
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    rows
+        .await?
+        .iter()
+        .map(link_from_row)
+        .collect()
+    })
 }
 
 /// Every non-ticket link of the board's live cards: rows in
 /// `board_card_links` of a kind other than a tracker, plus a link an older
 /// build wrote only into the card's `link_kind`/`link_id` columns (as role
 /// `primary`). For link status chips and the running set.
-pub fn board_links(conn: &Connection, board_id: &str) -> Result<Vec<CardLink>, String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT l.card_id, l.kind, l.ref, l.role, l.created_at
-             FROM board_card_links l JOIN board_cards c ON c.id = l.card_id
-             WHERE c.board_id = ?1
-               AND l.kind NOT IN ('jira', 'linear', 'plane')
-               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
-                 WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
-             UNION ALL
-             SELECT c.id, c.link_kind, c.link_id, 'primary', c.updated_at
-             FROM board_cards c
-             WHERE c.board_id = ?1
-               AND c.link_kind IS NOT NULL AND c.link_id IS NOT NULL
-               AND c.link_kind NOT IN ('jira', 'linear', 'plane')
-               AND NOT EXISTS (SELECT 1 FROM board_card_links l
-                 WHERE l.card_id = c.id AND l.kind = c.link_kind AND l.ref = c.link_id)
-               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
-                 WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
-             ORDER BY 1, 2, 3",
-        )
-        .map_err(db)?;
-    let rows = statement
-        .query_map([board_id], |r| {
-            Ok(CardLink {
-                card_id: r.get(0)?,
-                kind: r.get(1)?,
-                reference: r.get(2)?,
-                role: r.get(3)?,
-                created_at: r.get(4)?,
-            })
-        })
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    rows
+pub(crate) async fn board_links_in(
+    ex: &mut Ex<'_>,
+    board_id: &str,
+) -> Result<Vec<CardLink>, String> {
+    query(
+        ex,
+        "SELECT l.card_id, l.kind, l.ref, l.role, l.created_at
+         FROM board_card_links l JOIN board_cards c ON c.id = l.card_id
+         WHERE c.board_id = ?1
+           AND l.kind NOT IN ('jira', 'linear', 'plane')
+           AND NOT EXISTS (SELECT 1 FROM board_card_meta m
+             WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
+         UNION ALL
+         SELECT c.id, c.link_kind, c.link_id, 'primary', c.updated_at
+         FROM board_cards c
+         WHERE c.board_id = ?1
+           AND c.link_kind IS NOT NULL AND c.link_id IS NOT NULL
+           AND c.link_kind NOT IN ('jira', 'linear', 'plane')
+           AND NOT EXISTS (SELECT 1 FROM board_card_links l
+             WHERE l.card_id = c.id AND l.kind = c.link_kind AND l.ref = c.link_id)
+           AND NOT EXISTS (SELECT 1 FROM board_card_meta m
+             WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
+         ORDER BY 1, 2, 3",
+        args![board_id],
+    )
+    .await?
+    .iter()
+    .map(link_from_row)
+    .collect()
+}
+
+pub fn board_links(conn: &Conn, board_id: &str) -> Result<Vec<CardLink>, String> {
+    with_db!(conn, |ex| board_links_in(ex, board_id).await)
 }
 
 const TICKET_KINDS: [&str; 3] = ["jira", "linear", "plane"];
@@ -261,79 +265,73 @@ fn ticket_identity(json: &str) -> Result<(String, String), String> {
     Ok((tracker.to_string(), key.to_string()))
 }
 
-/// The card's ticket link as `TicketRef` JSON, if it has one.
-pub fn ticket(conn: &Connection, card_id: &str) -> Result<Option<String>, String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT ref FROM board_card_links
-             WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')
-             ORDER BY created_at DESC, kind LIMIT 1",
-        )
-        .map_err(db)?;
-    let mut rows = statement.query([card_id]).map_err(db)?;
-    match rows.next().map_err(db)? {
-        Some(row) => Ok(Some(row.get(0).map_err(db)?)),
+async fn ticket_in(ex: &mut Ex<'_>, card_id: &str) -> Result<Option<String>, String> {
+    match query_opt(
+        ex,
+        "SELECT ref FROM board_card_links
+         WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')
+         ORDER BY created_at DESC, kind LIMIT 1",
+        args![card_id],
+    )
+    .await?
+    {
+        Some(row) => Ok(Some(row.get(0)?)),
         None => Ok(None),
     }
 }
 
+/// The card's ticket link as `TicketRef` JSON, if it has one.
+pub fn ticket(conn: &Conn, card_id: &str) -> Result<Option<String>, String> {
+    with_db!(conn, |ex| ticket_in(ex, card_id).await)
+}
+
 /// Every ticket link on the board as (card id, `TicketRef` JSON), for the
 /// card faces.
-pub fn board_tickets(conn: &Connection, board_id: &str) -> Result<Vec<(String, String)>, String> {
-    let mut statement = conn
-        .prepare(
+pub fn board_tickets(conn: &Conn, board_id: &str) -> Result<Vec<(String, String)>, String> {
+    with_db!(conn, |ex| {
+        query(
+            ex,
             "SELECT l.card_id, l.ref FROM board_card_links l
              JOIN board_cards c ON c.id = l.card_id
              WHERE c.board_id = ?1 AND l.role = 'ticket' AND l.kind IN ('jira', 'linear', 'plane')
              ORDER BY l.card_id",
+            args![board_id],
         )
-        .map_err(db)?;
-    let rows = statement
-        .query_map([board_id], |r| Ok((r.get(0)?, r.get(1)?)))
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    rows
+        .await?
+        .iter()
+        .map(|r| Ok((r.get(0)?, r.get(1)?)))
+        .collect()
+    })
 }
 
 /// Sets, replaces (`Some`) or removes (`None`) the card's one ticket link.
 /// Re-saving the same tracker and key only refreshes the stored snapshot: no
 /// activity row and no `updated_at` bump. Returns the owning board id.
-pub fn set_ticket(
-    conn: &Connection,
-    card_id: &str,
-    ticket_json: Option<&str>,
-) -> Result<String, String> {
+pub fn set_ticket(conn: &Conn, card_id: &str, ticket_json: Option<&str>) -> Result<String, String> {
     let wanted = ticket_json.map(ticket_identity).transpose()?;
-    let tx = write_tx(conn)?;
-    let board_id = set_ticket_in(&tx, card_id, ticket_json, wanted)?;
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+    with_tx!(conn, |ex| set_ticket_in(ex, card_id, ticket_json, wanted)
+        .await)
 }
 
 /// [`set_ticket`] inside the caller's write transaction, which it leaves
 /// uncommitted. `wanted` is `ticket_json`'s (tracker, key).
-fn set_ticket_in(
-    tx: &Transaction<'_>,
+async fn set_ticket_in(
+    ex: &mut Ex<'_>,
     card_id: &str,
     ticket_json: Option<&str>,
     wanted: Option<(String, String)>,
 ) -> Result<String, String> {
-    let card = get_card(tx, card_id)?;
-    let existing: Vec<(String, String)> = {
-        let mut statement = tx
-            .prepare(
-                "SELECT kind, ref FROM board_card_links
-                 WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
-            )
-            .map_err(db)?;
-        let rows = statement
-            .query_map([card_id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .map_err(db)?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(db)?;
-        rows
-    };
+    let card = get_card_in(ex, card_id).await?;
+    let existing: Vec<(String, String)> = query(
+        ex,
+        "SELECT kind, ref FROM board_card_links
+         WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
+        args![card_id],
+    )
+    .await?
+    .iter()
+    .map(|r| Ok((r.get(0)?, r.get(1)?)))
+    .collect::<Result<_, String>>()?;
     let same = |(kind, reference): &(String, String)| {
         wanted.as_ref().is_some_and(|(tracker, key)| {
             kind == tracker
@@ -342,47 +340,53 @@ fn set_ticket_in(
     };
     let mut changed = false;
     for row in existing.iter().filter(|row| !same(row)) {
-        tx.execute(
+        execute(
+            ex,
             "DELETE FROM board_card_links
              WHERE card_id = ?1 AND kind = ?2 AND ref = ?3 AND role = 'ticket'",
-            params![card_id, row.0, row.1],
+            args![card_id, &row.0, &row.1],
         )
-        .map_err(db)?;
+        .await?;
         changed = true;
     }
     if let (Some(json), Some((tracker, key))) = (ticket_json, wanted.as_ref()) {
         match existing.iter().find(|row| same(row)) {
             Some((_, old)) if old == json => {}
             Some((kind, old)) => {
-                tx.execute(
+                execute(
+                    ex,
                     "UPDATE board_card_links SET ref = ?1
                      WHERE card_id = ?2 AND kind = ?3 AND ref = ?4 AND role = 'ticket'",
-                    params![json, card_id, kind, old],
+                    args![json, card_id, kind, old],
                 )
-                .map_err(db)?;
+                .await?;
             }
             None => {
-                tx.execute(
-                    "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
-                     VALUES (?1, ?2, ?3, ?5, ?4)",
-                    params![card_id, tracker, json, now_millis(), TICKET_ROLE],
-                )
-                .map_err(db)?;
+                LinkRow::create()
+                    .card_id(card_id)
+                    .kind(tracker)
+                    .reference(json)
+                    .role(Some(TICKET_ROLE.to_string()))
+                    .created_at(now_millis())
+                    .exec(ex)
+                    .await
+                    .map_err(err)?;
                 log_link(
-                    tx,
+                    ex,
                     &card.board_id,
                     card_id,
                     "linked",
                     &format!("ticket: {key}"),
-                )?;
+                )
+                .await?;
                 changed = true;
             }
         }
     } else if changed {
-        log_link(tx, &card.board_id, card_id, "unlinked", "ticket removed")?;
+        log_link(ex, &card.board_id, card_id, "unlinked", "ticket removed").await?;
     }
     if changed {
-        touch(tx, card_id)?;
+        touch(ex, card_id).await?;
     }
     Ok(card.board_id)
 }
@@ -390,18 +394,17 @@ fn set_ticket_in(
 /// "New card from ticket": a card in `column_id` titled with the ticket's
 /// key, linked to the ticket and marked as titled from it, in one write.
 pub fn create_card_from_ticket(
-    conn: &Connection,
+    conn: &Conn,
     column_id: &str,
     ticket_json: &str,
 ) -> Result<Card, String> {
     let (tracker, key) = ticket_identity(ticket_json)?;
-    let tx = write_tx(conn)?;
-    let card = create_card_in(&tx, column_id, &key, "")?;
-    set_ticket_in(&tx, &card.id, Some(ticket_json), Some((tracker, key)))?;
-    mark_title_from_ticket(&tx, &card.id)?;
-    let card = get_card(&tx, &card.id)?;
-    tx.commit().map_err(db)?;
-    Ok(card)
+    with_tx!(conn, |ex| {
+        let card = create_card_in(ex, column_id, &key, "").await?;
+        set_ticket_in(ex, &card.id, Some(ticket_json), Some((tracker, key))).await?;
+        mark_title_from_ticket(ex, &card.id).await?;
+        get_card_in(ex, &card.id).await
+    })
 }
 
 /// Replaces a card's title with its ticket's fetched `title` while the card
@@ -410,110 +413,117 @@ pub fn create_card_from_ticket(
 /// card that no longer links the ticket, is left alone. Returns the owning
 /// board id and whether the title changed.
 pub fn retitle_card_from_ticket(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     key: &str,
     title: &str,
 ) -> Result<(String, bool), String> {
     let title = clean_text(title, "Card title", MAX_TITLE)?;
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    let linked = ticket(&tx, card_id)?
-        .and_then(|json| ticket_identity(&json).ok())
-        .is_some_and(|(_, linked_key)| linked_key == key);
-    if !linked || card.title != key {
-        return Ok((card.board_id, false));
-    }
-    if card.title != title {
-        tx.execute(
-            "UPDATE board_cards SET title = ?1, updated_at = ?2 WHERE id = ?3",
-            params![title, now_millis(), card_id],
-        )
-        .map_err(db)?;
-        log_activity(
-            &tx,
-            NewActivity {
-                board_id: &card.board_id,
-                card_id: Some(card_id),
-                kind: "edited",
-                actor: "user",
-                from_column: None,
-                to_column: None,
-                detail: None,
-            },
-        )?;
-    }
-    mark_title_from_ticket(&tx, card_id)?;
-    tx.commit().map_err(db)?;
-    Ok((card.board_id, card.title != title))
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        let linked = ticket_in(ex, card_id)
+            .await?
+            .and_then(|json| ticket_identity(&json).ok())
+            .is_some_and(|(_, linked_key)| linked_key == key);
+        if !linked || card.title != key {
+            return Ok((card.board_id, false));
+        }
+        if card.title != title {
+            execute(
+                ex,
+                "UPDATE board_cards SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                args![&title, now_millis(), card_id],
+            )
+            .await?;
+            log_activity(
+                ex,
+                NewActivity {
+                    board_id: &card.board_id,
+                    card_id: Some(card_id),
+                    kind: "edited",
+                    actor: "user",
+                    from_column: None,
+                    to_column: None,
+                    detail: None,
+                },
+            )
+            .await?;
+        }
+        mark_title_from_ticket(ex, card_id).await?;
+        Ok((card.board_id, card.title != title))
+    })
+}
+
+pub(crate) async fn title_from_ticket_in(ex: &mut Ex<'_>, card_id: &str) -> Result<bool, String> {
+    CardRow::filter_by_id(card_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .map(|card| card.title_from_ticket)
+        .ok_or_else(|| "Card not found".to_string())
 }
 
 /// Whether the card's title was copied from a ticket and not edited since.
-pub fn title_from_ticket(conn: &Connection, card_id: &str) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT title_from_ticket FROM board_cards WHERE id = ?1",
-        [card_id],
-        |r| r.get::<_, i64>(0),
-    )
-    .optional()
-    .map_err(db)?
-    .map(|flag| flag != 0)
-    .ok_or_else(|| "Card not found".to_string())
+pub fn title_from_ticket(conn: &Conn, card_id: &str) -> Result<bool, String> {
+    with_db!(conn, |ex| title_from_ticket_in(ex, card_id).await)
 }
 
 /// Sets a card's description to text from a tracker and marks it, so it only
 /// reaches an agent as untrusted text. Returns the owning board id.
-pub fn set_body_from_ticket(
-    conn: &Connection,
-    card_id: &str,
-    body: &str,
-) -> Result<String, String> {
+pub fn set_body_from_ticket(conn: &Conn, card_id: &str, body: &str) -> Result<String, String> {
     check_body(body)?;
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    tx.execute(
-        "UPDATE board_cards SET body = ?1, body_from_ticket = ?2, updated_at = ?3 WHERE id = ?4",
-        params![body, !body.trim().is_empty(), now_millis(), card_id],
-    )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        CardRow::filter_by_id(card_id)
+            .update()
+            .body(body)
+            .body_from_ticket(!body.trim().is_empty())
+            .updated_at(now_millis())
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        Ok(card.board_id)
+    })
+}
+
+pub(crate) async fn ticket_body_in(
+    ex: &mut Ex<'_>,
+    card_id: &str,
+) -> Result<Option<String>, String> {
+    let card = CardRow::filter_by_id(card_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .ok_or_else(|| "Card not found".to_string())?;
+    let body = card.body.trim();
+    Ok((card.body_from_ticket && !body.is_empty()).then(|| body.to_string()))
 }
 
 /// The card's trimmed description when it came from a tracker, for the caller
 /// to wrap as untrusted text; `None` when it is empty or the user's own.
-pub fn ticket_body(conn: &Connection, card_id: &str) -> Result<Option<String>, String> {
-    let (body, marked) = conn
-        .query_row(
-            "SELECT body, body_from_ticket FROM board_cards WHERE id = ?1",
-            [card_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? != 0)),
-        )
-        .optional()
-        .map_err(db)?
-        .ok_or_else(|| "Card not found".to_string())?;
-    let body = body.trim();
-    Ok((marked && !body.is_empty()).then(|| body.to_string()))
+pub fn ticket_body(conn: &Conn, card_id: &str) -> Result<Option<String>, String> {
+    with_db!(conn, |ex| ticket_body_in(ex, card_id).await)
 }
 
-fn mark_title_from_ticket(tx: &Transaction<'_>, card_id: &str) -> Result<(), String> {
-    tx.execute(
-        "UPDATE board_cards SET title_from_ticket = 1 WHERE id = ?1",
-        [card_id],
-    )
-    .map_err(db)
-    .map(drop)
+async fn mark_title_from_ticket(ex: &mut Ex<'_>, card_id: &str) -> Result<(), String> {
+    CardRow::filter_by_id(card_id)
+        .update()
+        .title_from_ticket(true)
+        .exec(ex)
+        .await
+        .map_err(err)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{create_board, create_card, ensure_tables, list_activity};
+    use crate::testing::{fresh, Fixture};
+    use crate::{create_board, create_card, list_activity};
 
-    fn setup() -> (Connection, String, String) {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        ensure_tables(&conn).unwrap();
+    fn setup() -> (Fixture, String, String) {
+        let conn = fresh();
         let board = create_board(&conn, "Work").unwrap();
         let column = crate::get_board(&conn, &board.id).unwrap().columns[0]
             .id
@@ -529,7 +539,7 @@ mod tests {
         }
     }
 
-    fn details(conn: &Connection, board: &str, card: &str) -> Vec<String> {
+    fn details(conn: &Fixture, board: &str, card: &str) -> Vec<String> {
         let mut rows: Vec<String> = list_activity(conn, board, Some(card), 50)
             .unwrap()
             .into_iter()
@@ -599,13 +609,15 @@ mod tests {
     #[test]
     fn linking_and_unlinking_touch_updated_at() {
         let (conn, _, card) = setup();
-        conn.execute(
-            "UPDATE board_cards SET updated_at = 1 WHERE id = ?1",
-            [&card],
-        )
-        .unwrap();
+        conn.raw()
+            .execute(
+                "UPDATE board_cards SET updated_at = 1 WHERE id = ?1",
+                [&card],
+            )
+            .unwrap();
         set_ticket(&conn, &card, Some(&json("jira", "ABC-1", None))).unwrap();
         let after_link: i64 = conn
+            .raw()
             .query_row(
                 "SELECT updated_at FROM board_cards WHERE id = ?1",
                 [&card],
@@ -613,13 +625,15 @@ mod tests {
             )
             .unwrap();
         assert!(after_link > 1);
-        conn.execute(
-            "UPDATE board_cards SET updated_at = 1 WHERE id = ?1",
-            [&card],
-        )
-        .unwrap();
+        conn.raw()
+            .execute(
+                "UPDATE board_cards SET updated_at = 1 WHERE id = ?1",
+                [&card],
+            )
+            .unwrap();
         set_ticket(&conn, &card, None).unwrap();
         let after_remove: i64 = conn
+            .raw()
             .query_row(
                 "SELECT updated_at FROM board_cards WHERE id = ?1",
                 [&card],
@@ -683,17 +697,19 @@ mod tests {
     fn ticket_queries_ignore_rows_that_are_not_ticket_links() {
         let (conn, board, card) = setup();
         // A row an older build or another writer left: tracker kind, plain key.
-        conn.execute(
-            "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+        conn.raw()
+            .execute(
+                "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
              VALUES (?1, 'jira', 'ABC-1', 'primary', 1)",
-            [&card],
-        )
-        .unwrap();
-        conn.execute(
-            "UPDATE board_cards SET link_kind = 'jira', link_id = 'ABC-1' WHERE id = ?1",
-            [&card],
-        )
-        .unwrap();
+                [&card],
+            )
+            .unwrap();
+        conn.raw()
+            .execute(
+                "UPDATE board_cards SET link_kind = 'jira', link_id = 'ABC-1' WHERE id = ?1",
+                [&card],
+            )
+            .unwrap();
         assert_eq!(ticket(&conn, &card).unwrap(), None);
         assert!(board_tickets(&conn, &board).unwrap().is_empty());
         let mine = json("jira", "ABC-2", None);

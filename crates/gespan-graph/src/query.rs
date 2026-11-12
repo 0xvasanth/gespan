@@ -8,12 +8,12 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
-use rusqlite::{params, Connection, ToSql};
+use toasty::Executor;
 
 use crate::error::GraphError;
 use crate::key::{EdgeId, NodeId, NodeKey};
 use crate::kind::{EdgeKind, NodeKind};
-use crate::store::GraphStore;
+use crate::store::{query, GraphStore};
 use crate::time::Timestamp;
 
 /// Per-node fan-out caps. `per_start` edges are expanded at the start,
@@ -144,7 +144,12 @@ fn limit(k: u32) -> i64 {
 /// The `k` best qualifying edges incident to `node`: the top `k` of each
 /// direction, merged and cut to `k`, which is exact because the top `k` of a
 /// union lies inside the union of the two top-`k` lists.
-fn expand(conn: &Connection, node: i64, k: u32, as_of: AsOf) -> Result<Vec<Cand>, GraphError> {
+async fn expand(
+    ex: &mut dyn Executor,
+    node: i64,
+    k: u32,
+    as_of: AsOf,
+) -> Result<Vec<Cand>, GraphError> {
     let mut cands = Vec::new();
     if k == 0 {
         return Ok(cands);
@@ -154,18 +159,17 @@ fn expand(conn: &Connection, node: i64, k: u32, as_of: AsOf) -> Result<Vec<Cand>
         AsOf::At(_) => (OUT_AT, IN_AT),
     };
     for sql in [out, inn] {
-        let mut stmt = conn.prepare_cached(sql)?;
-        let mut rows = match as_of {
-            AsOf::Now => stmt.query(params![node, limit(k)])?,
-            AsOf::At(t) => stmt.query(params![node, limit(k), t.as_millis()])?,
-        };
-        while let Some(r) = rows.next()? {
+        let mut statement = toasty::sql::query(sql).bind(node).bind(limit(k));
+        if let AsOf::At(t) = as_of {
+            statement = statement.bind(t.as_millis());
+        }
+        for mut r in query(ex, statement).await? {
             cands.push(Cand {
-                edge: EdgeId(r.get(0)?),
-                nb: r.get(1)?,
-                kind: r.get::<_, String>(2)?.parse()?,
-                valid_from: r.get(3)?,
-                valid_to: r.get(4)?,
+                edge: EdgeId(r.i64()?),
+                nb: r.i64()?,
+                kind: r.string()?.parse()?,
+                valid_from: r.i64()?,
+                valid_to: r.opt_i64()?,
             });
         }
     }
@@ -174,23 +178,25 @@ fn expand(conn: &Connection, node: i64, k: u32, as_of: AsOf) -> Result<Vec<Cand>
     Ok(cands)
 }
 
-/// `(kind, key, label)` for each id, in one statement.
-fn labels(
-    conn: &Connection,
+/// `(kind, key, label)` for each id, in one statement (`json_each`: raw SQL).
+async fn labels(
+    ex: &mut dyn Executor,
     ids: impl Iterator<Item = i64>,
 ) -> Result<BTreeMap<i64, (NodeKind, NodeKey, String)>, GraphError> {
     let ids = serde_json::to_string(&ids.collect::<Vec<_>>())?;
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, kind, key, label FROM graph_nodes WHERE id IN (SELECT value FROM json_each(?1))",
-    )?;
-    let mut rows = stmt.query([ids])?;
+    let rows = query(
+        ex,
+        toasty::sql::query(
+            "SELECT id, kind, key, label FROM graph_nodes WHERE id IN (SELECT value FROM json_each(?1))",
+        )
+        .bind(ids),
+    )
+    .await?;
     let mut out = BTreeMap::new();
-    while let Some(r) = rows.next()? {
-        let kind: NodeKind = r.get::<_, String>(1)?.parse()?;
-        out.insert(
-            r.get(0)?,
-            (kind, NodeKey::new(r.get::<_, String>(2)?)?, r.get(3)?),
-        );
+    for mut r in rows {
+        let id = r.i64()?;
+        let kind: NodeKind = r.string()?.parse()?;
+        out.insert(id, (kind, NodeKey::new(r.string()?)?, r.string()?));
     }
     Ok(out)
 }
@@ -199,14 +205,17 @@ fn labels(
 /// parameter), as a subquery: the same ranking as [`expand`].
 fn top_k(node: &str, k: &str, at: bool, only: bool) -> String {
     let valid = if at {
-        "valid_from <= :t AND (valid_to IS NULL OR valid_to > :t)"
+        format!("valid_from <= {T} AND (valid_to IS NULL OR valid_to > {T})")
     } else {
-        "valid_to IS NULL"
+        "valid_to IS NULL".to_string()
     };
     let kinds = if only {
-        " AND kind IN (SELECT value FROM json_each(:kinds))"
+        format!(
+            " AND kind IN (SELECT value FROM json_each({}))",
+            kinds_param(at)
+        )
     } else {
-        ""
+        String::new()
     };
     format!(
         "SELECT id FROM (
@@ -221,6 +230,24 @@ fn top_k(node: &str, k: &str, at: bool, only: bool) -> String {
     )
 }
 
+// `reachable`'s numbered parameters. `?6` (the as-of time) is there only for
+// `At`, and the kinds take the next number, since SQLite counts parameters up
+// to the highest one used and every one must be bound.
+const START: &str = "?1";
+const PER_START: &str = "?2";
+const PER_HOP: &str = "?3";
+const HOPS: &str = "?4";
+const TOTAL: &str = "?5";
+const T: &str = "?6";
+
+fn kinds_param(at: bool) -> &'static str {
+    if at {
+        "?7"
+    } else {
+        "?6"
+    }
+}
+
 /// One of the four fixed `reachable` statements (`{Now, At} × {All, Only}`).
 ///
 /// Hop 1 is seeded in a non-recursive term with `:per_start`; the recursive
@@ -230,24 +257,24 @@ fn top_k(node: &str, k: &str, at: bool, only: bool) -> String {
 /// otherwise a hop-1 node's edge back to it would put it at depth 2 and
 /// expand it with `per_hop`, reporting direct neighbours at hops 3.
 fn reachable_sql(at: bool, only: bool) -> String {
-    let seed = top_k(":start", ":per_start", at, only);
-    let step = top_k("walk.node", ":per_hop", at, only);
+    let seed = top_k(START, PER_START, at, only);
+    let step = top_k("walk.node", PER_HOP, at, only);
     format!(
         "WITH RECURSIVE walk(node, depth) AS (
-           SELECT :start, 0
+           SELECT {START}, 0
            UNION
-           SELECT CASE WHEN e.src = :start THEN e.dst ELSE e.src END, 1
+           SELECT CASE WHEN e.src = {START} THEN e.dst ELSE e.src END, 1
              FROM graph_edges e WHERE e.id IN ({seed})
            UNION
            SELECT CASE WHEN e.src = walk.node THEN e.dst ELSE e.src END, walk.depth + 1
              FROM walk JOIN graph_edges e ON e.id IN ({step})
-            WHERE walk.depth >= 1 AND walk.depth < :hops AND walk.node <> :start)
+            WHERE walk.depth >= 1 AND walk.depth < {HOPS} AND walk.node <> {START})
          SELECT w.node, MIN(w.depth) AS d, n.kind, n.key, n.label
            FROM walk w JOIN graph_nodes n ON n.id = w.node
-          WHERE w.node <> :start
+          WHERE w.node <> {START}
           GROUP BY w.node
           ORDER BY d, w.node
-          LIMIT :total"
+          LIMIT {TOTAL}"
     )
 }
 
@@ -269,7 +296,6 @@ impl GraphStore {
         caps: Caps,
         as_of: AsOf,
     ) -> Result<Vec<Hit>, GraphError> {
-        let conn = &self.conn;
         let mut best: BTreeMap<i64, (u8, Cand)> = BTreeMap::new();
         let offer = |best: &mut BTreeMap<i64, (u8, Cand)>, hops: u8, c: Cand| {
             if c.nb == start.0 {
@@ -283,21 +309,26 @@ impl GraphStore {
                 best.insert(c.nb, (hops, c));
             }
         };
-        let first = expand(conn, start.0, caps.per_start, as_of)?;
-        for c in &first {
-            offer(&mut best, 1, *c);
-        }
-        let hop1: BTreeSet<i64> = first.iter().map(|c| c.nb).collect();
-        for m in hop1 {
-            for c in expand(conn, m, caps.per_hop, as_of)? {
-                offer(&mut best, 2, c);
+        // One wait for the whole query; its statements run back to back on
+        // the one connection.
+        let (found, mut names) = self.read(|mut db| async move {
+            let first = expand(&mut db, start.0, caps.per_start, as_of).await?;
+            for c in &first {
+                offer(&mut best, 1, *c);
             }
-        }
-        let mut found: Vec<(i64, u8, Cand)> =
-            best.into_iter().map(|(n, (h, c))| (n, h, c)).collect();
-        found.sort_by_key(|(n, _, c)| (Reverse(c.valid_from), *n));
-        found.truncate(caps.total as usize);
-        let mut names = labels(conn, found.iter().map(|(n, _, _)| *n))?;
+            let hop1: BTreeSet<i64> = first.iter().map(|c| c.nb).collect();
+            for m in hop1 {
+                for c in expand(&mut db, m, caps.per_hop, as_of).await? {
+                    offer(&mut best, 2, c);
+                }
+            }
+            let mut found: Vec<(i64, u8, Cand)> =
+                best.into_iter().map(|(n, (h, c))| (n, h, c)).collect();
+            found.sort_by_key(|(n, _, c)| (Reverse(c.valid_from), *n));
+            found.truncate(caps.total as usize);
+            let names = labels(&mut db, found.iter().map(|(n, _, _)| *n)).await?;
+            Ok((found, names))
+        })?;
         let mut hits = Vec::with_capacity(found.len());
         for (n, hops, c) in found {
             // A node deleted under us between statements has no label; skip it.
@@ -344,37 +375,27 @@ impl GraphStore {
                 &kinds.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
             )?),
         };
-        let mut stmt = self
-            .conn
-            .prepare_cached(&reachable_sql(at, kinds.is_some()))?;
-        let (per_start, per_hop, total) = (
-            limit(caps.per_start),
-            limit(caps.per_hop),
-            limit(caps.total),
-        );
-        let depth = i64::from(hops.get());
-        let mut args: Vec<(&str, &dyn ToSql)> = vec![
-            (":start", &start.0),
-            (":per_start", &per_start),
-            (":per_hop", &per_hop),
-            (":hops", &depth),
-            (":total", &total),
-        ];
-        if let Some(t) = &t {
-            args.push((":t", t));
+        let mut statement = toasty::sql::query(reachable_sql(at, kinds.is_some()))
+            .bind(start.0)
+            .bind(limit(caps.per_start))
+            .bind(limit(caps.per_hop))
+            .bind(i64::from(hops.get()))
+            .bind(limit(caps.total));
+        if let Some(t) = t {
+            statement = statement.bind(t);
         }
-        if let Some(kinds) = &kinds {
-            args.push((":kinds", kinds));
+        if let Some(kinds) = kinds {
+            statement = statement.bind(kinds);
         }
-        let mut rows = stmt.query(args.as_slice())?;
-        let mut out = Vec::new();
-        while let Some(r) = rows.next()? {
+        let rows = self.read(|mut db| async move { query(&mut db, statement).await })?;
+        let mut out = Vec::with_capacity(rows.len());
+        for mut r in rows {
             out.push(Reached {
-                node: NodeId(r.get(0)?),
-                hops: u8::try_from(r.get::<_, i64>(1)?).unwrap_or(u8::MAX),
-                kind: r.get::<_, String>(2)?.parse()?,
-                key: NodeKey::new(r.get::<_, String>(3)?)?,
-                label: r.get(4)?,
+                node: NodeId(r.i64()?),
+                hops: u8::try_from(r.i64()?).unwrap_or(u8::MAX),
+                kind: r.string()?.parse()?,
+                key: NodeKey::new(r.string()?)?,
+                label: r.string()?,
             });
         }
         Ok(out)

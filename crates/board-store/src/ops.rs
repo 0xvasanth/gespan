@@ -1,6 +1,7 @@
+use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex, Row};
 use crate::links::TICKET_KIND_ERROR;
+use crate::models::{ActivityRow, BoardRow, CardRow, ColumnRow};
 use crate::{now_millis, Activity, Board, BoardDetail, Card, Column};
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use uuid::Uuid;
 
 pub(crate) const MAX_NAME: usize = 200;
@@ -21,6 +22,9 @@ const PRIMARY: &str = "primary";
 /// column's order; live cards keep positions 0..n-1 without them.
 pub(crate) const LIVE: &str = "NOT EXISTS (SELECT 1 FROM board_card_meta m
    WHERE m.card_id = board_cards.id AND m.archived_at IS NOT NULL)";
+/// The `board_cards` columns [`card_from_row`] reads, in its order.
+pub(crate) const CARD_COLUMNS: &str =
+    "id, board_id, column_id, number, title, body, position, link_kind, link_id, created_at, updated_at";
 const ACTORS: [&str; 2] = ["user", "system"];
 /// Kinds `board_card_record` may append. Every other kind is written by the
 /// mutation that causes it.
@@ -32,10 +36,6 @@ const RECORD_KINDS: [&str; 6] = [
     "pr_opened",
     "pr_merged",
 ];
-
-pub fn db(error: rusqlite::Error) -> String {
-    error.to_string()
-}
 
 pub fn new_id() -> String {
     Uuid::new_v4().to_string()
@@ -66,74 +66,103 @@ fn check_role(role: Option<&str>) -> Result<(), String> {
     }
 }
 
-pub(crate) fn card_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Card> {
+/// A card from a row of [`CARD_COLUMNS`].
+pub(crate) fn card_from_row(mut row: Row) -> Result<Card, String> {
     Ok(Card {
-        id: row.get("id")?,
-        board_id: row.get("board_id")?,
-        column_id: row.get("column_id")?,
-        number: row.get("number")?,
-        title: row.get("title")?,
-        body: row.get("body")?,
-        position: row.get("position")?,
-        link_kind: row.get("link_kind")?,
-        link_id: row.get("link_id")?,
-        created_at: row.get("created_at")?,
-        updated_at: row.get("updated_at")?,
+        id: row.take(0)?,
+        board_id: row.take(1)?,
+        column_id: row.take(2)?,
+        number: row.take(3)?,
+        title: row.take(4)?,
+        body: row.take(5)?,
+        position: row.take(6)?,
+        link_kind: row.take(7)?,
+        link_id: row.take(8)?,
+        created_at: row.take(9)?,
+        updated_at: row.take(10)?,
     })
 }
 
-fn column_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Column> {
-    Ok(Column {
-        id: row.get("id")?,
-        board_id: row.get("board_id")?,
-        name: row.get("name")?,
-        position: row.get("position")?,
-        role: row.get("role")?,
-        color: row.get("color")?,
-        wip_limit: row.get("wip_limit")?,
-        collapsed: row.get::<_, i64>("collapsed")? != 0,
-    })
+pub(crate) fn cards_from_rows(rows: Vec<Row>) -> Result<Vec<Card>, String> {
+    rows.into_iter().map(card_from_row).collect()
 }
 
-fn board_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Board> {
-    Ok(Board {
-        id: row.get("id")?,
-        name: row.get("name")?,
-        created_at: row.get("created_at")?,
-        updated_at: row.get("updated_at")?,
-    })
+impl From<CardRow> for Card {
+    fn from(row: CardRow) -> Self {
+        Card {
+            id: row.id,
+            board_id: row.board_id,
+            column_id: row.column_id,
+            number: row.number,
+            title: row.title,
+            body: row.body,
+            position: row.position,
+            link_kind: row.link_kind,
+            link_id: row.link_id,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
 }
 
-pub fn get_card(conn: &Connection, card_id: &str) -> Result<Card, String> {
-    conn.query_row(
-        "SELECT * FROM board_cards WHERE id = ?1",
-        [card_id],
-        card_from_row,
-    )
-    .optional()
-    .map_err(db)?
-    .ok_or_else(|| "Card not found".to_string())
+impl From<ColumnRow> for Column {
+    fn from(row: ColumnRow) -> Self {
+        Column {
+            id: row.id,
+            board_id: row.board_id,
+            name: row.name,
+            position: row.position,
+            role: row.role,
+            color: row.color,
+            wip_limit: row.wip_limit,
+            collapsed: row.collapsed,
+        }
+    }
 }
 
-pub(crate) fn get_column(conn: &Connection, column_id: &str) -> Result<Column, String> {
-    conn.query_row(
-        "SELECT * FROM board_columns WHERE id = ?1",
-        [column_id],
-        column_from_row,
-    )
-    .optional()
-    .map_err(db)?
-    .ok_or_else(|| "Column not found".to_string())
+impl From<BoardRow> for Board {
+    fn from(row: BoardRow) -> Self {
+        Board {
+            id: row.id,
+            name: row.name,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
 }
 
-fn board_exists(conn: &Connection, board_id: &str) -> Result<(), String> {
-    let found: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM boards WHERE id = ?1)",
-            [board_id],
-            |row| row.get(0),
-        )
-        .map_err(db)?;
+/// The card, inside a job.
+pub(crate) async fn get_card_in(ex: &mut Ex<'_>, card_id: &str) -> Result<Card, String> {
+    CardRow::filter_by_id(card_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .map(Card::from)
+        .ok_or_else(|| "Card not found".to_string())
+}
+
+pub fn get_card(conn: &Conn, card_id: &str) -> Result<Card, String> {
+    with_db!(conn, |ex| get_card_in(ex, card_id).await)
+}
+
+pub(crate) async fn get_column(ex: &mut Ex<'_>, column_id: &str) -> Result<Column, String> {
+    ColumnRow::filter_by_id(column_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .map(Column::from)
+        .ok_or_else(|| "Column not found".to_string())
+}
+
+async fn board_exists(ex: &mut Ex<'_>, board_id: &str) -> Result<(), String> {
+    let found = BoardRow::filter_by_id(board_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .is_some();
     if found {
         Ok(())
     } else {
@@ -142,49 +171,56 @@ fn board_exists(conn: &Connection, board_id: &str) -> Result<(), String> {
 }
 
 /// The column's live cards in order.
-pub(crate) fn column_card_ids(conn: &Connection, column_id: &str) -> Result<Vec<String>, String> {
-    let mut statement = conn
-        .prepare(&format!(
+pub(crate) async fn column_card_ids(
+    ex: &mut Ex<'_>,
+    column_id: &str,
+) -> Result<Vec<String>, String> {
+    query(
+        ex,
+        &format!(
             "SELECT id FROM board_cards WHERE column_id = ?1 AND {LIVE} ORDER BY position, number"
-        ))
-        .map_err(db)?;
-    let ids = statement
-        .query_map([column_id], |row| row.get(0))
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<String>>>()
-        .map_err(db)?;
-    Ok(ids)
+        ),
+        args![column_id],
+    )
+    .await?
+    .iter()
+    .map(|row| row.get(0))
+    .collect()
 }
 
-fn board_column_ids(conn: &Connection, board_id: &str) -> Result<Vec<String>, String> {
-    let mut statement = conn
-        .prepare("SELECT id FROM board_columns WHERE board_id = ?1 ORDER BY position, rowid")
-        .map_err(db)?;
-    let ids = statement
-        .query_map([board_id], |row| row.get(0))
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<String>>>()
-        .map_err(db)?;
-    Ok(ids)
+async fn board_column_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, String> {
+    query(
+        ex,
+        "SELECT id FROM board_columns WHERE board_id = ?1 ORDER BY position, rowid",
+        args![board_id],
+    )
+    .await?
+    .iter()
+    .map(|row| row.get(0))
+    .collect()
 }
 
 /// Rewrite positions to 0..n-1 in the given order.
-pub(crate) fn write_card_positions(tx: &Transaction<'_>, ids: &[String]) -> Result<(), String> {
-    let mut statement = tx
-        .prepare("UPDATE board_cards SET position = ?1 WHERE id = ?2 AND position <> ?1")
-        .map_err(db)?;
+pub(crate) async fn write_card_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        statement.execute(params![index as i64, id]).map_err(db)?;
+        execute(
+            ex,
+            "UPDATE board_cards SET position = ?1 WHERE id = ?2 AND position <> ?1",
+            args![index as i64, id],
+        )
+        .await?;
     }
     Ok(())
 }
 
-fn write_column_positions(tx: &Transaction<'_>, ids: &[String]) -> Result<(), String> {
-    let mut statement = tx
-        .prepare("UPDATE board_columns SET position = ?1 WHERE id = ?2 AND position <> ?1")
-        .map_err(db)?;
+async fn write_column_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        statement.execute(params![index as i64, id]).map_err(db)?;
+        execute(
+            ex,
+            "UPDATE board_columns SET position = ?1 WHERE id = ?2 AND position <> ?1",
+            args![index as i64, id],
+        )
+        .await?;
     }
     Ok(())
 }
@@ -199,34 +235,35 @@ pub struct NewActivity<'a> {
     pub detail: Option<&'a str>,
 }
 
-pub(crate) fn is_archived(conn: &Connection, card_id: &str) -> Result<bool, String> {
-    conn.query_row(
+pub(crate) async fn is_archived(ex: &mut Ex<'_>, card_id: &str) -> Result<bool, String> {
+    query_value(
+        ex,
         "SELECT EXISTS(SELECT 1 FROM board_card_meta WHERE card_id = ?1 AND archived_at IS NOT NULL)",
-        [card_id],
-        |row| row.get(0),
+        args![card_id],
     )
-    .map_err(db)
+    .await
 }
 
 /// Bumps the card's `updated_at`, for edits that live in other tables.
-pub(crate) fn touch(tx: &Transaction<'_>, card_id: &str) -> Result<(), String> {
-    tx.execute(
+pub(crate) async fn touch(ex: &mut Ex<'_>, card_id: &str) -> Result<(), String> {
+    execute(
+        ex,
         "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
-        params![now_millis(), card_id],
+        args![now_millis(), card_id],
     )
+    .await
     .map(drop)
-    .map_err(db)
 }
 
 /// One `edited` row by the user saying what changed.
-pub(crate) fn log_edit(
-    tx: &Transaction<'_>,
+pub(crate) async fn log_edit(
+    ex: &mut Ex<'_>,
     board_id: &str,
     card_id: &str,
     detail: &str,
 ) -> Result<(), String> {
     log_activity(
-        tx,
+        ex,
         NewActivity {
             board_id,
             card_id: Some(card_id),
@@ -237,31 +274,28 @@ pub(crate) fn log_edit(
             detail: Some(detail),
         },
     )
+    .await
 }
 
-pub fn log_activity(tx: &Transaction<'_>, entry: NewActivity<'_>) -> Result<(), String> {
-    tx.execute(
-        "INSERT INTO board_activity
-           (id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![
-            new_id(),
-            entry.board_id,
-            entry.card_id,
-            entry.kind,
-            entry.actor,
-            entry.from_column,
-            entry.to_column,
-            entry.detail,
-            now_millis(),
-        ],
-    )
-    .map_err(db)?;
+pub async fn log_activity(ex: &mut Ex<'_>, entry: NewActivity<'_>) -> Result<(), String> {
+    ActivityRow::create()
+        .id(new_id())
+        .board_id(entry.board_id)
+        .card_id(entry.card_id.map(str::to_string))
+        .kind(entry.kind)
+        .actor(entry.actor)
+        .moved_from(entry.from_column.map(str::to_string))
+        .to_column(entry.to_column.map(str::to_string))
+        .detail(entry.detail.map(str::to_string))
+        .created_at(now_millis())
+        .exec(ex)
+        .await
+        .map_err(err)?;
     Ok(())
 }
 
-fn ensure_role_free(
-    tx: &Transaction<'_>,
+async fn ensure_role_free(
+    ex: &mut Ex<'_>,
     board_id: &str,
     role: Option<&str>,
     except_column: Option<&str>,
@@ -270,14 +304,13 @@ fn ensure_role_free(
     let Some(role) = role else {
         return Ok(());
     };
-    let taken: bool = tx
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM board_columns
-               WHERE board_id = ?1 AND role = ?2 AND id <> ?3)",
-            params![board_id, role, except_column.unwrap_or("")],
-            |row| row.get(0),
-        )
-        .map_err(db)?;
+    let taken: bool = query_value(
+        ex,
+        "SELECT EXISTS(SELECT 1 FROM board_columns
+           WHERE board_id = ?1 AND role = ?2 AND id <> ?3)",
+        args![board_id, role, except_column.unwrap_or("")],
+    )
+    .await?;
     if taken {
         return Err(format!(
             "Another column on this board already has the {role} role"
@@ -286,50 +319,72 @@ fn ensure_role_free(
     Ok(())
 }
 
-pub fn list_boards(conn: &Connection) -> Result<Vec<Board>, String> {
-    let mut statement = conn
-        .prepare("SELECT * FROM boards ORDER BY created_at, rowid")
-        .map_err(db)?;
-    let boards = statement
-        .query_map([], board_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
-    Ok(boards)
+pub fn list_boards(conn: &Conn) -> Result<Vec<Board>, String> {
+    with_db!(conn, |ex| {
+        query(
+            ex,
+            "SELECT id, name, created_at, updated_at FROM boards ORDER BY created_at, rowid",
+            args![],
+        )
+        .await?
+        .iter()
+        .map(|row| {
+            Ok(Board {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                created_at: row.get(2)?,
+                updated_at: row.get(3)?,
+            })
+        })
+        .collect()
+    })
 }
 
 /// The board's columns in order, without reading its cards.
-pub(crate) fn board_columns(conn: &Connection, board_id: &str) -> Result<Vec<Column>, String> {
-    let columns = conn
-        .prepare("SELECT * FROM board_columns WHERE board_id = ?1 ORDER BY position, rowid")
-        .map_err(db)?
-        .query_map([board_id], column_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    columns
+pub(crate) async fn board_columns(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<Column>, String> {
+    query(
+        ex,
+        "SELECT id, board_id, name, position, role, color, wip_limit, collapsed
+         FROM board_columns WHERE board_id = ?1 ORDER BY position, rowid",
+        args![board_id],
+    )
+    .await?
+    .iter()
+    .map(|row| {
+        Ok(Column {
+            id: row.get(0)?,
+            board_id: row.get(1)?,
+            name: row.get(2)?,
+            position: row.get(3)?,
+            role: row.get(4)?,
+            color: row.get(5)?,
+            wip_limit: row.get(6)?,
+            collapsed: row.get(7)?,
+        })
+    })
+    .collect()
 }
 
-pub fn get_board(conn: &Connection, board_id: &str) -> Result<BoardDetail, String> {
-    let board = conn
-        .query_row(
-            "SELECT * FROM boards WHERE id = ?1",
-            [board_id],
-            board_from_row,
-        )
-        .optional()
-        .map_err(db)?
+pub(crate) async fn get_board_in(ex: &mut Ex<'_>, board_id: &str) -> Result<BoardDetail, String> {
+    let board = BoardRow::filter_by_id(board_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .map(Board::from)
         .ok_or_else(|| "Board not found".to_string())?;
-    let columns = board_columns(conn, board_id)?;
-    let cards = conn
-        .prepare(&format!(
-            "SELECT * FROM board_cards WHERE board_id = ?1 AND {LIVE} ORDER BY position, number"
-        ))
-        .map_err(db)?
-        .query_map([board_id], card_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
+    let columns = board_columns(ex, board_id).await?;
+    let cards = cards_from_rows(
+        query(
+            ex,
+            &format!(
+                "SELECT {CARD_COLUMNS} FROM board_cards WHERE board_id = ?1 AND {LIVE}
+                 ORDER BY position, number"
+            ),
+            args![board_id],
+        )
+        .await?,
+    )?;
     Ok(BoardDetail {
         board,
         columns,
@@ -337,214 +392,187 @@ pub fn get_board(conn: &Connection, board_id: &str) -> Result<BoardDetail, Strin
     })
 }
 
-/// Board writes take SQLite's write lock before reading what they change, so a
-/// second app (or connection) writing the same board waits out `busy_timeout`
-/// instead of failing at once or acting on rows read before the other write.
-pub fn write_tx(conn: &Connection) -> Result<Transaction<'_>, String> {
-    Transaction::new_unchecked(conn, TransactionBehavior::Immediate).map_err(db)
+pub fn get_board(conn: &Conn, board_id: &str) -> Result<BoardDetail, String> {
+    with_db!(conn, |ex| get_board_in(ex, board_id).await)
 }
 
 /// A board with the four default columns (the "blank" template).
-pub fn create_board(conn: &Connection, name: &str) -> Result<Board, String> {
+pub fn create_board(conn: &Conn, name: &str) -> Result<Board, String> {
     let name = clean_text(name, "Board name", MAX_NAME)?;
-    let tx = write_tx(conn)?;
-    let board = crate::templates::create_blank(&tx, &name)?;
-    tx.commit().map_err(db)?;
-    Ok(board)
+    with_tx!(conn, |ex| crate::templates::create_blank(ex, &name).await)
 }
 
-pub fn rename_board(conn: &Connection, board_id: &str, name: &str) -> Result<(), String> {
+pub fn rename_board(conn: &Conn, board_id: &str, name: &str) -> Result<(), String> {
     let name = clean_text(name, "Board name", MAX_NAME)?;
-    let changed = conn
-        .execute(
+    let changed = with_db!(conn, |ex| {
+        execute(
+            ex,
             "UPDATE boards SET name = ?1, updated_at = ?2 WHERE id = ?3",
-            params![name, now_millis(), board_id],
+            args![name, now_millis(), board_id],
         )
-        .map_err(db)?;
+        .await
+    })?;
     if changed == 0 {
         return Err("Board not found".into());
     }
     Ok(())
 }
 
-pub fn delete_board(conn: &Connection, board_id: &str) -> Result<(), String> {
-    conn.execute("DELETE FROM boards WHERE id = ?1", [board_id])
-        .map_err(db)?;
-    Ok(())
+/// Deletes the board; everything on it goes with it (`boards_cascade`).
+pub fn delete_board(conn: &Conn, board_id: &str) -> Result<(), String> {
+    with_db!(conn, |ex| {
+        BoardRow::filter_by_id(board_id)
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)
+    })
 }
 
 pub fn create_column(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     name: &str,
     role: Option<&str>,
 ) -> Result<Column, String> {
     let name = clean_text(name, "Column name", MAX_NAME)?;
-    let tx = write_tx(conn)?;
-    board_exists(&tx, board_id)?;
-    ensure_role_free(&tx, board_id, role, None)?;
-    let position: i64 = tx
-        .query_row(
+    with_tx!(conn, |ex| {
+        board_exists(ex, board_id).await?;
+        ensure_role_free(ex, board_id, role, None).await?;
+        let position: i64 = query_value(
+            ex,
             "SELECT COUNT(*) FROM board_columns WHERE board_id = ?1",
-            [board_id],
-            |row| row.get(0),
+            args![board_id],
         )
-        .map_err(db)?;
-    let column = Column {
-        id: new_id(),
-        board_id: board_id.to_string(),
-        name,
-        position,
-        role: role.map(str::to_string),
-        color: None,
-        wip_limit: None,
-        collapsed: false,
-    };
-    tx.execute(
-        "INSERT INTO board_columns (id, board_id, name, position, role)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            column.id,
-            column.board_id,
-            column.name,
-            column.position,
-            column.role
-        ],
-    )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
-    Ok(column)
+        .await?;
+        ColumnRow::create()
+            .id(new_id())
+            .board_id(board_id)
+            .name(name)
+            .position(position)
+            .role(role.map(str::to_string))
+            .color(None::<String>)
+            .wip_limit(None::<i64>)
+            .collapsed(false)
+            .exec(ex)
+            .await
+            .map(Column::from)
+            .map_err(err)
+    })
 }
 
 /// Returns the owning board id.
 pub fn update_column(
-    conn: &Connection,
+    conn: &Conn,
     column_id: &str,
     name: &str,
     role: Option<&str>,
 ) -> Result<String, String> {
     let name = clean_text(name, "Column name", MAX_NAME)?;
-    let tx = write_tx(conn)?;
-    let column = get_column(&tx, column_id)?;
-    ensure_role_free(&tx, &column.board_id, role, Some(column_id))?;
-    tx.execute(
-        "UPDATE board_columns SET name = ?1, role = ?2 WHERE id = ?3",
-        params![name, role, column_id],
-    )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
-    Ok(column.board_id)
-}
-
-/// Returns the owning board id.
-pub fn move_column(conn: &Connection, column_id: &str, index: usize) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let column = get_column(&tx, column_id)?;
-    let mut ids = board_column_ids(&tx, &column.board_id)?;
-    ids.retain(|id| id != column_id);
-    ids.insert(index.min(ids.len()), column_id.to_string());
-    write_column_positions(&tx, &ids)?;
-    tx.commit().map_err(db)?;
-    Ok(column.board_id)
-}
-
-/// Returns the owning board id.
-pub fn delete_column(conn: &Connection, column_id: &str) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let column = get_column(&tx, column_id)?;
-    let cards: i64 = tx
-        .query_row(
-            "SELECT COUNT(*) FROM board_cards WHERE column_id = ?1",
-            [column_id],
-            |row| row.get(0),
+    with_tx!(conn, |ex| {
+        let column = get_column(ex, column_id).await?;
+        ensure_role_free(ex, &column.board_id, role, Some(column_id)).await?;
+        execute(
+            ex,
+            "UPDATE board_columns SET name = ?1, role = ?2 WHERE id = ?3",
+            args![name, role, column_id],
         )
-        .map_err(db)?;
-    if cards > 0 {
-        let plural = if cards == 1 { "card" } else { "cards" };
-        return Err(format!("Column has {cards} {plural}"));
-    }
-    tx.execute("DELETE FROM board_columns WHERE id = ?1", [column_id])
-        .map_err(db)?;
-    let ids = board_column_ids(&tx, &column.board_id)?;
-    write_column_positions(&tx, &ids)?;
-    tx.commit().map_err(db)?;
-    Ok(column.board_id)
+        .await?;
+        Ok(column.board_id)
+    })
 }
 
-pub fn create_card(
-    conn: &Connection,
-    column_id: &str,
-    title: &str,
-    body: &str,
-) -> Result<Card, String> {
-    let tx = write_tx(conn)?;
-    let card = create_card_in(&tx, column_id, title, body)?;
-    tx.commit().map_err(db)?;
-    Ok(card)
+/// Returns the owning board id.
+pub fn move_column(conn: &Conn, column_id: &str, index: usize) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let column = get_column(ex, column_id).await?;
+        let mut ids = board_column_ids(ex, &column.board_id).await?;
+        ids.retain(|id| id != column_id);
+        ids.insert(index.min(ids.len()), column_id.to_string());
+        write_column_positions(ex, &ids).await?;
+        Ok(column.board_id)
+    })
+}
+
+/// Returns the owning board id.
+pub fn delete_column(conn: &Conn, column_id: &str) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let column = get_column(ex, column_id).await?;
+        let cards: i64 = query_value(
+            ex,
+            "SELECT COUNT(*) FROM board_cards WHERE column_id = ?1",
+            args![column_id],
+        )
+        .await?;
+        if cards > 0 {
+            let plural = if cards == 1 { "card" } else { "cards" };
+            return Err(format!("Column has {cards} {plural}"));
+        }
+        ColumnRow::filter_by_id(column_id)
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        let ids = board_column_ids(ex, &column.board_id).await?;
+        write_column_positions(ex, &ids).await?;
+        Ok(column.board_id)
+    })
+}
+
+pub fn create_card(conn: &Conn, column_id: &str, title: &str, body: &str) -> Result<Card, String> {
+    with_tx!(conn, |ex| create_card_in(ex, column_id, title, body).await)
 }
 
 /// [`create_card`] inside the caller's write transaction, which it leaves
 /// uncommitted.
-pub(crate) fn create_card_in(
-    tx: &Transaction<'_>,
+pub(crate) async fn create_card_in(
+    ex: &mut Ex<'_>,
     column_id: &str,
     title: &str,
     body: &str,
 ) -> Result<Card, String> {
     let title = clean_text(title, "Card title", MAX_TITLE)?;
     check_body(body)?;
-    let column = get_column(tx, column_id)?;
-    tx.execute(
+    let column = get_column(ex, column_id).await?;
+    execute(
+        ex,
         "UPDATE boards SET card_seq = card_seq + 1 WHERE id = ?1",
-        [&column.board_id],
+        args![&column.board_id],
     )
-    .map_err(db)?;
-    let number: i64 = tx
-        .query_row(
-            "SELECT card_seq FROM boards WHERE id = ?1",
-            [&column.board_id],
-            |row| row.get(0),
-        )
-        .map_err(db)?;
-    let position: i64 = tx
-        .query_row(
-            &format!("SELECT COUNT(*) FROM board_cards WHERE column_id = ?1 AND {LIVE}"),
-            [column_id],
-            |row| row.get(0),
-        )
-        .map_err(db)?;
+    .await?;
+    let number: i64 = query_value(
+        ex,
+        "SELECT card_seq FROM boards WHERE id = ?1",
+        args![&column.board_id],
+    )
+    .await?;
+    let position: i64 = query_value(
+        ex,
+        &format!("SELECT COUNT(*) FROM board_cards WHERE column_id = ?1 AND {LIVE}"),
+        args![column_id],
+    )
+    .await?;
     let now = now_millis();
-    let card = Card {
-        id: new_id(),
-        board_id: column.board_id.clone(),
-        column_id: column.id.clone(),
-        number,
-        title,
-        body: body.to_string(),
-        position,
-        link_kind: None,
-        link_id: None,
-        created_at: now,
-        updated_at: now,
-    };
-    tx.execute(
-        "INSERT INTO board_cards
-           (id, board_id, column_id, number, title, body, position, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-        params![
-            card.id,
-            card.board_id,
-            card.column_id,
-            card.number,
-            card.title,
-            card.body,
-            card.position,
-            now,
-        ],
-    )
-    .map_err(db)?;
+    let card: Card = CardRow::create()
+        .id(new_id())
+        .board_id(&column.board_id)
+        .column_id(&column.id)
+        .number(number)
+        .title(title)
+        .body(body)
+        .position(position)
+        .link_kind(None::<String>)
+        .link_id(None::<String>)
+        .created_at(now)
+        .updated_at(now)
+        .title_from_ticket(false)
+        .body_from_ticket(false)
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into();
     log_activity(
-        tx,
+        ex,
         NewActivity {
             board_id: &card.board_id,
             card_id: Some(&card.id),
@@ -554,54 +582,52 @@ pub(crate) fn create_card_in(
             to_column: Some(&column.name),
             detail: None,
         },
-    )?;
+    )
+    .await?;
     Ok(card)
 }
 
 /// Returns the owning board id.
-pub fn update_card(
-    conn: &Connection,
-    card_id: &str,
-    title: &str,
-    body: &str,
-) -> Result<String, String> {
+pub fn update_card(conn: &Conn, card_id: &str, title: &str, body: &str) -> Result<String, String> {
     let title = clean_text(title, "Card title", MAX_TITLE)?;
     check_body(body)?;
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    if card.title == title && card.body == body {
-        return Ok(card.board_id);
-    }
-    // A title the user edits is theirs, so it no longer counts as ticket
-    // text; a body-only edit leaves the mark as it was. A description stays
-    // marked as ticket text until it is emptied, since an edit can keep it.
-    tx.execute(
-        "UPDATE board_cards SET title = ?1, body = ?2, updated_at = ?3,
-           title_from_ticket = CASE WHEN title = ?1 THEN title_from_ticket ELSE 0 END,
-           body_from_ticket = CASE WHEN trim(?2) = '' THEN 0 ELSE body_from_ticket END
-         WHERE id = ?4",
-        params![title, body, now_millis(), card_id],
-    )
-    .map_err(db)?;
-    log_activity(
-        &tx,
-        NewActivity {
-            board_id: &card.board_id,
-            card_id: Some(card_id),
-            kind: "edited",
-            actor: "user",
-            from_column: None,
-            to_column: None,
-            detail: None,
-        },
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        if card.title == title && card.body == body {
+            return Ok(card.board_id);
+        }
+        // A title the user edits is theirs, so it no longer counts as ticket
+        // text; a body-only edit leaves the mark as it was. A description stays
+        // marked as ticket text until it is emptied, since an edit can keep it.
+        execute(
+            ex,
+            "UPDATE board_cards SET title = ?1, body = ?2, updated_at = ?3,
+               title_from_ticket = CASE WHEN title = ?1 THEN title_from_ticket ELSE 0 END,
+               body_from_ticket = CASE WHEN trim(?2) = '' THEN 0 ELSE body_from_ticket END
+             WHERE id = ?4",
+            args![title, body, now_millis(), card_id],
+        )
+        .await?;
+        log_activity(
+            ex,
+            NewActivity {
+                board_id: &card.board_id,
+                card_id: Some(card_id),
+                kind: "edited",
+                actor: "user",
+                from_column: None,
+                to_column: None,
+                detail: None,
+            },
+        )
+        .await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Returns the owning board id.
 pub fn move_card(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     column_id: &str,
     index: usize,
@@ -610,31 +636,31 @@ pub fn move_card(
     if !ACTORS.contains(&actor) {
         return Err(format!("Unknown actor: {actor}"));
     }
-    let tx = write_tx(conn)?;
-    let board_id = move_card_in(&tx, card_id, column_id, index, actor)?;
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+    with_tx!(conn, |ex| move_card_in(
+        ex, card_id, column_id, index, actor
+    )
+    .await)
 }
 
 /// [`move_card`] inside the caller's write transaction, which it leaves
 /// uncommitted. `actor` is not checked here.
-pub(crate) fn move_card_in(
-    tx: &Transaction<'_>,
+pub(crate) async fn move_card_in(
+    ex: &mut Ex<'_>,
     card_id: &str,
     column_id: &str,
     index: usize,
     actor: &str,
 ) -> Result<String, String> {
-    let card = get_card(tx, card_id)?;
-    if is_archived(tx, card_id)? {
+    let card = get_card_in(ex, card_id).await?;
+    if is_archived(ex, card_id).await? {
         return Err("Card is archived".into());
     }
-    let target = get_column(tx, column_id)?;
+    let target = get_column(ex, column_id).await?;
     if target.board_id != card.board_id {
         return Err("Column not on this board".into());
     }
     let same_column = card.column_id == column_id;
-    let mut target_ids = column_card_ids(tx, column_id)?;
+    let mut target_ids = column_card_ids(ex, column_id).await?;
     let old_index = target_ids.iter().position(|id| id == card_id);
     target_ids.retain(|id| id != card_id);
     let new_index = index.min(target_ids.len());
@@ -643,25 +669,22 @@ pub(crate) fn move_card_in(
     }
     target_ids.insert(new_index, card_id.to_string());
 
-    let source = get_column(tx, &card.column_id)?;
+    let source = get_column(ex, &card.column_id).await?;
     if !same_column {
-        tx.execute(
+        execute(
+            ex,
             "UPDATE board_cards SET column_id = ?1 WHERE id = ?2",
-            params![column_id, card_id],
+            args![column_id, card_id],
         )
-        .map_err(db)?;
-        let mut source_ids = column_card_ids(tx, &card.column_id)?;
+        .await?;
+        let mut source_ids = column_card_ids(ex, &card.column_id).await?;
         source_ids.retain(|id| id != card_id);
-        write_card_positions(tx, &source_ids)?;
+        write_card_positions(ex, &source_ids).await?;
     }
-    write_card_positions(tx, &target_ids)?;
-    tx.execute(
-        "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
-        params![now_millis(), card_id],
-    )
-    .map_err(db)?;
+    write_card_positions(ex, &target_ids).await?;
+    touch(ex, card_id).await?;
     log_activity(
-        tx,
+        ex,
         NewActivity {
             board_id: &card.board_id,
             card_id: Some(card_id),
@@ -671,13 +694,14 @@ pub(crate) fn move_card_in(
             to_column: Some(&target.name),
             detail: None,
         },
-    )?;
+    )
+    .await?;
     Ok(card.board_id)
 }
 
 /// Passing `None` for both unlinks. Returns the owning board id.
 pub fn link_card(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     link_kind: Option<&str>,
     link_id: Option<&str>,
@@ -698,92 +722,95 @@ pub fn link_card(
         (None, None) => None,
         _ => return Err("A link needs both a kind and an id".into()),
     };
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    let previous = card.link_kind.as_deref().zip(card.link_id.as_deref());
-    if previous == link {
-        return Ok(card.board_id);
-    }
-    let (kind, detail) = match (link, previous) {
-        (Some((kind, id)), _) => ("linked", format!("{kind}:{id}")),
-        (None, Some((kind, id))) => ("unlinked", format!("{kind}:{id}")),
-        // Unlinking an unlinked card equals `previous == link`, handled above.
-        (None, None) => return Ok(card.board_id),
-    };
-    let now = now_millis();
-    tx.execute(
-        "UPDATE board_cards SET link_kind = ?1, link_id = ?2, updated_at = ?3 WHERE id = ?4",
-        params![link.map(|l| l.0), link.map(|l| l.1), now, card_id],
-    )
-    .map_err(db)?;
-    tx.execute(
-        "DELETE FROM board_card_links WHERE card_id = ?1 AND role = ?2",
-        params![card_id, PRIMARY],
-    )
-    .map_err(db)?;
-    // A link the card already has as an extra link stays an extra link: if
-    // it were promoted, unlinking would delete the row the user added.
-    if let Some((kind, id)) = link {
-        tx.execute(
-            "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT (card_id, kind, ref) DO NOTHING",
-            params![card_id, kind, id, PRIMARY, now],
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        let previous = card.link_kind.as_deref().zip(card.link_id.as_deref());
+        if previous == link {
+            return Ok(card.board_id);
+        }
+        let (kind, detail) = match (link, previous) {
+            (Some((kind, id)), _) => ("linked", format!("{kind}:{id}")),
+            (None, Some((kind, id))) => ("unlinked", format!("{kind}:{id}")),
+            // Unlinking an unlinked card equals `previous == link`, handled above.
+            (None, None) => return Ok(card.board_id),
+        };
+        let now = now_millis();
+        execute(
+            ex,
+            "UPDATE board_cards SET link_kind = ?1, link_id = ?2, updated_at = ?3 WHERE id = ?4",
+            args![link.map(|l| l.0), link.map(|l| l.1), now, card_id],
         )
-        .map_err(db)?;
-    }
-    log_activity(
-        &tx,
-        NewActivity {
-            board_id: &card.board_id,
-            card_id: Some(card_id),
-            kind,
-            actor: "user",
-            from_column: None,
-            to_column: None,
-            detail: Some(&detail),
-        },
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+        .await?;
+        execute(
+            ex,
+            "DELETE FROM board_card_links WHERE card_id = ?1 AND role = ?2",
+            args![card_id, PRIMARY],
+        )
+        .await?;
+        // A link the card already has as an extra link stays an extra link: if
+        // it were promoted, unlinking would delete the row the user added.
+        if let Some((kind, id)) = link {
+            execute(
+                ex,
+                "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (card_id, kind, ref) DO NOTHING",
+                args![card_id, kind, id, PRIMARY, now],
+            )
+            .await?;
+        }
+        log_activity(
+            ex,
+            NewActivity {
+                board_id: &card.board_id,
+                card_id: Some(card_id),
+                kind,
+                actor: "user",
+                from_column: None,
+                to_column: None,
+                detail: Some(&detail),
+            },
+        )
+        .await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Returns the owning board id.
-pub fn delete_card(conn: &Connection, card_id: &str) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    delete_card_in(&tx, &card)?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+pub fn delete_card(conn: &Conn, card_id: &str) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        delete_card_in(ex, &card).await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Deletes the card only while it is still archived, all in one write
 /// transaction, so a card another app restored meanwhile is never deleted.
 /// Returns the owning board id when it deleted the card, `None` when the card
 /// is live again or already gone.
-pub fn delete_archived_card(conn: &Connection, card_id: &str) -> Result<Option<String>, String> {
-    let tx = write_tx(conn)?;
-    let card = match get_card(&tx, card_id) {
-        Ok(card) => card,
-        Err(error) if error == "Card not found" => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    if !is_archived(&tx, card_id)? {
-        return Ok(None);
-    }
-    delete_card_in(&tx, &card)?;
-    tx.commit().map_err(db)?;
-    Ok(Some(card.board_id))
+pub fn delete_archived_card(conn: &Conn, card_id: &str) -> Result<Option<String>, String> {
+    with_tx!(conn, |ex| {
+        let card = match get_card_in(ex, card_id).await {
+            Ok(card) => card,
+            Err(error) if error == "Card not found" => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if !is_archived(ex, card_id).await? {
+            return Ok(None);
+        }
+        delete_card_in(ex, &card).await?;
+        Ok(Some(card.board_id))
+    })
 }
 
 /// Logs the tombstone, deletes the card and closes its column's gap.
-fn delete_card_in(tx: &Transaction<'_>, card: &Card) -> Result<(), String> {
-    let card_id = card.id.as_str();
-    let column = get_column(tx, &card.column_id)?;
+async fn delete_card_in(ex: &mut Ex<'_>, card: &Card) -> Result<(), String> {
+    let column = get_column(ex, &card.column_id).await?;
     // The tombstone has no card_id: the card's own rows cascade away with it.
     let detail = format!("#{} {}", card.number, card.title);
     log_activity(
-        tx,
+        ex,
         NewActivity {
             board_id: &card.board_id,
             card_id: None,
@@ -793,55 +820,64 @@ fn delete_card_in(tx: &Transaction<'_>, card: &Card) -> Result<(), String> {
             to_column: None,
             detail: Some(&detail),
         },
-    )?;
-    tx.execute("DELETE FROM board_cards WHERE id = ?1", [card_id])
-        .map_err(db)?;
-    let ids = column_card_ids(tx, &card.column_id)?;
-    write_card_positions(tx, &ids)
+    )
+    .await?;
+    CardRow::filter_by_id(&card.id)
+        .delete()
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    let ids = column_card_ids(ex, &card.column_id).await?;
+    write_card_positions(ex, &ids).await
 }
 
-pub fn cards_for_link(
-    conn: &Connection,
+pub(crate) async fn cards_for_link_in(
+    ex: &mut Ex<'_>,
     link_kind: &str,
     link_id: &str,
 ) -> Result<Vec<Card>, String> {
     // The link columns are read too, for links an older build wrote after the
     // v3 migration copied them.
-    let mut statement = conn
-        .prepare(&format!(
-            "SELECT * FROM board_cards
-             WHERE (id IN (SELECT card_id FROM board_card_links WHERE kind = ?1 AND ref = ?2)
-                    OR (link_kind = ?1 AND link_id = ?2))
-               AND {LIVE}
-             ORDER BY board_id, number"
-        ))
-        .map_err(db)?;
-    let cards = statement
-        .query_map(params![link_kind, link_id], card_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
-    Ok(cards)
+    cards_from_rows(
+        query(
+            ex,
+            &format!(
+                "SELECT {CARD_COLUMNS} FROM board_cards
+                 WHERE (id IN (SELECT card_id FROM board_card_links WHERE kind = ?1 AND ref = ?2)
+                        OR (link_kind = ?1 AND link_id = ?2))
+                   AND {LIVE}
+                 ORDER BY board_id, number"
+            ),
+            args![link_kind, link_id],
+        )
+        .await?,
+    )
+}
+
+pub fn cards_for_link(conn: &Conn, link_kind: &str, link_id: &str) -> Result<Vec<Card>, String> {
+    with_db!(conn, |ex| cards_for_link_in(ex, link_kind, link_id).await)
 }
 
 pub fn list_activity(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     card_id: Option<&str>,
     limit: usize,
 ) -> Result<Vec<Activity>, String> {
     let limit = limit.clamp(1, MAX_ACTIVITY) as i64;
-    let mut statement = conn
-        .prepare(
+    with_db!(conn, |ex| {
+        query(
+            ex,
             "SELECT id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at
              FROM board_activity
              WHERE board_id = ?1 AND (?2 IS NULL OR card_id = ?2)
              ORDER BY created_at DESC, rowid DESC
              LIMIT ?3",
+            args![board_id, card_id, limit],
         )
-        .map_err(db)?;
-    let rows = statement
-        .query_map(params![board_id, card_id, limit], |row| {
+        .await?
+        .iter()
+        .map(|row| {
             Ok(Activity {
                 id: row.get(0)?,
                 board_id: row.get(1)?,
@@ -854,15 +890,13 @@ pub fn list_activity(
                 created_at: row.get(8)?,
             })
         })
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
-    Ok(rows)
+        .collect()
+    })
 }
 
 /// Appends a `system` row without touching the card. Returns the owning board id.
 pub fn record_card(
-    conn: &Connection,
+    conn: &Conn,
     card_id: &str,
     kind: &str,
     detail: Option<&str>,
@@ -870,29 +904,30 @@ pub fn record_card(
     if !RECORD_KINDS.contains(&kind) {
         return Err(format!("Cannot record activity kind: {kind}"));
     }
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    log_activity(
-        &tx,
-        NewActivity {
-            board_id: &card.board_id,
-            card_id: Some(card_id),
-            kind,
-            actor: "system",
-            from_column: None,
-            to_column: None,
-            detail,
-        },
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        log_activity(
+            ex,
+            NewActivity {
+                board_id: &card.board_id,
+                card_id: Some(card_id),
+                kind,
+                actor: "system",
+                from_column: None,
+                to_column: None,
+                detail,
+            },
+        )
+        .await?;
+        Ok(card.board_id)
+    })
 }
 
 /// Moves several cards into one column at `index`, keeping the order given.
 /// Writes one `moved` row per card whose column or position changed. Returns
 /// the owning board id.
 pub fn move_cards(
-    conn: &Connection,
+    conn: &Conn,
     card_ids: &[String],
     column_id: &str,
     index: usize,
@@ -901,86 +936,89 @@ pub fn move_cards(
     if !ACTORS.contains(&actor) {
         return Err(format!("Unknown actor: {actor}"));
     }
-    let tx = write_tx(conn)?;
-    let target = get_column(&tx, column_id)?;
-    let mut moving: Vec<Card> = Vec::new();
-    for card_id in card_ids {
-        if moving.iter().any(|card| &card.id == card_id) {
-            continue;
+    with_tx!(conn, |ex| {
+        let target = get_column(ex, column_id).await?;
+        let mut moving: Vec<Card> = Vec::new();
+        for card_id in card_ids {
+            if moving.iter().any(|card| &card.id == card_id) {
+                continue;
+            }
+            let card = get_card_in(ex, card_id).await?;
+            if card.board_id != target.board_id {
+                return Err("Column not on this board".into());
+            }
+            if is_archived(ex, card_id).await? {
+                return Err("Card is archived".into());
+            }
+            moving.push(card);
         }
-        let card = get_card(&tx, card_id)?;
-        if card.board_id != target.board_id {
-            return Err("Column not on this board".into());
+        if moving.is_empty() {
+            return Ok(target.board_id);
         }
-        if is_archived(&tx, card_id)? {
-            return Err("Card is archived".into());
-        }
-        moving.push(card);
-    }
-    if moving.is_empty() {
-        return Ok(target.board_id);
-    }
-    let mut target_ids = column_card_ids(&tx, column_id)?;
-    target_ids.retain(|id| moving.iter().all(|card| &card.id != id));
-    let at = index.min(target_ids.len());
-    target_ids.splice(at..at, moving.iter().map(|card| card.id.clone()));
+        let mut target_ids = column_card_ids(ex, column_id).await?;
+        target_ids.retain(|id| moving.iter().all(|card| &card.id != id));
+        let at = index.min(target_ids.len());
+        target_ids.splice(at..at, moving.iter().map(|card| card.id.clone()));
 
-    let mut sources: Vec<&str> = Vec::new();
-    for card in &moving {
-        if card.column_id != column_id && !sources.contains(&card.column_id.as_str()) {
-            sources.push(&card.column_id);
+        let mut sources: Vec<String> = Vec::new();
+        for card in &moving {
+            if card.column_id != column_id && !sources.contains(&card.column_id) {
+                sources.push(card.column_id.clone());
+            }
         }
-    }
-    tx.execute(
-        &format!(
-            "UPDATE board_cards SET column_id = ?1 WHERE id IN ({})",
-            vec!["?"; moving.len()].join(", ")
-        ),
-        rusqlite::params_from_iter(
-            std::iter::once(column_id).chain(moving.iter().map(|card| card.id.as_str())),
-        ),
-    )
-    .map_err(db)?;
-    for source in &sources {
-        let ids = column_card_ids(&tx, source)?;
-        write_card_positions(&tx, &ids)?;
-    }
-    write_card_positions(&tx, &target_ids)?;
-
-    let now = now_millis();
-    for card in &moving {
-        let position = target_ids.iter().position(|id| id == &card.id).unwrap_or(0) as i64;
-        if card.column_id == column_id && card.position == position {
-            continue;
-        }
-        let source = get_column(&tx, &card.column_id)?;
-        tx.execute(
-            "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
-            params![now, card.id],
+        let mut params = args![column_id];
+        params.extend(moving.iter().map(|card| crate::db::Arg::from(&card.id)));
+        execute(
+            ex,
+            &format!(
+                "UPDATE board_cards SET column_id = ?1 WHERE id IN ({})",
+                vec!["?"; moving.len()].join(", ")
+            ),
+            params,
         )
-        .map_err(db)?;
-        log_activity(
-            &tx,
-            NewActivity {
-                board_id: &card.board_id,
-                card_id: Some(&card.id),
-                kind: "moved",
-                actor,
-                from_column: Some(&source.name),
-                to_column: Some(&target.name),
-                detail: None,
-            },
-        )?;
-    }
-    tx.commit().map_err(db)?;
-    Ok(target.board_id)
+        .await?;
+        for source in &sources {
+            let ids = column_card_ids(ex, source).await?;
+            write_card_positions(ex, &ids).await?;
+        }
+        write_card_positions(ex, &target_ids).await?;
+
+        let now = now_millis();
+        for card in &moving {
+            let position = target_ids.iter().position(|id| id == &card.id).unwrap_or(0) as i64;
+            if card.column_id == column_id && card.position == position {
+                continue;
+            }
+            let source = get_column(ex, &card.column_id).await?;
+            execute(
+                ex,
+                "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
+                args![now, &card.id],
+            )
+            .await?;
+            log_activity(
+                ex,
+                NewActivity {
+                    board_id: &card.board_id,
+                    card_id: Some(&card.id),
+                    kind: "moved",
+                    actor,
+                    from_column: Some(&source.name),
+                    to_column: Some(&target.name),
+                    detail: None,
+                },
+            )
+            .await?;
+        }
+        Ok(target.board_id)
+    })
 }
 
 /// Sets how a column looks: its colour (six hex digits), WIP limit and
 /// collapsed state, all three together. Returns the owning board id. Kept
 /// for templates; an edit from the UI uses [`update_column_display`].
 pub fn set_column_display(
-    conn: &Connection,
+    conn: &Conn,
     column_id: &str,
     color: Option<&str>,
     wip_limit: Option<i64>,
@@ -992,15 +1030,16 @@ pub fn set_column_display(
     if wip_limit.is_some_and(|limit| limit < 1) {
         return Err("A WIP limit must be at least 1".into());
     }
-    let tx = write_tx(conn)?;
-    let column = get_column(&tx, column_id)?;
-    tx.execute(
-        "UPDATE board_columns SET color = ?1, wip_limit = ?2, collapsed = ?3 WHERE id = ?4",
-        params![color, wip_limit, i64::from(collapsed), column_id],
-    )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
-    Ok(column.board_id)
+    with_tx!(conn, |ex| {
+        let column = get_column(ex, column_id).await?;
+        execute(
+            ex,
+            "UPDATE board_columns SET color = ?1, wip_limit = ?2, collapsed = ?3 WHERE id = ?4",
+            args![color, wip_limit, collapsed, column_id],
+        )
+        .await?;
+        Ok(column.board_id)
+    })
 }
 
 /// The column display fields to change. `None` leaves a field as it is;
@@ -1033,7 +1072,7 @@ where
 /// one app never resets a colour or WIP limit the other app just set. The
 /// checks are those of [`set_column_display`]. Returns the column after.
 pub fn update_column_display(
-    conn: &Connection,
+    conn: &Conn,
     column_id: &str,
     patch: &ColumnDisplayPatch,
 ) -> Result<Column, String> {
@@ -1045,32 +1084,34 @@ pub fn update_column_display(
             return Err("A WIP limit must be at least 1".into());
         }
     }
-    let tx = write_tx(conn)?;
-    get_column(&tx, column_id)?;
-    if let Some(color) = &patch.color {
-        tx.execute(
-            "UPDATE board_columns SET color = ?1 WHERE id = ?2",
-            params![color, column_id],
-        )
-        .map_err(db)?;
-    }
-    if let Some(limit) = patch.wip_limit {
-        tx.execute(
-            "UPDATE board_columns SET wip_limit = ?1 WHERE id = ?2",
-            params![limit, column_id],
-        )
-        .map_err(db)?;
-    }
-    if let Some(collapsed) = patch.collapsed {
-        tx.execute(
-            "UPDATE board_columns SET collapsed = ?1 WHERE id = ?2",
-            params![i64::from(collapsed), column_id],
-        )
-        .map_err(db)?;
-    }
-    let column = get_column(&tx, column_id)?;
-    tx.commit().map_err(db)?;
-    Ok(column)
+    with_tx!(conn, |ex| {
+        get_column(ex, column_id).await?;
+        if let Some(color) = &patch.color {
+            execute(
+                ex,
+                "UPDATE board_columns SET color = ?1 WHERE id = ?2",
+                args![color.as_deref(), column_id],
+            )
+            .await?;
+        }
+        if let Some(limit) = patch.wip_limit {
+            execute(
+                ex,
+                "UPDATE board_columns SET wip_limit = ?1 WHERE id = ?2",
+                args![limit, column_id],
+            )
+            .await?;
+        }
+        if let Some(collapsed) = patch.collapsed {
+            execute(
+                ex,
+                "UPDATE board_columns SET collapsed = ?1 WHERE id = ?2",
+                args![collapsed, column_id],
+            )
+            .await?;
+        }
+        get_column(ex, column_id).await
+    })
 }
 
 pub(crate) fn check_color(color: &str) -> Result<(), String> {
@@ -1093,18 +1134,15 @@ pub(crate) fn day_label(at: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ensure_tables;
-    use rusqlite::Connection;
+    use crate::testing::{fresh, Fixture};
 
-    fn setup() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        ensure_tables(&conn).unwrap();
-        conn
+    fn setup() -> Fixture {
+        fresh()
     }
 
-    fn col_positions(conn: &Connection, column_id: &str) -> Vec<(String, i64)> {
+    fn col_positions(conn: &Fixture, column_id: &str) -> Vec<(String, i64)> {
         let mut statement = conn
+            .raw()
             .prepare("SELECT id, position FROM board_cards WHERE column_id = ?1 ORDER BY position")
             .unwrap();
         let rows = statement
@@ -1113,7 +1151,7 @@ mod tests {
         rows.map(|row| row.unwrap()).collect()
     }
 
-    fn assert_contiguous(conn: &Connection, column_id: &str) {
+    fn assert_contiguous(conn: &Fixture, column_id: &str) {
         let positions: Vec<i64> = col_positions(conn, column_id)
             .into_iter()
             .map(|(_, position)| position)
@@ -1122,7 +1160,7 @@ mod tests {
         assert_eq!(positions, expected, "column {column_id} not contiguous");
     }
 
-    fn titles(conn: &Connection, column_id: &str) -> Vec<String> {
+    fn titles(conn: &Fixture, column_id: &str) -> Vec<String> {
         col_positions(conn, column_id)
             .into_iter()
             .map(|(id, _)| get_card(conn, &id).unwrap().title)
@@ -1130,13 +1168,13 @@ mod tests {
     }
 
     /// A board plus its default columns (todo, doing, review, done).
-    fn board_with_columns(conn: &Connection) -> (Board, Vec<Column>) {
+    fn board_with_columns(conn: &Fixture) -> (Board, Vec<Column>) {
         let board = create_board(conn, "Work").unwrap();
         let columns = get_board(conn, &board.id).unwrap().columns;
         (board, columns)
     }
 
-    fn add_cards(conn: &Connection, column_id: &str, titles: &[&str]) -> Vec<Card> {
+    fn add_cards(conn: &Fixture, column_id: &str, titles: &[&str]) -> Vec<Card> {
         titles
             .iter()
             .map(|title| create_card(conn, column_id, title, "").unwrap())
@@ -1422,7 +1460,8 @@ mod tests {
 
         delete_board(&conn, &board.id).unwrap();
         let count = |sql: &str| -> i64 {
-            conn.query_row(sql, [board.id.as_str()], |row| row.get(0))
+            conn.raw()
+                .query_row(sql, [board.id.as_str()], |row| row.get(0))
                 .unwrap()
         };
         assert_eq!(count("SELECT COUNT(*) FROM boards WHERE id = ?1"), 0);

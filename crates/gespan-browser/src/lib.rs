@@ -88,7 +88,7 @@ pub mod turn;
 mod util;
 pub mod view;
 
-pub use embedder::Embedder;
+pub use embedder::{BrowserDb, DbJob, Embedder};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -98,7 +98,6 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rusqlite::Connection;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
@@ -265,18 +264,18 @@ pub fn host() -> Option<Arc<BrowserHost>> {
 struct Db(Arc<dyn Embedder>);
 
 impl Db {
-    fn with<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Option<T> {
+    fn with<T>(&self, f: impl FnOnce(&BrowserDb) -> toasty::Result<T>) -> Option<T> {
         with_db(self.0.as_ref(), f).and_then(Result::ok)
     }
 }
 
 /// Run `f` on the embedder's database; `None` when it has none now.
-fn with_db<T>(embedder: &dyn Embedder, f: impl FnOnce(&Connection) -> T) -> Option<T> {
+fn with_db<T>(embedder: &dyn Embedder, f: impl FnOnce(&BrowserDb) -> T) -> Option<T> {
     let mut f = Some(f);
     let mut out = None;
-    embedder.with_db(&mut |conn| {
+    embedder.with_db(&mut |db| {
         if let Some(f) = f.take() {
-            out = Some(f(conn));
+            out = Some(f(db));
         }
     });
     out
@@ -344,7 +343,7 @@ pub struct BrowserHost {
     run_id: u64,
 }
 
-/// Create the host, migrate the audit tables and register it as the
+/// Create the host on the browser tables and register it as the
 /// process-wide [`host`]. The app calls it once at startup, after its
 /// database is open; `app_data_dir` holds the Gespan browser's profiles.
 pub fn init(embedder: Arc<dyn Embedder>, app_data_dir: Option<&Path>) -> Result<(), String> {
@@ -361,7 +360,6 @@ pub fn open(
     app_data_dir: Option<&Path>,
 ) -> Result<Arc<BrowserHost>, String> {
     let (run_id, settings) = with_db(embedder.as_ref(), |conn| {
-        audit::migrate(conn).map_err(|e| e.to_string())?;
         let _ = audit::prune(conn, now_ms());
         let run_id = audit::next_run_id(conn).map_err(|e| e.to_string())?;
         let _ = audit::close_stale_leases(conn, run_id);
