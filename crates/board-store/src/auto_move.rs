@@ -6,9 +6,10 @@
 //! `needs_input`, `completed`, `failed`, `pr_opened`, `pr_merged`), each
 //! `"default"`, `"stay"` or `{"column": id}`. "Default" is the forward-only
 //! rule both apps used before rules existed.
-use crate::db::{args, query_value, with_tx, Conn};
+use crate::db::{with_tx, Conn};
+use crate::models::ActivityRow;
 use crate::ops::NewActivity;
-use crate::ops::{board_columns, get_card_in, is_archived, log_activity, move_card_in};
+use crate::ops::{board_columns, count, get_card_in, is_archived, log_activity, move_card_in};
 use crate::settings::board_settings_in;
 use crate::Column;
 use serde::{Deserialize, Serialize};
@@ -198,13 +199,19 @@ fn apply(conn: &Conn, card_id: &str, event: LinkedEvent) -> Result<Option<String
             return Ok(None);
         }
         if event.once_per_card() {
-            let fired: bool = query_value(
+            let activity = ActivityRow::fields();
+            let fired = count(
                 ex,
-                "SELECT EXISTS(SELECT 1 FROM board_activity WHERE card_id = ?1 AND kind = ?2)",
-                args![card_id, event.as_str()],
+                ActivityRow::filter(
+                    activity
+                        .card_id()
+                        .eq(Some(card_id.to_string()))
+                        .and(activity.kind().eq(event.as_str())),
+                )
+                .count(),
             )
             .await?;
-            if fired {
+            if fired > 0 {
                 return Ok(None);
             }
         }

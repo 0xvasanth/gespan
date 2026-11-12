@@ -62,6 +62,8 @@ pub(crate) async fn list_comments_in(
     ex: &mut Ex<'_>,
     card_id: &str,
 ) -> Result<Vec<Comment>, String> {
+    // Raw SQL: comments made in the same millisecond keep insertion order
+    // (`rowid`), which Toasty 0.11 cannot order by.
     query(
         ex,
         "SELECT id, card_id, body, author, created_at, edited_at FROM board_comments
