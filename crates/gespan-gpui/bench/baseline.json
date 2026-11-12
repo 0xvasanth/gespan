@@ -1,0 +1,509 @@
+{
+  "schema": 1,
+  "created_at": "2026-11-12T16:51:01.330Z",
+  "git": {
+    "commit": "508a17ad4",
+    "branch": "claude/dev-benchmarks-8f369d",
+    "dirty": false
+  },
+  "machine": {
+    "model": "Mac14,6",
+    "cpu": "Apple M2 Max",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "27.0"
+  },
+  "config": {
+    "startup_runs": 5,
+    "cycles": 20,
+    "soak_s": 900,
+    "stages": [
+      "startup",
+      "interaction",
+      "soak"
+    ]
+  },
+  "load": {
+    "start": [
+      57.9,
+      47.3,
+      54.9
+    ],
+    "end": [
+      51.3,
+      78.8,
+      73
+    ]
+  },
+  "log_dir": "/Users/vasanth/Library/Logs/dev.gespan.native.dev",
+  "warnings": [
+    "The load average (57.9 → 51.3) was above the 12 cores: timings are inflated. Rerun on a quieter machine before trusting a regression."
+  ],
+  "startup": {
+    "runs": [
+      {
+        "app_run_ms": 195,
+        "first_frame_ms": 355,
+        "interactive_ms": 432.8,
+        "idle_rss_mb": 197.8,
+        "idle_footprint_mb": 203.4
+      },
+      {
+        "app_run_ms": 149.8,
+        "first_frame_ms": 319,
+        "interactive_ms": 400.8,
+        "idle_rss_mb": 193.6,
+        "idle_footprint_mb": 203.7
+      },
+      {
+        "app_run_ms": 202.1,
+        "first_frame_ms": 360,
+        "interactive_ms": 449,
+        "idle_rss_mb": 199.8,
+        "idle_footprint_mb": 207.2
+      },
+      {
+        "app_run_ms": 164,
+        "first_frame_ms": 346,
+        "interactive_ms": 440.3,
+        "idle_rss_mb": 199.1,
+        "idle_footprint_mb": 179.7
+      },
+      {
+        "app_run_ms": 175.3,
+        "first_frame_ms": 343,
+        "interactive_ms": 444.9,
+        "idle_rss_mb": 201,
+        "idle_footprint_mb": 182.8
+      }
+    ],
+    "median": {
+      "app_run_ms": 175.3,
+      "first_frame_ms": 346,
+      "interactive_ms": 440.3,
+      "idle_rss_mb": 199.1,
+      "idle_footprint_mb": 203.4
+    },
+    "stability": {
+      "crashes": 0,
+      "panics": 0,
+      "hangs": 0
+    }
+  },
+  "interaction": {
+    "phases": {
+      "tab_switch": {
+        "frame_ms": {
+          "count": 171,
+          "p50": 12.06,
+          "p95": 15.89,
+          "max": 18.75
+        },
+        "latency_ms": {
+          "count": 48,
+          "p50": 14.47,
+          "p95": 27.4,
+          "max": 34.77
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      },
+      "chat_scroll": {
+        "frame_ms": {
+          "count": 141,
+          "p50": 6.55,
+          "p95": 7.33,
+          "max": 9.39
+        },
+        "latency_ms": {
+          "count": 121,
+          "p50": 16.6,
+          "p95": 21.87,
+          "max": 24.28
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      },
+      "panes": {
+        "frame_ms": {
+          "count": 934,
+          "p50": 12.3,
+          "p95": 19.3,
+          "max": 178.6
+        },
+        "latency_ms": {
+          "count": 40,
+          "p50": 33.18,
+          "p95": 44.11,
+          "max": 214.44
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      },
+      "cycle": {
+        "frame_ms": {
+          "count": 6727,
+          "p50": 9.53,
+          "p95": 19.69,
+          "max": 49.67
+        },
+        "latency_ms": {
+          "count": 480,
+          "p50": 26.5,
+          "p95": 44.27,
+          "max": 62.44
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      }
+    },
+    "memory": {
+      "idle": {
+        "label": "idle",
+        "rss_mb": 197.9,
+        "footprint_mb": 206.9,
+        "gpu_mb": 94.7,
+        "event": "memory",
+        "wall_ms": 1794502495268.695
+      },
+      "before": {
+        "label": "before_cycles",
+        "rss_mb": 234.4,
+        "footprint_mb": 235.1,
+        "gpu_mb": 92.7,
+        "event": "memory",
+        "wall_ms": 1794502517243.628
+      },
+      "after": {
+        "label": "after_cycles",
+        "rss_mb": 220.4,
+        "footprint_mb": 269.6,
+        "gpu_mb": 83.4,
+        "event": "memory",
+        "wall_ms": 1794502604825.084
+      },
+      "growth": {
+        "rss_mb": -14,
+        "footprint_mb": 34.5
+      },
+      "samples": [
+        {
+          "label": "idle",
+          "rss_mb": 197.9,
+          "footprint_mb": 206.9,
+          "gpu_mb": 94.7,
+          "event": "memory",
+          "wall_ms": 1794502495268.695
+        },
+        {
+          "label": "before_cycles",
+          "rss_mb": 234.4,
+          "footprint_mb": 235.1,
+          "gpu_mb": 92.7,
+          "event": "memory",
+          "wall_ms": 1794502517243.628
+        },
+        {
+          "label": "cycle_5",
+          "rss_mb": 207.3,
+          "footprint_mb": 247,
+          "gpu_mb": 83.4,
+          "event": "memory",
+          "wall_ms": 1794502538137.886
+        },
+        {
+          "label": "cycle_10",
+          "rss_mb": 211.2,
+          "footprint_mb": 257.3,
+          "gpu_mb": 75.9,
+          "event": "memory",
+          "wall_ms": 1794502559501.375
+        },
+        {
+          "label": "cycle_15",
+          "rss_mb": 216.3,
+          "footprint_mb": 271.7,
+          "gpu_mb": 77.9,
+          "event": "memory",
+          "wall_ms": 1794502580864.646
+        },
+        {
+          "label": "cycle_20",
+          "rss_mb": 220.3,
+          "footprint_mb": 272.9,
+          "gpu_mb": 75.9,
+          "event": "memory",
+          "wall_ms": 1794502601777.375
+        },
+        {
+          "label": "after_cycles",
+          "rss_mb": 220.4,
+          "footprint_mb": 269.6,
+          "gpu_mb": 83.4,
+          "event": "memory",
+          "wall_ms": 1794502604825.084
+        }
+      ]
+    },
+    "layout": [
+      {
+        "label": "start",
+        "tabs": 8,
+        "panes": 8,
+        "event": "layout",
+        "wall_ms": 1794502495268.744
+      },
+      {
+        "label": "after_phases",
+        "tabs": 8,
+        "panes": 8,
+        "event": "layout",
+        "wall_ms": 1794502515140.207
+      },
+      {
+        "label": "after_cycles",
+        "tabs": 8,
+        "panes": 8,
+        "event": "layout",
+        "wall_ms": 1794502601777.4019
+      }
+    ],
+    "inactive_steps": 0,
+    "stability": {
+      "crashes": 0,
+      "panics": 0,
+      "hangs": 0,
+      "frame_timeouts": 0
+    }
+  },
+  "soak": {
+    "duration_s": 912,
+    "launches": 1,
+    "iterations": 175,
+    "phases": {
+      "soak": {
+        "frame_ms": {
+          "count": 18452,
+          "p50": 9.77,
+          "p95": 20.35,
+          "max": 742.74
+        },
+        "latency_ms": {
+          "count": 3811,
+          "p50": 23.26,
+          "p95": 2016.81,
+          "max": 2160.7
+        },
+        "long_frames": 5,
+        "inactive_steps": 1058
+      }
+    },
+    "memory": {
+      "start": {
+        "label": "soak_17",
+        "rss_mb": 242.9,
+        "footprint_mb": 269.6,
+        "gpu_mb": 104,
+        "event": "memory",
+        "wall_ms": 1794502639327.506
+      },
+      "end": {
+        "label": "soak_end",
+        "rss_mb": 180.6,
+        "footprint_mb": 289.2,
+        "gpu_mb": 98.3,
+        "event": "memory",
+        "wall_ms": 1794503516622.743
+      },
+      "samples": [
+        {
+          "label": "idle",
+          "rss_mb": 198.1,
+          "footprint_mb": 175.8,
+          "gpu_mb": 94.7,
+          "event": "memory",
+          "wall_ms": 1794502608529.126
+        },
+        {
+          "label": "soak_17",
+          "rss_mb": 242.9,
+          "footprint_mb": 269.6,
+          "gpu_mb": 104,
+          "event": "memory",
+          "wall_ms": 1794502639327.506
+        },
+        {
+          "label": "soak_35",
+          "rss_mb": 249,
+          "footprint_mb": 275,
+          "gpu_mb": 104,
+          "event": "memory",
+          "wall_ms": 1794502671359.135
+        },
+        {
+          "label": "soak_48",
+          "rss_mb": 244.3,
+          "footprint_mb": 239.8,
+          "gpu_mb": 77.9,
+          "event": "memory",
+          "wall_ms": 1794502701919.27
+        },
+        {
+          "label": "soak_58",
+          "rss_mb": 231.2,
+          "footprint_mb": 258.8,
+          "gpu_mb": 94.7,
+          "event": "memory",
+          "wall_ms": 1794502731988.006
+        },
+        {
+          "label": "soak_69",
+          "rss_mb": 231.3,
+          "footprint_mb": 245.3,
+          "gpu_mb": 77.9,
+          "event": "memory",
+          "wall_ms": 1794502763600.946
+        },
+        {
+          "label": "soak_83",
+          "rss_mb": 204.5,
+          "footprint_mb": 291.5,
+          "gpu_mb": 104,
+          "event": "memory",
+          "wall_ms": 1794502794129.125
+        },
+        {
+          "label": "soak_91",
+          "rss_mb": 127.5,
+          "footprint_mb": 226.8,
+          "gpu_mb": 92.2,
+          "event": "memory",
+          "wall_ms": 1794502907457.218
+        },
+        {
+          "label": "soak_93",
+          "rss_mb": 125.7,
+          "footprint_mb": 226.9,
+          "gpu_mb": 92.2,
+          "event": "memory",
+          "wall_ms": 1794502960215.509
+        },
+        {
+          "label": "soak_94",
+          "rss_mb": 117.8,
+          "footprint_mb": 226.8,
+          "gpu_mb": 92.2,
+          "event": "memory",
+          "wall_ms": 1794503046749.062
+        },
+        {
+          "label": "soak_96",
+          "rss_mb": 116,
+          "footprint_mb": 226.3,
+          "gpu_mb": 92.2,
+          "event": "memory",
+          "wall_ms": 1794503099153.327
+        },
+        {
+          "label": "soak_97",
+          "rss_mb": 140.1,
+          "footprint_mb": 247.2,
+          "gpu_mb": 84.8,
+          "event": "memory",
+          "wall_ms": 1794503133264.4739
+        },
+        {
+          "label": "soak_113",
+          "rss_mb": 173.1,
+          "footprint_mb": 287.9,
+          "gpu_mb": 104,
+          "event": "memory",
+          "wall_ms": 1794503164290.3572
+        },
+        {
+          "label": "soak_130",
+          "rss_mb": 173.2,
+          "footprint_mb": 306.5,
+          "gpu_mb": 101.9,
+          "event": "memory",
+          "wall_ms": 1794503194607.575
+        },
+        {
+          "label": "soak_147",
+          "rss_mb": 181.8,
+          "footprint_mb": 275.3,
+          "gpu_mb": 79.3,
+          "event": "memory",
+          "wall_ms": 1794503226135.256
+        },
+        {
+          "label": "soak_153",
+          "rss_mb": 111.7,
+          "footprint_mb": 236.3,
+          "gpu_mb": 79.4,
+          "event": "memory",
+          "wall_ms": 1794503281162.3582
+        },
+        {
+          "label": "soak_154",
+          "rss_mb": 114.3,
+          "footprint_mb": 236.2,
+          "gpu_mb": 79.4,
+          "event": "memory",
+          "wall_ms": 1794503367820.693
+        },
+        {
+          "label": "soak_156",
+          "rss_mb": 151.4,
+          "footprint_mb": 287.2,
+          "gpu_mb": 77.3,
+          "event": "memory",
+          "wall_ms": 1794503399312.263
+        },
+        {
+          "label": "soak_170",
+          "rss_mb": 130.6,
+          "footprint_mb": 265,
+          "gpu_mb": 92.3,
+          "event": "memory",
+          "wall_ms": 1794503436545.531
+        },
+        {
+          "label": "soak_171",
+          "rss_mb": 102.4,
+          "footprint_mb": 265,
+          "gpu_mb": 92.3,
+          "event": "memory",
+          "wall_ms": 1794503470462.371
+        },
+        {
+          "label": "soak_173",
+          "rss_mb": 159.4,
+          "footprint_mb": 306.5,
+          "gpu_mb": 83.4,
+          "event": "memory",
+          "wall_ms": 1794503502995.645
+        },
+        {
+          "label": "soak_end",
+          "rss_mb": 180.6,
+          "footprint_mb": 289.2,
+          "gpu_mb": 98.3,
+          "event": "memory",
+          "wall_ms": 1794503516622.743
+        }
+      ],
+      "growth": {
+        "rss_mb": -62.3,
+        "footprint_mb": 19.6
+      }
+    },
+    "stability": {
+      "crashes": 0,
+      "panics": 0,
+      "hangs": 0,
+      "frame_timeouts": 263
+    },
+    "crash_details": []
+  }
+}
