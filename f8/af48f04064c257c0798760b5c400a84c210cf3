@@ -1,0 +1,20 @@
+crates/gespan-core/src/provider/acp.rs
+  s_09449038da8e60::t_820f9a2ddb809d 3198-3217,3223-3225,3230-3232
+  s_09449038da8e60::t_6f53f0b3809f32 105-108,110,116,119,3218-3222,3226-3229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f8af48f04064c257c0798760b5c400a84c210cf3",
+  "prompts": {},
+  "sessions": {
+    "s_09449038da8e60": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6decefc-34f5-421f-aeca-6c331645bfc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
