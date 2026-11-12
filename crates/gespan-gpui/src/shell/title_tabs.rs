@@ -547,16 +547,65 @@ impl Shell {
         cx.notify();
     }
 
-    /// Moves `tab` to strip slot `to`; pinned tabs keep their places.
+    /// Moves `tab` to slot `to` among its own kind: a grouped tab among its
+    /// group's tabs, a loose tab among the strip's top-level entries. A tab
+    /// never leaves its group, and nothing lands inside another group.
     pub(super) fn reorder_title_tab(&mut self, tab: &TitleTab, to: usize, cx: &App) {
+        let entries = self.strip_entries(cx);
+        for (ix, entry) in entries.iter().enumerate() {
+            match entry {
+                StripEntry::Loose(loose) if loose == tab => {
+                    return self.reorder_entry(ix, to, cx);
+                }
+                StripEntry::Group { tabs, .. } => {
+                    if let Some(from) = tabs.iter().position(|t| t == tab) {
+                        let mut tabs = tabs.clone();
+                        let moved = tabs.remove(from);
+                        tabs.insert(to.min(tabs.len()), moved);
+                        return self.write_strip_order(tabs);
+                    }
+                }
+                StripEntry::Loose(_) => {}
+            }
+        }
+    }
+
+    /// Moves the strip's top-level entry `from` (a loose tab, or a whole
+    /// group with its tabs in their order) to entry slot `to`.
+    pub(super) fn reorder_entry(&mut self, from: usize, to: usize, cx: &App) {
+        let mut entries = self.strip_entries(cx);
+        if from >= entries.len() {
+            return;
+        }
+        let moved = entries.remove(from);
+        entries.insert(to.min(entries.len()), moved);
+        let tabs = entries
+            .into_iter()
+            .flat_map(|entry| match entry {
+                StripEntry::Loose(tab) => vec![tab],
+                StripEntry::Group { tabs, .. } => tabs,
+            })
+            .collect();
+        self.write_strip_order(tabs);
+    }
+
+    /// Moves `tab` to slot `to` of the current scope's strip tabs, the
+    /// slots a pane dropped on the strip counts; pinned tabs keep their places.
+    pub(super) fn place_in_strip_slot(&mut self, tab: &TitleTab, to: usize, cx: &App) {
         let mut visible = self.strip_tabs(cx);
         let Some(from) = visible.iter().position(|entry| entry == tab) else {
             return;
         };
         let entry = visible.remove(from);
         visible.insert(to.min(visible.len()), entry);
-        let set: HashSet<_> = visible.iter().cloned().collect();
-        let mut ordered = visible.into_iter();
+        self.write_strip_order(visible);
+    }
+
+    /// Writes `tabs` back over their own places in `title_order`, in the
+    /// given order; every other tab keeps its place. The session list follows.
+    fn write_strip_order(&mut self, tabs: Vec<TitleTab>) {
+        let set: HashSet<_> = tabs.iter().cloned().collect();
+        let mut ordered = tabs.into_iter();
         for entry in &mut self.workspace.title_order {
             if set.contains(entry) {
                 *entry = ordered.next().unwrap();

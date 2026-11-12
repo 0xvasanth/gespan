@@ -3,7 +3,6 @@
 //! one shows only its chip, with a tab count and a working spinner, until the
 //! pointer rests on the chip and the group peeks open in place.
 use super::*;
-use crate::strip_groups::StripEntry;
 use gespan_core::files::path_key;
 use gpui::Hsla;
 
@@ -171,7 +170,12 @@ impl Shell {
         let name = crate::workspace::project_name(project);
         let running = !expanded && self.group_running(tabs, cx);
         let current = path_key(project) == path_key(&self.workspace.project);
-        let (peek, open, close) = (project.to_owned(), project.to_owned(), project.to_owned());
+        let (peek, open, close, drag) = (
+            project.to_owned(),
+            project.to_owned(),
+            project.to_owned(),
+            project.to_owned(),
+        );
         let hover_group = SharedString::from(format!("tab-group-chip-{project}"));
         let (count_name, running_name, close_name, chip_name) =
             (name.clone(), name.clone(), name.clone(), name);
@@ -271,7 +275,17 @@ impl Shell {
                     this.peek_group(&peek, cx);
                 }
             }))
+            // Pressed, the chip drags its whole group along the strip.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event, _, cx| {
+                    this.start_strip_drag(StripChild::Group(drag.clone()), event, cx);
+                }),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
+                if std::mem::take(&mut this.skip_tab_click) {
+                    return;
+                }
                 this.strip_peek = None;
                 if !current {
                     this.select_project(open.clone(), window, cx);
@@ -291,6 +305,7 @@ impl Shell {
         tabs: &[TitleTab],
         children: Vec<(TitleTab, AnyElement)>,
         chip_width: f32,
+        (shift, dragged): (f32, bool),
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = path_key(project) == path_key(&self.workspace.project);
@@ -305,7 +320,7 @@ impl Shell {
             .chain(children.iter().map(|(key, _)| Some(key.clone())))
             .collect();
         let store = self.group_tab_bounds.clone();
-        div()
+        let group = div()
             .on_children_prepainted(move |bounds, _, _| {
                 let mut store = store.borrow_mut();
                 for (key, bounds) in keys.iter().zip(bounds) {
@@ -320,6 +335,7 @@ impl Shell {
             .flex_shrink_0()
             .h(px(TITLE_BAR_HEIGHT))
             .relative()
+            .left(px(shift))
             .px(px(GROUP_INSET))
             .flex()
             .items_center()
@@ -348,23 +364,31 @@ impl Shell {
             .child(self.group_chip(project, tabs, expanded, chip_width, cx))
             .children(children.into_iter().map(|(_, element)| element))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if !*hovered && this.strip_peek.as_ref() == Some(&peek) {
+                // A drag holds the strip still; its release settles the peek.
+                if !*hovered && this.tab_drag.is_none() && this.strip_peek.as_ref() == Some(&peek) {
                     this.strip_peek = None;
                     this.tabs_frame.update(cx, |_, cx| cx.notify());
                 }
-            }))
-            .into_any_element()
+            }));
+        // A group dragged by its chip draws over the boxes it passes.
+        if dragged {
+            gpui::deferred(group).with_priority(1).into_any_element()
+        } else {
+            group.into_any_element()
+        }
     }
 
     /// Lays the strip's tab slots out by `entries`: loose tabs in place, each
     /// group as one box. A slot easing out goes back to its project's group
     /// when it has one, else beside the slot before it. Returns the strip's
-    /// direct children, each loose tab keyed by its tab.
+    /// direct children, each loose tab keyed by its tab. Each box sits
+    /// `shifts` from its slot while a chip drag passes it.
     pub(super) fn grouped_strip(
         &self,
         entries: &[StripEntry<TitleTab>],
         slots: Vec<(TitleTab, AnyElement)>,
         chips: &HashMap<String, f32>,
+        (shifts, dragged): (&HashMap<String, f32>, Option<&str>),
         cx: &mut Context<Self>,
     ) -> Vec<(StripChild, AnyElement)> {
         let mut home: HashMap<TitleTab, usize> = HashMap::new();
@@ -409,9 +433,11 @@ impl Shell {
                 }
                 StripEntry::Group { project, tabs } => {
                     let width = chips.get(project).copied().unwrap_or(0.);
+                    let shift = shifts.get(project).copied().unwrap_or(0.);
+                    let motion = (shift, dragged == Some(project.as_str()));
                     out.push((
                         StripChild::Group(project.clone()),
-                        self.group_box(project, tabs, bucket, width, cx),
+                        self.group_box(project, tabs, bucket, width, motion, cx),
                     ));
                 }
             }
@@ -424,7 +450,8 @@ impl Shell {
     /// scrolls the strip back by what it gave up, so the chip stays under
     /// the pointer when the strip can scroll that far.
     pub(super) fn peek_group(&mut self, project: &str, cx: &mut Context<Self>) {
-        if self.strip_peek.as_deref() == Some(project) {
+        // A drag measured the strip when it began, so nothing opens under it.
+        if self.strip_peek.as_deref() == Some(project) || self.tab_drag.is_some() {
             return;
         }
         let place = |p: &str| {
@@ -494,8 +521,21 @@ impl Shell {
         self.close_title_tabs(&closing, next, window, cx);
     }
 
-    /// Where `project`'s group box was last drawn.
-    fn group_box_bounds(&self, project: &str) -> Option<Bounds<Pixels>> {
+    /// Ends a peek held through a drag once the pointer is outside its box.
+    pub(super) fn settle_peek(&mut self, pointer: Point<Pixels>) {
+        let Some(project) = self.strip_peek.clone() else {
+            return;
+        };
+        if !self
+            .group_box_bounds(&project)
+            .is_some_and(|b| b.contains(&pointer))
+        {
+            self.strip_peek = None;
+        }
+    }
+
+    /// Where `project`'s group box was last drawn, after the strip's scroll.
+    pub(super) fn group_box_bounds(&self, project: &str) -> Option<Bounds<Pixels>> {
         let ix = self
             .strip_children
             .iter()

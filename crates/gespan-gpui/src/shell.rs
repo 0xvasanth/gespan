@@ -93,6 +93,7 @@ pub(crate) use tray::reopen;
 mod window_chrome;
 mod worktrees;
 
+use crate::strip_groups::StripEntry;
 use crate::{
     conversation::{Conversation, SessionChanged},
     input,
@@ -488,16 +489,82 @@ const REVEAL_LABEL: &str = if cfg!(target_os = "macos") {
     "Open Containing Folder"
 };
 
+/// What a title strip drag moves among.
+#[derive(Clone, Debug, PartialEq)]
+enum DragScope {
+    /// A tab in this project's group: it moves among the group's tabs.
+    Group(String),
+    /// A loose tab, or a whole group by its chip: it moves among the
+    /// strip's top-level entries.
+    TopLevel,
+}
+
 struct TabDrag {
-    id: TitleTab,
+    /// The tab, or the group by its chip, being dragged.
+    item: tab_groups::StripChild,
+    scope: DragScope,
+    /// What the drag moves among, in strip order, and where each was drawn
+    /// when it began.
+    items: Vec<tab_groups::StripChild>,
     from: usize,
     to: usize,
     origin: Pixels,
     offset: Pixels,
     active: bool,
     bounds: Vec<Bounds<Pixels>>,
+    /// Whether pulling it down can drop it on a pane: the current scope's
+    /// tabs only.
+    to_pane: bool,
     /// Pulled far enough below the strip to drop on a pane.
     armed: bool,
+}
+
+impl TabDrag {
+    /// The dragged tab; None for a group dragged by its chip.
+    fn tab(&self) -> Option<&TitleTab> {
+        match &self.item {
+            tab_groups::StripChild::Tab(tab) => Some(tab),
+            tab_groups::StripChild::Group(_) => None,
+        }
+    }
+
+    /// Where slot `ix` puts the dragged item's left edge: past its own slot
+    /// it ends at that slot's right edge, so wider neighbours count right.
+    fn slot_left(&self, ix: usize) -> Pixels {
+        if ix > self.from {
+            self.bounds[ix].right() - self.bounds[self.from].size.width
+        } else {
+            self.bounds[ix].left()
+        }
+    }
+
+    /// How far the item at `ix` sits from its own slot while the drag
+    /// lasts: the dragged one rides the pointer, the ones it passed make
+    /// room by its width.
+    fn shift(&self, ix: usize) -> Pixels {
+        if !self.active {
+            return px(0.);
+        }
+        if ix == self.from {
+            return self.offset;
+        }
+        let step = self.bounds[self.from].size.width + self.gap();
+        if self.from < self.to && ix > self.from && ix <= self.to {
+            return -step;
+        }
+        if self.from > self.to && ix >= self.to && ix < self.from {
+            return step;
+        }
+        px(0.)
+    }
+
+    /// The gap between neighbouring items as laid out.
+    fn gap(&self) -> Pixels {
+        match self.bounds.as_slice() {
+            [first, second, ..] => (second.left() - first.right()).max(px(0.)),
+            _ => px(0.),
+        }
+    }
 }
 
 /// What a pane drop carries: a split pane by its header, a title tab
@@ -874,6 +941,8 @@ pub(crate) struct Shell {
     /// Tabs sliding between slots: neighbours making room for a drag and,
     /// after a drop, every tab gliding from where it was drawn into place.
     tab_shifts: HashMap<TitleTab, TabShift>,
+    /// Group boxes easing as a chip drag passes them, by project.
+    group_shifts: HashMap<String, TabShift>,
     pane_ticks: HashMap<i64, PaneTick>,
     skip_tab_click: bool,
     spaces_start: usize,
@@ -1299,6 +1368,7 @@ impl Shell {
             worktree_returns: HashMap::new(),
             tab_drag: None,
             tab_shifts: HashMap::new(),
+            group_shifts: HashMap::new(),
             pane_ticks: HashMap::new(),
             skip_tab_click: false,
             spaces_start: 0,
@@ -4314,8 +4384,14 @@ impl Shell {
             })
     }
     /// titleTabDropFromPoint: the strip slot nearest the pointer.
+    /// Past the last tab, over the new-tab button too, is the strip's end.
     fn tab_insert_at(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
-        let strip = self.tab_scroll.bounds();
+        let mut strip = self.tab_scroll.bounds();
+        if let Some(button) = self.new_tab_anchor.get()
+            && button.right() > strip.right()
+        {
+            strip.size.width = button.right() - strip.left();
+        }
         if !strip.contains(&position) {
             return None;
         }
@@ -4454,7 +4530,7 @@ impl Shell {
                 };
                 if let Some(to) = insert {
                     self.workspace.detach(id, self.workspace.tabs.len());
-                    self.reorder_title_tab(&TitleTab::Session(id), to, cx);
+                    self.place_in_strip_slot(&TitleTab::Session(id), to, cx);
                     self.pane_motion = None;
                 } else if let Some((target, edge)) = over {
                     self.workspace.place(id, target, edge);
@@ -4469,7 +4545,7 @@ impl Shell {
                     .and_then(|next| self.workspace.tabs.iter().position(|id| *id == next))
                     .unwrap_or(self.workspace.tabs.len());
                 self.workspace.detach(id, session_index);
-                self.reorder_title_tab(&TitleTab::Session(id), to, cx);
+                self.place_in_strip_slot(&TitleTab::Session(id), to, cx);
                 self.pane_motion = None;
             }
             (DragSource::Tab(tab), Some((target, edge)), _) => {
@@ -4490,7 +4566,7 @@ impl Shell {
         if let (Some(pilot), Some(to)) = (pilot, drag.insert)
             && self.workspace.title_order.contains(&pilot)
         {
-            self.reorder_title_tab(&pilot, to, cx);
+            self.place_in_strip_slot(&pilot, to, cx);
         }
         if self.pilot_active(cx) {
             self.persist(cx);
@@ -7886,31 +7962,76 @@ impl Shell {
             })
     }
     fn start_tab_drag(&mut self, id: TitleTab, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.start_strip_drag(tab_groups::StripChild::Tab(id), event, cx);
+    }
+    /// Presses `item` for a drag: a grouped tab moves among its group's
+    /// tabs, a loose tab or a chip's whole group among the strip's entries.
+    fn start_strip_drag(
+        &mut self,
+        item: tab_groups::StripChild,
+        event: &MouseDownEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use tab_groups::StripChild;
         self.skip_tab_click = false;
         self.close_menu(cx);
-        let tabs = self.strip_tabs(cx);
-        let Some(from) = tabs.iter().position(|tab| *tab == id) else {
+        let entries = self.strip_entries(cx);
+        let top_level = || -> Vec<StripChild> {
+            entries
+                .iter()
+                .map(|entry| match entry {
+                    StripEntry::Loose(tab) => StripChild::Tab(tab.clone()),
+                    StripEntry::Group { project, .. } => StripChild::Group(project.clone()),
+                })
+                .collect()
+        };
+        let (scope, items) = match &item {
+            StripChild::Group(_) => (DragScope::TopLevel, top_level()),
+            StripChild::Tab(tab) => match entries.iter().find_map(|entry| match entry {
+                StripEntry::Group { project, tabs } if tabs.contains(tab) => {
+                    Some((project.clone(), tabs.clone()))
+                }
+                _ => None,
+            }) {
+                Some((project, tabs)) => (
+                    DragScope::Group(project),
+                    tabs.into_iter().map(StripChild::Tab).collect(),
+                ),
+                None => (DragScope::TopLevel, top_level()),
+            },
+        };
+        let Some(from) = items.iter().position(|it| *it == item) else {
             return;
         };
-        if tabs.len() < 2 {
+        if items.len() < 2 {
             return;
         }
-        // Each tab where it is drawn, loose or inside its group.
-        let bounds: Vec<_> = tabs
+        // Each item where it is drawn, after the strip's scroll.
+        let bounds: Vec<_> = items
             .iter()
-            .filter_map(|tab| self.strip_tab_bounds(tab))
+            .filter_map(|it| match it {
+                StripChild::Tab(tab) => self.strip_tab_bounds(tab),
+                StripChild::Group(project) => self.group_box_bounds(project),
+            })
             .collect();
-        if bounds.len() != tabs.len() {
+        if bounds.len() != items.len() {
             return;
         }
+        let to_pane = match &item {
+            StripChild::Tab(tab) => self.strip_tabs(cx).contains(tab),
+            StripChild::Group(_) => false,
+        };
         self.tab_drag = Some(TabDrag {
-            id,
+            item,
+            scope,
+            items,
             from,
             to: from,
             origin: event.position.x,
             offset: px(0.),
             active: false,
             bounds,
+            to_pane,
             armed: false,
         });
         self.tabs_frame.update(cx, |_, cx| cx.notify());
@@ -7924,6 +8045,7 @@ impl Shell {
         if event.pressed_button != Some(MouseButton::Left) {
             self.tab_drag = None;
             self.cancel_pane_drag(cx);
+            self.settle_peek(event.position);
             self.tabs_frame.update(cx, |_, cx| cx.notify());
             return;
         }
@@ -7935,7 +8057,7 @@ impl Shell {
         drag.active = true;
         self.skip_tab_click = true;
         // Once armed it stays armed until the pointer is back over the tabs.
-        if pulled <= 0. {
+        if pulled <= 0. || !drag.to_pane {
             drag.armed = false;
         } else if pulled >= PANE_DROP_PULL {
             drag.armed = true;
@@ -7947,31 +8069,26 @@ impl Shell {
             drag.to = drag.from;
         } else {
             let start = drag.bounds[drag.from].left();
-            drag.offset = delta.clamp(
-                drag.bounds[0].left() - start,
-                drag.bounds.last().unwrap().left() - start,
-            );
-            drag.to = drag
-                .bounds
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| {
-                    (a.left() - start - drag.offset)
+            let last = drag.bounds.len() - 1;
+            drag.offset = delta.clamp(drag.slot_left(0) - start, drag.slot_left(last) - start);
+            let at = start + drag.offset;
+            drag.to = (0..=last)
+                .min_by(|a, b| {
+                    (drag.slot_left(*a) - at)
                         .abs()
-                        .partial_cmp(&(b.left() - start - drag.offset).abs())
+                        .partial_cmp(&(drag.slot_left(*b) - at).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
-                .map(|(ix, _)| ix)
                 .unwrap_or(drag.from);
         }
-        let (id, armed) = (drag.id.clone(), drag.armed);
+        let (id, armed) = (drag.tab().cloned(), drag.armed);
         // The active tab has no other pane to land on, but its title still
         // follows the pointer.
-        let own = self.active_title_tab(cx).as_ref() == Some(&id);
+        let own = id.is_some() && self.active_title_tab(cx) == id;
         let source = match &id {
-            TitleTab::Session(tab) => Some(DragSource::Tab(*tab)),
-            TitleTab::Pilot { .. } => Some(DragSource::PilotTab),
-            TitleTab::App(_) => None,
+            Some(TitleTab::Session(tab)) => Some(DragSource::Tab(*tab)),
+            Some(TitleTab::Pilot { .. }) => Some(DragSource::PilotTab),
+            Some(TitleTab::App(_)) | None => None,
         };
         let was = self.pane_drag.is_some();
         self.pane_drag = source.filter(|_| armed).map(|source| PaneDrag {
@@ -7992,63 +8109,80 @@ impl Shell {
         self.tabs_frame.update(cx, |_, cx| cx.notify());
     }
     fn finish_tab_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use tab_groups::StripChild;
         if let Some(drag) = self.tab_drag.take() {
+            let tab = drag.tab().cloned();
             let onto_pane = self.pane_drag.as_ref().is_some_and(|d| {
                 d.over.is_some()
                     && match d.source {
-                        DragSource::Tab(tab) => drag.id.session() == Some(tab),
-                        DragSource::PilotTab => matches!(drag.id, TitleTab::Pilot { .. }),
+                        DragSource::Tab(id) => tab.as_ref().and_then(TitleTab::session) == Some(id),
+                        DragSource::PilotTab => matches!(tab, Some(TitleTab::Pilot { .. })),
                         _ => false,
                     }
             });
-            if onto_pane {
+            if onto_pane && let Some(tab) = tab {
                 self.skip_tab_click = true;
-                if matches!(drag.id, TitleTab::Pilot { .. }) {
-                    self.drop_pilot_tab(drag.id, window, cx);
+                if matches!(tab, TitleTab::Pilot { .. }) {
+                    self.drop_pilot_tab(tab, window, cx);
                 } else {
                     self.finish_pane_drag(window, cx);
                 }
             } else if drag.active {
                 self.cancel_pane_drag(cx);
-                // Each tab glides from where it is drawn into its new slot.
+                // Each item glides from where it is drawn into its new slot.
                 let now = std::time::Instant::now();
-                let visible = self.strip_tabs(cx);
-                let drawn: Vec<(TitleTab, f32)> = visible
+                let drawn: Vec<f32> = drag
+                    .items
                     .iter()
-                    .enumerate()
-                    .map(|(ix, id)| {
-                        let shift = self.tab_shifts.get(id).map_or(0., |s| s.at(now).0);
-                        (
-                            id.clone(),
-                            drag.bounds.get(ix).map_or(0., |b| b.left().as_f32()) + shift,
-                        )
+                    .zip(&drag.bounds)
+                    .map(|(item, bounds)| {
+                        let shift = match item {
+                            StripChild::Tab(tab) => self.tab_shifts.get(tab),
+                            StripChild::Group(project) => self.group_shifts.get(project),
+                        }
+                        .map_or(0., |s| s.at(now).0);
+                        bounds.left().as_f32() + shift
                     })
                     .collect();
-                self.reorder_title_tab(&drag.id, drag.to, cx);
+                match (&drag.scope, &tab) {
+                    (DragScope::Group(_), Some(tab)) => self.reorder_title_tab(tab, drag.to, cx),
+                    _ => self.reorder_entry(drag.from, drag.to, cx),
+                }
                 self.tab_shifts.clear();
+                self.group_shifts.clear();
                 if !cx.reduce_motion() {
-                    for (ix, id) in self.strip_tabs(cx).iter().enumerate() {
-                        let (Some((_, left)), Some(slot)) =
-                            (drawn.iter().find(|(t, _)| t == id), drag.bounds.get(ix))
-                        else {
+                    // The new order packed from the first slot, as it will draw.
+                    let mut order: Vec<usize> = (0..drag.items.len()).collect();
+                    let moved = order.remove(drag.from);
+                    order.insert(drag.to.min(order.len()), moved);
+                    let gap = drag.gap().as_f32();
+                    let mut left = drag.bounds[0].left().as_f32();
+                    for ix in order {
+                        let from = drawn[ix] - left;
+                        left += drag.bounds[ix].size.width.as_f32() + gap;
+                        if from.abs() <= 0.5 {
                             continue;
+                        }
+                        let shift = TabShift {
+                            from,
+                            to: 0.,
+                            start: now,
                         };
-                        let from = left - slot.left().as_f32();
-                        if from.abs() > 0.5 {
-                            self.tab_shifts.insert(
-                                id.clone(),
-                                TabShift {
-                                    from,
-                                    to: 0.,
-                                    start: now,
-                                },
-                            );
+                        match &drag.items[ix] {
+                            StripChild::Tab(tab) => {
+                                self.tab_shifts.insert(tab.clone(), shift);
+                            }
+                            StripChild::Group(project) => {
+                                self.group_shifts.insert(project.clone(), shift);
+                            }
                         }
                     }
                 }
                 self.skip_tab_click = true;
                 self.persist(cx);
             }
+            // A peek held through the drag closes if the pointer left it.
+            self.settle_peek(window.mouse_position());
             self.tabs_frame.update(cx, |_, cx| cx.notify());
         }
     }
@@ -8060,58 +8194,7 @@ impl Shell {
         follow: bool,
         reduced: bool,
     ) -> (f32, bool) {
-        let now = std::time::Instant::now();
-        // The dragged tab rides the pointer; it eases only into a slot.
-        if follow || reduced {
-            self.tab_shifts.remove(&id);
-            if follow {
-                self.tab_shifts.insert(
-                    id.clone(),
-                    TabShift {
-                        from: target,
-                        to: target,
-                        start: now - std::time::Duration::from_secs(1),
-                    },
-                );
-            }
-            return (target, false);
-        }
-        let current = self.tab_shifts.get(&id).map(|s| s.at(now));
-        if current.is_none_or(|_| self.tab_shifts[&id].to != target) {
-            let from = current.map_or(0., |(value, _)| value);
-            if from == target {
-                self.tab_shifts.remove(&id);
-                return (target, false);
-            }
-            self.tab_shifts.insert(
-                id.clone(),
-                TabShift {
-                    from,
-                    to: target,
-                    start: now,
-                },
-            );
-        }
-        let (value, done) = self.tab_shifts[&id].at(now);
-        if done && target == 0. {
-            self.tab_shifts.remove(&id);
-        }
-        (value, !done)
-    }
-    fn tab_shift(&self, ix: usize) -> Pixels {
-        let Some(d) = self.tab_drag.as_ref().filter(|d| d.active) else {
-            return px(0.);
-        };
-        if ix == d.from {
-            return d.offset;
-        }
-        if d.from < d.to && ix > d.from && ix <= d.to {
-            return d.bounds[ix - 1].left() - d.bounds[ix].left();
-        }
-        if d.from > d.to && ix >= d.to && ix < d.from {
-            return d.bounds[ix + 1].left() - d.bounds[ix].left();
-        }
-        px(0.)
+        ease_shift(&mut self.tab_shifts, id, target, follow, reduced)
     }
     /// The tab strip's width: between the navigation and the right panel
     /// toggle, `pl-1.5 pr-3` clear of the edge.
@@ -8146,7 +8229,7 @@ impl Shell {
         // Tabs share the strip as if no group peeked: a peek pushes the rest
         // along instead of squeezing it, and the strip scrolls.
         let group_room = Self::group_room(&self.group_chip_widths(&entries, true, window, cx));
-        // Drags and drops count the current scope's tabs, as shortcuts do.
+        // Pane drops count the current scope's tabs, as shortcuts do.
         let strip = self.strip_tabs(cx);
         let strip_ix: Vec<Option<usize>> = tabs
             .iter()
@@ -8332,24 +8415,62 @@ impl Shell {
             + extra.values().sum::<f32>()
             + Self::group_room(&chips)
             - 2.;
-        let dragged = self
-            .tab_drag
-            .as_ref()
-            .filter(|d| d.active && !d.armed)
-            .map(|d| d.id.clone());
+        let dragging = self.tab_drag.as_ref().filter(|d| d.active && !d.armed);
+        let dragged_item = dragging.map(|d| d.item.clone());
+        let dragged = dragging.and_then(|d| d.tab().cloned());
+        // Where the drag puts each item it moves among, by item.
+        let drag_shift = |item: &tab_groups::StripChild| {
+            self.tab_drag.as_ref().map_or(0., |d| {
+                d.items
+                    .iter()
+                    .position(|it| it == item)
+                    .map_or(0., |ix| d.shift(ix).as_f32())
+            })
+        };
+        let targets: Vec<f32> = tabs
+            .iter()
+            .map(|tab| drag_shift(&tab_groups::StripChild::Tab(tab.clone())))
+            .collect();
+        let group_targets: Vec<(String, f32)> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                StripEntry::Group { project, .. } => Some((
+                    project.clone(),
+                    drag_shift(&tab_groups::StripChild::Group(project.clone())),
+                )),
+                StripEntry::Loose(_) => None,
+            })
+            .collect();
         let mut moving = false;
         let shifts: Vec<Pixels> = tabs
             .clone()
             .into_iter()
-            .enumerate()
-            .map(|(ix, id)| {
-                let target = strip_ix[ix].map_or(0., |ix| self.tab_shift(ix).as_f32());
+            .zip(targets)
+            .map(|(id, target)| {
                 let (value, active) =
                     self.eased_shift(id.clone(), target, dragged.as_ref() == Some(&id), reduced);
                 moving |= active;
                 px(value)
             })
             .collect();
+        // A chip drag carries its group's box; the boxes it passes make room.
+        let mut group_shifts: HashMap<String, f32> = HashMap::new();
+        for (project, target) in group_targets {
+            let follow = dragged_item == Some(tab_groups::StripChild::Group(project.clone()));
+            let (value, active) = ease_shift(
+                &mut self.group_shifts,
+                project.clone(),
+                target,
+                follow,
+                reduced,
+            );
+            moving |= active;
+            group_shifts.insert(project, value);
+        }
+        let dragged_group = match dragged_item {
+            Some(tab_groups::StripChild::Group(project)) => Some(project),
+            _ => None,
+        };
         // Keep inactive headlines on their last pane. Only an in-tab focus
         // change rolls the title; selecting a tab settles it in the same frame.
         self.pane_ticks
@@ -8392,10 +8513,9 @@ impl Shell {
                 // Keep its ink stable until that press is released, even if
                 // hover hitboxes are being replaced during that redraw.
                 let hovered = self.tab_hover == Some(id)
-                    || self
-                        .tab_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.id == TitleTab::Session(id) && !drag.active);
+                    || self.tab_drag.as_ref().is_some_and(|drag| {
+                        drag.tab() == Some(&TitleTab::Session(id)) && !drag.active
+                    });
                 // A collapsed tab drops its close button, so a click anywhere
                 // on it selects it; selected, it is wide enough to show it again.
                 let close = self.tab_can_close(id, cx)
@@ -8403,7 +8523,7 @@ impl Shell {
                 let dragging = self
                     .tab_drag
                     .as_ref()
-                    .is_some_and(|d| d.id == TitleTab::Session(id) && d.active);
+                    .is_some_and(|d| d.tab() == Some(&TitleTab::Session(id)) && d.active);
                 // Any chat in the tab with a saved draft dashes its plate, as
                 // the sidebar card does.
                 let draft = self
@@ -8725,7 +8845,13 @@ impl Shell {
             })
             .collect();
         let (keys, elements): (Vec<_>, Vec<_>) = self
-            .grouped_strip(&entries, elements, &chips, cx)
+            .grouped_strip(
+                &entries,
+                elements,
+                &chips,
+                (&group_shifts, dragged_group.as_deref()),
+                cx,
+            )
             .into_iter()
             .unzip();
         // The active tab's slot among the strip's direct children, when loose.
@@ -8853,6 +8979,54 @@ impl Shell {
             .child(titlebar_drag_area().ml(px(2.)).flex_1().min_w_0())
             .into_any()
     }
+}
+
+/// Where `id` is drawn now, easing toward `target` in `shifts`. The dragged
+/// item rides the pointer; the rest ease into their slots.
+fn ease_shift<K: Clone + Eq + std::hash::Hash>(
+    shifts: &mut HashMap<K, TabShift>,
+    id: K,
+    target: f32,
+    follow: bool,
+    reduced: bool,
+) -> (f32, bool) {
+    let now = std::time::Instant::now();
+    // The dragged tab rides the pointer; it eases only into a slot.
+    if follow || reduced {
+        shifts.remove(&id);
+        if follow {
+            shifts.insert(
+                id.clone(),
+                TabShift {
+                    from: target,
+                    to: target,
+                    start: now - std::time::Duration::from_secs(1),
+                },
+            );
+        }
+        return (target, false);
+    }
+    let current = shifts.get(&id).map(|s| s.at(now));
+    if current.is_none_or(|_| shifts[&id].to != target) {
+        let from = current.map_or(0., |(value, _)| value);
+        if from == target {
+            shifts.remove(&id);
+            return (target, false);
+        }
+        shifts.insert(
+            id.clone(),
+            TabShift {
+                from,
+                to: target,
+                start: now,
+            },
+        );
+    }
+    let (value, done) = shifts[&id].at(now);
+    if done && target == 0. {
+        shifts.remove(&id);
+    }
+    (value, !done)
 }
 /// Highlight only the existing hairline; its parent keeps the wider, transparent
 /// grab area centered on that line. The wash brightens the underlying border.
