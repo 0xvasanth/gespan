@@ -98,9 +98,9 @@ pub fn pin_idle_agents(ids: impl IntoIterator<Item = i64>) {
 pub fn idle_agent_pinned(id: i64) -> bool {
     parked::idle_agent_pinned(id)
 }
-/// Resume gives held agents the usual idle period from now.
-pub fn unpin_idle_agents() {
-    parked::unpin_idle_agents();
+/// Resume gives these sessions' held agents the usual idle period from now.
+pub fn unpin_idle_agents(ids: impl IntoIterator<Item = i64>) {
+    parked::unpin_idle_agents(ids);
 }
 pub fn discard_worktree(path: &Path) {
     parked::discard_worktree(path);

@@ -48,19 +48,19 @@ pub(crate) struct GraphNode {
 pub(crate) struct GraphEdge {
     #[key]
     #[auto]
-    id: i64,
-    src: i64,
-    dst: i64,
-    kind: String,
+    pub(crate) id: i64,
+    pub(crate) src: i64,
+    pub(crate) dst: i64,
+    pub(crate) kind: String,
     #[default("{}".to_string())]
-    props_json: String,
-    valid_from: i64,
-    valid_from_basis: String,
-    valid_to: Option<i64>,
-    source: String,
-    scope: String,
-    created_at: i64,
-    last_seen_run: Option<i64>,
+    pub(crate) props_json: String,
+    pub(crate) valid_from: i64,
+    pub(crate) valid_from_basis: String,
+    pub(crate) valid_to: Option<i64>,
+    pub(crate) source: String,
+    pub(crate) scope: String,
+    pub(crate) created_at: i64,
+    pub(crate) last_seen_run: Option<i64>,
 }
 
 #[derive(Debug, toasty::Model)]

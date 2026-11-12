@@ -1,5 +1,9 @@
 //! With Tab animations on, an opened tab's slot grows from nothing and a closed one
 //! collapses in place before it leaves the strip.
+// A panic while drawing takes the whole app down, so render code here may
+// not index, slice, unwrap or expect: use `get`, `let ... else` or a default.
+// Tests may (clippy.toml). See `settings/render_smoke_tests.rs`.
+#![deny(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::time::{Duration, Instant};
@@ -156,8 +160,9 @@ fn order_with_closing<K: Clone + Eq>(
         if !closing(key) || order.contains(key) {
             continue;
         }
-        let at = old[..old_ix]
+        let at = old
             .iter()
+            .take(old_ix)
             .rev()
             .find_map(|previous| order.iter().position(|k| k == previous))
             .map_or(0, |ix| ix + 1);

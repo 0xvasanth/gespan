@@ -1,4 +1,8 @@
 // Anchored popovers and menus, with their placement math and row/keyboard model.
+// A panic while drawing takes the whole app down, so render code here may
+// not index, slice, unwrap or expect: use `get`, `let ... else` or a default.
+// Tests may (clippy.toml). See `settings/render_smoke_tests.rs`.
+#![deny(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 use crate::theme::*;
 use gpui::{
     AnyElement, AnyView, App, Bounds, BoxShadow, Context, Corners, DispatchPhase, Display, Element,
@@ -1293,8 +1297,9 @@ impl Menu {
                 .active
                 .and_then(|a| ids.iter().position(|ix| *ix == a))
                 .unwrap_or(0);
-            self.active =
-                Some(ids[(from as isize + direction).rem_euclid(ids.len() as isize) as usize]);
+            self.active = ids
+                .get((from as isize + direction).rem_euclid(ids.len() as isize) as usize)
+                .copied();
         }
         cx.notify();
     }
@@ -1430,7 +1435,9 @@ impl Menu {
             })
             .when(filled && !action.disabled, |d| d.bg(fill))
             .when(!filled && !action.disabled, |d| d.hover(|s| s.bg(hover)))
-            .when(!in_submenu, |d| d.child(self.rows[ix].probe()))
+            .when_some(self.rows.get(ix).filter(|_| !in_submenu), |d, row| {
+                d.child(row.probe())
+            })
             .when_some(action.icon, |d, path| {
                 d.child(
                     icon(path, icon_size)
@@ -1657,7 +1664,7 @@ impl Render for Menu {
             let action = self.action(ix)?;
             let submenu = submenu_popover(
                 ("submenu", ix),
-                self.rows[ix].clone(),
+                self.rows.get(ix)?.clone(),
                 self.surface.clone(),
                 self.sub_region.clone(),
             );

@@ -5,9 +5,10 @@
 //! database at call time from the session key the app supplies, never from
 //! agent input.
 use crate::comments::{add_comment, list_comments_in};
-use crate::db::{args, query, query_value, with_db, with_tx, Conn, Ex};
+use crate::db::{err, with_db, with_tx, Conn, Ex};
 use crate::links::{board_links, ticket_body_in, title_from_ticket_in};
-use crate::ops::{cards_for_link, cards_for_link_in, get_card_in};
+use crate::models::{CardRow, LinkRow};
+use crate::ops::{cards_for_link, cards_for_link_in, count, get_card_in, live};
 use crate::settings::{board_settings, board_settings_in, check_session_key};
 use crate::subtasks::{get_subtask, list_subtasks_in, toggle_subtask_in};
 use crate::Card;
@@ -99,16 +100,17 @@ async fn agent_title(ex: &mut Ex<'_>, card: &Card) -> Result<Option<String>, Str
     }
     let title = card.title.trim();
     let wanted = title.to_lowercase();
-    let tickets = query(
-        ex,
-        "SELECT ref FROM board_card_links
-         WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
-        args![&card.id],
+    let link = LinkRow::fields();
+    let tickets: Vec<String> = LinkRow::filter(
+        link.card_id()
+            .eq(&card.id)
+            .and(link.role().eq(Some("ticket".to_string())))
+            .and(link.kind().in_list(["jira", "linear", "plane"])),
     )
-    .await?
-    .iter()
-    .map(|r| r.get::<String>(0))
-    .collect::<Result<Vec<_>, String>>()?;
+    .select(link.reference())
+    .exec(ex)
+    .await
+    .map_err(err)?;
     let copied = tickets.iter().any(|json| {
         serde_json::from_str::<Value>(json)
             .ok()
@@ -213,18 +215,30 @@ async fn linked_to_session(
     card_id: &str,
     session_key: &str,
 ) -> Result<bool, String> {
-    query_value(
-        ex,
-        "SELECT EXISTS(SELECT 1 FROM board_cards c
-           WHERE c.id = ?1
-             AND (c.id IN (SELECT card_id FROM board_card_links
-                           WHERE kind = 'session' AND ref = ?2)
-                  OR (c.link_kind = 'session' AND c.link_id = ?2))
-             AND NOT EXISTS (SELECT 1 FROM board_card_meta m
-               WHERE m.card_id = c.id AND m.archived_at IS NOT NULL))",
-        args![card_id, session_key],
+    let link = LinkRow::fields();
+    let linked = LinkRow::filter(
+        link.kind()
+            .eq("session")
+            .and(link.reference().eq(session_key)),
     )
-    .await
+    .select(link.card_id());
+    let card = CardRow::fields();
+    let on_card = card
+        .link_kind()
+        .eq(Some("session".to_string()))
+        .and(card.link_id().eq(Some(session_key.to_string())));
+    let found = count(
+        ex,
+        CardRow::filter(
+            card.id()
+                .eq(card_id)
+                .and(card.id().in_query(linked).or(on_card))
+                .and(live()),
+        )
+        .count(),
+    )
+    .await?;
+    Ok(found > 0)
 }
 
 /// Answers a card tool call for `session_key`. The cards in reach are the
