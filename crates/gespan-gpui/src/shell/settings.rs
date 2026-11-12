@@ -442,6 +442,9 @@ impl Shell {
         gespan_core::cli::initialize(&self.workspace.preferences.binary_paths);
         // Turning it off stops the toolkit and the injection; nothing is deleted.
         gespan_core::decisions::set_enabled(self.workspace.preferences.decision_log);
+        // On: harness files are (re)written; switched off: what Gespan wrote
+        // is removed. Off the UI thread either way.
+        crate::decision_log::decision_log_switched(self.workspace.preferences.decision_log);
         self.keep_visible_idle_agents(cx);
         gespan_core::provider::configure_idle_agents(
             self.workspace.preferences.idle_agents as usize,

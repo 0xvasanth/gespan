@@ -4655,6 +4655,10 @@ impl Shell {
         self.update_usage_provider(cx);
         self.sync_board_projects(cx);
         self.sync_right_panel(cx);
+        // A project opened or closed: its checkouts get their decision files.
+        if crate::decision_log::set_known_projects(&self.workspace.projects) {
+            gespan_core::decisions::service::regenerate();
+        }
         self.invalidate_chrome(cx);
         self.save_state(cx);
     }

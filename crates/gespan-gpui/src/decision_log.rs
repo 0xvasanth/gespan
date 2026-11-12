@@ -6,6 +6,7 @@ use gespan_core::pilot::files::content_hash as digest;
 use gespan_core::store::Store;
 use gespan_core::transcript::Row;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 /// How many of a session's answers are kept, newest last.
@@ -146,15 +147,201 @@ fn typed(rows: &[Row], typed_hashes: &HashSet<String>) -> Vec<String> {
         .collect()
 }
 
-/// Registers [`user_texts`] as the decision log's source of the user's words.
+/// Registers [`user_texts`] as the decision log's source of the user's words,
+/// and the harness writer as its regeneration hook.
 /// The hub calls it on its own thread, so it reads the app database itself.
 pub(crate) fn install(store: Database) {
+    install_harness_writer(store.clone());
     gespan_core::decisions::service::set_user_text_source(Box::new(move |session| {
         match locked(&store) {
             Ok(store) => user_texts(&store, session),
             Err(_) => Vec::new(),
         }
     }));
+}
+
+/// The open projects, as the shell last saved them, so the harness writer
+/// (which runs off the UI thread) knows which checkouts to write for.
+static KNOWN_PROJECTS: LazyLock<Mutex<Vec<String>>> = LazyLock::new(Default::default);
+
+/// Records the open projects; true when the list changed.
+pub(crate) fn set_known_projects(projects: &[String]) -> bool {
+    let mut known = KNOWN_PROJECTS.lock().unwrap_or_else(|e| e.into_inner());
+    if *known == projects {
+        return false;
+    }
+    *known = projects.to_vec();
+    true
+}
+
+/// Every local checkout Gespan knows: the open projects and their
+/// worktrees. Remote (SSH) projects get nothing in v1. Runs git, so call it
+/// off the UI thread.
+fn known_workspaces() -> Vec<PathBuf> {
+    let projects = KNOWN_PROJECTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let mut out: Vec<PathBuf> = Vec::new();
+    for project in projects {
+        let path = PathBuf::from(&project);
+        if gespan_core::files::remote::is_remote(&path) || !path.is_dir() {
+            continue;
+        }
+        let trees = gespan_core::git::worktrees(&path).unwrap_or_default();
+        let found = trees
+            .into_iter()
+            .filter(|tree| !tree.missing)
+            .map(|tree| PathBuf::from(tree.path));
+        for candidate in std::iter::once(path.clone()).chain(found) {
+            if !out.contains(&candidate) {
+                out.push(candidate);
+            }
+        }
+    }
+    out
+}
+
+/// What the harness writer should do when the log's switch is applied.
+#[derive(Debug, PartialEq, Eq)]
+enum SwitchAction {
+    Regenerate,
+    RemoveAll,
+}
+
+/// The first apply at startup regenerates when the log is on; turning it on
+/// regenerates; turning it off removes what Gespan wrote. An unchanged
+/// switch, or the log off from the start, does nothing.
+fn switch_action(previous: Option<bool>, on: bool) -> Option<SwitchAction> {
+    match (previous, on) {
+        (Some(was), now) if was == now => None,
+        (_, true) => Some(SwitchAction::Regenerate),
+        (Some(true), false) => Some(SwitchAction::RemoveAll),
+        (_, false) => None,
+    }
+}
+
+static SWITCH: Mutex<Option<bool>> = Mutex::new(None);
+static HARNESS_STORE: Mutex<Option<Database>> = Mutex::new(None);
+
+/// Applies the log's switch to the harness files: called with every
+/// preferences apply, including the first one at startup.
+pub(crate) fn decision_log_switched(on: bool) {
+    let previous = SWITCH.lock().unwrap_or_else(|e| e.into_inner()).replace(on);
+    match switch_action(previous, on) {
+        Some(SwitchAction::Regenerate) => gespan_core::decisions::service::regenerate(),
+        Some(SwitchAction::RemoveAll) => {
+            let store = HARNESS_STORE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            if let Some(store) = store {
+                std::thread::spawn(move || write_harness_files(&store, false));
+            }
+        }
+        None => {}
+    }
+}
+
+/// The paths whose "edit replaced" notice is waiting for a window to show.
+static EDIT_NOTICES: LazyLock<(
+    async_channel::Sender<String>,
+    async_channel::Receiver<String>,
+)> = LazyLock::new(async_channel::unbounded);
+
+/// Notices for user edits Gespan replaced, as they come in.
+pub(crate) fn edit_notices() -> async_channel::Receiver<String> {
+    EDIT_NOTICES.1.clone()
+}
+
+fn edit_notice_key(path: &Path) -> String {
+    format!("decision-edit-notice:{}", path.display())
+}
+
+pub(crate) fn edit_notice_text(path: &Path) -> String {
+    format!(
+        "Gespan replaced your edit inside its section of {}. Edit decisions in My tasks instead.",
+        path.display()
+    )
+}
+
+/// The notices to show for `paths` (files whose Gespan section the user had
+/// edited): one per path, ever. Marks each as shown.
+fn unseen_edit_notices(store: &Store, paths: &[PathBuf]) -> Vec<String> {
+    let mut out = Vec::new();
+    for path in paths {
+        let key = edit_notice_key(path);
+        if matches!(store.setting(&key), Ok(Some(_))) {
+            continue;
+        }
+        if let Err(error) = store.save_setting(&key, "shown") {
+            tracing::warn!(%error, "the decision edit notice could not be recorded");
+            continue;
+        }
+        out.push(edit_notice_text(path));
+    }
+    out
+}
+
+/// Registers the harness writer as the log's regeneration hook. Each run
+/// happens on its own thread, never the UI's; the core serializes them.
+fn install_harness_writer(store: Database) {
+    *HARNESS_STORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(store.clone());
+    gespan_core::decisions::service::set_regenerate(Box::new(move || {
+        if !gespan_core::decisions::enabled() {
+            return;
+        }
+        let store = store.clone();
+        std::thread::spawn(move || write_harness_files(&store, true));
+    }));
+}
+
+/// Regenerates (or, with `regenerate` off, removes) every harness file for
+/// the real home, the app's data dir, its accounts and its known checkouts.
+fn write_harness_files(store: &Database, regenerate: bool) {
+    use gespan_core::decisions::harness;
+    let Some(home) = gespan_core::accounts::home() else {
+        tracing::warn!("the decision log found no home folder to write to");
+        return;
+    };
+    let Ok((book, data_dir)) = locked(store).map(|s| {
+        (
+            s.provider_accounts().unwrap_or_default(),
+            s.data_dir().map(Path::to_path_buf),
+        )
+    }) else {
+        return;
+    };
+    let Some(data_dir) = data_dir else {
+        return;
+    };
+    let workspaces = known_workspaces();
+    let report = if regenerate {
+        match gespan_core::decisions::service::with(|log| {
+            harness::regenerate(log, &book, &data_dir, &home, &workspaces)
+        }) {
+            Ok(report) => report,
+            Err(error) => {
+                tracing::warn!(%error, "the decision log could not write harness files");
+                return;
+            }
+        }
+    } else {
+        harness::remove_all(&book, &data_dir, &home, &workspaces)
+    };
+    for (path, error) in &report.errors {
+        tracing::warn!(path = %path.display(), %error, "a decision log harness file was not written");
+    }
+    if report.user_edits_overwritten.is_empty() {
+        return;
+    }
+    let notices = match locked(store) {
+        Ok(store) => unseen_edit_notices(&store, &report.user_edits_overwritten),
+        Err(_) => return,
+    };
+    for notice in notices {
+        let _ = EDIT_NOTICES.0.try_send(notice);
+    }
 }
 
 #[cfg(test)]
@@ -397,5 +584,62 @@ mod tests {
             .join()
             .unwrap();
         assert_eq!(texts, ["Ship it on Friday"]);
+    }
+
+    #[test]
+    fn decision_edit_notice_shows_once_per_path() {
+        let store = Store::open_gespan(Path::new(":memory:")).unwrap();
+        let claude = PathBuf::from("home").join(".claude").join("CLAUDE.md");
+        let codex = PathBuf::from("home").join(".codex").join("AGENTS.md");
+        let first = unseen_edit_notices(&store, std::slice::from_ref(&claude));
+        assert_eq!(
+            first,
+            [format!(
+                "Gespan replaced your edit inside its section of {}. Edit decisions in My tasks instead.",
+                claude.display()
+            )]
+        );
+        assert_eq!(
+            store
+                .setting(&format!("decision-edit-notice:{}", claude.display()))
+                .unwrap()
+                .as_deref(),
+            Some("shown")
+        );
+        // The same file again stays quiet; another file still gets its one.
+        let next = unseen_edit_notices(&store, &[claude.clone(), codex.clone()]);
+        assert_eq!(next, [edit_notice_text(&codex)]);
+        assert!(unseen_edit_notices(&store, &[claude, codex]).is_empty());
+    }
+
+    #[test]
+    fn decision_switch_regenerates_when_on_and_cleans_up_only_when_turned_off() {
+        // At startup: on writes the files, off leaves the disk alone.
+        assert_eq!(switch_action(None, true), Some(SwitchAction::Regenerate));
+        assert_eq!(switch_action(None, false), None);
+        // Turning it off removes what Gespan wrote; on writes it back.
+        assert_eq!(
+            switch_action(Some(true), false),
+            Some(SwitchAction::RemoveAll)
+        );
+        assert_eq!(
+            switch_action(Some(false), true),
+            Some(SwitchAction::Regenerate)
+        );
+        // Other preference changes re-apply an unchanged switch: nothing.
+        assert_eq!(switch_action(Some(true), true), None);
+        assert_eq!(switch_action(Some(false), false), None);
+    }
+
+    #[test]
+    fn decision_known_projects_report_changes_only() {
+        let _guard = exclusive();
+        let saved = KNOWN_PROJECTS.lock().unwrap().clone();
+        let a = vec!["/a".to_string(), "/b".to_string()];
+        set_known_projects(&[]);
+        assert!(set_known_projects(&a));
+        assert!(!set_known_projects(&a));
+        assert!(set_known_projects(&a[..1]));
+        *KNOWN_PROJECTS.lock().unwrap() = saved;
     }
 }
