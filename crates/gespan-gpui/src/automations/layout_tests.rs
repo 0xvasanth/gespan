@@ -8,9 +8,9 @@ use std::{cell::RefCell, rc::Rc};
 const CODEX_BINARY: &str = "GESPAN_CODEX_BINARY";
 
 /// A database of automations and the window showing the page over it.
-struct Page {
+pub(super) struct Page {
     _dir: tempfile::TempDir,
-    service: Arc<Mutex<Service>>,
+    pub(super) service: Arc<Mutex<Service>>,
     codex_binary: Option<std::ffi::OsString>,
 }
 
@@ -26,7 +26,7 @@ impl Drop for Page {
     }
 }
 
-fn page() -> Page {
+pub(super) fn page() -> Page {
     // Opening an automation loads its model's controls; a missing CLI makes
     // that fail at once instead of starting a real Codex.
     let codex_binary = std::env::var_os(CODEX_BINARY);
@@ -55,7 +55,7 @@ fn save(page: &Page, name: &str, cwd: &str, trigger: AutomationTrigger) -> Autom
     page.service.lock().unwrap().upsert(draft).unwrap()
 }
 
-fn open(
+pub(super) fn open(
     page: &Page,
     cwd: &str,
     cx: &mut TestAppContext,
@@ -70,7 +70,7 @@ fn open(
 }
 
 /// `debug_bounds` for a selector built at run time.
-trait Drawn {
+pub(super) trait Drawn {
     fn drawn(&mut self, selector: &str) -> Option<gpui::Bounds<gpui::Pixels>>;
 }
 impl Drawn for VisualTestContext {
@@ -79,7 +79,7 @@ impl Drawn for VisualTestContext {
     }
 }
 
-fn click(visual: &mut VisualTestContext, selector: &str) {
+pub(super) fn click(visual: &mut VisualTestContext, selector: &str) {
     visual.refresh().unwrap();
     let bounds = visual
         .drawn(selector)

@@ -32,6 +32,9 @@ mod gallery;
 mod layout;
 #[cfg(test)]
 mod layout_tests;
+mod review_setup;
+#[cfg(test)]
+mod review_setup_tests;
 mod trigger_menu;
 
 /// Event providers and schedules are separate from agent harness branding.
@@ -58,6 +61,11 @@ pub(crate) enum Event {
     Close,
     Launch(Box<DueAutomationRun>),
     OpenSession(String),
+    /// The review setup sheet's "Sign in": run `gh auth login` in a
+    /// terminal, then call `recheck_github` once it exits.
+    SignInGithub {
+        cwd: String,
+    },
 }
 
 /// "See all in Runs": open the Runs page filtered to this automation. Its
@@ -80,6 +88,9 @@ struct Template {
     prompt: String,
     trigger: serde_json::Value,
     trigger_label: String,
+    /// A quick setup the card opens instead of the editor: "review".
+    #[serde(default)]
+    setup: Option<String>,
 }
 struct TriggerFields {
     id: String,
@@ -116,6 +127,10 @@ enum Choice {
     Minute(String),
     Weekday(String),
     ModelSetting(String),
+    /// The review setup sheet's sentence.
+    SetupRepo,
+    SetupWhich,
+    SetupResults,
 }
 struct ChoiceMenu {
     field: Choice,
@@ -164,6 +179,10 @@ pub(crate) struct Automations {
     trigger_subscription: Option<Subscription>,
     trigger_connections: HashMap<String, bool>,
     request_generation: u64,
+    /// The two-click review setup, shown in place of the gallery.
+    review_setup: Option<review_setup::ReviewSetup>,
+    review_generation: u64,
+    github_probe: review_setup::GithubProbe,
 }
 impl EventEmitter<Event> for Automations {}
 impl EventEmitter<OpenRuns> for Automations {}
@@ -222,6 +241,9 @@ impl Automations {
             trigger_subscription: None,
             trigger_connections: HashMap::new(),
             request_generation: 0,
+            review_setup: None,
+            review_generation: 0,
+            github_probe: review_setup::github_probe(),
         };
         this.refresh(cx);
         this
@@ -276,6 +298,9 @@ impl Automations {
         projects: Vec<String>,
         cx: &mut Context<Self>,
     ) {
+        if self.cwd != cwd {
+            self.review_setup = None;
+        }
         self.cwd = cwd;
         self.projects = projects;
         self.load_folders(cx);
@@ -283,6 +308,7 @@ impl Automations {
     }
     fn show_gallery(&mut self, cx: &mut Context<Self>) {
         self.editor = None;
+        self.review_setup = None;
         self.selected = None;
         self.runs.clear();
         self.gallery = true;
@@ -460,6 +486,7 @@ impl Automations {
             }));
         }
         let last_pilot = draft.action.pilot_id().map(str::to_string);
+        self.review_setup = None;
         self.editor = Some(Editor {
             draft,
             last_pilot,
@@ -567,12 +594,16 @@ impl Automations {
         Some(draft)
     }
     fn save(&mut self, cx: &mut Context<Self>) {
-        if self.saving {
-            return;
-        }
         let Some(draft) = self.collected(cx) else {
             return;
         };
+        self.upsert(draft, cx);
+    }
+    /// Saves `draft` and opens what was saved, selected in the list.
+    fn upsert(&mut self, draft: AutomationUpsert, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         self.saving = true;
         self.error = None;
         let service = self.service.clone();
@@ -782,18 +813,25 @@ impl Automations {
         .detach();
     }
     fn choose_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editor) = &self.editor else {
-            return;
+        // The review sheet's Model phrase, else the editor's model.
+        let (harness, model, cwd) = match (&self.review_setup, &self.editor) {
+            (Some(setup), _) => (&setup.input.harness, &setup.input.model, &setup.input.cwd),
+            (None, Some(editor)) => (
+                &editor.draft.harness,
+                &editor.draft.model,
+                &editor.draft.cwd,
+            ),
+            (None, None) => return,
         };
-        let kind = Kind::from_id(&editor.draft.harness);
+        let kind = Kind::from_id(harness);
         let profile = crate::accounts::get(cx)
-            .map(|a| a.read(cx).selected(kind, &editor.draft.cwd))
+            .map(|a| a.read(cx).selected(kind, cwd))
             .unwrap_or_default();
         let picker = cx.new(|cx| {
             ModelList::new_for(
                 kind,
-                gespan_core::store::native_model(&editor.draft.model, &editor.draft.harness),
-                &editor.draft.cwd,
+                gespan_core::store::native_model(model, harness),
+                cwd,
                 profile,
                 cx,
             )
@@ -802,6 +840,13 @@ impl Automations {
             &picker,
             window,
             |this, _, picked: &ModelPicked, window, cx| {
+                if this.review_setup.is_some() {
+                    this.set_review_model(picked.0, picked.1.clone(), cx);
+                    this.models = None;
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                    return;
+                }
                 if let Some(editor) = &mut this.editor {
                     let current = gespan_core::store::native_model(
                         &editor.draft.model,
@@ -996,7 +1041,9 @@ impl Render for Automations {
                     ),
             )
             .child(list);
-        let main_content = if self.gallery || self.editor.is_none() {
+        let main_content = if self.review_setup.is_some() {
+            self.render_review_setup(cx)
+        } else if self.gallery || self.editor.is_none() {
             self.render_gallery(cx)
         } else {
             self.render_editor(cx)
@@ -1029,7 +1076,9 @@ impl Render for Automations {
                         this.trigger_menu = None;
                         this.models = None;
                         this.project_picker = None;
-                    } else if this.editor.is_some() && !this.gallery {
+                    } else if this.review_setup.is_some()
+                        || (this.editor.is_some() && !this.gallery)
+                    {
                         this.show_gallery(cx);
                     } else {
                         cx.emit(Event::Close);

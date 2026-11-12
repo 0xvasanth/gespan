@@ -197,6 +197,14 @@ impl Automations {
             }))
     }
     pub(super) fn apply_choice(&mut self, field: Choice, value: String, cx: &mut Context<Self>) {
+        if matches!(
+            field,
+            Choice::SetupRepo | Choice::SetupWhich | Choice::SetupResults
+        ) {
+            self.apply_setup_choice(field, value);
+            cx.notify();
+            return;
+        }
         let Some(editor) = &mut self.editor else {
             return;
         };
@@ -291,6 +299,8 @@ impl Automations {
                     trigger.day_of_week = value.parse().unwrap_or(1);
                 }
             }
+            // Handled above: the review sheet has no editor.
+            Choice::SetupRepo | Choice::SetupWhich | Choice::SetupResults => {}
         }
         editor.dirty = true;
         self.choice = None;

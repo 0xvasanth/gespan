@@ -85,6 +85,10 @@ impl Automations {
             cards.push(
                 div()
                     .id(SharedString::from(format!("template-{}", template.id)))
+                    .debug_selector({
+                        let selector = format!("template-{}", template.id);
+                        move || selector
+                    })
                     .role(Role::Button)
                     .aria_label(template.name.clone())
                     .min_h(px(148.))
@@ -146,9 +150,13 @@ impl Automations {
                             ))
                             .child(template.trigger_label.clone()),
                     )
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.begin(Some(selected.clone()), cx)),
-                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if selected.setup.as_deref() == Some("review") {
+                            this.open_review_setup(cx);
+                        } else {
+                            this.begin(Some(selected.clone()), cx);
+                        }
+                    }))
                     .into_any_element(),
             );
         }

@@ -725,7 +725,8 @@ fn github_call<T: DeserializeOwned, L: Serialize>(
     convert(local()?)
 }
 
-fn github_repositories(project: &Path) -> Result<Vec<String>, String> {
+/// The GitHub repositories a project's checkout points at, local or remote.
+pub fn github_repositories(project: &Path) -> Result<Vec<String>, String> {
     github_call(project, "git_github_repositories", json!({}), || {
         github::git_github_repositories_for(project)
     })
