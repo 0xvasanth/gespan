@@ -53,6 +53,10 @@
 //! Kiro's project files carry preferences as well as decisions (Cursor has
 //! no global file, Kiro's CLI reads no global steering); Claude's carries
 //! decisions only, since its global `CLAUDE.md` has the preferences.
+//! With search by meaning on, the shared file and the project files hold
+//! pinned decisions only (plus preferences, as above), like the
+//! session-start block; the other decisions reach each turn as its related
+//! block.
 //!
 //! Default homes come from a lookup (`default_homes` in the app, temp dirs in
 //! tests), so `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` are
@@ -620,6 +624,7 @@ pub fn regenerate(
             return report;
         }
     };
+    let by_meaning = store.embedder().is_some();
     let mut done: Vec<Job> = Vec::new();
     let text = body(&prefs, &[]);
     for job in preference_jobs(book, data_dir, homes) {
@@ -637,6 +642,13 @@ pub fn regenerate(
         let (prefs, decisions): (Vec<Entry>, Vec<Entry>) = entries
             .into_iter()
             .partition(|e| e.kind == EntryKind::Preference);
+        // With search by meaning on, sessions start with the preferences and
+        // the pinned decisions and get the rest per turn; the files say the
+        // same as the start block.
+        let decisions: Vec<Entry> = decisions
+            .into_iter()
+            .filter(|e| !by_meaning || e.pinned)
+            .collect();
         let full = body(&prefs, &decisions);
         let decisions_only = body(&[], &decisions);
         for job in project_jobs(workspace, data_dir) {

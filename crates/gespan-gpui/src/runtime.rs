@@ -574,6 +574,9 @@ fn run_turn_using(
         // the command would turn it into an ordinary message instead.
         let prompt = settings.prepared_prompt.take().unwrap_or(prompt);
         let raw_native_command = provider::is_raw_command(kind, &prompt);
+        // What the user wrote, before any context is wrapped around it: the
+        // decision log looks up what is related to it.
+        let user_message = prompt.clone();
         let prompt = if raw_native_command {
             prompt
         } else if let Some(pilot) = &settings.pilot {
@@ -741,6 +744,16 @@ fn run_turn_using(
             // A checkout Gespan has not written for gets its files soon; this
             // session gets the block meanwhile.
             crate::decision_log::note_session_workspace(std::path::Path::new(workspace));
+            // With search by meaning on, the decisions related to this
+            // message, after the start block. Best effort: the turn waits at
+            // most RELATED_DEADLINE for it, and goes without it otherwise.
+            if let Some(block) = gespan_core::decisions::related_context(
+                std::path::Path::new(workspace),
+                &user_message,
+                RELATED_DEADLINE,
+            ) {
+                prompt = with_decision_context(&block, &prompt);
+            }
             if let Some((block, hash)) = gespan_core::decisions::start_context(
                 kind,
                 std::path::Path::new(workspace),
@@ -1974,7 +1987,13 @@ fn decisions_toolkit(enabled: bool, remote: bool, worker: bool) -> Option<&'stat
     Some(if worker { DECISIONS_READ } else { DECISIONS })
 }
 
-/// `prompt` with the decision log's session-start block before it, in the
+/// How long a turn waits for its related decisions. Nomic embeds a message
+/// in about 60 ms (p95 about 90 ms) on the runtime the app links, so this
+/// leaves room for the search without the user noticing the wait.
+const RELATED_DEADLINE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// `prompt` with a decision log block (the session-start block, or a turn's
+/// related decisions) before it, in the
 /// `<gespan_context>` wrapper the Pilot prompt uses.
 fn with_decision_context(block: &str, prompt: &str) -> String {
     format!("<gespan_context>\n{block}\n</gespan_context>\n\n{prompt}")
@@ -2024,6 +2043,21 @@ mod tests {
         assert_eq!(
             sent,
             "<gespan_context>\nGespan decision log. Use tabs.\n</gespan_context>\n\nRefactor the store"
+        );
+        assert_eq!(gespan_core::outside_turns::without_injected(&sent), prompt);
+    }
+
+    /// The start block comes first, then the turn's related decisions, then
+    /// the user's words, which are all that is taken for theirs.
+    #[test]
+    fn decision_start_and_related_blocks_precede_the_users_words() {
+        use super::with_decision_context;
+        let prompt = "Refactor the store";
+        let with_related = with_decision_context("Related: D-4.", prompt);
+        let sent = with_decision_context("Start: P-1.", &with_related);
+        assert_eq!(
+            sent,
+            "<gespan_context>\nStart: P-1.\n</gespan_context>\n\n<gespan_context>\nRelated: D-4.\n</gespan_context>\n\nRefactor the store"
         );
         assert_eq!(gespan_core::outside_turns::without_injected(&sent), prompt);
     }

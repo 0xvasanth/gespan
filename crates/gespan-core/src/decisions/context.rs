@@ -1,12 +1,17 @@
 //! The session-start block: what a session of a harness that reads no
 //! decision file is told about the log, once, and again only after it changes.
+//! And, with search by meaning on, each turn's related block.
 use super::entry::{Entry, Kind as EntryKind};
-use super::render::{render_block, START_BUDGET};
+use super::render::{render_block, START_BUDGET, TURN_BUDGET};
 use super::scope::scope_for;
 use super::service;
+use crate::diagnostics::metrics::{self, ErrorKind};
 use crate::provider::Kind;
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
 /// Whether this harness loads the project decision file on its own, so its
 /// sessions get the log from the file instead of an injected block.
@@ -58,4 +63,116 @@ pub fn start_context(
         .map(|b| format!("{b:02x}"))
         .collect();
     (already != Some(hash.as_str())).then_some((block, hash))
+}
+
+/// Counted each time a turn is sent without its related block because the
+/// lookup was not ready in time (or could not start).
+const SKIPPED: &str = "decisions.related.skipped";
+
+/// At most this many per-turn lookups run at once in the process. A lookup
+/// still running when its turn's deadline passed keeps its slot until it
+/// ends, so a stuck embedder holds these few threads and no more: later
+/// turns go without the block instead of starting another.
+pub const MAX_RELATED_WORKERS: usize = 2;
+
+/// The most entries a related block lists before the budget trims it.
+const RELATED_LIMIT: usize = 8;
+
+static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// A slot among [`MAX_RELATED_WORKERS`], given back when dropped.
+struct Slot;
+
+impl Slot {
+    fn take() -> Option<Slot> {
+        IN_FLIGHT
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < MAX_RELATED_WORKERS).then_some(n + 1)
+            })
+            .ok()
+            .map(|_| Slot)
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Per-turn lookups running now, finished turns' late ones included.
+pub fn related_in_flight() -> usize {
+    IN_FLIGHT.load(Ordering::SeqCst)
+}
+
+/// The decisions related to `user_message`, for the turn about to be sent,
+/// with search by meaning on. `None` when the log is off, search by meaning
+/// is off, nothing related is left once what the session start already
+/// gave (preferences and pinned decisions) is taken out, or the lookup is
+/// not ready within `deadline`. In that last case, or when the lookups
+/// already running leave no room for another, the turn goes without it and
+/// `decisions.related.skipped` is counted.
+///
+/// The lookup (the project's scope, which asks git, then hybrid search
+/// with its relevance cut-off) runs on its own thread; this waits for it
+/// at most `deadline`, so the turn is never held longer.
+pub fn related_context(workspace: &Path, user_message: &str, deadline: Duration) -> Option<String> {
+    if !service::enabled() || !matches!(service::with(|s| s.embedder().is_some()), Ok(true)) {
+        return None;
+    }
+    let Some(slot) = Slot::take() else {
+        metrics::failure(SKIPPED, ErrorKind::Other);
+        return None;
+    };
+    let (tx, rx) = mpsc::sync_channel(1);
+    let workspace = workspace.to_path_buf();
+    let message = user_message.to_owned();
+    let spawned = std::thread::Builder::new()
+        .name("decisions-related".into())
+        .spawn(move || {
+            let _slot = slot;
+            let _ = tx.send(related_block(&workspace, &message));
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "the related decisions lookup could not start");
+        metrics::failure(SKIPPED, ErrorKind::SpawnFailed);
+        return None;
+    }
+    match rx.recv_timeout(deadline) {
+        Ok(block) => block,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            metrics::failure(SKIPPED, ErrorKind::Timeout);
+            None
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            metrics::failure(SKIPPED, ErrorKind::Panic);
+            None
+        }
+    }
+}
+
+/// The lookup itself, on the worker thread.
+fn related_block(workspace: &Path, message: &str) -> Option<String> {
+    let scope = scope_for(workspace);
+    let found = service::with(|store| {
+        if store.embedder().is_none() {
+            return Ok(Vec::new());
+        }
+        store.search(&scope, message, RELATED_LIMIT)
+    });
+    let entries = match found {
+        Ok(Ok(entries)) => entries,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "the decision log could not be searched for this turn");
+            return None;
+        }
+        Err(_) => return None,
+    };
+    // Preferences and pinned decisions are in the session-start block (or
+    // the project file) already.
+    let related: Vec<Entry> = entries
+        .into_iter()
+        .filter(|e| e.kind != EntryKind::Preference && !e.pinned)
+        .collect();
+    (!related.is_empty()).then(|| render_block(&[], &related, TURN_BUDGET).text)
 }

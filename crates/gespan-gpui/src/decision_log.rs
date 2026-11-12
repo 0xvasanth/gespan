@@ -465,6 +465,8 @@ fn apply_meaning(on: bool, generation: u64, loader: &Loader) {
         if !on {
             set_meaning_status(None);
             let _ = gespan_core::decisions::service::with(|log| log.set_embedder(None));
+            // Every decision goes back into the files.
+            gespan_core::decisions::service::regenerate();
             return;
         }
         let embedder = match loader(&current) {
@@ -496,6 +498,10 @@ fn apply_meaning(on: bool, generation: u64, loader: &Loader) {
     {
         set_meaning_status(Some(format!("Embedding failed: {error}")));
     }
+    // With it on, the files keep only preferences and pinned decisions (the
+    // rest reach each turn); if the pass turned it back off, they get every
+    // decision again. Either way they follow what the log is now.
+    gespan_core::decisions::service::regenerate();
 }
 
 /// Downloads (when missing) and loads the Nomic model. `None` when it was
@@ -979,6 +985,32 @@ mod tests {
             .join()
             .unwrap();
         assert_eq!(model_in_use(), None);
+    }
+
+    /// Files follow the switch: with search by meaning on they hold only
+    /// preferences and pinned decisions, so each switch rewrites them, once
+    /// its work is done.
+    #[test]
+    fn decision_meaning_switch_regenerates_the_harness_files() {
+        let _log = meaning_log();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        gespan_core::decisions::service::set_regenerate(Box::new(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        let count = || calls.load(std::sync::atomic::Ordering::SeqCst);
+        switch_meaning(true, hash_loader()).unwrap().join().unwrap();
+        assert_eq!(count(), 1);
+        switch_meaning(false, hash_loader())
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(count(), 2);
+        // A model that cannot load changes nothing, so nothing is rewritten.
+        let broken: Arc<Loader> = Arc::new(|_: &dyn Fn() -> bool| Err("no model".into()));
+        switch_meaning(true, broken).unwrap().join().unwrap();
+        assert_eq!(count(), 2);
+        *MEANING.lock().unwrap() = None;
     }
 
     /// The user turns it off while the model is still loading: the slow

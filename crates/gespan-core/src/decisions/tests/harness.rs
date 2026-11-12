@@ -900,3 +900,50 @@ fn a_fifo_in_place_of_a_harness_file_is_skipped_without_blocking() {
         assert!(fs::symlink_metadata(&claude).unwrap().file_type().is_fifo());
     });
 }
+
+/// With search by meaning on, sessions start with preferences and pinned
+/// decisions and get the rest per turn, so every file Gespan writes holds
+/// the same: the shared file and each harness's project file.
+#[test]
+fn shared_file_with_embeddings_on_has_only_prefs_and_pinned() {
+    let f = fixture();
+    let scope = scope_for(&f.repo);
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    f.approve(EntryKind::Decision, scope.clone(), "Use sqlite");
+    let pinned = f.propose(EntryKind::Decision, scope, "Name branches after tickets");
+    f.store.approve(pinned, None, true, &[], 20).unwrap();
+    f.store
+        .set_embedder(Some(std::sync::Arc::new(
+            crate::decisions::HashEmbedder::new(),
+        )))
+        .unwrap();
+
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    let shared = shared_file(&f.repo, &f.data);
+    let files: Vec<(Option<Kind>, PathBuf)> = std::iter::once((None, shared.clone()))
+        .chain(
+            project_targets(&f.repo)
+                .into_iter()
+                .map(|t| (Some(t.harness), t.path)),
+        )
+        .collect();
+    for (harness, file) in &files {
+        let body = section_of(&read(file));
+        assert!(body.contains("Name branches after tickets text"), "{body}");
+        assert!(!body.contains("Use sqlite"), "{harness:?}: {body}");
+        assert_eq!(
+            body.contains("Answer tersely text"),
+            *harness != Some(Kind::Claude),
+            "{harness:?}: {body}"
+        );
+    }
+
+    // Off again: the next regeneration brings every decision back.
+    f.store.set_embedder(None).unwrap();
+    f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    for (harness, file) in &files {
+        let body = section_of(&read(file));
+        assert!(body.contains("Use sqlite text"), "{harness:?}: {body}");
+    }
+}

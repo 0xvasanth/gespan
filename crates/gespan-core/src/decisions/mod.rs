@@ -14,7 +14,7 @@ pub mod store;
 pub(crate) mod toolkit;
 pub(crate) mod vector;
 
-pub use context::{reads_decision_file, start_context};
+pub use context::{reads_decision_file, related_context, start_context};
 pub use embed::{Embedder, HashEmbedder};
 pub use entry::{
     Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, ShownHash, Source, Status,
