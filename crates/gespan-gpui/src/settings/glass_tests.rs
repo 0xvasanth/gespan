@@ -888,3 +888,72 @@ fn chat_background_controls_write_their_preferences(cx: &mut TestAppContext) {
     click(visual, "settings-remove-chat-background");
     assert_eq!(prefs(window, visual).chat_background, None);
 }
+
+#[gpui::test]
+fn devices_show_machine_states_the_remove_card_and_away_from_home_in_its_card(
+    cx: &mut TestAppContext,
+) {
+    use gespan_core::remote::{Machine, SshTarget};
+    let (window, mut visual) = window(Section::Devices, Preferences::default(), cx);
+    let visual = &mut visual;
+    let machine = |id: &str, name: &str| Machine {
+        id: id.into(),
+        name: name.into(),
+        endpoint: String::new(),
+        environment_id: String::new(),
+        ssh: Some(SshTarget {
+            target: format!("me@{id}"),
+            port: None,
+            remote_port: 3774,
+        }),
+    };
+    window
+        .update(visual, |view, _, cx| {
+            view.seed_machines_for_test(
+                vec![
+                    machine("mini", "Home Mac mini"),
+                    machine("box", "Build box"),
+                ],
+                &[
+                    ("mini", "Connected"),
+                    (
+                        "box",
+                        "Connected · host update needed for Explorer and Changes",
+                    ),
+                ],
+                Some("box"),
+            );
+            view.ctx.mobile = Some(gespan_core::mobile::Status {
+                enabled: true,
+                listening: true,
+                name: "desk".into(),
+                fingerprint: Some("7f3a9c21d4e5".into()),
+                addresses: Vec::new(),
+                devices: Vec::new(),
+                open_router: true,
+                remote_address: String::new(),
+                router_status: String::new(),
+                error: None,
+            });
+            view.open_away_for_test();
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // One pill per machine, matching what its host reported.
+    assert!(visual.debug_bounds("remote-remove-confirmation").is_some());
+    let card = visual.debug_bounds("mobile-away-card").unwrap();
+    let details = visual.debug_bounds("mobile-away-details").unwrap();
+    assert!(
+        card.contains(&details.center()),
+        "the details open inside the card"
+    );
+    let router = visual
+        .debug_bounds("settings-toggle-mobile-open-router")
+        .unwrap();
+    assert!(
+        router.left() > card.center().x,
+        "the router switch sits on the right"
+    );
+}

@@ -719,6 +719,23 @@ impl SettingsView {
         cx.notify();
     }
 
+    #[cfg(test)]
+    pub(in crate::settings) fn seed_machines_for_test(
+        &mut self,
+        machines: Vec<Machine>,
+        status: &[(&str, &str)],
+        removing: Option<&str>,
+    ) {
+        self.connections.loaded = true;
+        self.connections.machines = machines;
+        for (id, label) in status {
+            self.connections
+                .status
+                .insert((*id).into(), (*label).into());
+        }
+        self.connections.removing = removing.map(str::to_owned);
+    }
+
     pub(super) fn connections_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         self.initialize_connection_fields(cx);
         let busy = self.connections.busy;
@@ -818,7 +835,7 @@ impl SettingsView {
             page.push(div().p_5().rounded(px(14.)).border_1().border_color(crate::glass::edge()).bg(crate::glass::fill()).flex().flex_col().gap_4()
                 .child(div().flex().justify_between().child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child("Connect through SSH"))
                     .child(div().rounded_sm().bg(content(0.1)).px_2().py_1().text_size(px(11.)).text_color(content(0.6)).child("SSH")))
-                .child(target).child(name)
+                .child(div().flex().gap_3().child(div().flex_1().min_w_0().child(target)).child(div().flex_1().min_w_0().child(name)))
                 .child(div().id("ssh-advanced").role(Role::Button).aria_label("Advanced SSH settings").text_size(px(12.)).text_color(content(0.5)).cursor_pointer()
                     .child(if self.connections.advanced { "▾ Advanced" } else { "▸ Advanced" })
                     .on_click(cx.listener(|this, _, _, cx| { this.connections.advanced = !this.connections.advanced; cx.notify(); })))
@@ -999,18 +1016,20 @@ impl SettingsView {
     ) -> AnyElement {
         let revoke_machine = machine.clone();
         let disabled = self.connections.revoking;
-        div().id("remote-remove-confirmation").role(Role::Group).aria_label(format!("Confirm removing {}", machine.name)).border_t_1().border_color(content(0.1)).bg(content(0.03)).p_4().flex().flex_col().gap_3()
+        // As designed: a red-tinted card inside the list, under the row.
+        div().border_t_1().border_color(crate::glass::hairline()).p(px(12.)).child(
+        div().id("remote-remove-confirmation").debug_selector(|| "remote-remove-confirmation".into()).role(Role::Group).aria_label(format!("Confirm removing {}", machine.name)).rounded(px(12.)).border_1().border_color(red(0.25)).bg(red(0.05)).p_4().flex().flex_col().gap(px(10.))
             .child(div().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(format!("Remove {} from this desktop?", machine.name)))
             .child(paragraph("This closes this desktop’s connection to the machine. It does not stop the host, and its sessions keep running and stay on that machine. You can add it again later."))
             .child(paragraph("Removing alone leaves this desktop’s credential valid on the host. Revoke access to invalidate it first; the machine must be reachable."))
             .child(paragraph("To stop the host and turn off its background service, run ~/.gespan-host/bin/gespan-host service uninstall on that machine (%USERPROFILE%\\.gespan-host\\bin\\gespan-host.cmd service uninstall on Windows). Its sessions and history are kept."))
             .child(div().flex().flex_wrap().gap_2()
-                .child(glass_secondary("revoke-remove-machine", "Revoke access and remove", true, disabled).child("Revoke access and remove")
+                .child(glass_secondary("revoke-remove-machine", "Revoke access and remove", true, disabled).border_1().border_color(red(0.4)).bg(red(0.08)).child("Revoke access and remove")
                     .on_click(cx.listener(move |this, _, _, cx| this.remove_connection(revoke_machine.clone(), true, cx))))
                 .child(glass_secondary("remove-machine-only", "Remove from this desktop only", false, disabled).child("Remove from this desktop only")
                     .on_click(cx.listener(move |this, _, _, cx| this.remove_connection(machine.clone(), false, cx))))
-                .child(glass_secondary("cancel-remove-machine", "Cancel", false, disabled).child("Cancel")
-                    .on_click(cx.listener(|this, _, _, cx| { if !this.connections.revoking { this.connections.removing = None; cx.notify(); } })))).into_any_element()
+                .child(crate::glass::button("cancel-remove-machine", "Cancel", crate::glass::Button::Ghost).h(px(28.)).role(Role::Button).aria_label("Cancel")
+                    .on_click(cx.listener(|this, _, _, cx| { if !this.connections.revoking { this.connections.removing = None; cx.notify(); } }))))).into_any_element()
     }
 }
 
