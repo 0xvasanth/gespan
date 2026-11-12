@@ -45,6 +45,18 @@ pub(super) const FLOW_ANSWERS: [(&str, &str, Button, bool); 2] = [
     ("my-tasks-flow-reject", "Reject", Button::Ghost, false),
 ];
 
+/// A draft review's answers: submitting is the main one; keeping it as a
+/// draft the secondary one. The flag is whether the answer submits.
+pub(super) const DRAFT_ANSWERS: [(&str, &str, Button, bool); 2] = [
+    (
+        "my-tasks-draft-submit",
+        "Submit review",
+        Button::Primary,
+        true,
+    ),
+    ("my-tasks-draft-keep", "Keep as draft", Button::Glass, false),
+];
+
 /// A Pilot choice's options: the first leads, the rest are glass.
 pub(super) fn choice_weight(ix: usize) -> Button {
     if ix == 0 {
@@ -168,13 +180,10 @@ impl MyTasks {
                         false,
                     ));
                 }
-                for (id, label, submit) in [
-                    ("my-tasks-draft-submit", "Submit review", true),
-                    ("my-tasks-draft-keep", "Keep as draft", false),
-                ] {
+                for (id, label, weight, submit) in DRAFT_ANSWERS {
                     let run = run.clone();
                     buttons.push(
-                        answer(id, id.into(), label, submit)
+                        answer(id, id.into(), label, weight)
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(Event::DraftDecide {
                                     run: run.clone(),
