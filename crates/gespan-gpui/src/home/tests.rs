@@ -34,7 +34,7 @@ fn waiting(key: &str, kind: Kind, since_ms: u64) -> Waiting {
         project: "/work/langfuse".into(),
         since_ms,
         source: Source::Session(1),
-        approval: (kind == Kind::Approval).then(|| (1, "req-1".into())),
+        allow: None,
     }
 }
 
@@ -348,4 +348,25 @@ fn dark_brand_tiles_draw_in_ink_so_their_bars_show() {
     assert_eq!(provider_color("cursor"), content(0.9));
     // No tile at all (a multicolour logo) is ink too.
     assert_eq!(provider_color("antigravity"), content(0.9));
+}
+
+#[test]
+fn only_a_short_lone_command_can_be_allowed_from_home() {
+    // The card found a plain shell command: offered, and shown whole.
+    assert_eq!(
+        one_click(Some("gh pr create --fill")),
+        Some("gh pr create --fill".into())
+    );
+    assert_eq!(
+        one_click(Some("  git status \n")),
+        Some("git status".into())
+    );
+    // No lone command: an alert, an MCP tool or extra arguments.
+    assert_eq!(one_click(None), None);
+    assert_eq!(one_click(Some("   ")), None);
+    // More than one line, or too long to show without cutting it.
+    assert_eq!(one_click(Some("cd app\nrm -rf build")), None);
+    let long = "x".repeat(ONE_CLICK_MAX + 1);
+    assert_eq!(one_click(Some(&long)), None);
+    assert!(one_click(Some(&"x".repeat(ONE_CLICK_MAX))).is_some());
 }

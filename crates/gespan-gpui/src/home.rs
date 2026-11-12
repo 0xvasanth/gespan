@@ -120,8 +120,31 @@ pub(crate) struct Waiting {
     pub project: String,
     pub since_ms: u64,
     pub source: Source,
-    /// A tool approval's session and request, which "Allow once" answers.
-    pub approval: Option<(i64, String)>,
+    /// A tool approval Home may allow in one click; see [`one_click`].
+    pub allow: Option<OneClick>,
+}
+
+/// A tool approval simple enough to allow from Home: its session, request
+/// and the whole command, which the row shows before you can allow it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OneClick {
+    pub session: i64,
+    pub request: String,
+    pub command: String,
+}
+
+/// Commands longer than this open in My tasks instead, so the row never
+/// has to cut the command it asks you to allow.
+const ONE_CLICK_MAX: usize = 120;
+
+/// The command Home may offer "Allow once" for: the approval card's lone
+/// command (a shell command with no alert, MCP server or other argument,
+/// its hidden characters marked) on one line and short enough to show in
+/// full. Anything else opens in My tasks, which shows the whole card.
+pub(crate) fn one_click(lone_command: Option<&str>) -> Option<String> {
+    let command = lone_command?.trim();
+    (!command.is_empty() && !command.contains('\n') && command.chars().count() <= ONE_CLICK_MAX)
+        .then(|| command.to_owned())
 }
 
 /// One agent working now.
@@ -532,6 +555,11 @@ impl Home {
             self.range = range;
             cx.notify();
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn waiting_for_test(&self) -> &[Waiting] {
+        &self.data.waiting
     }
 
     pub(crate) fn set_data(&mut self, data: Data, cx: &mut Context<Self>) {
@@ -1032,12 +1060,28 @@ impl Home {
                                     .text_color(content(1.))
                                     .child(task.headline.clone()),
                             )
+                            .when_some(task.allow.as_ref(), |d, allow| {
+                                // The whole command, never cut: it's what Allow once allows.
+                                d.child(
+                                    div()
+                                        .debug_selector({
+                                            let key = key.clone();
+                                            move || format!("home-command-{key}")
+                                        })
+                                        .mt(px(2.))
+                                        .font_family(crate::fonts::monospace())
+                                        .text_size(px(12.))
+                                        .line_height(px(17.))
+                                        .text_color(content(0.9))
+                                        .child(allow.command.clone()),
+                                )
+                            })
                             .child(note(meta).truncate()),
                     )
-                    .map(|d| match (&task.approval, &task.source) {
-                        (Some((session, request)), source) => {
+                    .map(|d| match (&task.allow, &task.source) {
+                        (Some(allow), source) => {
                             let (session, request, source) =
-                                (*session, request.clone(), source.clone());
+                                (allow.session, allow.request.clone(), source.clone());
                             d.child(
                                 small_button(
                                     SharedString::from(format!("home-allow-{key}")),
@@ -1072,10 +1116,12 @@ impl Home {
                             )
                         }
                         (None, _) => {
+                            // Anything Home can't show in full opens in My tasks.
+                            let label = if approval { "Open" } else { "Answer" };
                             d.child(
                                 small_button(
                                     SharedString::from(format!("home-answer-{key}")),
-                                    "Answer",
+                                    label,
                                     Button::Glass,
                                 )
                                 .debug_selector({

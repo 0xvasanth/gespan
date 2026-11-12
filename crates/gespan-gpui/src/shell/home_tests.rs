@@ -213,13 +213,7 @@ fn allow_once_on_home_answers_the_request_like_my_tasks(cx: &mut TestAppContext)
         .update(visual, |shell, _, cx| {
             shell.sessions[&id].update(cx, |view, _| {
                 view.controls = Some(send);
-                view.set_approvals_for_test(vec![gespan_core::agent::Approval {
-                    id: "a1".into(),
-                    title: "Allow Bash?".into(),
-                    detail: "git status".into(),
-                    can_remember: true,
-                    tool: None,
-                }]);
+                view.set_approvals_for_test(vec![bash("a1", "gh pr create --fill")]);
             });
         })
         .unwrap();
@@ -227,12 +221,82 @@ fn allow_once_on_home_answers_the_request_like_my_tasks(cx: &mut TestAppContext)
     let key = format!("approval:{id}:a1");
     assert!(drawn(visual, &format!("home-waiting-{key}")));
     assert!(!drawn(visual, "home-waiting-empty"));
+    // The row shows the whole command it would allow.
+    assert!(drawn(visual, &format!("home-command-{key}")));
+    let shown =
+        home(window, visual).read_with(visual, |home, _| home.waiting_for_test()[0].allow.clone());
+    assert_eq!(
+        shown.map(|a| a.command).as_deref(),
+        Some("gh pr create --fill")
+    );
     click(visual, &format!("home-allow-{key}"));
     let sent = controls.try_recv().expect("a decision was sent");
     assert_eq!(sent.id, "a1");
     assert!(matches!(sent.decision, gespan_core::agent::Decision::Allow));
     // Answering keeps you on Home.
     assert_eq!(view(window, visual), Some(AppView::Home));
+}
+
+/// A Bash tool approval, as Claude sends one.
+fn bash(id: &str, command: &str) -> gespan_core::agent::Approval {
+    let mut call = gespan_core::tool::ToolCall::new(&format!("call-{id}"), "Bash");
+    call.input = serde_json::json!({ "command": command }).to_string();
+    gespan_core::agent::Approval {
+        id: id.into(),
+        title: "Allow Bash?".into(),
+        detail: command.into(),
+        can_remember: true,
+        tool: Some(call),
+    }
+}
+
+#[gpui::test]
+fn a_request_home_cannot_show_in_full_opens_in_my_tasks_instead(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let id = other_session(window, visual);
+    let (send, controls) = std::sync::mpsc::channel();
+    window
+        .update(visual, |shell, _, cx| {
+            shell.sessions[&id].update(cx, |view, _| {
+                view.controls = Some(send);
+                view.set_approvals_for_test(vec![
+                    // A hidden character makes `rm` look like something else:
+                    // the card raises an alert, so no one-click allow.
+                    bash("hidden", "r\u{200B}m -rf build"),
+                    // Two lines can't sit on one row whole.
+                    bash("multi", "cd app\nrm -rf build"),
+                ]);
+            });
+        })
+        .unwrap();
+    open_home(window, visual);
+    for request in ["hidden", "multi"] {
+        let key = format!("approval:{id}:{request}");
+        assert!(
+            drawn(visual, &format!("home-waiting-{key}")),
+            "{request} is listed"
+        );
+        assert!(
+            !drawn(visual, &format!("home-allow-{key}")),
+            "{request}: no Allow once"
+        );
+        assert!(!drawn(visual, &format!("home-command-{key}")), "{request}");
+    }
+    // Its Open goes to My tasks on that request, where the full card is.
+    let key = format!("approval:{id}:hidden");
+    click(visual, &format!("home-answer-{key}"));
+    assert_eq!(view(window, visual), Some(AppView::MyTasks));
+    let selected = window
+        .read_with(visual, |shell, cx| {
+            shell
+                .my_tasks
+                .as_ref()
+                .and_then(|view| view.read(cx).selected().map(|t| t.key.clone()))
+        })
+        .unwrap();
+    assert_eq!(selected, Some(key));
+    assert!(controls.try_recv().is_err(), "nothing was decided");
 }
 
 #[gpui::test]

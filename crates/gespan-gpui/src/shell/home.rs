@@ -3,7 +3,8 @@
 //! clicks go.
 use super::agents_panel::AgentState;
 use super::*;
-use crate::home::{self, Data, Home, Page, Usage, Waiting, Working};
+use crate::conversation::approval_card::Card;
+use crate::home::{self, Data, Home, OneClick, Page, Usage, Waiting, Working};
 use crate::my_tasks::{Body, Source};
 
 impl Shell {
@@ -62,9 +63,14 @@ impl Shell {
                         project: task.project.clone(),
                         since_ms: task.since_ms,
                         source: task.source.clone(),
-                        approval: match (&task.body, &task.source) {
-                            (Body::Approval { approval, .. }, Source::Session(id)) => {
-                                Some((*id, approval.id.clone()))
+                        allow: match (&task.body, &task.source) {
+                            (Body::Approval { approval, cwd }, Source::Session(id)) => {
+                                let card = Card::new(approval, cwd.as_deref());
+                                home::one_click(card.lone_command()).map(|command| OneClick {
+                                    session: *id,
+                                    request: approval.id.clone(),
+                                    command,
+                                })
                             }
                             _ => None,
                         },
