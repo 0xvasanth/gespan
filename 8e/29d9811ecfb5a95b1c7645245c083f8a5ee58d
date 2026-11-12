@@ -1,0 +1,76 @@
+crates/gespan-core/migrations/gespan/history.toml
+  s_a2c0f0f2f96e87::t_d74a4cc4509a05 4
+crates/gespan-core/src/automations.rs
+  s_a2c0f0f2f96e87::t_4b2942041f751d 2237-2238,2263,2265,2268,2270,2346,2512,2515,2687,3622
+  s_a2c0f0f2f96e87::t_bbad07766408c6 1916-1944
+  s_a2c0f0f2f96e87::t_896070e571c344 2255
+  s_a2c0f0f2f96e87::t_63c3824b643b66 2239,2241
+  s_a2c0f0f2f96e87::t_3659cd8a9ec7c8 4541,4543-4544
+  s_a2c0f0f2f96e87::t_03be9374261f18 4542,4545
+  s_a2c0f0f2f96e87::t_d6221d65ebb387 2720
+  s_a2c0f0f2f96e87::t_8c27a3be573476 924-926,932-940,942,944-945,957-959,973-1013,2250,4502
+  s_a2c0f0f2f96e87::t_c02268054ba368 354,359,4451-4501,4503-4540,4546-4565
+  s_a2c0f0f2f96e87::t_f50dde141cbffb 916-918
+  s_a2c0f0f2f96e87::t_95140d0454db4c 4,7,10
+  s_a2c0f0f2f96e87::t_02e88f93ef2c15 855,1551-1554
+  s_a2c0f0f2f96e87::t_f632abd59f7df6 2516-2523
+  s_a2c0f0f2f96e87::t_9805565afff86c 3566-3572
+  s_a2c0f0f2f96e87::t_6aa9d239db4e67 258-353,355-358,360,390-394,605-613,616-622,625-628,637-643,647-650,655-660,778-790,793-798,800-801,806,810-813,833-834,836,840-842,844,846,853-854,856,1014-1029,1034-1049,1067-1116,1144-1187,1191-1197,1199-1203,1255-1290
+crates/gespan-core/src/orm/kind.rs
+  s_a2c0f0f2f96e87::t_45ca1fe46b59b3 46-48,51-60,62
+  s_a2c0f0f2f96e87::t_e575f27d2c7498 89-90,96-99
+  s_a2c0f0f2f96e87::t_8c27a3be573476 91-95
+  s_a2c0f0f2f96e87::t_96488b56ae9965 112-115
+crates/gespan-core/migrations/gespan/snapshots/0000_snapshot.toml
+  s_a2c0f0f2f96e87::t_d74a4cc4509a05 168-432
+crates/gespan-core/tests/shared_contracts.rs
+  s_a2c0f0f2f96e87::t_60a1b4239c98d0 320-335,338-344,347-355,358-367,371-378,381-384,387-390,392-398
+crates/gespan-core/migrations/counters/snapshots/0000_snapshot.toml
+  s_a2c0f0f2f96e87::t_d74a4cc4509a05 1-46
+crates/gespan-core/src/orm/tests.rs
+  s_a2c0f0f2f96e87::t_3d767c72344938 167-182
+  s_a2c0f0f2f96e87::t_8c27a3be573476 287-293
+crates/gespan-core/migrations/counters/history.toml
+  s_a2c0f0f2f96e87::t_d74a4cc4509a05 2-6
+crates/gespan-core/src/flow/store.rs
+  s_a2c0f0f2f96e87::t_fd452a7e278f4d 407-422
+  s_a2c0f0f2f96e87::t_f9858ec274c190 734-737
+  s_a2c0f0f2f96e87::t_e419e901b39801 851
+  s_a2c0f0f2f96e87::t_34d76bc2c4056c 750-754
+  s_a2c0f0f2f96e87::t_ca3e7020190bec 5,8-68,72-73,79-80,88-91,103-104,107-119,122-123,125,127,129,135,138,140,145-147,151-161,224-257,262-265,272-281,284-285,287-300,302-308,312-315,321-342,347-357,362-366,372-395
+  s_a2c0f0f2f96e87::t_72d9f53d78e1a3 681-684
+  s_a2c0f0f2f96e87::t_def6046ef4b434 760-764
+  s_a2c0f0f2f96e87::t_8c27a3be573476 266-271,367-371,844-847
+  s_a2c0f0f2f96e87::t_51ff8f1ad7ebb5 769-801,806-843,848-850,852-864
+  s_a2c0f0f2f96e87::t_40626f1fa424ed 865
+crates/gespan-core/migrations/gespan/migrations/0000_init.sql
+  s_a2c0f0f2f96e87::t_d74a4cc4509a05 1-5,7,10-21,42-90
+crates/gespan-core/src/diagnostics/metrics.rs
+  s_a2c0f0f2f96e87::t_5f099f004f2e22 772-826,828
+  s_a2c0f0f2f96e87::t_fb1b2db1829a67 827
+  s_a2c0f0f2f96e87::t_6aef543b73bf66 479-482
+  s_a2c0f0f2f96e87::t_5539c35c141b5e 671-674
+  s_a2c0f0f2f96e87::t_f3d78a18563628 429-438
+  s_a2c0f0f2f96e87::t_e56039be3f3a64 158-186,188,199-209,213-214,216,219-221,223,240-255,261-268,270-273,275,281-282,284-285,287-288
+  s_a2c0f0f2f96e87::t_6d965794352710 356-358
+  s_a2c0f0f2f96e87::t_c220e714536513 704
+  s_a2c0f0f2f96e87::t_963e6858f2ee9c 6
+crates/gespan-core/migrations/counters/migrations/0000_init.sql
+  s_a2c0f0f2f96e87::t_d74a4cc4509a05 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e29d9811ecfb5a95b1c7645245c083f8a5ee58d",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
