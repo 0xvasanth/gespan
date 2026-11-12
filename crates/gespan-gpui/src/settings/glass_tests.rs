@@ -701,3 +701,47 @@ fn accept_connections_shows_once_a_phone_is_paired_and_reachable_only_while_list
     // Paired but not listening: the switch stays, Reachable doesn't.
     assert_eq!(set(visual, 1, false), (true, false));
 }
+
+#[gpui::test]
+fn diagnostics_kind_chips_hug_their_text_and_a_panic_is_red(cx: &mut TestAppContext) {
+    use super::pages::kind_tone;
+    use crate::glass::Tone;
+    assert_eq!(kind_tone("panic"), Tone::Bad);
+    assert_eq!(kind_tone("timeout"), Tone::Muted);
+    let (window, mut visual) = window(Section::Diagnostics, Preferences::default(), cx);
+    let visual = &mut visual;
+    window
+        .update(visual, |view, _, cx| {
+            view.diagnostics.counters = Some(Ok(vec![
+                super::pages::CounterRow {
+                    name: "git.command".into(),
+                    kind: "exit_status",
+                    today: 3,
+                    week: 9,
+                },
+                super::pages::CounterRow {
+                    name: "panic".into(),
+                    kind: "panic",
+                    today: 0,
+                    week: 1,
+                },
+            ]));
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let long = visual
+        .debug_bounds("settings-counter-kind-exit_status")
+        .unwrap();
+    let short = visual.debug_bounds("settings-counter-kind-panic").unwrap();
+    // Each chip is as wide as its word, not the column.
+    assert!(short.size.width < long.size.width);
+    assert!(long.size.width < px(120.));
+    // The report tile sits centred against its card's text.
+    assert!(visual.debug_bounds("settings-report-tile").is_some());
+    assert!(
+        visual.debug_bounds("settings-counters-today").is_some(),
+        "3 today"
+    );
+}

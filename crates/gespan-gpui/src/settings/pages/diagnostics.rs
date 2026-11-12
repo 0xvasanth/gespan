@@ -69,6 +69,40 @@ pub(crate) fn summarize(counts: &[Count], today: NaiveDate) -> Vec<CounterRow> {
     rows
 }
 
+/// The 7-day bar's track, as long as the design draws it.
+const BAR_TRACK: f32 = 84.;
+
+/// The tone a failure kind's chip shows in: a crash is the one that's red.
+pub(in crate::settings) fn kind_tone(kind: &str) -> crate::glass::Tone {
+    if kind == "panic" {
+        crate::glass::Tone::Bad
+    } else {
+        crate::glass::Tone::Muted
+    }
+}
+
+/// A failure kind as a chip that hugs its text.
+fn kind_chip(kind: &'static str) -> gpui::Div {
+    let tone = kind_tone(kind);
+    let (ink, fill, edge) = match tone {
+        crate::glass::Tone::Muted => (content(0.7), content(0.07), crate::glass::edge()),
+        _ => (tone.ink(), tone.ink().opacity(0.1), tone.ink().opacity(0.3)),
+    };
+    div()
+        .debug_selector(move || format!("settings-counter-kind-{kind}"))
+        .flex_none()
+        .px(px(6.))
+        .py(px(1.))
+        .rounded(px(5.))
+        .bg(fill)
+        .border_1()
+        .border_color(edge)
+        .font_family(crate::fonts::monospace())
+        .text_size(px(11.))
+        .text_color(ink)
+        .child(kind)
+}
+
 impl SettingsView {
     fn load_counters(&mut self, cx: &mut Context<Self>) {
         let work = cx.background_executor().spawn(async {
@@ -104,22 +138,23 @@ impl SettingsView {
             .relative()
             .p(px(16.))
             .flex()
-            .items_start()
-            .gap(px(12.))
+            .items_center()
+            .gap(px(14.))
             .when(flash, |d| d.border_color(accent_color().opacity(0.6)))
             .child(self.reveal_probe("diagnostics-actions"))
             .child(
                 div()
-                    .size(px(32.))
+                    .debug_selector(|| "settings-report-tile".into())
+                    .size(px(44.))
                     .flex_none()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(9.))
-                    .bg(content(0.07))
+                    .rounded(px(12.))
+                    .bg(crate::glass::Tone::Ok.ink().opacity(0.12))
                     .border_1()
-                    .border_color(crate::glass::edge())
-                    .child(icon("shield-alert", 16.).text_color(content(0.8))),
+                    .border_color(crate::glass::Tone::Ok.ink().opacity(0.25))
+                    .child(icon("shield-alert", 20.).text_color(crate::glass::Tone::Ok.ink())),
             )
             .child(
                 div()
@@ -202,15 +237,21 @@ impl SettingsView {
             _ => 0,
         };
         vec![
-            self.glass_group(
-                None,
-                "Help",
-                None,
-                None,
-                None,
-                vec![card.into_any_element()],
-            ),
-            buttons,
+            // The buttons sit close under the card they act for.
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(11.))
+                .child(self.glass_group(
+                    None,
+                    "Help",
+                    None,
+                    None,
+                    None,
+                    vec![card.into_any_element()],
+                ))
+                .child(buttons)
+                .into_any_element(),
             self.glass_group(
                 None,
                 "Last 7 days",
@@ -282,24 +323,7 @@ impl SettingsView {
                                 .text_color(content(0.9))
                                 .child(row.name.clone()),
                         )
-                        .child(
-                            div().w(px(120.)).child(
-                                div()
-                                    .flex_none()
-                                    .max_w_full()
-                                    .px(px(6.))
-                                    .py(px(1.))
-                                    .rounded(px(5.))
-                                    .bg(content(0.07))
-                                    .border_1()
-                                    .border_color(crate::glass::edge())
-                                    .truncate()
-                                    .font_family(crate::fonts::monospace())
-                                    .text_size(px(11.))
-                                    .text_color(content(0.7))
-                                    .child(row.kind),
-                            ),
-                        )
+                        .child(div().w(px(120.)).flex().child(kind_chip(row.kind)))
                         .child(
                             div()
                                 .w(px(70.))
@@ -318,7 +342,7 @@ impl SettingsView {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .w(px(64.))
+                                        .w(px(BAR_TRACK))
                                         .h(px(4.))
                                         .rounded_full()
                                         .bg(content(0.08))
@@ -327,7 +351,7 @@ impl SettingsView {
                                                 .h_full()
                                                 .w(gpui::relative(share))
                                                 .rounded_full()
-                                                .bg(accent_color()),
+                                                .bg(crate::glass::Tone::Bad.ink()),
                                         ),
                                 )
                                 .child(
