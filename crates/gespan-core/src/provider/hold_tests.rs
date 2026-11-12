@@ -337,7 +337,7 @@ fn a_held_agent_keeps_its_background_work_with_the_warm_pool_off() {
         .unwrap();
     let alive = unsafe { libc::kill(pid, 0) } == 0;
     parked::discard_session(&discard);
-    parked::unpin_idle_agents();
+    parked::unpin_idle_agents([SESSION]);
     unsafe {
         libc::kill(pid, libc::SIGKILL);
     }
