@@ -1827,9 +1827,15 @@ impl TranscriptView {
                     && let Some(action) = input["command"]
                         .as_str()
                         .and_then(gespan_core::pilot::work::command_action)
+                        .or_else(|| gespan_core::pilot::work::app_call_action(&tool.name, &input))
                     && matches!(action.as_str(), "sessions.start" | "sessions.send")
                 {
                     let receipts = serde_json::from_str::<serde_json::Value>(&tool.output)
+                        .map(|v| match v["content"][0]["text"].as_str() {
+                            // An MCP result keeps the receipt as its first text block.
+                            Some(text) => serde_json::from_str(text).unwrap_or(v),
+                            None => v,
+                        })
                         .map(|v| vec![v])
                         .unwrap_or_else(|_| {
                             tool.output
@@ -2950,8 +2956,22 @@ impl TranscriptView {
             None => at..at,
         }
     }
-    pub(crate) fn patch(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) {
-        self.patch_view(self.base + start, rows, cx);
+    /// Applies a turn's rows from store row `start`. Returns false, changing
+    /// nothing, when `start` lies past the rows this view holds: the store
+    /// then has rows the view never got, and only a reload can place these.
+    pub(crate) fn patch(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) -> bool {
+        let at = self.base + start;
+        if at > self.source.len() {
+            tracing::error!(
+                start,
+                held = self.source.len() - self.base,
+                rows = rows.len(),
+                "transcript patch would leave a gap; skipped until the chat reloads"
+            );
+            return false;
+        }
+        self.patch_view(at, rows, cx);
+        true
     }
     fn patch_view(&mut self, start: usize, rows: Vec<Row>, cx: &mut Context<Self>) {
         if rows.is_empty() {
@@ -7181,6 +7201,74 @@ mod scroll_tests {
             let document=view.rows.iter().position(|r| matches!(r.body,Body::PilotCard(_))).unwrap();
             assert!(document > answer);
         });
+    }
+
+    #[gpui::test]
+    fn a_patch_past_the_held_rows_is_skipped_instead_of_crashing(cx: &mut TestAppContext) {
+        let view = cx.new(|_| TranscriptView::new());
+        view.update(cx, |view, cx| {
+            assert!(view.patch(0, vec![row("user", "Hi"), row("assistant", "Hello")], cx));
+            // The store had a row this view never got: the next turn starts
+            // one past the end.
+            assert!(!view.patch(3, vec![row("user", "Again"), row("assistant", "")], cx));
+            assert_eq!(
+                view.source_rows()
+                    .iter()
+                    .map(|r| r.text.as_str())
+                    .collect::<Vec<_>>(),
+                ["Hi", "Hello"]
+            );
+            // Contiguous patches still apply: replacing the tail and appending.
+            assert!(view.patch(1, vec![row("assistant", "Hello there")], cx));
+            assert!(view.patch(2, vec![row("user", "Again")], cx));
+            assert_eq!(view.source_rows().len(), 3);
+        });
+    }
+
+    #[gpui::test]
+    fn a_session_started_through_app_call_shows_its_launch_card(cx: &mut TestAppContext) {
+        // The store reloads this tool as one row, so the card comes from the
+        // tool row itself, as it does for Gespan's CLI.
+        let receipt = r#"{"ok":true,"result":{"sessionId":7,"accepted":true}}"#;
+        let start = |output: String| {
+            serde_json::to_string(&ToolCall {
+                id: "t".into(),
+                name: "mcp__gespan__app_call".into(),
+                input: r#"{"action":"sessions.start","input":{}}"#.into(),
+                output,
+                state: ToolState::Completed,
+                panel: None,
+                display: None,
+                live_elapsed_secs: None,
+            })
+            .unwrap()
+        };
+        let wrapped = serde_json::json!({"content":[{"type":"text","text":receipt}]}).to_string();
+        for output in [receipt.to_owned(), wrapped] {
+            let view = cx.new(|_| {
+                let mut view = TranscriptView::new();
+                view.pilot_mode("cat", 0xe86b5f, "PilotCat");
+                view
+            });
+            view.update(cx, |view, cx| {
+                view.patch(
+                    0,
+                    vec![
+                        row("user", "Start one"),
+                        row("tool", &start(output)),
+                        row("assistant", "Started it."),
+                    ],
+                    cx,
+                );
+                assert_eq!(
+                    view.rows
+                        .iter()
+                        .filter(|r| matches!(r.body, Body::Launch(7)))
+                        .count(),
+                    1
+                );
+            });
+        }
     }
 
     #[gpui::test]

@@ -223,11 +223,10 @@ fn project_block(block: &Value) -> Result<Vec<Row>, String> {
             &crate::notes::card_row(&block["noteCard"]),
         ));
     }
-    for launch in crate::pilot::work::block_launches(std::slice::from_ref(block))
-        .into_iter()
-        .flatten()
-    {
-        let mut launch = launch;
+    // Only launches the desktop recorded on the block become rows. A launch
+    // read from a tool's own receipt would turn one written tool row into
+    // two on reload, and every later row would then be off by one.
+    for mut launch in crate::pilot::work::recorded_launches(block) {
         launch["sessionId"] = json!(crate::pilot::work::session_handle(&launch["sessionId"]));
         rows.push(metadata_row("pilot-launch", &launch));
     }
@@ -1059,6 +1058,111 @@ mod tool_presentation_tests {
         assert_eq!(
             reloaded.presentation_in(Some("/repo/feature")).target,
             "src/lib.rs"
+        );
+    }
+}
+
+#[cfg(test)]
+mod row_count_tests {
+    use super::*;
+    use crate::tool::{ToolCall, ToolState};
+
+    fn tool_row(name: &str, input: Value, output: Value) -> Row {
+        let call = ToolCall {
+            id: "call-1".into(),
+            name: name.into(),
+            input: input.to_string(),
+            output: output.to_string(),
+            state: ToolState::Completed,
+            panel: None,
+            display: None,
+            live_elapsed_secs: None,
+        };
+        Row {
+            role: "tool".into(),
+            text: serde_json::to_string(&call).unwrap(),
+            first: true,
+            sent_at: None,
+        }
+    }
+
+    fn text_row(role: &str, text: &str) -> Row {
+        Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: None,
+        }
+    }
+
+    /// What row numbering depends on: each row's role and whether it starts
+    /// a message. A tool's text gains display metadata when saved.
+    fn shape(rows: &[Row]) -> Vec<(&str, bool)> {
+        rows.iter().map(|r| (r.role.as_str(), r.first)).collect()
+    }
+
+    /// The two ways an agent starts a session: Gespan's CLI through its shell,
+    /// or the `app_call` tool.
+    fn session_starts() -> [Row; 2] {
+        let receipt = json!({"ok":true,"result":{"id":"app-123","cwd":"/repo","model":"opus","harness":"claude","title":"Side task"}});
+        [
+            tool_row(
+                "Bash",
+                json!({"command":"gespan app sessions.start --json '{}'"}),
+                receipt.clone(),
+            ),
+            tool_row(
+                "mcp__gespan__app_call",
+                json!({"action":"sessions.start"}),
+                receipt,
+            ),
+        ]
+    }
+
+    #[test]
+    fn a_tool_that_starts_a_session_reloads_as_the_one_row_written() {
+        for start in session_starts() {
+            let rows = vec![text_row("user", "Split this off"), start];
+            let blocks = merge(&[], 0, &rows).unwrap();
+            assert_eq!(shape(&project(&blocks).unwrap()), shape(&rows));
+        }
+    }
+
+    #[test]
+    fn the_reply_after_a_session_start_saves_where_the_turn_counted_it() {
+        for start in session_starts() {
+            // The turn saves as it streams: the prompt and tool first, then
+            // its reply at the next row it counted.
+            let rows = vec![text_row("user", "Split this off"), start];
+            let saved = merge(&[], 0, &rows).unwrap();
+            let reply = text_row("assistant", "Started it in its own session.");
+            let answered = merge(&saved, rows.len(), std::slice::from_ref(&reply))
+                .expect("the reply lands after the tool, not inside it");
+            let mut expected = rows.clone();
+            expected.push(reply);
+            assert_eq!(shape(&project(&answered).unwrap()), shape(&expected));
+            // The next turn's prompt goes where the view put it, too.
+            let next = text_row("user", "Thanks");
+            let continued = merge(&answered, expected.len(), std::slice::from_ref(&next)).unwrap();
+            expected.push(next);
+            let reloaded = project(&continued).unwrap();
+            assert_eq!(shape(&reloaded), shape(&expected));
+            assert_eq!(reloaded[2].text, "Started it in its own session.");
+            assert_eq!(reloaded[3].text, "Thanks");
+        }
+    }
+
+    #[test]
+    fn launches_the_desktop_recorded_still_show_as_cards() {
+        // A failed start and a start without an app id are not launches.
+        let block = json!({"id":"prompt","role":"user","text":"Review it","pilotSpawnedSessions":[
+            {"sessionId":"app-child","cwd":"/repo","title":"Review","harness":"codex","model":"gpt-6"},
+            {"sessionId":"bad id!","cwd":"/repo","title":"x","harness":"codex","model":"m"}
+        ]});
+        let rows = project(std::slice::from_ref(&block)).unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.role.as_str()).collect::<Vec<_>>(),
+            ["user", "pilot-launch"]
         );
     }
 }
