@@ -128,30 +128,43 @@ fn find_sections(lines: &[&str]) -> Vec<Span> {
 /// returned byte for byte, with one exception: removing a section also drops
 /// the single blank line Gespan put before it. Of several sections the first
 /// is kept and the rest are removed; marker lines left behind that would pair
-/// up into a new section are dropped on their own, keeping the text between.
+/// up into a new section are dropped on their own, keeping the text between
+/// (after a removal: until no BEGIN..END pair outside code fences is left).
 /// See `find_sections` for which pairs count as sections.
 pub fn replace_section(existing: &str, body: &str) -> String {
-    let mut current = replace_section_once(existing, body);
-    // Removal is a single pass: repeating it would go on to eat a user's
-    // fenced example of the markers once the real section is gone.
+    let current = replace_section_once(existing, body);
+    // Dropping sections can leave orphan markers that now pair up
+    // (BEGIN u1 [section] u2 END). Those pairs are not sections Gespan wrote
+    // and the lines between them are the user's, so drop only their marker
+    // lines; otherwise the next run would find them and remove u1 and u2.
     if body.is_empty() {
-        return current;
+        // After a removal no fence-aware pair may remain. Pairs only the
+        // fence-blind fallback would find are left alone: they are markers
+        // inside the user's code fences (a fenced example of the markers).
+        strip_stray_markers(current, 0, |lines| scan_sections(lines, true).0)
+    } else {
+        // The kept section stays first (lines before it never change), so
+        // every later pair is stray.
+        strip_stray_markers(current, 1, find_sections)
     }
-    // Dropping later sections can leave orphan markers that now pair up
-    // after the kept section (BEGIN u1 [section] u2 END). Those pairs are not
-    // sections Gespan wrote and the lines between them are the user's, so
-    // drop only their marker lines, until one section remains; otherwise
-    // the next run would find and remove them. Lines before the kept
-    // section are untouched, so it stays the first section, and every round
-    // removes marker lines, so this ends.
+}
+
+/// Drops the BEGIN and END lines of every pair `spans` finds after the first
+/// `keep`, until at most `keep` remain. Only marker lines are removed, so each
+/// round shortens the text and this ends.
+fn strip_stray_markers(
+    mut text: String,
+    keep: usize,
+    spans: impl Fn(&[&str]) -> Vec<Span>,
+) -> String {
     loop {
-        let lines: Vec<&str> = current.split_inclusive('\n').collect();
-        let spans = find_sections(&lines);
-        if spans.len() <= 1 {
-            return current;
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let found = spans(&lines);
+        if found.len() <= keep {
+            return text;
         }
-        let stray: Vec<usize> = spans[1..].iter().flat_map(|&(b, e)| [b, e]).collect();
-        current = lines
+        let stray: Vec<usize> = found[keep..].iter().flat_map(|&(b, e)| [b, e]).collect();
+        text = lines
             .iter()
             .enumerate()
             .filter(|(i, _)| stray.binary_search(i).is_err())

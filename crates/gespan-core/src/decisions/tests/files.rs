@@ -651,41 +651,42 @@ fn begin_fence_end_fence_counterexample_is_idempotent() {
 /// only of ``` / ~~~ fences, whole-line markers and plain text: the
 /// fence-aware pairs, else the last fence-blind pair whose interior leaves no
 /// fence open, else nothing.
-fn reference_spans(lines: &[&str]) -> Vec<(usize, usize)> {
-    fn scan(lines: &[&str], aware: bool) -> (Vec<(usize, usize)>, bool) {
-        let (mut spans, mut open, mut fence) = (Vec::new(), None, None::<&str>);
-        for (i, &line) in lines.iter().enumerate() {
-            if aware {
-                if let Some(f) = fence {
-                    if line == f {
-                        fence = None;
-                    }
-                    continue;
+fn reference_scan(lines: &[&str], aware: bool) -> (Vec<(usize, usize)>, bool) {
+    let (mut spans, mut open, mut fence) = (Vec::new(), None, None::<&str>);
+    for (i, &line) in lines.iter().enumerate() {
+        if aware {
+            if let Some(f) = fence {
+                if line == f {
+                    fence = None;
                 }
-                if line == "```" || line == "~~~" {
-                    fence = Some(line);
-                    continue;
-                }
+                continue;
             }
-            if line == BEGIN {
-                open = Some(i);
-            } else if line == END {
-                if let Some(b) = open.take() {
-                    spans.push((b, i));
-                }
+            if line == "```" || line == "~~~" {
+                fence = Some(line);
+                continue;
             }
         }
-        (spans, fence.is_some())
+        if line == BEGIN {
+            open = Some(i);
+        } else if line == END {
+            if let Some(b) = open.take() {
+                spans.push((b, i));
+            }
+        }
     }
-    let (aware, _) = scan(lines, true);
+    (spans, fence.is_some())
+}
+
+fn reference_spans(lines: &[&str]) -> Vec<(usize, usize)> {
+    let (aware, _) = reference_scan(lines, true);
     if !aware.is_empty() {
         return aware;
     }
-    let (blind, _) = scan(lines, false);
+    let (blind, _) = reference_scan(lines, false);
     blind
         .into_iter()
         .rev()
-        .find(|&(b, e)| !scan(&lines[b + 1..e], true).1)
+        .find(|&(b, e)| !reference_scan(&lines[b + 1..e], true).1)
         .into_iter()
         .collect()
 }
@@ -726,14 +727,73 @@ fn assert_user_lines_survive(x: &str, out: &str, body: &str, label: &str) {
     }
 }
 
-#[test]
-fn regeneration_is_idempotent_and_keeps_user_lines_for_every_short_sequence() {
-    let alphabet = ["```", "~~~", BEGIN, END, "text"];
-    let bodies = ["b", "b\n```\nc\n```"];
-    let mut checked = 0usize;
-    for len in 0..=7usize {
-        let total = alphabet.len().pow(len as u32);
-        for mut code in 0..total {
+fn remove_checked(x: &str) -> String {
+    let out = replace_section(x, "");
+    assert_user_lines_survive(x, &out, "", "removal");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        reference_scan(&lines, true).0.is_empty(),
+        "removal of {x:?} left a marker pair: {out:?}"
+    );
+    out
+}
+
+fn regenerate_checked(x: &str, body: &str) -> String {
+    let out = replace_section(x, body);
+    assert_user_lines_survive(x, &out, body, "regeneration");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        reference_spans(&lines).len(),
+        1,
+        "regenerating {x:?} did not leave one section: {out:?}"
+    );
+    out
+}
+
+/// All single-step and multi-step checks for one input.
+fn check_every_operation(x: &str, bodies: &[&str]) {
+    let lines: Vec<&str> = x.lines().collect();
+    // remove -> remove
+    let removed = remove_checked(x);
+    remove_checked(&removed);
+    if reference_spans(&lines).is_empty() {
+        assert_eq!(removed, x, "nothing of ours in {x:?}, yet it changed");
+    }
+    for &body in bodies {
+        // remove -> regenerate
+        regenerate_checked(&removed, body);
+        // regenerate -> remove -> regenerate
+        let r1 = regenerate_checked(x, body);
+        let back = remove_checked(&r1);
+        regenerate_checked(&back, body);
+        assert_eq!(
+            replace_section(&r1, body),
+            r1,
+            "not idempotent: {x:?} / {body:?}"
+        );
+        let r3 = replace_section(&r1, "other");
+        assert_eq!(
+            r3.matches(BEGIN).count(),
+            r1.matches(BEGIN).count(),
+            "section count changed: {x:?} / {body:?}"
+        );
+        if removed == x {
+            assert!(
+                back == x || (!x.ends_with('\n') && back == format!("{x}\n")),
+                "removal did not restore {x:?} / {body:?}: {back:?}"
+            );
+        }
+    }
+}
+
+fn for_every_sequence(
+    alphabet: &[&str],
+    lens: std::ops::RangeInclusive<usize>,
+    bodies: &[&str],
+) -> usize {
+    let mut checked = 0;
+    for len in lens {
+        for mut code in 0..alphabet.len().pow(len as u32) {
             let mut lines = Vec::with_capacity(len);
             for _ in 0..len {
                 lines.push(alphabet[code % alphabet.len()]);
@@ -744,38 +804,23 @@ fn regeneration_is_idempotent_and_keeps_user_lines_for_every_short_sequence() {
                 if trailing_newline && !x.is_empty() {
                     x.push('\n');
                 }
-                let removed = replace_section(&x, "");
-                assert_user_lines_survive(&x, &removed, "", "removal");
-                if reference_spans(&lines).is_empty() {
-                    assert_eq!(removed, x, "nothing of ours in {x:?}, yet it changed");
-                }
-                for body in bodies {
-                    let r1 = replace_section(&x, body);
-                    assert_user_lines_survive(&x, &r1, body, "replacement");
-                    assert_eq!(
-                        replace_section(&r1, body),
-                        r1,
-                        "not idempotent: {x:?} / {body:?}"
-                    );
-                    let r3 = replace_section(&r1, "other");
-                    assert_eq!(
-                        r3.matches(BEGIN).count(),
-                        r1.matches(BEGIN).count(),
-                        "section count changed: {x:?} / {body:?}"
-                    );
-                    if removed == x {
-                        let back = replace_section(&r1, "");
-                        assert!(
-                            back == x || (!x.ends_with('\n') && back == format!("{x}\n")),
-                            "removal did not restore {x:?} / {body:?}: {back:?}"
-                        );
-                    }
-                    checked += 1;
-                }
+                check_every_operation(&x, bodies);
+                checked += 1;
             }
         }
     }
-    assert!(checked > 300_000);
+    checked
+}
+
+#[test]
+fn every_short_sequence_keeps_user_lines_through_remove_and_regenerate() {
+    // Up to 6 lines with blank lines and three bodies, plus length 7 (the
+    // shortest that reaches stray-marker pairing) without blanks.
+    let full = ["```", "~~~", BEGIN, END, "text", ""];
+    let bodies = ["b", "b\n```\nc\n```", "b\n~~~\nc\n~~~"];
+    let mut checked = for_every_sequence(&full, 0..=6, &bodies);
+    checked += for_every_sequence(&full[..5], 7..=7, &bodies[..2]);
+    assert!(checked > 250_000);
 }
 
 #[test]
@@ -849,4 +894,20 @@ fn write_atomic_refuses_parent_dir_components_and_creates_nothing() {
     assert!(!root.join("missing").exists());
     assert!(!tmp.path().join("outside").exists());
     assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+}
+
+#[test]
+fn removing_collapsed_sections_keeps_the_text_between_orphan_markers() {
+    let existing = format!(
+        "{}{BEGIN}\nu1\n{}u2\n{END}\ntail\n",
+        section("one"),
+        section("two")
+    );
+    let removed = replace_section(&existing, "");
+    assert_eq!(removed, "u1\nu2\ntail\n");
+    let again = replace_section(&removed, "");
+    assert_eq!(again, removed);
+    let regenerated = replace_section(&again, "new");
+    assert_eq!(regenerated, format!("u1\nu2\ntail\n\n{}", section("new")));
+    assert_eq!(regenerated.matches(BEGIN).count(), 1);
 }
