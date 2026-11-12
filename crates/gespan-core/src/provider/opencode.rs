@@ -1299,7 +1299,6 @@ mod tool_tests {
     #[test]
     fn opencode_review_policy_decides_bash() {
         use crate::review_policy::ReviewResults;
-        use serde_json::json;
         let post = "gh pr review 7 --repo acme/app --comment --body 'x'";
         for access in [
             AccessMode::FullAccess,
@@ -1408,7 +1407,6 @@ mod tool_tests {
 
     #[test]
     fn opencode_review_policy_ignores_the_access_mode_and_never_remembers() {
-        use crate::review_policy::ReviewResults;
         use serde_json::json;
         let (v2, _) = opencode_seen(204, true);
         let rows = v2.permissions(&review_request(ReviewResults::Post, AccessMode::FullAccess))
