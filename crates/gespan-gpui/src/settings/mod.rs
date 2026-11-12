@@ -1,6 +1,8 @@
 //! The Settings pages, their rail and the breadcrumb, search and actions the
 //! inset layout puts in its title bar.
 mod data;
+#[cfg(test)]
+mod glass_tests;
 mod keymap;
 #[cfg(test)]
 mod layout_tests;
@@ -104,7 +106,6 @@ impl PartialEq for SettingsContext {
 }
 pub(crate) enum SettingsEvent {
     WhatsNew,
-    RunSetup,
     CheckAppUpdates,
     CheckHarnessUpdates,
     ManageInboxProvider(String),
@@ -661,6 +662,7 @@ impl SettingsView {
         cx.emit(SettingsEvent::Changed(Box::new(self.prefs.clone())));
         cx.notify();
     }
+    /// Appearance's preview card: Restore defaults.
     fn restore_defaults(&mut self, cx: &mut Context<Self>) {
         self.accent_custom_open = false;
         self.update(cx, |p| p.restore_appearance());
@@ -707,7 +709,7 @@ impl SettingsView {
         self.scroll.set_offset(gpui::point(offset.x, y));
     }
 
-    /// The breadcrumb and Restore defaults: in the inset title bar, or the
+    /// The breadcrumb: in the inset title bar, or the
     /// page's own 40px header row in the boxy frame. Search joins them
     /// only while the settings nav, its usual home, is collapsed.
     pub(crate) fn header(
@@ -762,33 +764,6 @@ impl SettingsView {
                     .items_center()
                     .gap(px(6.))
                     .map(|d| if in_title_bar { d.pr_4() } else { d.pr_2() })
-                    .when(self.section == Section::Appearance, |d| {
-                        d.child(
-                            div()
-                                .id("restore-defaults")
-                                .role(Role::Button)
-                                .aria_label("Restore defaults")
-                                .flex()
-                                .flex_shrink_0()
-                                .items_center()
-                                .gap(px(6.))
-                                .rounded_md()
-                                .px_2()
-                                .py_1()
-                                .text_size(px(12.))
-                                .line_height(px(16.))
-                                .text_color(content(0.5))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-                                .child(
-                                    icon("rotate-ccw", 14.)
-                                        .text_color(gpui::transparent_black())
-                                        .map(|i| i.text_color(content(0.5))),
-                                )
-                                .child("Restore defaults")
-                                .on_click(cx.listener(|this, _, _, cx| this.restore_defaults(cx))),
-                        )
-                    })
                     .children(search),
             )
             .into_any_element()
@@ -1220,7 +1195,29 @@ impl Render for SettingsView {
                         .flex_1()
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll)
-                        .child(
+                        .child(if self.glass() {
+                            // The glass page: a narrower column whose groups
+                            // stand apart as cards.
+                            div()
+                                .mx_auto()
+                                .w_full()
+                                .max_w(px(860.))
+                                .flex()
+                                .flex_col()
+                                .gap(px(22.))
+                                .map(|d| {
+                                    if narrow {
+                                        d.px_5().pt_6().pb(px(40.))
+                                    } else {
+                                        d.px_8().pt(px(28.)).pb(px(40.))
+                                    }
+                                })
+                                .child(widgets::glass_page_header(
+                                    self.section.label(),
+                                    self.section.description(),
+                                ))
+                                .children(page)
+                        } else {
                             div()
                                 .mx_auto()
                                 .w_full()
@@ -1236,8 +1233,8 @@ impl Render for SettingsView {
                                     self.section.label(),
                                     self.section.description(),
                                 ))
-                                .children(page),
-                        )
+                                .children(page)
+                        })
                         .into_any_element(),
                 ]
             })

@@ -103,6 +103,11 @@ impl Section {
             Section::Worktrees => "Worktrees",
         }
     }
+    /// Pages drawn in the glass presentation: a glass card per group,
+    /// segmented tracks, accent sliders. A page joins by adding itself here.
+    pub(crate) fn glass(self) -> bool {
+        matches!(self, Section::General | Section::Appearance)
+    }
     pub(crate) fn description(self) -> &'static str {
         match self {
             Section::General => {
@@ -112,7 +117,9 @@ impl Section {
                 "Report a problem, your logs, and the failures counted on this machine."
             }
             Section::Connections => "Connect your machines and run agents remotely through SSH.",
-            Section::Appearance => "Theme, tint, translucency, workspace style, and the sidebar.",
+            Section::Appearance => {
+                "Theme, color, glass and layout. Changes apply as you make them."
+            }
             Section::Keybindings => {
                 "Every shortcut the workspace handles, from the app menu and the key handler."
             }
@@ -147,7 +154,7 @@ impl Section {
                 "ssh remote host machine server environment always on herdr machines remote agents"
             }
             Section::Appearance => {
-                "theme dark light color accent glass blur zoom scale wallpaper sidebar"
+                "theme dark light color accent glass blur zoom scale wallpaper sidebar tint translucency workspace style"
             }
             Section::Keybindings => "shortcut hotkey keyboard binding",
             Section::Dictation => "voice microphone speech parakeet",
@@ -817,7 +824,7 @@ mod tests {
         );
         assert_eq!(
             Section::Appearance.description(),
-            "Theme, tint, translucency, workspace style, and the sidebar."
+            "Theme, color, glass and layout. Changes apply as you make them."
         );
         assert!(!Section::General.keywords().contains("rail"));
         assert!(!Section::Appearance.keywords().contains("rail"));

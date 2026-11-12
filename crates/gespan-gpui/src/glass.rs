@@ -391,6 +391,60 @@ pub(crate) fn empty_state(
         )
 }
 
+/// A 30px square action on a glass plate, for actions whose glyph says
+/// enough on its own. Give it a role, an accessible name and a tooltip.
+pub(crate) fn icon_button(id: impl Into<ElementId>, icon: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .size(px(30.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded(px(8.))
+        .bg(fill())
+        .border_1()
+        .border_color(edge())
+        .text_color(content(0.62))
+        .hover(|s| s.bg(hover_fill()).text_color(content(1.)))
+        .child(crate::theme::icon(icon, 15.).text_color(content(0.75)))
+}
+
+/// An on/off chip: one of several choices that each switch on their own,
+/// laid out in a wrapping row.
+pub(crate) fn chip(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    on: bool,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .h(px(28.))
+        .px(px(11.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(6.))
+        .rounded_full()
+        .border_1()
+        .text_size(px(12.))
+        .whitespace_nowrap()
+        .map(|d| {
+            if on {
+                d.bg(content(0.10))
+                    .border_color(content(0.18))
+                    .text_color(content(1.))
+            } else {
+                d.border_color(edge())
+                    .text_color(content(0.62))
+                    .hover(|s| s.bg(hover_fill()).text_color(content(1.)))
+            }
+        })
+        .child(label.into())
+}
+
 /// A [`segment`] whose word follows a status dot in `tone`, for filters by
 /// status. Added by the Runs page.
 pub(crate) fn dot_segment(

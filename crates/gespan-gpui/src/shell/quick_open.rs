@@ -108,6 +108,7 @@ impl Shell {
                         })
                         .detach();
                     }
+                    Command::RunSetup => this.run_setup_again(window, cx),
                     Command::ReportIssue => {
                         window.dispatch_action(Box::new(crate::report::ReportIssue), cx)
                     }
@@ -290,6 +291,53 @@ mod tests {
             .update(cx, |shell, _, _| {
                 assert!(shell.quick_open.is_none());
                 assert!(shell.report.open.is_some());
+            })
+            .unwrap();
+    }
+
+    /// Run setup again left Settings › General; the palette is where it lives now.
+    #[gpui::test]
+    fn palette_runs_setup_again_from_welcome(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::input::bind(cx);
+            super::super::bind_keys(cx);
+            crate::popover::bind(cx);
+            cx.set_reduce_motion(true);
+        });
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        window
+            .update(cx, |shell, _, _| assert!(shell.setup.is_none()))
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), &format!("{modifier}-shift-p"));
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                let search = shell
+                    .quick_open
+                    .as_ref()
+                    .unwrap()
+                    .picker
+                    .read(cx)
+                    .search
+                    .clone();
+                search.update(cx, |input, cx| {
+                    input.set_text(">Run setup again".into(), cx)
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "enter");
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                assert!(shell.quick_open.is_none());
+                let card = shell.setup.as_ref().expect("setup opens").view.read(cx);
+                assert_eq!(card.step(), crate::setup::SetupStep::Welcome);
             })
             .unwrap();
     }
