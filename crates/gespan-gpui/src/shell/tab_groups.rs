@@ -25,6 +25,18 @@ pub(super) enum StripChild {
     Group(String),
 }
 
+/// Each group's chip as a frame draws it, by project.
+#[derive(Default)]
+pub(super) struct GroupChips {
+    /// Chip widths as drawn.
+    pub(super) widths: HashMap<String, f32>,
+    /// Chip widths with every group but the current one collapsed, as if
+    /// nothing peeked.
+    pub(super) resting: HashMap<String, f32>,
+    /// Other projects' groups with a chat at work.
+    pub(super) running: HashSet<String>,
+}
+
 /// Bounds of the tabs drawn inside groups, as last laid out.
 pub(super) type GroupTabBounds = std::rc::Rc<std::cell::RefCell<HashMap<TitleTab, Bounds<Pixels>>>>;
 
@@ -104,46 +116,54 @@ impl Shell {
         })
     }
 
-    /// Each group's chip width, by project. A chip is sized to its name
-    /// (up to a cap), plus the count and spinner it shows while collapsed.
-    /// `resting` sizes every group but the current one collapsed, as if
-    /// nothing peeked.
+    /// Each group's chip, measured once a frame. A chip is sized to its
+    /// name (up to a cap), plus the count and spinner it shows while
+    /// collapsed.
     pub(super) fn group_chip_widths(
         &self,
         entries: &[StripEntry<TitleTab>],
-        resting: bool,
         window: &Window,
         cx: &App,
-    ) -> HashMap<String, f32> {
-        entries
-            .iter()
-            .filter_map(|entry| match entry {
-                StripEntry::Group { project, tabs } => {
-                    let label = self.appearance(project).label(project);
-                    let mut width = 2. * CHIP_PAD
-                        + CHIP_DOT
-                        + CHIP_GAP
-                        + text_width(&label, CHIP_TEXT, gpui::FontWeight::SEMIBOLD, window)
-                            .min(CHIP_LABEL_MAX);
-                    let current = path_key(project) == path_key(&self.workspace.project);
-                    if !self.group_expanded(project) || (resting && !current) {
-                        width += CHIP_GAP
-                            + 2. * COUNT_PAD
-                            + text_width(
-                                &tabs.len().to_string(),
-                                COUNT_TEXT,
-                                gpui::FontWeight::MEDIUM,
-                                window,
-                            );
-                        if self.group_running(tabs, cx) {
-                            width += CHIP_GAP + SPINNER;
-                        }
-                    }
-                    Some((project.clone(), width.ceil()))
+    ) -> GroupChips {
+        let mut chips = GroupChips::default();
+        for entry in entries {
+            let StripEntry::Group { project, tabs } = entry else {
+                continue;
+            };
+            let label = self.appearance(project).label(project);
+            let open = 2. * CHIP_PAD
+                + CHIP_DOT
+                + CHIP_GAP
+                + text_width(&label, CHIP_TEXT, gpui::FontWeight::SEMIBOLD, window)
+                    .min(CHIP_LABEL_MAX);
+            let current = path_key(project) == path_key(&self.workspace.project);
+            // Only another project's group ever collapses.
+            let collapsed = if current {
+                open
+            } else {
+                let running = self.group_running(tabs, cx);
+                if running {
+                    chips.running.insert(project.clone());
                 }
-                StripEntry::Loose(_) => None,
-            })
-            .collect()
+                open + CHIP_GAP
+                    + 2. * COUNT_PAD
+                    + text_width(
+                        &tabs.len().to_string(),
+                        COUNT_TEXT,
+                        gpui::FontWeight::MEDIUM,
+                        window,
+                    )
+                    + if running { CHIP_GAP + SPINNER } else { 0. }
+            };
+            let drawn = if self.group_expanded(project) {
+                open
+            } else {
+                collapsed
+            };
+            chips.widths.insert(project.clone(), drawn.ceil());
+            chips.resting.insert(project.clone(), collapsed.ceil());
+        }
+        chips
     }
 
     /// The strip room groups take beyond their tabs: chips, insets and the
@@ -153,14 +173,14 @@ impl Shell {
     }
 
     /// A group's chip: the project's colour dot and name; collapsed, its tab
-    /// count and, while any of its chats works, the spinner. Resting on a
-    /// collapsed chip peeks its group open.
+    /// count and, while any of its chats works (`running`), the spinner.
+    /// Resting on a collapsed chip peeks its group open.
     pub(super) fn group_chip(
         &self,
         project: &str,
         tabs: &[TitleTab],
         expanded: bool,
-        width: f32,
+        (width, running): (f32, bool),
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let appearance = self.appearance(project);
@@ -168,7 +188,7 @@ impl Shell {
         let label_for_close = label.clone();
         let color = appearance.color(project);
         let name = crate::workspace::project_name(project);
-        let running = !expanded && self.group_running(tabs, cx);
+        let running = !expanded && running;
         let current = path_key(project) == path_key(&self.workspace.project);
         let (peek, open, close, drag) = (
             project.to_owned(),
@@ -304,7 +324,7 @@ impl Shell {
         project: &str,
         tabs: &[TitleTab],
         children: Vec<(TitleTab, AnyElement)>,
-        chip_width: f32,
+        chip: (f32, bool),
         (shift, dragged): (f32, bool),
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -361,7 +381,7 @@ impl Shell {
                         }
                     }),
             )
-            .child(self.group_chip(project, tabs, expanded, chip_width, cx))
+            .child(self.group_chip(project, tabs, expanded, chip, cx))
             .children(children.into_iter().map(|(_, element)| element))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 // A drag holds the strip still; its release settles the peek.
@@ -387,7 +407,7 @@ impl Shell {
         &self,
         entries: &[StripEntry<TitleTab>],
         slots: Vec<(TitleTab, AnyElement)>,
-        chips: &HashMap<String, f32>,
+        chips: &GroupChips,
         (shifts, dragged): (&HashMap<String, f32>, Option<&str>),
         cx: &mut Context<Self>,
     ) -> Vec<(StripChild, AnyElement)> {
@@ -432,12 +452,13 @@ impl Shell {
                     out.extend(bucket.into_iter().map(|(tab, e)| (StripChild::Tab(tab), e)));
                 }
                 StripEntry::Group { project, tabs } => {
-                    let width = chips.get(project).copied().unwrap_or(0.);
+                    let width = chips.widths.get(project).copied().unwrap_or(0.);
+                    let chip = (width, chips.running.contains(project));
                     let shift = shifts.get(project).copied().unwrap_or(0.);
                     let motion = (shift, dragged == Some(project.as_str()));
                     out.push((
                         StripChild::Group(project.clone()),
-                        self.group_box(project, tabs, bucket, width, motion, cx),
+                        self.group_box(project, tabs, bucket, chip, motion, cx),
                     ));
                 }
             }

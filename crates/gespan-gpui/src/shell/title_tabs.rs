@@ -194,13 +194,53 @@ impl Shell {
     /// The strip for every project: each project's tabs as one group, where
     /// its first tab is, and app tabs loose between them.
     pub(super) fn strip_entries(&self, cx: &App) -> Vec<StripEntry<TitleTab>> {
-        entries(&self.global_strip_tabs(cx), |tab| self.tab_project(tab, cx))
+        self.strip_frame(cx).0
+    }
+
+    /// [`Self::strip_entries`], with each grouped tab's project worked out
+    /// once so a frame can look it up again.
+    pub(super) fn strip_frame(
+        &self,
+        cx: &App,
+    ) -> (Vec<StripEntry<TitleTab>>, HashMap<TitleTab, String>) {
+        let tabs = self.global_strip_tabs(cx);
+        let projects: HashMap<TitleTab, String> = tabs
+            .iter()
+            .filter_map(|tab| Some((tab.clone(), self.tab_project(tab, cx)?)))
+            .collect();
+        (entries(&tabs, |tab| projects.get(tab).cloned()), projects)
+    }
+
+    /// `tab`'s project from a frame's `projects`, else worked out, as for a
+    /// tab easing off the strip.
+    pub(super) fn frame_project(
+        &self,
+        projects: &HashMap<TitleTab, String>,
+        tab: &TitleTab,
+        cx: &App,
+    ) -> Option<String> {
+        projects
+            .get(tab)
+            .cloned()
+            .or_else(|| self.tab_project(tab, cx))
     }
 
     /// The worktree `tab` runs in when that isn't its project folder, named
-    /// as the sidebar names it.
+    /// as the sidebar names it. The strip itself looks the project up once
+    /// a frame and calls [`Self::tab_worktree_label_in`].
+    #[cfg(test)]
     pub(super) fn tab_worktree_label(&self, tab: &TitleTab, cx: &App) -> Option<String> {
         let project = self.tab_project(tab, cx)?;
+        self.tab_worktree_label_in(tab, &project, cx)
+    }
+
+    /// [`Self::tab_worktree_label`] for a tab whose `project` is known.
+    pub(super) fn tab_worktree_label_in(
+        &self,
+        tab: &TitleTab,
+        project: &str,
+        cx: &App,
+    ) -> Option<String> {
         let worktree = match tab {
             TitleTab::App(_) => return None,
             TitleTab::Session(tab) => self.workspace.tab_workspaces.get(tab).map_or_else(
@@ -209,8 +249,7 @@ impl Shell {
             ),
             TitleTab::Pilot { worktree, .. } => worktree.as_str(),
         };
-        (path_key(worktree) != path_key(&project))
-            .then(|| self.worktree_label_in(&project, worktree))
+        (path_key(worktree) != path_key(project)).then(|| self.worktree_label_in(project, worktree))
     }
 
     /// Keeps each project's tabs side by side in `title_order`, so a tab

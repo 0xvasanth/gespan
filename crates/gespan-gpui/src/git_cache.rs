@@ -17,10 +17,14 @@ struct Memory {
 }
 impl Memory {
     fn get(&mut self, cwd: &str) -> Option<Snapshot> {
+        self.touch(cwd).cloned()
+    }
+    /// `cwd`'s snapshot, marked as just used.
+    fn touch(&mut self, cwd: &str) -> Option<&Snapshot> {
         let entry = self.entries.get_mut(&path_key(cwd))?;
         self.clock += 1;
         entry.0 = self.clock;
-        Some(entry.1.clone())
+        Some(&entry.1)
     }
     fn put(&mut self, cwd: &str, state: Snapshot) {
         self.clock += 1;
@@ -59,6 +63,19 @@ fn memory() -> &'static Mutex<Memory> {
 }
 pub(crate) fn get(cwd: &str) -> Option<Snapshot> {
     memory().lock().ok()?.get(cwd)
+}
+/// The branch checked out at `path` among `cwd`'s worktrees, read in place
+/// rather than cloning the whole snapshot. None when either is unknown or
+/// the worktree is detached.
+pub(crate) fn worktree_branch(cwd: &str, path: &str) -> Option<String> {
+    memory()
+        .lock()
+        .ok()?
+        .touch(cwd)?
+        .worktrees
+        .iter()
+        .find(|tree| path_key(&tree.path) == path_key(path))
+        .and_then(|tree| tree.branch.clone())
 }
 pub(crate) fn remember(cwd: &str, state: &Snapshot) {
     if let Ok(mut memory) = memory().lock() {

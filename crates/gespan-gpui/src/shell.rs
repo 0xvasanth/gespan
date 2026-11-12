@@ -8234,13 +8234,14 @@ impl Shell {
         let strip_width = self.tabs_width(window, cx);
         self.drawn_peek = self.strip_peek.clone();
         // Every project's tabs, grouped; collapsed groups draw only a chip.
-        let entries = self.strip_entries(cx);
+        // Each tab's project and each chip are worked out once a frame.
+        let (entries, projects) = self.strip_frame(cx);
         let tabs = self.drawn_strip_tabs(&entries);
-        let chips = self.group_chip_widths(&entries, false, window, cx);
-        self.keep_peek_in_place(&chips);
+        let chips = self.group_chip_widths(&entries, window, cx);
+        self.keep_peek_in_place(&chips.widths);
         // Tabs share the strip as if no group peeked: a peek pushes the rest
         // along instead of squeezing it, and the strip scrolls.
-        let group_room = Self::group_room(&self.group_chip_widths(&entries, true, window, cx));
+        let group_room = Self::group_room(&chips.resting);
         // Pane drops count the current scope's tabs, as shortcuts do.
         let strip = self.strip_tabs(cx);
         let strip_ix: Vec<Option<usize>> = tabs
@@ -8275,10 +8276,11 @@ impl Shell {
                 | crate::tab_motion::Slot::Closing { key, .. } => key,
             })
             .filter(|key| {
-                self.tab_project(key, cx).is_some_and(|project| {
-                    gespan_core::files::path_key(&project)
-                        != gespan_core::files::path_key(&self.workspace.project)
-                })
+                self.frame_project(&projects, key, cx)
+                    .is_some_and(|project| {
+                        gespan_core::files::path_key(&project)
+                            != gespan_core::files::path_key(&self.workspace.project)
+                    })
             })
             .cloned()
             .collect();
@@ -8431,7 +8433,7 @@ impl Shell {
                 })
                 .sum::<f32>()
             + extra.values().sum::<f32>()
-            + Self::group_room(&chips)
+            + Self::group_room(&chips.widths)
             - 2.;
         let dragging = self.tab_drag.as_ref().filter(|d| d.active && !d.armed);
         let dragged_item = dragging.map(|d| d.item.clone());
@@ -8552,7 +8554,9 @@ impl Shell {
                     .filter(|pane| self.session_summaries.contains_key(pane))
                     .any(|pane| self.session_metadata(pane, cx).has_saved_draft());
                 // A tab in a worktree other than its project folder names it.
-                let worktree = self.tab_worktree_label(&TitleTab::Session(id), cx);
+                let worktree = self
+                    .frame_project(&projects, &TitleTab::Session(id), cx)
+                    .and_then(|p| self.tab_worktree_label_in(&TitleTab::Session(id), &p, cx));
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -8752,7 +8756,8 @@ impl Shell {
                     let w = tab_width(tab);
                     // A Pilot in a worktree names it, as a chat tab does.
                     let worktree = self
-                        .tab_worktree_label(tab, cx)
+                        .frame_project(&projects, tab, cx)
+                        .and_then(|p| self.tab_worktree_label_in(tab, &p, cx))
                         .filter(|_| w >= TAB_CLOSE_MIN_WIDTH)
                         .map(|label| tab_groups::worktree_badge(id.clone(), label));
                     let element = manager.update(cx, |m, cx| m.title_tab(id, w, worktree, cx))?;
