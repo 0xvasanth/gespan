@@ -25,6 +25,14 @@ const WHICH: [(WhichPrs, &str, &str); 3] = [
         "is opened, drafts too",
     ),
 ];
+/// Shown beneath Results whenever it is Post, in the sheet and the editor.
+pub(super) const POST_WARNING: &str = "Posted reviews skip your approval. A pull request can try to make the agent quote local files in its review.";
+
+/// The warning under a Results choice, only for Post.
+pub(super) fn post_warning(results: ReviewResults) -> Option<&'static str> {
+    (results == ReviewResults::Post).then_some(POST_WARNING)
+}
+
 pub(super) const RESULTS: [(ReviewResults, &str, &str); 3] = [
     (
         ReviewResults::Gespan,
@@ -636,6 +644,18 @@ impl Automations {
                             ),
                     )
                     .child(sentence)
+                    .children(post_warning(setup.input.results).map(|text| {
+                        div()
+                            .id("review-setup-post-warning")
+                            .debug_selector(|| "review-setup-post-warning".into())
+                            .role(Role::Note)
+                            .aria_label(text)
+                            .w_full()
+                            .text_size(px(13.))
+                            .line_height(px(18.))
+                            .text_color(content(0.6))
+                            .child(text)
+                    }))
                     .child(line)
                     .child(actions),
             )
