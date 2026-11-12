@@ -2256,12 +2256,21 @@ mod tests {
     }
 
     fn setup(cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64, i64) {
+        setup_at(cx, std::path::Path::new(":memory:"))
+    }
+
+    /// [`setup`] on a store saved at `path`, so the board store reads back
+    /// what it saved.
+    fn setup_at(
+        cx: &mut TestAppContext,
+        path: &std::path::Path,
+    ) -> (WindowHandle<Shell>, i64, i64) {
         cx.update(|cx| {
             crate::shell::bind_keys(cx);
             crate::input::bind(cx);
             crate::popover::bind(cx);
         });
-        let (window, a, b) = crate::shell::tests::window(cx);
+        let (window, a, b) = crate::shell::tests::window_at(cx, path);
         window
             .update(cx, |shell, _, cx| {
                 for id in [a, b] {
@@ -2844,7 +2853,7 @@ mod tests {
                 assert!(shell.project_groups().folders.is_empty());
                 let store = locked(&shell.store).unwrap();
                 assert!(!store.sessions().unwrap().iter().any(|s| s.id == a));
-                assert!(store.load(a).unwrap().rows.is_empty());
+                assert!(store.load(a).map_or(true, |t| t.rows.is_empty()));
                 assert!(store.reminders().unwrap().is_empty());
                 assert!(
                     store
@@ -3682,18 +3691,17 @@ mod tests {
 
     #[gpui::test]
     fn ticket_menu_sets_agent_status_permission_on_off_or_board_default(cx: &mut TestAppContext) {
-        let (window, a, _) = setup(cx);
         // A database file, so the board store reads back what it saved.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gespan.db");
-        let (store, key) = {
-            let store = gespan_core::store::Store::open(&path).unwrap();
-            while store.create("codex", "/work/gespan").unwrap().id < a {}
-            let key = store.persisted_session_id(a).unwrap();
-            (Arc::new(Mutex::new(store)), key)
-        };
-        window
-            .update(cx, |shell, _, _| shell.store = store.clone())
+        let (window, a, _) = setup_at(cx, &path);
+        let key = window
+            .update(cx, |shell, _, _| {
+                locked(&shell.store)
+                    .unwrap()
+                    .persisted_session_id(a)
+                    .unwrap()
+            })
             .unwrap();
         fake_tickets(window, cx, &[Tracker::Linear]);
         submit_link(window, cx, a, "ENG-7");
@@ -3738,17 +3746,9 @@ mod tests {
     /// board store the shell keeps, not a new one per build.
     #[gpui::test]
     fn session_menu_opens_no_new_service_per_build(cx: &mut TestAppContext) {
-        let (window, a, _) = setup(cx);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gespan.db");
-        let store = {
-            let store = gespan_core::store::Store::open(&path).unwrap();
-            while store.create("codex", "/work/gespan").unwrap().id < a {}
-            Arc::new(Mutex::new(store))
-        };
-        window
-            .update(cx, |shell, _, _| shell.store = store.clone())
-            .unwrap();
+        let (window, a, _) = setup_at(cx, &path);
         fake_tickets(window, cx, &[Tracker::Linear]);
         submit_link(window, cx, a, "ENG-7");
         let opens = |cx: &mut TestAppContext| {
@@ -3780,12 +3780,13 @@ mod tests {
             .unwrap();
         assert_eq!(opens(cx) - before, 1);
         // Another database (the store was swapped) gets its own board store.
+        // A copy holds the same sessions.
         let other = dir.path().join("other.db");
-        let store = {
-            let store = gespan_core::store::Store::open(&other).unwrap();
-            while store.create("codex", "/work/gespan").unwrap().id < a {}
-            Arc::new(Mutex::new(store))
-        };
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute("VACUUM INTO ?1", [other.to_string_lossy()])
+            .unwrap();
+        let store = Arc::new(Mutex::new(gespan_core::store::Store::open(&other).unwrap()));
         window
             .update(cx, |shell, _, cx| {
                 shell.store = store.clone();
@@ -3797,17 +3798,9 @@ mod tests {
 
     #[gpui::test]
     fn a_failed_status_setting_read_shows_the_error_not_board_default(cx: &mut TestAppContext) {
-        let (window, a, _) = setup(cx);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gespan.db");
-        let store = {
-            let store = gespan_core::store::Store::open(&path).unwrap();
-            while store.create("codex", "/work/gespan").unwrap().id < a {}
-            Arc::new(Mutex::new(store))
-        };
-        window
-            .update(cx, |shell, _, _| shell.store = store.clone())
-            .unwrap();
+        let (window, a, _) = setup_at(cx, &path);
         fake_tickets(window, cx, &[Tracker::Linear]);
         submit_link(window, cx, a, "ENG-7");
         window

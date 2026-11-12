@@ -227,10 +227,8 @@ impl Roster {
             })
             .transpose()?
             .unwrap_or_default();
-        if store.uses_gespan_schema() {
-            if let Some(preferences) = store.desktop_preferences() {
-                roster.reconcile_desktop(store, preferences)?;
-            }
+        if let Some(preferences) = store.desktop_preferences() {
+            roster.reconcile_desktop(store, preferences)?;
         }
         let mut ids = HashSet::new();
         roster.pilots.retain(|m| {

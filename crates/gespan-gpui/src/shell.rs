@@ -9724,12 +9724,14 @@ mod tests {
             .unwrap();
         cx.refresh().unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        let row = visual.debug_bounds("sidebar-session-1").unwrap();
+        let row = visual
+            .debug_bounds(Box::leak(format!("sidebar-session-{a}").into_boxed_str()))
+            .unwrap();
         visual.simulate_mouse_move(row.center(), None, Default::default());
         visual.run_until_parked();
         visual.refresh().unwrap();
         let archive = visual
-            .debug_bounds("archive-session-1")
+            .debug_bounds(Box::leak(format!("archive-session-{a}").into_boxed_str()))
             .expect("hover reveals Archive");
         visual.simulate_click(archive.center(), Default::default());
         visual.run_until_parked();
@@ -12299,7 +12301,16 @@ mod tests {
             .update(cx, |shell, _, _| assert!(shell.menu.is_none()))
             .unwrap();
         let copied = cx.update(|cx| cx.read_from_clipboard().and_then(|c| c.text()));
-        assert_eq!(copied, Some(a.to_string()));
+        // The Gespan id is the one the store keeps, not the window's handle.
+        let saved = window
+            .update(cx, |shell, _, _| {
+                locked(&shell.store)
+                    .unwrap()
+                    .persisted_session_id(a)
+                    .unwrap()
+            })
+            .unwrap();
+        assert_eq!(copied, Some(saved));
     }
     #[gpui::test]
     fn a_folder_renamed_while_running_moves_every_chat_in_the_project(cx: &mut TestAppContext) {
@@ -12549,7 +12560,14 @@ mod tests {
             .unwrap();
     }
     pub(super) fn window(cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64, i64) {
-        let mut store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        window_at(cx, std::path::Path::new(":memory:"))
+    }
+    /// [`window`] on a store saved at `path`.
+    pub(super) fn window_at(
+        cx: &mut TestAppContext,
+        path: &std::path::Path,
+    ) -> (WindowHandle<Shell>, i64, i64) {
+        let mut store = Store::open(path).unwrap();
         let mut a = store.create("codex", "/work/another-project").unwrap();
         let b = store.create("claude", "/work/gespan").unwrap();
         store

@@ -10,8 +10,20 @@ pub struct Ready {
 }
 
 /// The launching chat's session id lives in the high half of a turn id.
+/// Only its low 32 bits fit there; compare with [`is_source`].
 pub fn source_of(origin_turn: u64) -> i64 {
     (origin_turn >> 32) as i64
+}
+
+/// Whether `source`, from [`source_of`], is the chat `chat`. Session ids are
+/// wider than 32 bits, so this compares the bits a turn id keeps.
+pub fn is_source(source: i64, chat: i64) -> bool {
+    source == (chat as u64 & 0xffff_ffff) as i64
+}
+
+/// Whether the turn `origin_turn` was taken in the chat `chat`.
+pub fn launched_from(origin_turn: u64, chat: i64) -> bool {
+    is_source(source_of(origin_turn), chat)
 }
 
 /// Each stopped session reports on its own; siblings from the same turn never hold it back.
@@ -107,6 +119,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_chat_id_wider_than_32_bits_is_still_its_launches_source() {
+        // Store ids are 53-bit hashes; a turn id keeps only the low half.
+        let chat = 5_727_532_172_997_706_i64;
+        let turn = ((chat as u64) << 32) | 7;
+        assert_ne!(source_of(turn), chat, "the turn id cannot hold all of it");
+        assert!(is_source(source_of(turn), chat));
+        assert!(!is_source(source_of(turn), chat + 1));
+    }
     #[test]
     fn a_stopped_session_reports_while_its_sibling_still_runs() {
         let launches = [launch(1, 7, 1), launch(2, 7, 1)];

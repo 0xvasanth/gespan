@@ -10,12 +10,13 @@ use toasty_core::schema::diff;
 use toasty_driver_sqlite::Sqlite;
 
 /// Opens every connection with a five second busy timeout, foreign keys on
-/// and (for files) write-ahead logging, as the hand-written stores did. One
-/// connection does all the work.
+/// and (for writable files) write-ahead logging, as the hand-written stores
+/// did. One connection does all the work.
 #[derive(Debug)]
 pub(crate) struct Driver {
     sqlite: Sqlite,
-    file: bool,
+    /// Whether to switch the file to write-ahead logging: a writable file.
+    wal: bool,
 }
 
 impl Driver {
@@ -23,15 +24,48 @@ impl Driver {
         if super::is_memory(path) {
             Self {
                 sqlite: Sqlite::in_memory(),
-                file: false,
+                wal: false,
             }
         } else {
             Self {
                 sqlite: Sqlite::open(path),
-                file: true,
+                wal: true,
             }
         }
     }
+
+    /// A driver that opens `path` read-only: SQLite refuses every write, and
+    /// the file's journal mode is left as it is.
+    pub(crate) fn read_only(path: &Path) -> Self {
+        Self {
+            sqlite: Sqlite::open(read_only_uri(path)),
+            wal: false,
+        }
+    }
+}
+
+/// `path` as a read-only SQLite URI. The driver opens with URI filenames on,
+/// so `mode=ro` makes the connection read-only.
+fn read_only_uri(path: &Path) -> String {
+    let mut text = String::new();
+    for c in path.to_string_lossy().chars() {
+        match c {
+            '\\' if cfg!(windows) => text.push('/'),
+            '%' => text.push_str("%25"),
+            '?' => text.push_str("%3f"),
+            '#' => text.push_str("%23"),
+            c => text.push(c),
+        }
+    }
+    let prefix = if text.starts_with('/') {
+        "file://"
+    } else if text.as_bytes().get(1) == Some(&b':') {
+        // A Windows drive path, `C:/...`.
+        "file:///"
+    } else {
+        "file:"
+    };
+    format!("{prefix}{text}?mode=ro")
 }
 
 async fn pragma(
@@ -72,7 +106,7 @@ impl ToastyDriver for Driver {
             "PRAGMA foreign_keys=ON",
             "PRAGMA journal_mode=WAL",
         ] {
-            if self.file || !sql.contains("journal_mode") {
+            if self.wal || !sql.contains("journal_mode") {
                 pragma(connection.as_mut(), &schema, sql).await?;
             }
         }
@@ -89,5 +123,27 @@ impl ToastyDriver for Driver {
 
     async fn reset_db(&self) -> toasty_core::Result<()> {
         self.sqlite.reset_db().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_only_uri;
+    use std::path::Path;
+
+    #[test]
+    fn a_read_only_uri_escapes_what_sqlite_would_read_as_uri_syntax() {
+        assert_eq!(
+            read_only_uri(Path::new("/Users/me/Application Support/gespan.db")),
+            "file:///Users/me/Application Support/gespan.db?mode=ro"
+        );
+        assert_eq!(
+            read_only_uri(Path::new("/tmp/a?b#c%d/gespan.db")),
+            "file:///tmp/a%3fb%23c%25d/gespan.db?mode=ro"
+        );
+        assert_eq!(
+            read_only_uri(Path::new("relative/gespan.db")),
+            "file:relative/gespan.db?mode=ro"
+        );
     }
 }

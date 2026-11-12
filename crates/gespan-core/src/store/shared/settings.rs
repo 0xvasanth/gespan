@@ -6,10 +6,9 @@
 //! Before this file existed, the values lived in `<db>.gpui.json`. They are
 //! imported once, with `user_version` 1 marking the import done; that import
 //! is the Settings database's only legacy step.
-use super::{parse, sql};
+use super::parse;
 use crate::orm::{Database, Kind};
 use crate::store::schema::Setting;
-use rusqlite::{Connection, OpenFlags};
 use std::{collections::BTreeMap, path::Path};
 
 type Snapshot = BTreeMap<String, String>;
@@ -31,6 +30,16 @@ pub(super) fn save(database: &Database, key: &str, value: &str) -> Result<(), St
             .exec(&mut db)
             .await
             .map(drop)
+    })
+}
+
+/// Removes the settings `keys`.
+pub(super) fn remove(database: &Database, keys: Vec<String>) -> Result<(), String> {
+    database.run(|mut db| async move {
+        Setting::filter(Setting::fields().key().in_list(keys))
+            .delete()
+            .exec(&mut db)
+            .await
     })
 }
 
@@ -104,14 +113,7 @@ pub(super) fn open(
                     return Ok(());
                 }
                 for (key, value) in rows {
-                    toasty::sql::statement(
-                        "INSERT INTO settings(key,value) VALUES(?1,?2)
-                         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    )
-                    .bind(key)
-                    .bind(value)
-                    .exec(tx)
-                    .await?;
+                    Setting::upsert_by_key(key).value(value).exec(tx).await?;
                 }
                 // The marker and all imported keys commit together. Keep the old
                 // file untouched as a backup, but never re-import stale values.
@@ -135,12 +137,8 @@ fn read(path: &Path, old_path: &Path) -> Result<Snapshot, String> {
     if !path.exists() {
         return legacy(old_path);
     }
-    let conn = sql(Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ))?;
-    sql(conn.busy_timeout(std::time::Duration::from_secs(5)))?;
-    let version: i64 = sql(conn.query_row("PRAGMA user_version", [], |row| row.get(0)))?;
+    let settings = crate::orm::open_read_only(Kind::Settings, path)?;
+    let version = import_marker(&settings)?;
     if version > 1 {
         return Err(format!("Unsupported native settings version: {version}"));
     }
@@ -148,9 +146,11 @@ fn read(path: &Path, old_path: &Path) -> Result<Snapshot, String> {
         // An interrupted initial import has not replaced the legacy snapshot.
         return legacy(old_path);
     }
-    let mut query = sql(conn.prepare("SELECT key,value FROM settings"))?;
-    let values = sql(query.query_map([], |row| Ok((row.get(0)?, row.get(1)?))))?;
-    sql(values.collect())
+    let values = settings.run(|mut db| async move { Setting::all().exec(&mut db).await })?;
+    Ok(values
+        .into_iter()
+        .map(|setting| (setting.key, setting.value))
+        .collect())
 }
 
 #[cfg(test)]
@@ -217,7 +217,7 @@ mod tests {
         store
             .save_setting("pilot-app-receipt:1:large", &"x".repeat(10_000_000))
             .unwrap();
-        let database = store.shared.as_ref().unwrap().extras_db.as_ref().unwrap();
+        let database = store.shared.extras_db.as_ref().unwrap();
         let changes = || -> String {
             let rows = database
                 .run(|mut db| async move {
@@ -252,7 +252,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open_gespan(&dir.path().join("gespan.db")).unwrap();
         store.save_setting("workspace", "old").unwrap();
-        let database = store.shared.as_ref().unwrap().extras_db.as_ref().unwrap();
+        let database = store.shared.extras_db.as_ref().unwrap();
         let pragma = |sql: &'static str| {
             database
                 .run(|mut db| async move { toasty::sql::statement(sql).exec(&mut db).await })

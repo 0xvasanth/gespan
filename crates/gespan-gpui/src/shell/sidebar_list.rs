@@ -1849,7 +1849,7 @@ mod tests {
     fn large_project_only_lays_out_nearby_session_cards(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let started = std::time::Instant::now();
-        let (first, last) = window
+        let (first, next, last) = window
             .update(cx, |shell, window, cx| {
                 let mut summaries = Vec::new();
                 {
@@ -1863,6 +1863,8 @@ mod tests {
                     }
                 }
                 let first = summaries.last().unwrap().id;
+                // The newest but one: the next card down from `first`.
+                let next = summaries[summaries.len() - 2].id;
                 let last = summaries[0].id;
                 for summary in summaries {
                     shell.order.push(summary.id);
@@ -1870,7 +1872,7 @@ mod tests {
                 }
                 shell.workspace.open(first);
                 shell.select_project("/work/many-sessions".into(), window, cx);
-                (first, last)
+                (first, next, last)
             })
             .unwrap();
         cx.refresh().unwrap();
@@ -1947,7 +1949,7 @@ mod tests {
             .update(cx, |shell, window, cx| {
                 // Resolve scroll_to_end's end sentinel before checking selection.
                 let offset = shell.sidebar_list.state.logical_scroll_top();
-                shell.open(first - 1, window, cx);
+                shell.open(next, window, cx);
                 offset
             })
             .unwrap();
@@ -1961,7 +1963,7 @@ mod tests {
                     (after.item_ix, after.offset_in_item),
                     (offset.item_ix, offset.offset_in_item)
                 );
-                assert!(shell.session_row_bounds[&(first - 1)].get().is_none());
+                assert!(shell.session_row_bounds[&next].get().is_none());
             })
             .unwrap();
     }

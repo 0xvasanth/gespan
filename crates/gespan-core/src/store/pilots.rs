@@ -1,63 +1,74 @@
 use super::db::args;
+use super::schema::{NoteRecord, SessionRecord};
 use super::{Session, Store};
 
 impl Store {
     /// Look up an existing Pilot conversation independently of the sidebar.
     /// Hidden sessions are valid conversations and must never be replaced.
     pub fn pilot_session(&self, id: i64) -> Result<Option<Session>, String> {
-        if !self.uses_gespan_schema() {
-            return Ok(self
-                .sessions()?
-                .into_iter()
-                .find(|session| session.id == id));
-        }
         let original = self.persisted_session_id(id)?;
-        self.sql()?
-            .optional(
-                "SELECT title,harness,cwd,provider_session_id,updated_at,has_user_message,
-                 archived,pinned,linked_work_item_json FROM sessions WHERE id=?1",
-                args![original],
-            )?
-            .map(|row| {
-                Ok(Session {
-                    id,
-                    title: row.get(0)?,
-                    provider: row.get(1)?,
-                    cwd: row.get(2)?,
-                    provider_id: row.get(3)?,
-                    updated_at: row.get::<i64>(4)?.max(0) as u64,
-                    has_messages: row.get(5)?,
-                    archived: row.get(6)?,
-                    pinned: row.get(7)?,
-                    created_at: 0,
-                    work_item: row
-                        .get::<Option<String>>(8)?
-                        .and_then(|raw| serde_json::from_str(&raw).ok()),
-                })
-            })
-            .transpose()
+        let row = self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter_by_id(original)
+                .select((
+                    (session.title(), session.harness(), session.cwd()),
+                    (session.provider_session_id(), session.updated_at()),
+                    (
+                        session.has_user_message(),
+                        session.archived(),
+                        session.pinned(),
+                    ),
+                    session.linked_work_item_json(),
+                ))
+                .exec(&mut db)
+                .await
+        })?;
+        Ok(row.into_iter().next().map(
+            |(
+                (title, provider, cwd),
+                (provider_id, updated_at),
+                (has_messages, archived, pinned),
+                work_item,
+            )| Session {
+                id,
+                title,
+                provider,
+                cwd,
+                provider_id,
+                updated_at: updated_at.max(0) as u64,
+                has_messages,
+                archived,
+                pinned,
+                created_at: 0,
+                work_item: work_item.and_then(|raw| serde_json::from_str(&raw).ok()),
+            },
+        ))
     }
     /// Cheap freshness token; the blocks themselves are loaded only on change.
     pub fn pilot_work_revision(&self, id: i64) -> Result<Option<(u64, u64, u64)>, String> {
-        if !self.uses_gespan_schema() {
-            return Ok(None);
-        }
         let original = self.persisted_session_id(id)?;
-        let db = self.sql()?;
-        let updated: i64 = db.value(
-            "SELECT updated_at FROM sessions WHERE id=?1",
-            args![original],
-        )?;
-        let notes = db
-            .optional(
-                "SELECT updated_at FROM notes ORDER BY updated_at DESC LIMIT 1",
-                args![],
-            )?
-            .map(|row| row.get::<i64>(0))
-            .transpose()?
-            .unwrap_or(0);
+        let (updated, notes) = self.orm()?.run(|mut db| async move {
+            let updated = SessionRecord::filter_by_id(original)
+                .select(SessionRecord::fields().updated_at())
+                .exec(&mut db)
+                .await?
+                .into_iter()
+                .next();
+            let note = NoteRecord::fields();
+            let notes = NoteRecord::all()
+                .order_by(note.updated_at().desc())
+                .limit(1)
+                .select(note.updated_at())
+                .exec(&mut db)
+                .await?
+                .into_iter()
+                .next()
+                .unwrap_or(0);
+            Ok((updated, notes))
+        })?;
+        let updated = updated.ok_or("Query returned no rows")?;
         // Commits by other connections, as seen by this store's one.
-        let version: i64 = db.value("PRAGMA data_version", args![])?;
+        let version: i64 = self.sql()?.value("PRAGMA data_version", args![])?;
         Ok(Some((
             updated.max(0) as u64,
             notes.max(0) as u64,
@@ -73,43 +84,56 @@ impl Store {
         id: &str,
         body: bool,
     ) -> Result<Option<crate::pilot::Document>, String> {
-        if !self.uses_gespan_schema() {
-            return Ok(None);
-        }
-        let body_column = if body { "body" } else { "''" };
-        self.sql()?
-            .optional(
-                &format!(
-                    "SELECT id,COALESCE(artifact_kind,'document'),title,{body_column},created_at,updated_at
-                     FROM notes WHERE id=?1"
-                ),
-                args![id],
-            )?
-            .map(|r| {
-                Ok(crate::pilot::Document {
-                    id: r.get(0)?,
-                    kind: r.get(1)?,
-                    title: r.get(2)?,
-                    summary: String::new(),
-                    body: r.get(3)?,
-                    created_at: r.get::<i64>(4)?.max(0) as u64,
-                    updated_at: r.get::<i64>(5)?.max(0) as u64,
-                })
-            })
-            .transpose()
+        let id = id.to_owned();
+        let row = self.orm()?.run(|mut db| async move {
+            let note = NoteRecord::fields();
+            let found = NoteRecord::filter_by_id(&id)
+                .select((
+                    note.artifact_kind(),
+                    note.title(),
+                    note.created_at(),
+                    note.updated_at(),
+                ))
+                .exec(&mut db)
+                .await?
+                .into_iter()
+                .next();
+            let Some(found) = found else {
+                return Ok(None);
+            };
+            // The body is read only when asked for: it can be a large page.
+            let text = if body {
+                NoteRecord::filter_by_id(&id)
+                    .select(note.body())
+                    .exec(&mut db)
+                    .await?
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            Ok(Some((id, found, text)))
+        })?;
+        Ok(row.map(
+            |(id, (kind, title, created_at, updated_at), body)| crate::pilot::Document {
+                id,
+                kind: kind.unwrap_or_else(|| "document".into()),
+                title,
+                summary: String::new(),
+                body,
+                created_at: created_at.max(0) as u64,
+                updated_at: updated_at.max(0) as u64,
+            },
+        ))
     }
     /// Metadata comes from the saved conversation, in both indexed Pilot history
     /// and older sessions.blocks_json. No provider rollout is opened here.
     pub fn pilot_work(&self, id: i64) -> Result<Option<crate::pilot::Work>, String> {
-        if !self.uses_gespan_schema() {
-            return Ok(None);
-        }
         let original = self.persisted_session_id(id)?;
-        let indexed: bool = self.sql()?.value(
-            "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
-            args![&original],
-        )?;
-        // Return only references and confirmed app receipts from SQLite. A Pilot
+        let indexed = self.shared_indexed(&original)?;
+        // json1: Toasty 0.11 cannot read fields inside the JSON blocks, so
+        // these stay raw. Return only references and confirmed app receipts from SQLite. A Pilot
         // can have megabytes of prose/tools; none of that crosses this boundary.
         let source = if indexed {
             "SELECT block_json AS block,seq FROM pilot_blocks WHERE session_id=?1"
@@ -200,7 +224,7 @@ mod tests {
         let store = Store::open_gespan(Path::new(":memory:")).unwrap();
         let session = store.create("claude", "/project").unwrap();
         let original = store.persisted_session_id(session.id).unwrap();
-        store.conn.execute(
+        store.conn().execute(
             "UPDATE sessions SET sidebar_hidden=1,provider_session_id='existing-thread' WHERE id=?1",
             [&original],
         ).unwrap();
@@ -212,7 +236,7 @@ mod tests {
         assert_eq!(store.persisted_session_id(loaded.id).unwrap(), original);
         assert_eq!(
             store
-                .conn
+                .conn()
                 .query_row("SELECT count(*) FROM sessions", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
             1
@@ -231,15 +255,15 @@ mod tests {
                 {"id":"user","role":"user","text":"Write it","artifactCards":[{"id":"existing-artifact","kind":"html","title":"Original title","summary":"Overview"}],"pilotSpawnedSessions":[{"sessionId":child_id,"cwd":"/old-project","title":"Launch title","harness":"claude","model":"opus"}]},
                 {"id":"assistant","role":"assistant","text":"Done"}
             ]);
-            store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,slug_pending,created_at,updated_at,content_kind,artifact_kind) VALUES('existing-artifact','existing-artifact','Saved title','<h1>Actual HTML</h1>','[]',0,10,20,'artifact','html')", []).unwrap();
+            store.conn().execute("INSERT INTO notes(id,slug,title,body,tags_json,slug_pending,created_at,updated_at,content_kind,artifact_kind) VALUES('existing-artifact','existing-artifact','Saved title','<h1>Actual HTML</h1>','[]',0,10,20,'artifact','html')", []).unwrap();
             if indexed {
                 store
-                    .conn
+                    .conn()
                     .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
                     .unwrap();
                 for (seq, block) in blocks.as_array().unwrap().iter().enumerate() {
                     store
-                        .conn
+                        .conn()
                         .execute(
                             "INSERT INTO pilot_blocks(session_id,seq,block_id,block_json,search_text,is_user,is_draft)
                              VALUES(?1,?2,?3,?4,'',?5,0)",
@@ -255,7 +279,7 @@ mod tests {
                 }
             } else {
                 store
-                    .conn
+                    .conn()
                     .execute(
                         "UPDATE sessions SET blocks_json=?2 WHERE id=?1",
                         rusqlite::params![original, blocks.to_string()],

@@ -17,10 +17,7 @@ impl Store {
     pub(in crate::store) fn shared_edit_queue_empty(&self, id: i64) -> Result<(), String> {
         // Validation must not refresh the optimistic queue/history revision:
         // a failed edit leaves the visible revision old and still guarded.
-        let raw: String = self.db()?.value(
-            "SELECT queued_messages_json FROM sessions WHERE id=?1",
-            args![self.persisted_session_id(id)?],
-        )?;
+        let raw = self.shared_queue(id)?;
         let queued: Vec<Value> = parse(&raw)?;
         if !queued.is_empty()
             || self
@@ -199,8 +196,6 @@ impl Store {
         self.save_context_usage(id, &Default::default())?;
         tx.commit()?;
         self.shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow_mut()
             .insert(id, HistoryRevision::of(next));

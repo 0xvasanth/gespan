@@ -1,62 +1,61 @@
 //! Chats with a turn in flight, kept current while they run so a quit or a
 //! crash can continue them on the next launch. The desktop table is the one
 //! older Tauri builds wrote.
-use super::db::args;
+use super::schema::{InFlightSession, SessionRecord};
 use super::Store;
 use crate::interrupted;
-
-const LEGACY_KEY: &str = "in-flight";
-const TABLE: &str = "in_flight_sessions";
 
 impl Store {
     /// Replace the list, in the given order. Remote and unknown sessions are
     /// skipped: the host owns remote turns.
     pub fn set_in_flight(&self, ids: &[i64]) -> Result<(), String> {
-        if self.shared.is_none() {
-            let ids: Vec<i64> = ids.iter().copied().filter(|id| *id > 0).collect();
-            return self.save_setting(LEGACY_KEY, &serde_json::to_string(&ids).unwrap());
-        }
         self.shared_writable()?;
-        let db = self.sql()?;
-        let tx = db.begin()?;
-        db.execute(&format!("DELETE FROM {TABLE}"), args![])?;
+        let tx = self.begin()?;
+        let database = self.orm()?;
+        database
+            .run(|mut db| async move { InFlightSession::all().delete().exec(&mut db).await })?;
         let mut index = 0_i64;
         for id in ids.iter().filter(|id| **id > 0) {
             let Ok(persisted) = self.persisted_session_id(*id) else {
                 continue;
             };
-            // Copies the session's cwd in the same statement: INSERT ... SELECT.
-            index += db.execute(
-                "INSERT OR REPLACE INTO in_flight_sessions(session_id,cwd,sort_index)
-                 SELECT id,cwd,?2 FROM sessions WHERE id=?1",
-                args![persisted, index],
-            )? as i64;
+            let added = database.run(|mut db| async move {
+                // Each row copies its session's cwd; a session gone since is skipped.
+                let Some(cwd) = SessionRecord::filter_by_id(&persisted)
+                    .select(SessionRecord::fields().cwd())
+                    .exec(&mut db)
+                    .await?
+                    .into_iter()
+                    .next()
+                else {
+                    return Ok(false);
+                };
+                InFlightSession::upsert_by_session_id(persisted)
+                    .cwd(cwd)
+                    .sort_index(index)
+                    .exec(&mut db)
+                    .await?;
+                Ok(true)
+            })?;
+            index += i64::from(added);
         }
         tx.commit()
     }
 
     /// Read and clear the list, so a second window or launch cannot take it twice.
     pub fn take_in_flight(&self) -> Result<Vec<i64>, String> {
-        if self.shared.is_none() {
-            let ids = match self.setting(LEGACY_KEY)? {
-                Some(text) if !text.is_empty() => serde_json::from_str(&text).unwrap_or_default(),
-                _ => Vec::new(),
-            };
-            self.save_setting(LEGACY_KEY, "")?;
-            return Ok(ids);
-        }
         self.shared_writable()?;
-        let db = self.sql()?;
-        let tx = db.begin()?;
-        let persisted = db
-            .query(
-                &format!("SELECT session_id FROM {TABLE} ORDER BY sort_index, session_id"),
-                args![],
-            )?
-            .iter()
-            .map(|row| row.get::<String>(0))
-            .collect::<Result<Vec<_>, _>>()?;
-        db.execute(&format!("DELETE FROM {TABLE}"), args![])?;
+        let tx = self.begin()?;
+        let persisted = self.orm()?.run(|mut db| async move {
+            let row = InFlightSession::fields();
+            let ids = InFlightSession::all()
+                .order_by((row.sort_index().asc(), row.session_id().asc()))
+                .select(row.session_id())
+                .exec(&mut db)
+                .await?;
+            InFlightSession::all().delete().exec(&mut db).await?;
+            Ok(ids)
+        })?;
         tx.commit()?;
         Ok(persisted
             .iter()
@@ -131,7 +130,7 @@ mod tests {
         let id = store.create("codex", "/work/app").unwrap().id;
         store.set_in_flight(&[id]).unwrap();
         let (session, cwd): (String, String) = store
-            .conn
+            .conn()
             .query_row("SELECT session_id,cwd FROM in_flight_sessions", [], |r| {
                 Ok((r.get(0)?, r.get(1)?))
             })
@@ -146,7 +145,7 @@ mod tests {
         let id = store.create("codex", "/work/app").unwrap().id;
         let persisted = store.persisted_session_id(id).unwrap();
         store
-            .conn
+            .conn()
             .execute(
                 "INSERT INTO in_flight_sessions(session_id,cwd,sort_index) VALUES(?1,'/work/app',0),('gone','/x',1)",
                 [&persisted],

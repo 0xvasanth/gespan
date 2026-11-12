@@ -1,7 +1,7 @@
 //! What will wake a chat without the user: work it left running in the
 //! background and delegated sessions it asked to hear back from. The
 //! composer's watch chip lists these, so a quiet chat never hides a pending wake.
-use crate::pilot::{completions::source_of, Launch};
+use crate::pilot::{completions::launched_from, Launch};
 use crate::provider::BackgroundTask;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,7 +99,7 @@ pub fn delegated<'a>(
 /// `origin_turn` keeps only the low 32 bits of the launching chat's id, so
 /// compare on those: real session ids are wider than 32 bits.
 fn launched_by(launch: &Launch, chat: i64) -> bool {
-    source_of(launch.origin_turn) == (chat as u64 & 0xffff_ffff) as i64
+    launched_from(launch.origin_turn, chat)
 }
 
 /// The chip's text, or nothing when no wake is pending.
