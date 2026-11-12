@@ -98,7 +98,6 @@ mod settings;
 mod setup;
 mod shell;
 mod sound;
-#[allow(dead_code)]
 mod strip_groups;
 mod syntax;
 mod tab_label;

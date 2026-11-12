@@ -111,11 +111,13 @@ impl Shell {
         }
     }
 
-    /// The pinned tabs in this scope, in pin order.
-    fn pinned_visible(&self, cx: &App) -> Vec<TitleTab> {
-        self.visible_tabs(cx)
-            .into_iter()
-            .filter(|tab| self.tab_pinned(tab))
+    /// Every pinned tab that can draw, from any project, in pin order.
+    pub(super) fn pinned_visible(&self, cx: &App) -> Vec<TitleTab> {
+        self.workspace
+            .pinned_tabs
+            .iter()
+            .filter(|tab| self.tab_drawable(tab, cx))
+            .cloned()
             .collect()
     }
 

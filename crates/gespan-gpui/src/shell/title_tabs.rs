@@ -1,5 +1,6 @@
 //! All title-strip commands operate on the same visible, ordered snapshot.
 use super::*;
+use crate::strip_groups::{StripEntry, entries, make_contiguous};
 use crate::workspace::TitleTab;
 use gespan_core::files::path_key;
 
@@ -86,41 +87,128 @@ impl Shell {
         self.workspace
             .title_order
             .iter()
-            .filter(|tab| match tab {
-                TitleTab::App(view) => {
-                    (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
-                        && (*view != app_views::AppView::Board || self.workspace.preferences.board)
-                        && (*view != app_views::AppView::Flows || crate::flows::visible(cx))
-                }
-                TitleTab::Session(tab) => {
-                    self.workspace.tabs.contains(tab) && {
-                        let id = self.workspace.scope_pane(*tab);
-                        self.session_summaries
-                            .contains_key(&self.workspace.session_for_pane(id))
-                            && self
-                                .session_metadata(self.workspace.session_for_pane(id), cx)
+            .filter(|tab| {
+                self.tab_drawable(tab, cx)
+                    && match tab {
+                        TitleTab::App(_) => true,
+                        TitleTab::Session(tab) => {
+                            let id = self.workspace.scope_pane(*tab);
+                            self.session_metadata(self.workspace.session_for_pane(id), cx)
                                 .summary
                                 .cwd
                                 == self.workspace.project
-                            && self.in_worktree_scope(id, cx)
+                                && self.in_worktree_scope(id, cx)
+                        }
+                        TitleTab::Pilot {
+                            project, worktree, ..
+                        } => {
+                            *project == self.workspace.project
+                                && path_key(worktree) == path_key(self.working_copy())
+                        }
                     }
-                }
-                TitleTab::Pilot {
-                    id,
-                    project,
-                    worktree,
-                } => {
-                    *project == self.workspace.project
-                        && path_key(worktree) == path_key(self.working_copy())
-                        && self.workspace.preferences.pilots
-                        && self
-                            .pilots
-                            .as_ref()
-                            .is_some_and(|m| m.read(cx).roster.get(id).is_some())
-                }
             })
             .cloned()
             .collect()
+    }
+
+    /// Whether `tab` can draw at all, whichever project it belongs to: its
+    /// app view is turned on, its session's summary is loaded, its pilot
+    /// still exists.
+    pub(super) fn tab_drawable(&self, tab: &TitleTab, cx: &App) -> bool {
+        match tab {
+            TitleTab::App(view) => {
+                (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
+                    && (*view != app_views::AppView::Board || self.workspace.preferences.board)
+                    && (*view != app_views::AppView::Flows || crate::flows::visible(cx))
+            }
+            TitleTab::Session(tab) => {
+                self.workspace.tabs.contains(tab)
+                    && self.session_summaries.contains_key(
+                        &self
+                            .workspace
+                            .session_for_pane(self.workspace.scope_pane(*tab)),
+                    )
+            }
+            TitleTab::Pilot { id, .. } => {
+                self.workspace.preferences.pilots
+                    && self
+                        .pilots
+                        .as_ref()
+                        .is_some_and(|m| m.read(cx).roster.get(id).is_some())
+            }
+        }
+    }
+
+    /// The project folder `tab` belongs to: a session's working folder, a
+    /// pilot's project. App tabs, and sessions whose summary isn't loaded,
+    /// have none.
+    pub(super) fn tab_project(&self, tab: &TitleTab, cx: &App) -> Option<String> {
+        match tab {
+            TitleTab::App(_) => None,
+            TitleTab::Session(tab) => {
+                let session = self
+                    .workspace
+                    .session_for_pane(self.workspace.scope_pane(*tab));
+                self.session_summaries
+                    .contains_key(&session)
+                    .then(|| self.session_metadata(session, cx).summary.cwd.clone())
+            }
+            TitleTab::Pilot { project, .. } => Some(project.clone()),
+        }
+    }
+
+    /// Every drawable tab of every project, in strip order, pins left out.
+    #[allow(dead_code)] // Drawn by the grouped strip.
+    pub(super) fn global_strip_tabs(&self, cx: &App) -> Vec<TitleTab> {
+        self.workspace
+            .title_order
+            .iter()
+            .filter(|tab| self.tab_drawable(tab, cx) && !self.tab_pinned(tab))
+            .cloned()
+            .collect()
+    }
+
+    /// The strip for every project: each project's tabs as one group, where
+    /// its first tab is, and app tabs loose between them.
+    #[allow(dead_code)] // Drawn by the grouped strip.
+    pub(super) fn strip_entries(&self, cx: &App) -> Vec<StripEntry<TitleTab>> {
+        entries(&self.global_strip_tabs(cx), |tab| self.tab_project(tab, cx))
+    }
+
+    /// The worktree `tab` runs in when that isn't its project folder, named
+    /// as the sidebar names it.
+    #[allow(dead_code)] // Drawn by the grouped strip.
+    pub(super) fn tab_worktree_label(&self, tab: &TitleTab, cx: &App) -> Option<String> {
+        let project = self.tab_project(tab, cx)?;
+        let worktree = match tab {
+            TitleTab::App(_) => return None,
+            TitleTab::Session(tab) => self.workspace.tab_workspaces.get(tab).map_or_else(
+                || self.session_working_copy(self.workspace.scope_pane(*tab), cx),
+                String::as_str,
+            ),
+            TitleTab::Pilot { worktree, .. } => worktree.as_str(),
+        };
+        (path_key(worktree) != path_key(&project)).then(|| self.worktree_label(worktree))
+    }
+
+    /// Keeps each project's tabs side by side in `title_order`, so a tab
+    /// opened for a project joins its group; the session list follows.
+    pub(super) fn group_title_order(&mut self, cx: &App) {
+        let projects: HashMap<TitleTab, Option<String>> = self
+            .workspace
+            .title_order
+            .iter()
+            .map(|tab| (tab.clone(), self.tab_project(tab, cx)))
+            .collect();
+        make_contiguous(&mut self.workspace.title_order, |tab| {
+            projects.get(tab).cloned().flatten()
+        });
+        self.workspace.tabs = self
+            .workspace
+            .title_order
+            .iter()
+            .filter_map(TitleTab::session)
+            .collect();
     }
 
     pub(super) fn active_title_tab(&self, cx: &App) -> Option<TitleTab> {

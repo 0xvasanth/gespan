@@ -73,6 +73,8 @@ mod sidebar_peek;
 mod space_reorder;
 #[cfg(test)]
 mod surface_tests;
+#[cfg(test)]
+mod tab_groups_tests;
 mod terminal_dock;
 mod terminal_panes;
 #[cfg(test)]
@@ -4641,6 +4643,7 @@ impl Shell {
         }
         self.workspace.worktree_focus = self.worktree_focus.clone();
         self.workspace.normalize_title_order();
+        self.group_title_order(cx);
         self.sync_git(cx);
         self.update_chat_visibility(cx);
         self.update_usage_provider(cx);
