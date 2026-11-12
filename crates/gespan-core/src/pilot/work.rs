@@ -134,7 +134,16 @@ fn action(block: &Value) -> Option<String> {
 }
 /// The action of an `app_call` tool, for agents on the tool endpoint.
 fn tool_action(tool: &Value) -> Option<String> {
-    let name = tool["nativeName"].as_str()?;
+    let input = match &tool["nativeInput"] {
+        Value::String(text) => serde_json::from_str(text).ok()?,
+        input => input.clone(),
+    };
+    app_call_action(tool["nativeName"].as_str()?, &input)
+}
+
+/// The action an `app_call` tool named `name` was given, however the agent
+/// prefixes its tool names (`mcp__gespan__app_call`, `gespan.app_call`).
+pub fn app_call_action(name: &str, input: &Value) -> Option<String> {
     let bare = name
         .rsplit_once("__")
         .or_else(|| name.rsplit_once([':', '.', '/']))
@@ -142,10 +151,6 @@ fn tool_action(tool: &Value) -> Option<String> {
     if bare != "app_call" {
         return None;
     }
-    let input = match &tool["nativeInput"] {
-        Value::String(text) => serde_json::from_str(text).ok()?,
-        input => input.clone(),
-    };
     input["action"].as_str().map(str::to_owned)
 }
 
@@ -193,6 +198,18 @@ fn receipt(detail: &str) -> Option<Value> {
         Some(text) => serde_json::from_str(text).ok(),
         None => Some(parsed),
     }
+}
+
+/// The sessions the desktop app recorded on a block as launched from it.
+/// Unlike [`block_launches`], it never reads a tool's own receipt: a tool row
+/// is one row, and the view reads its launches from the row itself.
+pub(crate) fn recorded_launches(block: &Value) -> Vec<Value> {
+    block["pilotSpawnedSessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(launch)
+        .collect()
 }
 
 /// One receipt list per source block. Listings supply details for accepted sends

@@ -247,6 +247,8 @@ pub(crate) struct Conversation {
     status: String,
     loaded: bool,
     history_unloaded: bool,
+    /// A turn's update skipped rows this view never got; reload once it ends.
+    history_out_of_sync: bool,
     history_actions: std::collections::VecDeque<history::HistoryAction>,
     pending_search: Option<(usize, String)>,
     /// A background row clicked before the session finished loading.
@@ -856,6 +858,7 @@ impl Conversation {
             status: "Loading conversation…".into(),
             loaded: false,
             history_unloaded: false,
+            history_out_of_sync: false,
             history_actions: Default::default(),
             pending_search: None,
             pending_tool: None,
@@ -1692,12 +1695,14 @@ impl Conversation {
                                 || update.delivered.is_some()
                                 || !update.follow_up_delivered.is_empty()
                                 || !update.follow_up_errors.is_empty());
-                        this.transcript.update(cx, |v, cx| {
-                            v.patch(update.start, update.rows, cx);
+                        let applied = this.transcript.update(cx, |v, cx| {
+                            let applied = v.patch(update.start, update.rows, cx);
                             if stopping {
                                 v.stop_streaming(cx);
                             }
+                            applied
                         });
+                        this.history_out_of_sync |= !applied;
                         if let Some(id) = update.provider_turn_id {
                             this.transcript
                                 .update(cx, |view, _| view.record_provider_turn(id));
@@ -1880,6 +1885,12 @@ impl Conversation {
                             this.questions.clear();
                             this.controls = None;
                             this.transcript.update(cx, |v, cx| v.streaming(false, cx));
+                            if std::mem::take(&mut this.history_out_of_sync) {
+                                // The store holds rows this view never got:
+                                // show what was saved rather than a broken turn.
+                                this.history_unloaded = true;
+                                this.reload_history(cx);
+                            }
                             let model_id = turn_model_id.clone();
                             this.transcript.update(cx, |view, _| {
                                 if let Some(turn) = view.active_turn()
