@@ -531,12 +531,30 @@ impl Protocol {
         }
     }
     /// The review policy's answer for this permission request, or `None` when
-    /// no policy applies. Only Claude's Bash tool is covered so far.
+    /// no policy applies. Claude's Bash tool and every Codex approval request
+    /// are covered; a Codex request that is not a command (a file change, extra
+    /// permissions) is always denied, since a review never edits anything.
     fn review_verdict(&self, kind: &str, request: &Value) -> Option<Verdict> {
         let policy = self.request.settings.review.as_ref()?;
         if kind == "claude" && request["tool_name"] == "Bash" {
             let command = request["input"]["command"].as_str()?;
             return Some(review_policy::verdict(policy, command));
+        }
+        if self.request.kind.family() == Family::Codex && kind != "codex-mcp" {
+            let command = match &request["command"] {
+                Value::String(command) => Some(command.clone()),
+                Value::Array(argv) => argv
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|argv| shlex::try_join(argv).ok()),
+                _ => None,
+            };
+            let is_command = kind == "execCommandApproval" || kind.contains("ommandExecution");
+            return Some(match command {
+                Some(command) if is_command => review_policy::verdict(policy, &command),
+                _ => Verdict::Deny,
+            });
         }
         None
     }
@@ -739,6 +757,8 @@ impl Protocol {
                 json!({"type":"control_response","response":{"subtype":"success","request_id":wire,"response":response}}),
             )
         } else {
+            // A review's post is approved once, never for the session.
+            let session = session && self.request.settings.review.is_none();
             let result = if kind.contains("permissions") {
                 json!({"permissions": if allow { request["permissions"].clone() } else { json!({}) }, "scope":if self.request.settings.access == AccessMode::FullAccess { "session" } else { "turn" }})
             } else if kind == "execCommandApproval" || kind == "applyPatchApproval" {
@@ -1781,6 +1801,152 @@ cat >/dev/null"#,
             assert_eq!(started["params"]["sandboxPolicy"]["networkAccess"], true);
             if plan {
                 assert_eq!(started["params"]["sandboxPolicy"]["type"], "readOnly");
+            }
+        }
+    }
+    fn codex_review_protocol(results: crate::review_policy::ReviewResults) -> Protocol {
+        let mut p = review_protocol(results, AccessMode::ReadOnly);
+        p.request.kind = Kind::Codex;
+        p
+    }
+    fn codex_request(p: &mut Protocol, method: &str, params: Value) -> (Vec<Event>, Value) {
+        let mut out = Vec::new();
+        let events = p
+            .frame(json!({"id":9,"method":method,"params":params}), &mut out)
+            .unwrap();
+        let response = String::from_utf8_lossy(&out)
+            .lines()
+            .next()
+            .map_or(Value::Null, |l| serde_json::from_str(l).unwrap());
+        (events, response)
+    }
+    fn codex_starts(p: &mut Protocol) -> Vec<Value> {
+        let mut out = Vec::new();
+        p.frame(json!({"id":1,"result":{}}), &mut out).unwrap();
+        p.frame(json!({"id":2,"result":{"thread":{"id":"t"}}}), &mut out)
+            .unwrap();
+        String::from_utf8_lossy(&out)
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .filter(|m| m["method"] == "thread/start" || m["method"] == "turn/start")
+            .collect()
+    }
+    #[test]
+    fn codex_review_runs_ask_gespan_with_network() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let starts = codex_starts(&mut p);
+        assert_eq!(starts.len(), 2);
+        for m in &starts {
+            assert_eq!(m["params"]["approvalPolicy"], "untrusted", "{m}");
+            assert_eq!(m["params"]["sandboxPolicy"]["type"], "readOnly", "{m}");
+            assert_eq!(m["params"]["sandboxPolicy"]["networkAccess"], true, "{m}");
+        }
+        assert_eq!(starts[0]["params"]["sandbox"], "read-only");
+        // Without a review: exactly today's.
+        let mut plain = protocol(Kind::Codex);
+        plain.request.settings.access = AccessMode::ReadOnly;
+        for m in codex_starts(&mut plain) {
+            assert_eq!(m["params"]["approvalPolicy"], "never");
+            assert!(m["params"]["sandboxPolicy"].get("networkAccess").is_none());
+        }
+    }
+    #[test]
+    fn codex_review_policy_decides_commands_in_both_wire_shapes() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","diff","7","-R","acme/app"]}),
+        );
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(r["result"]["decision"], "approved");
+        let (_, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"gh pr view 7 -R acme/app"}),
+        );
+        assert_eq!(r["result"]["decision"], "accept");
+        // A read that omits the target repo is not the triggering PR.
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","diff","7"]}),
+        );
+        assert_eq!(r["result"]["decision"], "denied");
+        let (_, r) = codex_request(&mut p, "execCommandApproval", json!({"command":["rm","x"]}));
+        assert_eq!(r["result"]["decision"], "denied");
+        let (_, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"rm x"}),
+        );
+        assert_eq!(r["result"]["decision"], "decline");
+        assert!(p.approvals.is_empty());
+    }
+    #[test]
+    fn codex_review_draft_post_asks_the_user_and_never_remembers() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","review","7","-R","acme/app","--comment","-b","x"]}),
+        );
+        assert_eq!(r, Value::Null);
+        let [Event::Approval(a)] = events.as_slice() else {
+            panic!("{events:?}")
+        };
+        assert!(!a.can_remember);
+        assert!(
+            a.detail.contains("gh pr review 7 -R acme/app"),
+            "{}",
+            a.detail
+        );
+        // "Allow for this session" must still be a one-off approval.
+        let mut out = Vec::new();
+        p.respond(
+            Control {
+                id: "9".into(),
+                decision: Decision::Session,
+            },
+            &mut out,
+        )
+        .unwrap();
+        let r: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(r["result"]["decision"], "approved");
+        // Post is allowed outright.
+        let mut p = codex_review_protocol(ReviewResults::Post);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","review","7","-R","acme/app","--comment","-b","x"]}),
+        );
+        assert!(events.is_empty());
+        assert_eq!(r["result"]["decision"], "approved");
+    }
+    #[test]
+    fn codex_review_denies_file_changes_and_permission_requests() {
+        use crate::review_policy::ReviewResults;
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let mut p = codex_review_protocol(results);
+            for (method, key, denied) in [
+                ("applyPatchApproval", "decision", "denied"),
+                ("item/fileChange/requestApproval", "decision", "decline"),
+                ("item/permissions/requestApproval", "scope", "turn"),
+            ] {
+                let (events, r) = codex_request(
+                    &mut p,
+                    method,
+                    json!({"permissions":{"network":true},"reason":"edit"}),
+                );
+                assert!(events.is_empty(), "{method}: {events:?}");
+                if key == "decision" {
+                    assert_eq!(r["result"][key], denied, "{method}");
+                } else {
+                    assert_eq!(r["result"]["permissions"], json!({}), "{method}");
+                }
             }
         }
     }
