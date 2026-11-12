@@ -37,7 +37,8 @@ fn missing_document_uses_error_cards_without_moving_content(cx: &mut TestAppCont
         .window
         .update(visual, |_, w, _| w.viewport_size())
         .unwrap();
-    assert_eq!(error.top(), px(12.));
+    // The notice stack starts below the tab bar, so it never covers its controls.
+    assert_eq!(error.top(), px(crate::theme::TITLE_BAR_HEIGHT + 8.));
     assert_eq!(error.right(), viewport.width - px(12.));
     assert_eq!(error.size.width, px(360.));
     assert_eq!(visual.debug_bounds("main-pane-frame").unwrap(), body);
