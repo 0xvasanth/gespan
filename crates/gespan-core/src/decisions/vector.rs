@@ -11,7 +11,12 @@
 //! Toasty model with one row per vector table. Changing the model empties
 //! the vector table in the same transaction that records the new model, so
 //! vectors of two models are never compared.
-use crate::store::db::{self, args};
+//!
+//! `vec0` is a virtual table, which Toasty cannot model, so every statement
+//! on `task_decisions_vec` here is raw SQL. Nothing else in the log is.
+use std::collections::HashMap;
+
+use crate::store::db::{self, args, Sql};
 use sha2::{Digest, Sha256};
 
 /// The vector table's name, as the SQL below spells it.
@@ -105,6 +110,49 @@ pub(crate) fn blob(v: &[f32]) -> Vec<u8> {
     v.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
+/// Every stored vector's entry id, with its scope and fingerprint.
+pub(crate) fn stored(db: &crate::orm::Database) -> Result<HashMap<i64, (String, String)>, String> {
+    // A vec0 virtual table, which Toasty cannot model: raw SQL.
+    Sql::Orm(db)
+        .query(
+            "SELECT rowid, scope, fingerprint FROM task_decisions_vec",
+            args![],
+        )?
+        .iter()
+        .map(|r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))
+        .collect()
+}
+
+/// How many vectors partition `scope` holds.
+pub(crate) fn partition_size(db: &crate::orm::Database, scope: &str) -> Result<i64, String> {
+    // A vec0 virtual table, which Toasty cannot model: raw SQL.
+    Sql::Orm(db).value(
+        "SELECT COUNT(*) FROM task_decisions_vec WHERE scope = ?1",
+        args![scope],
+    )
+}
+
+/// The `k` vectors in partition `scope` nearest `query` (a [`blob`]), as
+/// entry ids with their cosine distances, nearest first.
+pub(crate) fn knn(
+    db: &crate::orm::Database,
+    scope: &str,
+    query: &[u8],
+    k: usize,
+) -> Result<Vec<(i64, f64)>, String> {
+    // sqlite-vec's nearest-neighbour MATCH on a vec0 virtual table, which
+    // Toasty cannot model: raw SQL.
+    Sql::Orm(db)
+        .query(
+            "SELECT rowid, distance FROM task_decisions_vec \
+             WHERE embedding MATCH ?1 AND k = ?2 AND scope = ?3 ORDER BY distance",
+            args![query.to_vec(), i64::try_from(k).unwrap_or(i64::MAX), scope],
+        )?
+        .iter()
+        .map(|r| Ok((r.get(0)?, r.get(1)?)))
+        .collect()
+}
+
 /// Writes entry `id`'s vector in partition `scope`, replacing any it had.
 /// vec0 has no upsert and cannot move a row between partitions, so it is a
 /// delete and an insert; run it inside the transaction that wrote the entry.
@@ -115,6 +163,7 @@ pub(crate) async fn put(
     v: &Vector,
 ) -> toasty::Result<()> {
     remove(tx, &[id]).await?;
+    // vec0 is a virtual table, which Toasty cannot model: raw SQL.
     db::statement(
         "INSERT INTO task_decisions_vec(rowid, scope, embedding, fingerprint) \
          VALUES (?1, ?2, ?3, ?4)",
@@ -128,6 +177,7 @@ pub(crate) async fn put(
 /// Removes the vectors of `ids` (entries that can no longer be shown).
 pub(crate) async fn remove(tx: &mut toasty::Transaction<'_>, ids: &[i64]) -> toasty::Result<()> {
     for &id in ids {
+        // vec0 is a virtual table, which Toasty cannot model: raw SQL.
         db::statement("DELETE FROM task_decisions_vec WHERE rowid = ?1", args![id])
             .exec(&mut *tx)
             .await?;
@@ -157,6 +207,7 @@ pub(crate) async fn adopt_model(
                     .exec(&mut *tx)
                     .await?;
             }
+            // vec0 is a virtual table, which Toasty cannot model: raw SQL.
             db::statement("DELETE FROM task_decisions_vec", args![])
                 .exec(&mut *tx)
                 .await?;

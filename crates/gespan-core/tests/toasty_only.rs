@@ -249,6 +249,16 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "constraint triggers and the legacy claims upgrade for adoption",
     ),
     (
+        "gespan-core/src/decisions/store.rs",
+        8,
+        "FTS5 / vec0 virtual tables Toasty cannot model",
+    ),
+    (
+        "gespan-core/src/decisions/vector.rs",
+        6,
+        "FTS5 / vec0 virtual tables Toasty cannot model",
+    ),
+    (
         "gespan-core/src/desktop_preferences/webview.rs",
         1,
         "reads WebKit's database",

@@ -6,15 +6,19 @@
 //!
 //! Times always come from the caller, never the clock, so every operation is
 //! deterministic under test.
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
+
+use toasty::stmt::Expr;
+use toasty::Executor;
 
 use super::embed::{Embedder, DIMS};
 use super::entry::{
     Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, ShownHash, Source, Status,
 };
 use super::vector::{self, Embedding, Vector};
-use crate::store::db::{self, args, Sql, SqlRow};
+use crate::store::db::{args, Sql};
 use crate::store::my_tasks::TaskDecision;
 
 /// Reciprocal rank fusion's `k`: how much a list's top ranks outweigh its
@@ -45,6 +49,8 @@ pub(crate) struct DecisionFlag {
 }
 
 /// What the gespan kind runs on every open (`orm::Kind::constraints`):
+/// raw SQL, since an FTS5 virtual table and its triggers are beyond what
+/// Toasty can model.
 /// keyword search over the log, as an external-content FTS5 index on
 /// `task_decisions` kept in step by triggers. Every statement is idempotent.
 /// The last one indexes rows the triggers never saw (rows older builds left,
@@ -76,24 +82,28 @@ pub(crate) const CONSTRAINTS: &[&str] = &[
         <> (SELECT COUNT(*) FROM task_decisions)",
 ];
 
-/// `task_decisions` columns in the order `row_to_entry` reads them, with the
-/// open flag count last.
-const COLS: &str = "e.id, e.kind, e.scope, e.status, e.title, e.statement, e.why, \
-    e.user_answer, e.session, e.question_ref, e.user_turn, e.import_src, e.pinned, \
-    e.supersedes, e.replaced_by, e.created_at, e.decided_at, \
-    (SELECT COUNT(*) FROM decision_flags f WHERE f.entry = e.id AND f.dismissed = 0)";
+/// How many ids go into one `IN` list, well under SQLite's bound-parameter
+/// limit.
+const IN_CHUNK: usize = 500;
 
-const HAS_USER_SOURCE: &str = "((e.question_ref IS NOT NULL AND e.question_ref <> '') \
-     OR (e.user_turn IS NOT NULL AND e.user_turn <> ''))";
-
-/// What an agent may see in `scope` (bound as `?1`): active entries, plus
-/// pending ones that carry a user source, for the scope and for global.
-/// `visible` and `search` both filter with this, so they cannot drift apart.
-fn visible_filter() -> String {
-    format!(
-        "(e.status = 'active' OR (e.status = 'pending' AND {HAS_USER_SOURCE})) \
-         AND e.scope IN (?1, 'global')"
-    )
+/// What an agent may see in `scope`: active entries, plus pending ones that
+/// carry a user source (a non-empty `question_ref` or `user_turn`), for the
+/// scope and for global. `visible`, `search` and `nearest` all filter with
+/// this, so they cannot drift apart.
+fn visible_filter(scope: &str) -> Expr<bool> {
+    let e = TaskDecision::fields();
+    let user_source = e
+        .question_ref()
+        .is_some()
+        .and(e.question_ref().ne(Some(String::new())))
+        .or(e
+            .user_turn()
+            .is_some()
+            .and(e.user_turn().ne(Some(String::new()))));
+    e.status()
+        .eq(Status::Active.as_str())
+        .or(e.status().eq(Status::Pending.as_str()).and(user_source))
+        .and(e.scope().in_list([scope.to_string(), "global".to_string()]))
 }
 
 /// The decision log over `task_decisions` and `decision_flags`.
@@ -205,20 +215,17 @@ impl DecisionStore {
             return Ok(0);
         };
         let model = embedder.model_id().to_string();
-        let stored: std::collections::HashMap<i64, (String, String)> = self
-            .sql()
-            .query(
-                "SELECT rowid, scope, fingerprint FROM task_decisions_vec",
-                args![],
-            )?
-            .iter()
-            .map(|r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))
-            .collect::<Result<_, String>>()?;
-        let rows = self.sql().query(
-            "SELECT id, scope, title, statement, why FROM task_decisions \
-             WHERE status IN ('active', 'pending') ORDER BY id",
-            args![],
-        )?;
+        let stored = vector::stored(&self.db)?;
+        let rows = self.db.run(|mut db| async move {
+            let e = TaskDecision::fields();
+            TaskDecision::filter(
+                e.status()
+                    .in_list([Status::Active.as_str(), Status::Pending.as_str()]),
+            )
+            .order_by(e.id().asc())
+            .exec(&mut db)
+            .await
+        })?;
         let mut keep = std::collections::HashSet::new();
         let mut embedded = 0;
         for row in rows {
@@ -228,9 +235,14 @@ impl DecisionStore {
             if !still_current {
                 return Ok(embedded);
             }
-            let (id, scope): (i64, String) = (row.get(0)?, row.get(1)?);
-            let (title, text, why): (String, String, String) =
-                (row.get(2)?, row.get(3)?, row.get(4)?);
+            let TaskDecision {
+                id,
+                scope,
+                title,
+                statement: text,
+                why,
+                ..
+            } = row;
             let fingerprint = vector::fingerprint(&model, &title, &text, &why);
             if stored.get(&id) == Some(&(scope.clone(), fingerprint.clone())) {
                 keep.insert(id);
@@ -331,22 +343,42 @@ impl DecisionStore {
     /// differs is never touched, so running it again changes nothing.
     /// Returns how many rows moved.
     pub fn rescope_project_rows(&self, scope_of: impl Fn(&Path) -> Scope) -> Result<usize, Error> {
-        let projects = self.sql().query(
-            "SELECT DISTINCT project FROM task_decisions WHERE scope = 'project:' || project",
-            args![],
-        )?;
+        let rows = self.db.run(|mut db| async move {
+            TaskDecision::filter(TaskDecision::fields().scope().starts_with("project:"))
+                .exec(&mut db)
+                .await
+        })?;
+        let projects: BTreeSet<String> = rows
+            .into_iter()
+            .filter(|row| row.scope == format!("project:{}", row.project))
+            .map(|row| row.project)
+            .collect();
         let mut moved = 0;
-        for row in projects {
-            let project: String = row.get(0)?;
+        for project in projects {
             let scope = scope_of(Path::new(&project)).to_string();
-            if scope == format!("project:{project}") {
+            let keyed = format!("project:{project}");
+            if scope == keyed {
                 continue;
             }
-            moved += self.sql().execute(
-                "UPDATE task_decisions SET scope = ?1 \
-                 WHERE project = ?2 AND scope = 'project:' || ?2",
-                args![scope, project],
-            )?;
+            // The count and the update are one transaction, so the count is
+            // what the update changed.
+            moved += self.db.transaction(move |tx| {
+                Box::pin(async move {
+                    let e = TaskDecision::fields();
+                    let still_keyed = || {
+                        TaskDecision::filter(
+                            e.project()
+                                .eq(project.clone())
+                                .and(e.scope().eq(keyed.clone())),
+                        )
+                    };
+                    let n = still_keyed().count().exec(&mut *tx).await?;
+                    if n > 0 {
+                        still_keyed().update().scope(scope).exec(&mut *tx).await?;
+                    }
+                    Ok(usize::try_from(n).unwrap_or(usize::MAX))
+                })
+            })?;
         }
         Ok(moved)
     }
@@ -682,49 +714,37 @@ impl DecisionStore {
             self.clean(&edit.why),
         );
         let v = self.vector_for(&title, &text, &why);
-        let update = db::statement(
-            "UPDATE task_decisions SET title = ?1, statement = ?2, why = ?3, user_answer = ?4, \
-             question_ref = ?5, user_turn = ?6 \
-             WHERE id = ?7 AND status = 'pending'",
-            args![
-                title,
-                text,
-                why,
-                user_answer.map(|a| self.clean(a)),
-                self.clean_source(&source.question_ref),
-                self.clean_source(&source.user_turn),
-                id
-            ],
-        );
-        let n = self.db.transaction(move |tx| {
+        let answer = user_answer.map(|a| self.clean(a));
+        let question_ref = self.clean_source(&source.question_ref);
+        let user_turn = self.clean_source(&source.user_turn);
+        // A compare-and-set: the transaction holds the write lock, so the
+        // pending row read here is the row updated.
+        let revised = self.db.transaction(move |tx| {
             Box::pin(async move {
-                let n = update.exec(&mut *tx).await?;
-                if n > 0 && !matches!(v, Embedding::Off) {
-                    let row = TaskDecision::filter_by_id(id)
-                        .first()
-                        .exec(&mut *tx)
-                        .await?;
-                    if let Some(row) = row {
-                        v.apply(tx, id, &row.scope).await?;
-                    }
-                }
-                Ok(n)
+                let Some(mut row) = in_status(tx, id, Status::Pending).await? else {
+                    return Ok(false);
+                };
+                row.update()
+                    .title(title)
+                    .statement(text)
+                    .why(why)
+                    .user_answer(answer)
+                    .question_ref(question_ref)
+                    .user_turn(user_turn)
+                    .exec(&mut *tx)
+                    .await?;
+                v.apply(tx, id, &row.scope).await?;
+                Ok(true)
             })
         })?;
-        if n == 0 {
+        if !revised {
             return Err(self.missing_or(id, Error::NotPending(id))?);
         }
         self.load(id)?.ok_or(Error::NotFound(id))
     }
 
     pub fn reject(&self, id: i64, now_ms: i64) -> Result<(), Error> {
-        let n = self.leave_with_vector(
-            "UPDATE task_decisions SET status = 'rejected', decided_at = ?1, updated_at = ?1 \
-             WHERE id = ?2 AND status = 'pending'",
-            id,
-            now_ms,
-        )?;
-        if n == 0 {
+        if !self.leave_with_vector(id, Status::Pending, Status::Rejected, now_ms)? {
             return Err(self.missing_or(id, Error::NotPending(id))?);
         }
         Ok(())
@@ -733,31 +753,41 @@ impl DecisionStore {
     /// Archives an active entry. It leaves My tasks' Decisions list too,
     /// which reads `archived_at`.
     pub fn archive(&self, id: i64, now_ms: i64) -> Result<(), Error> {
-        let n = self.leave_with_vector(
-            "UPDATE task_decisions SET status = 'archived', decided_at = ?1, \
-             archived_at = ?1, updated_at = ?1 \
-             WHERE id = ?2 AND status = 'active'",
-            id,
-            now_ms,
-        )?;
-        if n == 0 {
+        if !self.leave_with_vector(id, Status::Active, Status::Archived, now_ms)? {
             return Err(self.missing_or(id, Error::NotActive(id))?);
         }
         Ok(())
     }
 
-    /// Runs `update` (bound `?1` = `now_ms`, `?2` = `id`), which takes entry
-    /// `id` out of what can be shown, and deletes its vector in the same
-    /// transaction. Returns how many rows `update` changed.
-    fn leave_with_vector(&self, update: &str, id: i64, now_ms: i64) -> Result<u64, Error> {
-        let update = db::statement(update, args![now_ms, id]);
+    /// Moves entry `id` from status `from` to `to` (rejected or archived),
+    /// out of what can be shown, stamping it decided (and archived, for
+    /// `to` archived) at `now_ms`, and deletes its vector in the same
+    /// transaction. False, with nothing written, when `id` is not in `from`.
+    fn leave_with_vector(
+        &self,
+        id: i64,
+        from: Status,
+        to: Status,
+        now_ms: i64,
+    ) -> Result<bool, Error> {
+        // A compare-and-set: the transaction holds the write lock, so the row
+        // read in `from` is the row updated.
         Ok(self.db.transaction(move |tx| {
             Box::pin(async move {
-                let n = update.exec(&mut *tx).await?;
-                if n > 0 {
-                    vector::remove(tx, &[id]).await?;
+                let Some(mut row) = in_status(tx, id, from).await? else {
+                    return Ok(false);
+                };
+                let mut update = row
+                    .update()
+                    .status(to.as_str())
+                    .decided_at(Some(now_ms))
+                    .updated_at(now_ms);
+                if to == Status::Archived {
+                    update = update.archived_at(Some(now_ms));
                 }
-                Ok(n)
+                update.exec(&mut *tx).await?;
+                vector::remove(tx, &[id]).await?;
+                Ok(true)
             })
         })?)
     }
@@ -788,11 +818,27 @@ impl DecisionStore {
     }
 
     pub fn dismiss_flag(&self, flag: i64) -> Result<(), Error> {
-        let n = self.sql().execute(
-            "UPDATE decision_flags SET dismissed = 1 WHERE id = ?1",
-            args![flag],
-        )?;
-        if n == 0 {
+        // The read and the update are one transaction, so a flag found here
+        // is the flag dismissed.
+        let found = self.db.transaction(move |tx| {
+            Box::pin(async move {
+                if DecisionFlag::filter_by_id(flag)
+                    .first()
+                    .exec(&mut *tx)
+                    .await?
+                    .is_none()
+                {
+                    return Ok(false);
+                }
+                DecisionFlag::filter_by_id(flag)
+                    .update()
+                    .dismissed(true)
+                    .exec(&mut *tx)
+                    .await?;
+                Ok(true)
+            })
+        })?;
+        if !found {
             return Err(Error::FlagNotFound(flag));
         }
         Ok(())
@@ -807,9 +853,8 @@ impl DecisionStore {
         let mut history: Vec<Entry> = Vec::new();
         let mut frontier = vec![id];
         while let Some(next) = frontier.pop() {
-            let sql = format!("SELECT {COLS} FROM task_decisions e WHERE e.replaced_by = ?1");
-            for row in self.sql().query(&sql, args![next])? {
-                let e = row_to_entry(&row)?;
+            let replaced = TaskDecision::fields().replaced_by().eq(Some(next));
+            for e in self.entries(replaced)? {
                 frontier.push(e.id);
                 history.push(e);
             }
@@ -825,36 +870,40 @@ impl DecisionStore {
     /// Active entries, plus pending ones that carry a user source, for the
     /// scope and for global.
     pub fn visible(&self, scope: &Scope) -> Result<Vec<Entry>, Error> {
-        self.query(&visible_filter(), Some(scope))
+        self.newest_first(visible_filter(&scope.to_string()))
     }
 
     /// Active entries for the scope and for global, newest decided first.
     pub fn active(&self, scope: &Scope) -> Result<Vec<Entry>, Error> {
-        self.query(
-            "e.status = 'active' AND e.scope IN (?1, 'global')",
-            Some(scope),
+        let e = TaskDecision::fields();
+        self.newest_first(
+            e.status()
+                .eq(Status::Active.as_str())
+                .and(e.scope().in_list([scope.to_string(), "global".to_string()])),
         )
     }
 
     pub fn pending(&self) -> Result<Vec<Entry>, Error> {
-        self.query("e.status = 'pending'", None)
+        self.newest_first(TaskDecision::fields().status().eq(Status::Pending.as_str()))
     }
 
     /// Undismissed flags with their entries, oldest first.
     pub fn open_flags(&self) -> Result<Vec<(Flag, Entry)>, Error> {
-        let rows = self.sql().query(
-            "SELECT id, entry, session, reason, created_at FROM decision_flags \
-             WHERE dismissed = 0 ORDER BY created_at, id",
-            args![],
-        )?;
+        let rows = self.db.run(|mut db| async move {
+            let f = DecisionFlag::fields();
+            DecisionFlag::filter(f.dismissed().eq(false))
+                .order_by((f.created_at().asc(), f.id().asc()))
+                .exec(&mut db)
+                .await
+        })?;
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             let flag = Flag {
-                id: row.get(0)?,
-                entry: row.get(1)?,
-                session: row.get(2)?,
-                reason: row.get(3)?,
-                created_ms: row.get(4)?,
+                id: row.id,
+                entry: row.entry,
+                session: row.session,
+                reason: row.reason,
+                created_ms: row.created_at,
             };
             let e = self.load(flag.entry)?.ok_or(Error::NotFound(flag.entry))?;
             out.push((flag, e));
@@ -949,14 +998,6 @@ impl DecisionStore {
         if scope_text != "global" {
             partitions.push("global".into());
         }
-        let limit = i64::try_from(k).unwrap_or(i64::MAX);
-        let sql = format!(
-            "WITH hits AS (SELECT rowid AS id, distance FROM task_decisions_vec \
-               WHERE embedding MATCH ?2 AND k = ?3 AND scope = ?4) \
-             SELECT {COLS}, hits.distance FROM hits JOIN task_decisions e ON e.id = hits.id \
-             WHERE {} AND e.scope = ?4 ORDER BY hits.distance, e.id DESC LIMIT ?5",
-            visible_filter()
-        );
         let blob = vector::blob(query_vec);
         let mut found: Vec<(Entry, f64)> = Vec::new();
         for partition in partitions {
@@ -964,31 +1005,22 @@ impl DecisionStore {
             // but hidden pending ones keep theirs: when the filter drops
             // enough of the pool to leave fewer than `k`, ask again for a
             // wider one, while the partition holds more than was read.
-            let size: i64 = self.sql().value(
-                "SELECT COUNT(*) FROM task_decisions_vec WHERE scope = ?1",
-                args![partition.clone()],
-            )?;
+            let size = vector::partition_size(&self.db, &partition)?;
             let mut pool = k.saturating_mul(2).clamp(64, MAX_KNN);
-            let rows = loop {
-                let rows = self.sql().query(
-                    &sql,
-                    args![
-                        scope_text.clone(),
-                        blob.clone(),
-                        i64::try_from(pool).unwrap_or(64),
-                        partition.clone(),
-                        limit
-                    ],
-                )?;
+            let shown = loop {
+                let hits = vector::knn(&self.db, &partition, &blob, pool)?;
+                // The hits `visible` would show for `scope` that are in this
+                // partition, nearest first (newest first on a tie), cut to `k`.
+                let in_partition = visible_filter(&scope_text)
+                    .and(TaskDecision::fields().scope().eq(partition.clone()));
+                let shown = self.ranked(&hits, in_partition, k)?;
                 let read_all = i64::try_from(pool).unwrap_or(i64::MAX) >= size;
-                if rows.len() >= k || read_all || pool >= MAX_KNN {
-                    break rows;
+                if shown.len() >= k || read_all || pool >= MAX_KNN {
+                    break shown;
                 }
                 pool = pool.saturating_mul(8).min(MAX_KNN);
             };
-            for row in rows {
-                found.push((row_to_entry(&row)?, row.get(18)?));
-            }
+            found.extend(shown);
         }
         found.sort_by(|a, b| a.1.total_cmp(&b.1).then(b.0.id.cmp(&a.0.id)));
         found.truncate(k);
@@ -1001,34 +1033,77 @@ impl DecisionStore {
         let Some(m) = match_expr(query) else {
             return Ok(Vec::new());
         };
-        let sql = format!(
-            "SELECT {COLS} FROM task_decisions_fts \
-             JOIN task_decisions e ON e.id = task_decisions_fts.rowid \
-             WHERE task_decisions_fts MATCH ?2 AND {} \
-             ORDER BY bm25(task_decisions_fts), e.id DESC LIMIT ?3",
-            visible_filter()
-        );
-        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-        self.sql()
-            .query(&sql, args![scope.to_string(), m, limit])?
+        // FTS5's MATCH and bm25 on a virtual table, which Toasty cannot
+        // model: raw SQL for the matching ids and their ranks. Every match is
+        // read, because the visibility filter below must run before the
+        // limit, as it did when this was one joined query.
+        let hits: Vec<(i64, f64)> = self
+            .sql()
+            .query(
+                "SELECT rowid, bm25(task_decisions_fts) FROM task_decisions_fts \
+                 WHERE task_decisions_fts MATCH ?1",
+                args![m],
+            )?
             .iter()
-            .map(row_to_entry)
-            .collect()
+            .map(|r| Ok((r.get(0)?, r.get(1)?)))
+            .collect::<Result<_, String>>()?;
+        Ok(self
+            .ranked(&hits, visible_filter(&scope.to_string()), limit)?
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect())
     }
 
-    fn query(&self, filter: &str, scope: Option<&Scope>) -> Result<Vec<Entry>, Error> {
-        let sql = format!(
-            "SELECT {COLS} FROM task_decisions e WHERE {filter} \
-             ORDER BY COALESCE(e.decided_at, e.created_at) DESC, e.id DESC"
-        );
-        let args = match scope {
-            Some(s) => args![s.to_string()],
-            None => args![],
-        };
-        self.sql()
-            .query(&sql, args)?
+    /// The entries of `hits` (ids with a rank, lower is better) that match
+    /// `filter`, best rank first and the newest (larger id) first on a tie,
+    /// cut to `limit`, with their ranks.
+    fn ranked(
+        &self,
+        hits: &[(i64, f64)],
+        filter: Expr<bool>,
+        limit: usize,
+    ) -> Result<Vec<(Entry, f64)>, Error> {
+        let mut by_id: HashMap<i64, Entry> = HashMap::new();
+        for chunk in hits.chunks(IN_CHUNK) {
+            let ids: Vec<i64> = chunk.iter().map(|(id, _)| *id).collect();
+            let filter = filter.clone().and(TaskDecision::fields().id().in_list(ids));
+            by_id.extend(self.entries(filter)?.into_iter().map(|e| (e.id, e)));
+        }
+        let mut out: Vec<(Entry, f64)> = hits
             .iter()
-            .map(row_to_entry)
+            .filter_map(|&(id, rank)| by_id.remove(&id).map(|e| (e, rank)))
+            .collect();
+        out.sort_by(|a, b| a.1.total_cmp(&b.1).then(b.0.id.cmp(&a.0.id)));
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    /// The entries matching `filter`, most recently decided (or, undecided,
+    /// created) first, then the newest first.
+    fn newest_first(&self, filter: Expr<bool>) -> Result<Vec<Entry>, Error> {
+        let mut entries = self.entries(filter)?;
+        entries.sort_by(|a, b| {
+            b.decided_ms
+                .unwrap_or(b.created_ms)
+                .cmp(&a.decided_ms.unwrap_or(a.created_ms))
+                .then(b.id.cmp(&a.id))
+        });
+        Ok(entries)
+    }
+
+    /// The entries matching `filter`, with their open flag counts, in no
+    /// particular order.
+    fn entries(&self, filter: Expr<bool>) -> Result<Vec<Entry>, Error> {
+        let (rows, flags) = self.db.run(|mut db| async move {
+            let rows = TaskDecision::filter(filter).exec(&mut db).await?;
+            let flags = open_flag_counts(&mut db).await?;
+            Ok((rows, flags))
+        })?;
+        rows.into_iter()
+            .map(|row| {
+                let open = flags.get(&row.id).copied().unwrap_or(0);
+                entry_of(row, open)
+            })
             .collect()
     }
 
@@ -1042,10 +1117,19 @@ impl DecisionStore {
     }
 
     fn load(&self, id: i64) -> Result<Option<Entry>, Error> {
-        let sql = format!("SELECT {COLS} FROM task_decisions e WHERE e.id = ?1");
-        self.sql()
-            .optional(&sql, args![id])?
-            .map(|row| row_to_entry(&row))
+        let found = self.db.run(|mut db| async move {
+            let Some(row) = TaskDecision::filter_by_id(id).first().exec(&mut db).await? else {
+                return Ok(None);
+            };
+            let f = DecisionFlag::fields();
+            let open = DecisionFlag::filter(f.entry().eq(id).and(f.dismissed().eq(false)))
+                .count()
+                .exec(&mut db)
+                .await?;
+            Ok(Some((row, open)))
+        })?;
+        found
+            .map(|(row, open)| entry_of(row, u32::try_from(open).unwrap_or(u32::MAX)))
             .transpose()
     }
 }
@@ -1116,29 +1200,55 @@ fn shown_now(row: &TaskDecision) -> ShownHash {
     )
 }
 
-fn row_to_entry(r: &SqlRow) -> Result<Entry, Error> {
-    let open_flags: i64 = r.get(17)?;
+/// Entry `id` while its status is `status`.
+async fn in_status(
+    tx: &mut toasty::Transaction<'_>,
+    id: i64,
+    status: Status,
+) -> toasty::Result<Option<TaskDecision>> {
+    let e = TaskDecision::fields();
+    TaskDecision::filter(e.id().eq(id).and(e.status().eq(status.as_str())))
+        .first()
+        .exec(&mut *tx)
+        .await
+}
+
+/// Each entry's number of undismissed flags. Open flags are few: the user
+/// answers or dismisses them.
+async fn open_flag_counts(ex: &mut dyn Executor) -> toasty::Result<HashMap<i64, u32>> {
+    let mut counts: HashMap<i64, u32> = HashMap::new();
+    for flag in DecisionFlag::filter(DecisionFlag::fields().dismissed().eq(false))
+        .exec(ex)
+        .await?
+    {
+        let n = counts.entry(flag.entry).or_default();
+        *n = n.saturating_add(1);
+    }
+    Ok(counts)
+}
+
+fn entry_of(row: TaskDecision, open_flags: u32) -> Result<Entry, Error> {
     Ok(Entry {
-        id: r.get(0)?,
-        kind: Kind::parse(&r.get::<String>(1)?)?,
-        scope: Scope::parse(&r.get::<String>(2)?)?,
-        status: Status::parse(&r.get::<String>(3)?)?,
-        title: r.get(4)?,
-        text: r.get(5)?,
-        why: r.get(6)?,
-        user_answer: r.get(7)?,
+        id: row.id,
+        kind: Kind::parse(&row.kind)?,
+        scope: Scope::parse(&row.scope)?,
+        status: Status::parse(&row.status)?,
+        title: row.title,
+        text: row.statement,
+        why: row.why,
+        user_answer: row.user_answer,
         source: Source {
-            session: r.get(8)?,
-            question_ref: r.get(9)?,
-            user_turn: r.get(10)?,
-            import: r.get(11)?,
+            session: row.session,
+            question_ref: row.question_ref,
+            user_turn: row.user_turn,
+            import: row.import_src,
         },
-        pinned: r.get(12)?,
-        supersedes: r.get(13)?,
-        replaced_by: r.get(14)?,
-        created_ms: r.get(15)?,
-        decided_ms: r.get(16)?,
-        open_flags: u32::try_from(open_flags).unwrap_or(u32::MAX),
+        pinned: row.pinned,
+        supersedes: row.supersedes,
+        replaced_by: row.replaced_by,
+        created_ms: row.created_at,
+        decided_ms: row.decided_at,
+        open_flags,
     })
 }
 

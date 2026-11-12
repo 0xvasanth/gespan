@@ -36,7 +36,8 @@ Gespan SQLite file with rusqlite, and never probe columns at runtime.
   rusqlite connection.
 - Raw SQL is only for what Toasty 0.11 cannot express: conditional upserts
   (`ON CONFLICT ... WHERE`), updates that must return a count, CTEs, `json_*`
-  and window functions, and a projection that must stay on a covering index.
+  and window functions, a projection that must stay on a covering index, and
+  queries against FTS5 and sqlite-vec virtual tables, which Toasty cannot model.
   Run it through `toasty::sql` (`Store::sql()` in store code) on the same
   database, with a comment on the statement saying which of these it is.
 - Existing raw queries are debt. When you change a file that has them, move its

@@ -107,6 +107,10 @@ an adopted copy, so the file itself never changes.
   `#[index(name = "...", field)]` to keep an existing index name.
 - Conditional upserts (`ON CONFLICT ... WHERE`), CTEs, `json_*` and window
   functions go through `toasty::sql`. Binding a NULL needs `bind_typed`.
+- Queries against FTS5 and sqlite-vec virtual tables, which Toasty cannot
+  model, go through `toasty::sql` too (the decision log's `task_decisions_fts`
+  and `task_decisions_vec`). Keep them to the virtual table: read its ids and
+  scores raw, then load the rows with the typed API.
 - Plain upserts are typed: `Model::upsert_by_<key>(..)` replaces the row,
   `.on_create(..)` sets columns only a new row gets, `.on_update(..)` takes
   `toasty::stmt::increment()`, and `.or_ignore()` is `INSERT OR IGNORE`

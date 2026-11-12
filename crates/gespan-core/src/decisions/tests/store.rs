@@ -465,3 +465,75 @@ fn my_tasks_text_is_redacted_and_capped_like_the_logs() {
     assert!(block.included.contains(&id));
     assert!(!block.text.contains(secret) && !block.text.contains(github));
 }
+
+#[test]
+fn a_pending_entry_needs_a_non_empty_user_source_to_be_visible() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("gespan.db");
+    let log = DecisionStore::open(&path, config()).unwrap();
+    let scope = Scope::Repo("github.com/o/r".into());
+    let propose = |title: &str| {
+        log.propose(proposal(scope.clone(), title, &format!("{title} tabs")), 1)
+            .unwrap()
+            .id
+    };
+    let (none, empty, turn, answered) = (
+        propose("None"),
+        propose("Empty"),
+        propose("Turn"),
+        propose("Answered"),
+    );
+    let other = log
+        .propose(
+            NewEntry {
+                source: Source {
+                    question_ref: Some("q-1".into()),
+                    ..Source::default()
+                },
+                ..proposal(
+                    Scope::Repo("github.com/o/other".into()),
+                    "Other",
+                    "Other tabs",
+                )
+            },
+            1,
+        )
+        .unwrap()
+        .id;
+    // My tasks and older builds may leave an empty string, which the log's
+    // own writes never do: it is no user source.
+    let conn = Connection::open(&path).unwrap();
+    conn.execute(
+        "UPDATE task_decisions SET question_ref = '', user_turn = '' WHERE id = ?1",
+        [empty],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE task_decisions SET question_ref = '', user_turn = 'said so' WHERE id = ?1",
+        [turn],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE task_decisions SET question_ref = 'q-2' WHERE id = ?1",
+        [answered],
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut visible: Vec<i64> = log.visible(&scope).unwrap().iter().map(|e| e.id).collect();
+    visible.sort();
+    assert_eq!(visible, [turn, answered]);
+    let mut found: Vec<i64> = log
+        .search(&scope, "tabs", 10)
+        .unwrap()
+        .iter()
+        .map(|e| e.id)
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        [turn, answered],
+        "search sees exactly what visible sees"
+    );
+    assert!(![none, empty, other].iter().any(|id| found.contains(id)));
+}
