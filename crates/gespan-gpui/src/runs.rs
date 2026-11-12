@@ -582,8 +582,12 @@ impl Runs {
             .flex_wrap()
             .items_center()
             .gap(px(10.))
+            // One automation lives in one project, so while its chip shows
+            // the project control would change nothing.
+            .when(automation.is_none(), |d| {
+                d.child(glass::segmented().flex_wrap().children(projects))
+            })
             .children(automation)
-            .child(glass::segmented().flex_wrap().children(projects))
             .child(glass::segmented().flex_wrap().children(statuses))
             .child(
                 glass::field()
@@ -599,7 +603,7 @@ impl Runs {
             .into_any_element()
     }
 
-    fn row(&self, row: RunRow, first: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn row(&self, row: RunRow, first: bool, last: bool, cx: &mut Context<Self>) -> AnyElement {
         const GROUP: &str = "runs-row";
         let tone = glass::Tone::of_status(row.status);
         let open = row.can_open();
@@ -686,6 +690,10 @@ impl Runs {
             .px(px(16.))
             .py(px(11.))
             .when(!first, |d| d.border_t_1().border_color(glass::hairline()))
+            // The card clips square, so the end rows round their own hover
+            // fill to the card's inner corner.
+            .when(first, |d| d.rounded_t(px(13.)))
+            .when(last, |d| d.rounded_b(px(13.)))
             .hover(|s| s.bg(glass::hover_fill()))
             .flex()
             .items_center()
@@ -827,7 +835,7 @@ impl Runs {
                                 .children(
                                     rows.into_iter()
                                         .enumerate()
-                                        .map(|(i, row)| self.row(row, i == 0, cx)),
+                                        .map(|(i, row)| self.row(row, i == 0, i + 1 == count, cx)),
                                 ),
                         )
                 },
