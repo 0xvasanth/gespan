@@ -1401,7 +1401,7 @@ fn gh_root(cwd: &Path) -> PathBuf {
             .unwrap_or_else(std::env::temp_dir)
     }
 }
-pub(super) fn run_gh(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
+pub(crate) fn run_gh(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
     run_command("gh", root, args, allow_empty)
 }
 fn run_command(

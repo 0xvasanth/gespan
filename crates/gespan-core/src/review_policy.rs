@@ -64,6 +64,81 @@ pub enum Verdict {
     Deny,
 }
 
+/// Pi and omp read-only runs have no shell tool and no per-tool approval, so
+/// they cannot run `gh` or hold a gated post. They can only keep a review in
+/// Gespan.
+pub fn supported_results(kind: crate::provider::Kind) -> &'static [ReviewResults] {
+    use crate::provider::Kind;
+    match kind {
+        Kind::Pi | Kind::Omp => &[ReviewResults::Gespan],
+        _ => &[
+            ReviewResults::Gespan,
+            ReviewResults::Draft,
+            ReviewResults::Post,
+        ],
+    }
+}
+
+/// Whether Gespan has to fetch the pull request for this provider.
+pub fn needs_prefetch(kind: crate::provider::Kind) -> bool {
+    matches!(kind, crate::provider::Kind::Pi | crate::provider::Kind::Omp)
+}
+
+const MAX_DIFF_BYTES: usize = 400 * 1024;
+
+/// The pull request's text and diff, fetched by Gespan for a provider that
+/// cannot run `gh` itself.
+pub fn prefetch_context(cwd: &std::path::Path, target: &ReviewTarget) -> Result<String, String> {
+    prefetch_with(target, |args| crate::inbox::run_gh(cwd, args, true))
+}
+
+fn prefetch_with(
+    target: &ReviewTarget,
+    mut gh: impl FnMut(&[&str]) -> Result<String, String>,
+) -> Result<String, String> {
+    let number = target.number.to_string();
+    let view = gh(&[
+        "pr",
+        "view",
+        &number,
+        "--repo",
+        &target.repo,
+        "--json",
+        "title,body,author,baseRefName,headRefName",
+    ])?;
+    let meta: serde_json::Value =
+        serde_json::from_str(&view).map_err(|e| format!("Could not read the pull request: {e}"))?;
+    let text = |key: &str| meta[key].as_str().unwrap_or_default();
+    let author = meta["author"]["login"].as_str().unwrap_or_default();
+    let diff = gh(&["pr", "diff", &number, "--repo", &target.repo])?;
+    let (diff, cut) = if diff.len() > MAX_DIFF_BYTES {
+        let mut end = MAX_DIFF_BYTES;
+        while !diff.is_char_boundary(end) {
+            end -= 1;
+        }
+        (&diff[..end], true)
+    } else {
+        (diff.as_str(), false)
+    };
+    let mut out = format!(
+        "Pull request {}#{}\nTitle: {}\nAuthor: {}\nBase: {}\nHead: {}\n\nDescription:\n{}\n\n",
+        target.repo,
+        target.number,
+        text("title"),
+        author,
+        text("baseRefName"),
+        text("headRefName"),
+        text("body"),
+    );
+    if cut {
+        out.push_str("The diff was cut at 400 KB; read the files for the rest.\n");
+    }
+    out.push_str("```diff\n");
+    out.push_str(diff);
+    out.push_str("\n```\n");
+    Ok(out)
+}
+
 /// The text appended to the run's prompt.
 pub fn instruction(policy: &ReviewPolicy) -> String {
     match (&policy.target, policy.results) {
@@ -465,6 +540,82 @@ fn post(policy: &ReviewPolicy, args: &[&str], review: bool) -> Verdict {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn target() -> ReviewTarget {
+        ReviewTarget {
+            repo: "acme/app".into(),
+            number: 7,
+        }
+    }
+
+    const VIEW: &str = r#"{"title":"Fix the thing","body":"Body text","author":{"login":"octo"},"baseRefName":"main","headRefName":"fix"}"#;
+
+    fn fake_gh(diff: String) -> impl FnMut(&[&str]) -> Result<String, String> {
+        move |args| match args {
+            ["pr", "view", "7", "--repo", "acme/app", "--json", _] => Ok(VIEW.into()),
+            ["pr", "diff", "7", "--repo", "acme/app"] => Ok(diff.clone()),
+            other => Err(format!("unexpected gh call {other:?}")),
+        }
+    }
+
+    #[test]
+    fn pi_supports_gespan_only() {
+        use crate::provider::Kind;
+        for kind in [Kind::Pi, Kind::Omp] {
+            assert_eq!(supported_results(kind), &[ReviewResults::Gespan]);
+            assert!(needs_prefetch(kind));
+        }
+        for kind in [Kind::Claude, Kind::Codex, Kind::OpenCode] {
+            assert_eq!(
+                supported_results(kind),
+                &[
+                    ReviewResults::Gespan,
+                    ReviewResults::Draft,
+                    ReviewResults::Post
+                ]
+            );
+            assert!(!needs_prefetch(kind));
+        }
+    }
+
+    #[test]
+    fn prefetch_context_formats_a_small_pull_request() {
+        let out = prefetch_with(&target(), fake_gh("diff --git a/x b/x\n+hi".into())).unwrap();
+        assert!(out.starts_with("Pull request acme/app#7\n"), "{out}");
+        for want in ["Fix the thing", "octo", "main", "fix", "Body text"] {
+            assert!(out.contains(want), "missing {want}: {out}");
+        }
+        assert!(
+            out.contains("```diff\ndiff --git a/x b/x\n+hi\n```"),
+            "{out}"
+        );
+        assert!(!out.contains("cut"), "{out}");
+    }
+
+    #[test]
+    fn prefetch_context_truncates_a_big_diff_on_a_char_boundary() {
+        // 3-byte chars: 400 KiB is not a multiple of 3, so a naive cut splits one.
+        let diff = "€".repeat(500 * 1024 / 3);
+        let out = prefetch_with(&target(), fake_gh(diff)).unwrap();
+        assert!(out.contains("The diff was cut at 400 KB"), "{out}");
+        let body = out.split("```diff\n").nth(1).unwrap();
+        let body = body.split("\n```").next().unwrap();
+        assert!(body.len() <= 400 * 1024);
+        assert!(body.len() > 400 * 1024 - 3);
+        assert!(body.chars().all(|c| c == '€'));
+    }
+
+    #[test]
+    fn prefetch_context_passes_through_a_gh_failure() {
+        let err = prefetch_with(&target(), |_| Err("not logged in".into())).unwrap_err();
+        assert_eq!(err, "not logged in");
+    }
+
+    #[test]
+    fn prefetch_context_rejects_unparseable_metadata() {
+        let err = prefetch_with(&target(), |_| Ok("nope".into())).unwrap_err();
+        assert!(err.contains("pull request"), "{err}");
+    }
 
     fn policy(results: ReviewResults) -> ReviewPolicy {
         ReviewPolicy {
