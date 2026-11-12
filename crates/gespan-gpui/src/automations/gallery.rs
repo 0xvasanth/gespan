@@ -13,6 +13,7 @@ impl Automations {
         let mut cards = vec![
             div()
                 .id("automation-scratch")
+                .debug_selector(|| "automation-scratch".into())
                 .role(Role::Button)
                 .aria_label("Start from scratch")
                 .min_h(px(148.))

@@ -1,6 +1,90 @@
 use super::*;
 use chrono::{Local, TimeZone};
 
+/// One labelled row for a trigger property: its name and what it does on the
+/// left, its field on the right, and why its value can't be saved, if so.
+fn trigger_property_row(
+    trigger: usize,
+    row: usize,
+    property: &TriggerProperty,
+    input: &Entity<Input>,
+    cx: &App,
+) -> AnyElement {
+    let error = automations::trigger_property_error(property, &input.read(cx).content);
+    let selector = format!("trigger-{trigger}-{}", property.key);
+    div()
+        .debug_selector(move || selector)
+        .when(row > 0, |d| d.border_t_1().border_color(content(0.08)))
+        .px(px(12.))
+        .py(px(8.))
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_x(px(16.))
+        .gap_y(px(6.))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(140.))
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(content(0.8))
+                        .child(property.label),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(content(0.45))
+                        .child(property.hint),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(160.))
+                .max_w(px(280.))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .h(px(28.))
+                        .px(px(8.))
+                        .rounded(px(6.))
+                        .bg(content(0.08))
+                        .border_1()
+                        .border_color(if error.is_some() {
+                            gpui::Hsla::from(rgb(0xf87171))
+                        } else {
+                            content(0.12)
+                        })
+                        .flex()
+                        .items_center()
+                        .text_size(px(12.))
+                        .child(input.clone()),
+                )
+                .when_some(error, |d, error| {
+                    d.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "trigger-{trigger}-{}-error",
+                                property.key
+                            )))
+                            .role(Role::Alert)
+                            .aria_label(error)
+                            .text_size(px(11.))
+                            .text_color(rgb(0xfca5a5))
+                            .child(error),
+                    )
+                }),
+        )
+        .into_any_element()
+}
+
 pub(super) fn toggle(id: impl Into<gpui::ElementId>, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
@@ -180,6 +264,97 @@ impl Editor {
     }
 }
 impl Automations {
+    /// The project this automation runs in, under its name: a labelled field
+    /// that opens the project picker on click, Enter, Space or Down, and a
+    /// Tab stop of its own. Once saved it shows a lock, and picking a project
+    /// duplicates the automation there instead of moving it. It keeps room for the name, and its row wraps it
+    /// onto a line of its own when the editor is narrow.
+    fn render_project_control(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let cwd = self
+            .editor
+            .as_ref()
+            .map(|e| e.draft.cwd.clone())
+            .unwrap_or_default();
+        let open = self.project_picker.is_some();
+        // A saved automation keeps its project; the control then duplicates.
+        let frozen = self.editor.as_ref().is_some_and(|e| e.saved);
+        let name: SharedString = if cwd.is_empty() {
+            "Choose project".into()
+        } else {
+            self.project_label(&cwd).into()
+        };
+        div()
+            .id("automation-project")
+            .debug_selector(|| "automation-project".into())
+            .role(Role::Button)
+            .aria_label(self.project_control_label())
+            .aria_description(if frozen {
+                format!(
+                    "{cwd}. Fixed for this automation. Opens a picker to duplicate it into another project"
+                )
+            } else if cwd.is_empty() {
+                "Choose the project this automation runs in".to_string()
+            } else {
+                format!("{cwd}. Choose the project this automation runs in")
+            })
+            .aria_expanded(open)
+            .track_focus(&self.project_focus)
+            .tab_index(0)
+            .relative()
+            .flex_shrink(1.)
+            .min_w(px(168.))
+            .max_w(px(360.))
+            .h(px(28.))
+            .px(px(8.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(content(if open { 0.3 } else { 0.12 }))
+            .bg(content(if open { 0.1 } else { 0.06 }))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(12.))
+            .cursor_pointer()
+            .hover(|s| s.bg(content(0.1)).border_color(content(0.2)))
+            // A clear ring, so Tab visibly lands here.
+            .focus_visible(|s| s.border_color(accent_color()).bg(content(0.1)))
+            .child(self.project_anchor.probe())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(content(0.5))
+                    .child("Project"),
+            )
+            .child(div().flex_shrink_0().child(self.project_mark(&cwd, 14.)))
+            .child(
+                div()
+                    .debug_selector(|| "automation-project-name".into())
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(content(if cwd.is_empty() { 0.6 } else { 0.95 }))
+                    .child(name),
+            )
+            .child(
+                icon(if frozen { "lock" } else { "chevron-down" }, 12.)
+                    .flex_shrink_0()
+                    .text_color(content(0.55)),
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.choose_project(window, cx)))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                // Like the app's other menu triggers: Enter, Space or Down.
+                // Opening moves focus to the picker, so the key-up click GPUI
+                // would synthesize for Enter and Space never fires as well.
+                if matches!(event.keystroke.key.as_str(), "enter" | "space" | "down")
+                    && !event.keystroke.modifiers.modified()
+                {
+                    this.choose_project(window, cx);
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            }))
+    }
     fn select_control(
         &self,
         id: impl Into<gpui::ElementId>,
@@ -533,28 +708,19 @@ impl Automations {
                         )),
                 );
         } else {
-            sentence = sentence
-                .child(self.select_control(
+            sentence = sentence.child(
+                self.select_control(
                     ("trigger-event", index),
                     automations::event_label(&trigger.kind, &trigger.event),
                     Choice::TriggerEvent(id.clone()),
                     events(&trigger.kind),
                     cx,
-                ))
-                .child("by");
-            if let Some(fields) = fields {
-                sentence = sentence.child(
-                    div()
-                        .w(px(80.))
-                        .h(px(28.))
-                        .rounded(px(6.))
-                        .bg(content(0.1))
-                        .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .child(fields.actor.clone()),
-                );
-            }
+                )
+                .aria_label(format!(
+                    "Event: {}",
+                    automations::event_label(&trigger.kind, &trigger.event)
+                )),
+            );
         }
         let row = div()
             .group("automation-trigger")
@@ -595,20 +761,31 @@ impl Automations {
                     })),
             );
         let mut result = div().child(row);
-        if trigger.kind != "time"
-            && let Some(fields) = fields
+        if let Some(fields) = fields
+            && !fields.properties.is_empty()
         {
             result = result.child(
                 div()
-                    .pl(px(24.))
-                    .pb(px(8.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .text_size(px(11.))
-                    .text_color(content(0.4))
-                    .child("Repositories")
-                    .child(div().flex_1().max_w(px(340.)).child(fields.repos.clone())),
+                    .id(("trigger-properties", index))
+                    .debug_selector({
+                        let selector = format!("trigger-properties-{index}");
+                        move || selector
+                    })
+                    .role(Role::Group)
+                    .aria_label(format!(
+                        "{} settings",
+                        automations::event_label(&trigger.kind, &trigger.event)
+                    ))
+                    .ml(px(24.))
+                    .mb(px(8.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(content(0.08))
+                    .children(fields.properties.iter().enumerate().map(
+                        |(row, (property, input))| {
+                            trigger_property_row(index, row, property, input, cx)
+                        },
+                    )),
             );
         }
         result.into_any_element()
@@ -618,7 +795,8 @@ impl Automations {
         let draft = &editor.draft;
         let valid = !editor.name.read(cx).content.trim().is_empty()
             && !editor.prompt.read(cx).content.trim().is_empty()
-            && !draft.cwd.trim().is_empty();
+            && !draft.cwd.trim().is_empty()
+            && self.property_error(cx).is_none();
         let mut actions = div().flex_shrink_0().flex().items_center().gap(px(8.));
         if !editor.saved || editor.dirty {
             actions = actions.child(
@@ -715,8 +893,8 @@ impl Automations {
                     .child(
                         div()
                             .min_w_0()
-                            .overflow_hidden()
                             .flex()
+                            .flex_wrap()
                             .items_center()
                             .gap(px(8.))
                             .text_size(px(12.))
@@ -732,37 +910,7 @@ impl Automations {
                             ))
                             .child(if draft.enabled { "Active" } else { "Inactive" })
                             .child(div().ml(px(8.)).h(px(12.)).w(px(1.)).bg(content(0.15)))
-                            .child(
-                                div()
-                                    .id("automation-project")
-                                    .relative()
-                                    .min_w_0()
-                                    .role(Role::Button)
-                                    .aria_label("Choose automation project")
-                                    .px(px(8.))
-                                    .h(px(26.))
-                                    .rounded(px(6.))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .text_size(px(12.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(content(0.9))
-                                    .hover(|s| s.bg(content(0.05)))
-                                    .child(self.project_anchor.probe())
-                                    .child(self.project_mark(&draft.cwd, 14.))
-                                    .child(div().min_w_0().truncate().child(
-                                        if draft.cwd.is_empty() {
-                                            "Choose project".into()
-                                        } else {
-                                            self.project_label(&draft.cwd)
-                                        },
-                                    ))
-                                    .child(icon("chevron-down", 12.).text_color(content(0.45)))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.choose_project(window, cx)
-                                    })),
-                            )
+                            .child(self.render_project_control(cx))
                             .when(editor.saved, |d| {
                                 d.child(
                                     icon_button(
