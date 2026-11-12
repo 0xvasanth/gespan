@@ -6,7 +6,7 @@
 //! label and field ids inside view specs, layouts, display options and
 //! auto-move rules are remapped to the new ids; a value with no match is
 //! dropped (the saved-view rule), and an auto-move target with no match stays.
-use crate::db::{args, err, execute, query, query_opt, with_db, with_tx, Conn, Ex};
+use crate::db::{err, with_db, with_tx, Conn, Ex};
 use crate::fields::list_fields_in;
 use crate::labels::list_labels_in;
 use crate::models::{BoardRow, ColumnRow, FieldRow, LabelRow, SettingsRow, TemplateRow, ViewRow};
@@ -201,23 +201,28 @@ pub fn list_templates(conn: &Conn) -> Result<Vec<TemplateInfo>, String> {
             built_in: true,
         })
         .collect();
-    let saved = with_db!(conn, |ex| {
-        query(
-            ex,
-            "SELECT id, name FROM board_templates ORDER BY lower(name), name, id",
-            args![],
-        )
-        .await?
-        .iter()
-        .map(|r| {
-            Ok(TemplateInfo {
-                id: r.get(0)?,
-                name: r.get(1)?,
-                built_in: false,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()
-    })?;
+    let mut saved: Vec<TemplateInfo> = with_db!(conn, |ex| {
+        TemplateRow::all()
+            .select((TemplateRow::fields().id(), TemplateRow::fields().name()))
+            .exec(ex)
+            .await
+            .map_err(err)
+    })?
+    .into_iter()
+    .map(|(id, name)| TemplateInfo {
+        id,
+        name,
+        built_in: false,
+    })
+    .collect();
+    // By name ignoring ASCII case (SQLite's `lower`), then name, then id.
+    saved.sort_by(|a, b| {
+        (a.name.to_ascii_lowercase(), &a.name, &a.id).cmp(&(
+            b.name.to_ascii_lowercase(),
+            &b.name,
+            &b.id,
+        ))
+    });
     templates.extend(saved);
     Ok(templates)
 }
@@ -497,14 +502,13 @@ pub fn create_board_from_template(
         let spec = match built_in_spec(template_id) {
             Some(spec) => spec,
             None => {
-                let raw: String = query_opt(
-                    ex,
-                    "SELECT spec_json FROM board_templates WHERE id = ?1",
-                    args![template_id],
-                )
-                .await?
-                .ok_or_else(|| "Template not found".to_string())?
-                .get(0)?;
+                let raw: String = TemplateRow::filter_by_id(template_id)
+                    .select(TemplateRow::fields().spec_json())
+                    .first()
+                    .exec(ex)
+                    .await
+                    .map_err(err)?
+                    .ok_or_else(|| "Template not found".to_string())?;
                 serde_json::from_str(&raw).map_err(|_| "Template is not valid".to_string())?
             }
         };
@@ -595,13 +599,22 @@ pub fn delete_template(conn: &Conn, id: &str) -> Result<(), String> {
     if BUILT_IN_TEMPLATES.contains(&id) {
         return Err("Built-in templates can't be deleted".into());
     }
-    let deleted = with_db!(conn, |ex| {
-        execute(ex, "DELETE FROM board_templates WHERE id = ?1", args![id]).await
-    })?;
-    if deleted == 0 {
-        return Err("Template not found".into());
-    }
-    Ok(())
+    with_tx!(conn, |ex| {
+        let found = TemplateRow::filter_by_id(id)
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .is_some();
+        if !found {
+            return Err("Template not found".into());
+        }
+        TemplateRow::filter_by_id(id)
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)
+    })
 }
 
 /// The built-in "blank" board, as `create_board` makes it.

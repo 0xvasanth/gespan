@@ -162,32 +162,62 @@ const QUERY_PATTERNS: &[&str] = &[
 /// adoption or a constraint, or is something Toasty 0.11 cannot express
 /// (see docs/toasty.md), with a comment on the statement saying which.
 const QUERIES: &[(&str, usize, &str)] = &[
-    ("board-store/src/agent.rs", 4, "to move to Toasty"),
-    ("board-store/src/auto_move.rs", 1, "to move to Toasty"),
-    ("board-store/src/card_ops.rs", 24, "to move to Toasty"),
-    ("board-store/src/comments.rs", 1, "to move to Toasty"),
+    (
+        "board-store/src/card_ops.rs",
+        3,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/comments.rs",
+        1,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
     (
         "board-store/src/constraints.rs",
         26,
         "trigger bodies of constraints Toasty cannot express",
     ),
-    ("board-store/src/fields.rs", 15, "to move to Toasty"),
-    ("board-store/src/labels.rs", 15, "to move to Toasty"),
-    ("board-store/src/links.rs", 15, "to move to Toasty"),
-    ("board-store/src/meta.rs", 16, "to move to Toasty"),
+    (
+        "board-store/src/fields.rs",
+        3,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/meta.rs",
+        4,
+        "GROUP BY counts Toasty cannot express",
+    ),
     (
         "board-store/src/migrate.rs",
         24,
         "legacy board upgrade for adoption",
     ),
-    ("board-store/src/ops.rs", 32, "to move to Toasty"),
-    ("board-store/src/relations.rs", 10, "to move to Toasty"),
-    ("board-store/src/seed.rs", 12, "to move to Toasty"),
-    ("board-store/src/settings.rs", 9, "to move to Toasty"),
-    ("board-store/src/subtasks.rs", 3, "to move to Toasty"),
-    ("board-store/src/templates.rs", 3, "to move to Toasty"),
+    (
+        "board-store/src/ops.rs",
+        5,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/relations.rs",
+        3,
+        "a recursive CTE Toasty cannot express",
+    ),
+    (
+        "board-store/src/seed.rs",
+        1,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/subtasks.rs",
+        1,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
     ("board-store/src/testing.rs", 1, "test fixture"),
-    ("board-store/src/views.rs", 20, "to move to Toasty"),
+    (
+        "board-store/src/views.rs",
+        6,
+        "rowid tie-breaks and a window function Toasty cannot express",
+    ),
     (
         "gespan-browser/src/audit.rs",
         10,

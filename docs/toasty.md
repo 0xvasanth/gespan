@@ -102,5 +102,23 @@ an adopted copy, so the file itself never changes.
 - Conditional upserts (`ON CONFLICT ... WHERE`), updates that return a
   count, CTEs, `json_*` and window functions go through `toasty::sql`.
   Binding a NULL needs `bind_typed`.
+- There is no `rowid`. A query that breaks ties by insertion order
+  (`ORDER BY position, rowid`) stays raw.
+- There is no `GROUP BY` and no aggregate but `count()`. Per-group counts in
+  one statement stay raw. A single `MAX` is an `order_by(..desc())` with
+  `first()`.
+- Joins exist only through relations, and the board models declare none.
+  Use `in_query` with a `select` subquery, or two queries joined in Rust.
+- `ORDER BY lower(name)` has no typed form. Sort in Rust with
+  `to_ascii_lowercase`, which folds the same ASCII letters SQLite's `lower`
+  does.
+- Updates and deletes return no row count. When the count only decides
+  what happens next, check with `count()` or `first()` in the same
+  transaction instead. `upsert_by_*` with `or_ignore()`
+  returns `None` on a conflict, which stands in for `INSERT OR IGNORE`'s
+  count.
+- The SQLite driver panics when a stored value doesn't match the model's
+  type, which ends that connection's task. A test that corrupts a row on
+  purpose reads it on a connection of its own.
 - Toasty brings `PartialEq` impls for tuples into scope. An
   `assert_eq!(x, [])` on a tuple vector may then need a type annotation.
