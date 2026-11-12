@@ -310,7 +310,7 @@ fn not_installed_and_remote_and_off_github_cannot_turn_on(cx: &mut TestAppContex
         (
             check(true, true, &[], false),
             Readiness::NoGithubRemote,
-            "This project isn't on GitHub.",
+            "This project isn't on GitHub. Use Customize… to pick repositories.",
             vec![],
         ),
         (
@@ -333,6 +333,14 @@ fn not_installed_and_remote_and_off_github_cannot_turn_on(cx: &mut TestAppContex
         );
         for button in buttons {
             assert!(visual.drawn(button).is_some(), "{state:?}: {button}");
+        }
+        if state == Readiness::NoGithubRemote {
+            // No repositories to offer: no dropdown that opens onto nothing.
+            assert!(
+                visual.drawn("review-setup-repo").is_none(),
+                "an empty Repository dropdown is drawn"
+            );
+            assert!(visual.drawn("review-setup-repo-text").is_some());
         }
         click(&mut visual, "review-setup-turn-on");
         // Not only the button: turning on itself refuses.
