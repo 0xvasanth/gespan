@@ -1090,7 +1090,7 @@ impl Shell {
                 .debug_selector(|| "waiting-requests".into())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .role(Role::Button)
-                .aria_label(format!("{label}: show their notices"))
+                .aria_label(format!("{label}: open My tasks"))
                 .cursor_pointer()
                 .size(px(WAITING_BUTTON))
                 .mr(px(super::CORNER_CONTROL_GAP))
@@ -1124,11 +1124,8 @@ impl Shell {
                                 .child(badge),
                         ),
                 )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.notification_state
-                        .approvals
-                        .update(cx, |notices, cx| notices.reopen(cx));
-                }))
+                // Every closed request is listed on My tasks, answerable there.
+                .on_click(cx.listener(|this, _, window, cx| this.open_my_tasks(window, cx)))
                 .into_any_element(),
         )
     }
@@ -1730,7 +1727,7 @@ mod waiting_tests {
     }
 
     #[gpui::test]
-    fn a_closed_request_waits_in_the_title_bar_and_its_button_brings_it_back(
+    fn a_closed_request_waits_in_the_title_bar_and_its_button_opens_my_tasks(
         cx: &mut TestAppContext,
     ) {
         let (window, first, second) = crate::shell::tests::window(cx);
@@ -1798,12 +1795,20 @@ mod waiting_tests {
             .unwrap();
 
         visual.simulate_click(button.center(), Default::default());
+        visual.run_until_parked();
         visual.refresh().unwrap();
-        visual.refresh().unwrap();
-        assert!(
-            visual.debug_bounds("approval-toast-close-0").is_some(),
-            "back"
-        );
-        assert!(visual.debug_bounds("waiting-requests").is_none());
+        window
+            .read_with(visual, |shell, cx| {
+                assert_eq!(
+                    shell.active_app_view,
+                    Some(crate::workspace::AppView::MyTasks)
+                );
+                assert_eq!(shell.my_task_count(cx), 1, "the request is listed there");
+            })
+            .unwrap();
+        assert!(visual.debug_bounds("my-tasks-card").is_some());
+        // Closing it decided nothing, and the page shows it, so the toast
+        // stays closed.
+        assert!(visual.debug_bounds("approval-toast-close-0").is_none());
     }
 }
