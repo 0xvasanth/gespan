@@ -1,5 +1,9 @@
 //! The Settings pages, their rail and the breadcrumb, search and actions the
 //! inset layout puts in its title bar.
+// A panic while drawing takes the whole app down, so render code here may
+// not index, slice, unwrap or expect: use `get`, `let ... else` or a default.
+// Tests may (clippy.toml). See `settings/render_smoke_tests.rs`.
+#![deny(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 mod data;
 #[cfg(test)]
 mod glass_tests;
@@ -13,6 +17,8 @@ pub(crate) use notification_preferences::looks_like_project;
 mod pages;
 mod palettes;
 mod preferences;
+#[cfg(test)]
+mod render_smoke_tests;
 mod skill_document;
 pub(crate) use palettes::{PALETTES, palette};
 pub(crate) mod widgets;
@@ -223,8 +229,7 @@ impl SliderKind {
             SliderKind::BackgroundEmpty => p.chat_background_empty = value,
             SliderKind::BackgroundSession => p.chat_background_session = value,
             SliderKind::InterfaceScale => {
-                let last = UI_SCALE_PERCENTS.len() - 1;
-                p.ui_scale = UI_SCALE_PERCENTS[(value as usize).min(last)];
+                p.ui_scale = preferences::ui_scale_at(value as usize);
             }
         }
     }

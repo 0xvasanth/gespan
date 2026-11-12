@@ -1,4 +1,8 @@
 //! Leave short labels clear and fade the last 40px only on overflow.
+// A panic while drawing takes the whole app down, so render code here may
+// not index, slice, unwrap or expect: use `get`, `let ... else` or a default.
+// Tests may (clippy.toml). See `settings/render_smoke_tests.rs`.
+#![deny(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 use gpui::{ContentMask, SharedString, TextAlign, TextRun, canvas, prelude::*, px};
 
 pub(crate) fn tab_label(text: impl Into<SharedString>) -> impl IntoElement {

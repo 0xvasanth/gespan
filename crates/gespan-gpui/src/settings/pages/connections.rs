@@ -54,6 +54,29 @@ pub(in crate::settings) struct ConnectionsState {
     reveal_prompt: bool,
 }
 
+#[cfg(test)]
+impl ConnectionsState {
+    /// Saved machines as a finished refresh leaves them, with `removing`
+    /// waiting for its confirmation, for tests that draw the page.
+    pub(in crate::settings) fn seed_for_test(
+        &mut self,
+        machines: Vec<Machine>,
+        status: &str,
+        removing: &str,
+    ) {
+        self.status = machines
+            .iter()
+            .map(|m| (m.id.clone(), status.to_owned()))
+            .collect();
+        self.needs_update = machines.iter().take(1).map(|m| m.id.clone()).collect();
+        self.machines = machines;
+        self.loaded = true;
+        self.removing = Some(removing.to_owned());
+        self.error = "Couldn't reach Studio.".into();
+        self.notice = "Saved.".into();
+    }
+}
+
 /// Dropping Settings while an SSH job is waiting must terminate its askpass wait.
 struct JobLease {
     remote: Arc<Connections>,
@@ -208,7 +231,9 @@ impl SettingsView {
         disabled: bool,
         cx: &mut Context<Self>,
     ) -> Div {
-        let input = self.fields[key].clone();
+        let Some(input) = self.fields.get(key).cloned() else {
+            return div();
+        };
         input.update(cx, |input, _| input.set_read_only(disabled));
         div()
             .flex()
