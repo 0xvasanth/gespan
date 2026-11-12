@@ -364,8 +364,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (Math.max(...result.load.start, ...result.load.end) > cpus().length) {
     result.warnings.push(`The load average (${result.load.start[0]} → ${result.load.end[0]}) was above the ${cpus().length} cores: timings are inflated. Rerun on a quieter machine before trusting a regression.`);
   }
-  if ((result.interaction?.inactive_steps ?? 0) > 0) {
-    result.warnings.push(`${result.interaction.inactive_steps} steps ran while the Gespan Dev window was not active; GPUI throttles inactive windows to 30 fps, so leave the window in front during a run.`);
+  const inactive = (result.interaction?.inactive_steps ?? 0) + (result.soak?.phases?.soak?.inactive_steps ?? 0);
+  if (inactive > 0) {
+    result.warnings.push(`${inactive} steps ran while the Gespan Dev window was not active; GPUI throttles inactive windows to 30 fps, so leave the window in front during a run.`);
   }
 
   const baselinePath = resolve(workspace, options.baseline);

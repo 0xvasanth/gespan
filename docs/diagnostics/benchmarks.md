@@ -106,6 +106,9 @@ flowchart LR
 - Frame draw time comes from GPUI itself: `ZED_MEASUREMENTS=1` prints
   `frame duration:` for every drawn frame. The runner attributes each to the
   phase it fell in.
+- A frame's duration includes presenting it. When the GPU or the machine is
+  busy, presenting waits for a free drawable and the p50 sits at one display
+  refresh (about 16.4 ms); compare runs taken under similar load.
 - After every pane cycle the driver records the number of tabs and panes,
   so a cycle that leaves a split or tab behind shows up in `results.json`
   instead of quietly skewing the memory numbers.
