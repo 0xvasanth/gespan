@@ -230,6 +230,7 @@ fn verdict_at(policy: &ReviewPolicy, command: &str, unwrap: bool) -> Verdict {
         ["pr", sub @ ("view" | "diff" | "checks" | "list"), rest @ ..] => {
             pr_read(sub, target, rest)
         }
+        ["issue", "view", rest @ ..] => issue_read(target, rest),
         ["api", rest @ ..] => api_read(target, rest),
         ["pr", "review", rest @ ..] => return post(policy, rest, true),
         ["pr", "comment", rest @ ..] => return post(policy, rest, false),
@@ -437,6 +438,55 @@ fn pr_read(sub: &str, target: Option<&ReviewTarget>, args: &[&str]) -> bool {
         return true;
     };
     repos.iter().all(|r| same_repo(r, target)) && (url_scoped || !repos.is_empty())
+}
+
+/// `gh issue view <n>`: reads one issue the pull request may link, by number
+/// only (no URL), with `--comments` and `--json` fields allowed. Scoped to the
+/// target repo exactly like the pull request reads.
+fn issue_read(target: Option<&ReviewTarget>, args: &[&str]) -> bool {
+    let mut repos: Vec<&str> = Vec::new();
+    let mut selector: Option<&str> = None;
+    let mut iter = args.iter().copied();
+    while let Some(arg) = iter.next() {
+        if !arg.starts_with('-') {
+            if parse_number(arg).is_none() || selector.replace(arg).is_some() {
+                return false;
+            }
+            continue;
+        }
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            _ => (arg, None),
+        };
+        let kind = match flag {
+            "-R" | "--repo" => Val::Repo,
+            "-c" | "--comments" => Val::Switch,
+            "--json" => Val::Fields,
+            _ => return false,
+        };
+        if matches!(kind, Val::Switch) {
+            if inline.is_some() {
+                return false;
+            }
+            continue;
+        }
+        let Some(value) = inline.or_else(|| iter.next()) else {
+            return false;
+        };
+        if !valid_value(kind, value) {
+            return false;
+        }
+        if matches!(kind, Val::Repo) {
+            repos.push(value);
+        }
+    }
+    if selector.is_none() {
+        return false;
+    }
+    match target {
+        Some(target) => !repos.is_empty() && repos.iter().all(|r| same_repo(r, target)),
+        None => true,
+    }
 }
 
 /// `gh api` as a plain GET of an endpoint under the target repo. Every option
@@ -1063,6 +1113,64 @@ mod tests {
         );
         assert_eq!(verdict(&open, "gh pr diff 7 -R other/repo"), Verdict::Allow);
         assert_eq!(verdict(&open, "gh pr diff 7 -R x/y --web"), Verdict::Deny);
+    }
+
+    #[test]
+    fn a_linked_issue_can_be_read_in_the_pull_requests_repo_only() {
+        for r in [
+            ReviewResults::Gespan,
+            ReviewResults::Draft,
+            ReviewResults::Post,
+        ] {
+            let p = policy(r);
+            for c in [
+                "gh issue view 12 -R acme/app",
+                "gh issue view 12 --repo acme/app --comments",
+                "gh issue view 12 --repo=Acme/App --json title,body,comments",
+                "/bin/zsh -lc 'gh issue view 12 -R acme/app'",
+            ] {
+                assert_eq!(verdict(&p, c), Verdict::Allow, "{r:?} {c}");
+            }
+        }
+        let p = policy(ReviewResults::Post);
+        for c in [
+            // Unscoped, another repo, or a host-prefixed repo.
+            "gh issue view 12",
+            "gh issue view 12 -R other/repo",
+            "gh issue view 12 -R acme/app -R other/repo",
+            "gh issue view 12 -R github.com/acme/app",
+            // By URL, more than one, or no issue at all.
+            "gh issue view https://github.com/acme/app/issues/12 -R acme/app",
+            "gh issue view 12 13 -R acme/app",
+            "gh issue view -R acme/app",
+            "gh issue view +12 -R acme/app",
+            // Anything but the read-only options.
+            "gh issue view 12 -R acme/app --web",
+            "gh issue view 12 -R acme/app -w",
+            "gh issue view 12 -R acme/app --jq .body",
+            "gh issue view 12 -R acme/app --json 'title;id'",
+            "gh issue view 12 -R acme/app --comments=true",
+            // Other issue subcommands write.
+            "gh issue comment 12 -R acme/app -b x",
+            "gh issue edit 12 -R acme/app --add-label x",
+            "gh issue close 12 -R acme/app",
+            "gh issue list -R acme/app",
+        ] {
+            assert_eq!(verdict(&p, c), Verdict::Deny, "{c}");
+        }
+        let open = ReviewPolicy {
+            results: ReviewResults::Gespan,
+            target: None,
+        };
+        assert_eq!(verdict(&open, "gh issue view 12"), Verdict::Allow);
+        assert_eq!(
+            verdict(&open, "gh issue view 12 -R other/repo"),
+            Verdict::Allow
+        );
+        assert_eq!(
+            verdict(&open, "gh issue view 12 -R evil.host/o/r"),
+            Verdict::Deny
+        );
     }
 
     #[test]
