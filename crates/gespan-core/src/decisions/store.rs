@@ -190,16 +190,60 @@ impl DecisionStore {
     /// same text, whatever became of it (rejected and archived rows count, so
     /// a rejected import never comes back). `None` when it was already there.
     pub fn propose_import(&self, e: NewEntry, now_ms: i64) -> Result<Option<Entry>, Error> {
-        let src = e.source.import.as_deref().map(|v| self.clean(v));
-        let text = self.clean(&e.text);
-        let seen = self.sql().query(
-            "SELECT 1 FROM task_decisions WHERE import_src = ?1 AND statement = ?2 LIMIT 1",
-            args![src.unwrap_or_default(), text],
-        )?;
-        if !seen.is_empty() {
-            return Ok(None);
+        if e.why.trim().is_empty() {
+            return Err(Error::MissingWhy);
         }
-        self.propose(e, now_ms).map(Some)
+        let src = self.clean_source(&e.source.import);
+        let (title, text, why) = (
+            self.clean(&e.title),
+            self.clean(&e.text),
+            self.clean(&e.why),
+        );
+        let (kind, scope) = (e.kind.as_str(), e.scope.to_string());
+        let project = super::entry::project_column(&e.scope);
+        // One immediate transaction holds the check and the insert, so two
+        // imports racing cannot both find the rule missing.
+        let id = self.db.transaction(move |tx| {
+            Box::pin(async move {
+                let f = TaskDecision::fields();
+                let seen = TaskDecision::filter(
+                    f.import_src()
+                        .eq(src.clone())
+                        .and(f.statement().eq(text.clone())),
+                )
+                .first()
+                .exec(&mut *tx)
+                .await?;
+                if seen.is_some() {
+                    return Ok(None);
+                }
+                let row = TaskDecision::create()
+                    .project(project)
+                    .statement(text)
+                    .why(why)
+                    .created_at(now_ms)
+                    .updated_at(now_ms)
+                    .archived_at(None)
+                    .kind(kind)
+                    .status(Status::Pending.as_str())
+                    .scope(scope)
+                    .title(title)
+                    .user_answer(None)
+                    .session(None)
+                    .question_ref(None)
+                    .user_turn(None)
+                    .import_src(src)
+                    .pinned(false)
+                    .supersedes(None)
+                    .replaced_by(None)
+                    .decided_at(None)
+                    .exec(&mut *tx)
+                    .await?;
+                Ok(Some(row.id))
+            })
+        })?;
+        id.map(|id| self.load(id)?.ok_or(Error::NotFound(id)))
+            .transpose()
     }
 
     /// Approve a pending entry, optionally edited, optionally replacing active

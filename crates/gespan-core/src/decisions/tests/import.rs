@@ -218,3 +218,91 @@ fn global_files_follow_the_injected_homes() {
     write(&opencode, "AGENTS.md", "- c\n");
     assert_eq!(global_files(&homes).len(), 3);
 }
+
+#[test]
+fn concurrent_imports_insert_each_rule_once() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("gespan.db");
+    let config = || Config {
+        redact: crate::pilot::memory::redact,
+    };
+    let first = DecisionStore::open(&path, config()).unwrap();
+    let second = DecisionStore::open(&path, config()).unwrap();
+    let file = write(dir.path(), "CLAUDE.md", CLAUDE_MD);
+    let files = [file];
+    let barrier = std::sync::Barrier::new(2);
+    let (a, b) = std::thread::scope(|s| {
+        let (barrier, files) = (&barrier, &files);
+        let run = move |log: &DecisionStore| {
+            barrier.wait();
+            import_once(log, files, 10).unwrap()
+        };
+        let (one, two) = (&first, &second);
+        let a = s.spawn(move || run(one));
+        let b = s.spawn(move || run(two));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert_eq!(a + b, 5);
+    assert_eq!(first.pending().unwrap().len(), 5);
+}
+
+#[test]
+fn a_file_over_the_cap_imports_only_its_first_rules() {
+    use crate::decisions::import::MAX_RULES_PER_FILE;
+    let dir = TempDir::new().unwrap();
+    let log = store(&dir);
+    let text: String = (0..250).map(|i| format!("- rule number {i}\n")).collect();
+    let file = write(dir.path(), "CLAUDE.md", &text);
+    assert_eq!(MAX_RULES_PER_FILE, 200);
+    assert_eq!(import_once(&log, &[file], 10).unwrap(), 200);
+    let texts: Vec<String> = log.pending().unwrap().into_iter().map(|e| e.text).collect();
+    assert!(texts.contains(&"rule number 199".to_string()));
+    assert!(!texts.contains(&"rule number 200".to_string()));
+}
+
+#[test]
+fn stored_fields_name_the_home_as_a_tilde_not_its_path() {
+    use crate::decisions::import::import_once_from;
+    let dir = TempDir::new().unwrap();
+    let log = store(&dir);
+    let home = dir.path().join("people").join("jane");
+    std::fs::create_dir_all(home.join(".claude")).unwrap();
+    let file = write(&home.join(".claude"), "CLAUDE.md", "- Keep it short\n");
+    assert_eq!(
+        import_once_from(&log, std::slice::from_ref(&file), 10, Some(&home)).unwrap(),
+        1
+    );
+    // Stable: a second run with the same home matches the stored source.
+    assert_eq!(import_once_from(&log, &[file], 20, Some(&home)).unwrap(), 0);
+    let entry = &log.pending().unwrap()[0];
+    let home_text = home.display().to_string();
+    let source = entry.source.import.clone().unwrap();
+    for field in [&entry.title, &entry.text, &entry.why, &source] {
+        assert!(!field.contains(&home_text), "{field}");
+    }
+    assert!(source.starts_with('~'), "{source}");
+    assert!(entry.why.starts_with("Imported from ~"), "{}", entry.why);
+}
+
+#[test]
+fn indentation_decides_between_a_rule_and_a_nested_item() {
+    let text = "# Rules\n\n - one space\n - sibling\n   - nested under it\n    - also nested\n\n## More\n\n   - three spaces\n";
+    let found = candidates(text, Path::new("x.md"));
+    let texts: Vec<&str> = found.iter().map(|e| e.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            "one space",
+            "sibling\n- nested under it\n- also nested",
+            "three spaces"
+        ]
+    );
+}
+
+#[test]
+fn horizontal_rules_and_year_lines_are_not_rules() {
+    let text = "# Rules\n\n- Real\n\n* * *\n\n- - -\n\n- Also real\n\n2024. A year\n";
+    let found = candidates(text, Path::new("x.md"));
+    let texts: Vec<&str> = found.iter().map(|e| e.text.as_str()).collect();
+    assert_eq!(texts, ["Real", "Also real"]);
+}

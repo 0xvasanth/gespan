@@ -5,26 +5,51 @@ use super::entry::{derived_title, Kind, NewEntry, Scope, Source};
 use super::files::{closes_fence, fence_opener, replace_section};
 use super::harness::read_capped;
 use super::store::DecisionStore;
+use crate::accounts;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// How many words of a rule go into its title after the heading.
 const TITLE_WORDS: usize = 8;
 
-/// A line's top-level list marker: `-`, `*`, `+` or `1.` / `1)` at column
-/// zero, followed by a space. Returns the rule text after it.
-fn bullet(line: &str) -> Option<&str> {
-    let rest = line
-        .strip_prefix(['-', '*', '+'])
-        .or_else(|| {
-            let digits = line.chars().take_while(char::is_ascii_digit).count();
-            let after = &line[digits..];
-            (digits > 0)
-                .then(|| after.strip_prefix(['.', ')']))
-                .flatten()
-        })?
-        .strip_prefix(' ')?;
-    Some(rest.trim())
+/// The most rules taken from one file; the rest are skipped (and logged), so
+/// a huge file cannot flood My tasks.
+pub const MAX_RULES_PER_FILE: usize = 200;
+
+/// A list marker found at the start of a line.
+struct Marker<'a> {
+    /// Spaces before the marker.
+    indent: usize,
+    /// Where a nested item's marker would have to start to belong to it.
+    content: usize,
+    /// The text after the marker.
+    rest: &'a str,
+}
+
+/// A line's list marker: `-`, `*`, `+` or `1.` / `1)` (up to three digits)
+/// after at most three spaces, followed by a space. Four or more spaces make
+/// it plain indented text. A line of only dashes, stars and underscores
+/// after the marker (`* * *`) is a horizontal rule, not a list item.
+fn bullet(line: &str) -> Option<Marker<'_>> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let body = &line[indent..];
+    let (width, after) = if let Some(after) = body.strip_prefix(['-', '*', '+']) {
+        (1, after)
+    } else {
+        let digits = body.chars().take_while(char::is_ascii_digit).count();
+        ((1..=3).contains(&digits)).then_some(())?;
+        (digits + 1, body[digits..].strip_prefix(['.', ')'])?)
+    };
+    let rest = after.strip_prefix(' ')?.trim();
+    let divider = !rest.is_empty() && rest.chars().all(|c| matches!(c, '-' | '*' | '_' | ' '));
+    (!divider).then_some(Marker {
+        indent,
+        content: indent + width + 1,
+        rest,
+    })
 }
 
 fn heading(line: &str) -> Option<&str> {
@@ -41,12 +66,19 @@ fn heading(line: &str) -> Option<&str> {
 /// folded into their parent. The title is the nearest heading plus the first
 /// words of the rule; the why names `file`.
 pub fn candidates(text: &str, file: &Path) -> Vec<NewEntry> {
+    candidates_from(text, file, accounts::home().as_deref())
+}
+
+/// `candidates` with the home folder named, so the file is shown as `~/...`.
+fn candidates_from(text: &str, file: &Path, home: Option<&Path>) -> Vec<NewEntry> {
     let text = replace_section(text, "");
     let mut rules: Vec<(String, String)> = Vec::new();
     let mut heading_now = String::new();
     let mut fence: Option<(char, usize)> = None;
     // Whether the last rule can still take continuation lines.
     let mut open = false;
+    // Where the open rule's text starts, in columns.
+    let mut content = 0;
     for line in text.lines() {
         if let Some((ch, len)) = fence {
             if closes_fence(line, ch, len) {
@@ -73,12 +105,13 @@ pub fn candidates(text: &str, file: &Path) -> Vec<NewEntry> {
         if let Some(title) = heading(line) {
             heading_now = title.to_owned();
             open = false;
-        } else if let Some(rule) = bullet(line) {
-            open = true;
-            if !rule.is_empty() {
-                rules.push((heading_now.clone(), rule.to_owned()));
-            } else {
-                open = false;
+        } else if let Some(marker) = bullet(line).filter(|m| !(open && m.indent >= content)) {
+            // A bullet starting where the open rule's text starts is nested
+            // in it; anywhere left of that it is a rule of its own.
+            open = !marker.rest.is_empty();
+            content = marker.content;
+            if open {
+                rules.push((heading_now.clone(), marker.rest.to_owned()));
             }
         } else if line.trim().is_empty() {
             // A blank line may sit between a rule and its nested items.
@@ -94,9 +127,18 @@ pub fn candidates(text: &str, file: &Path) -> Vec<NewEntry> {
             open = false;
         }
     }
-    let why = format!("Imported from {}", file.display());
+    if rules.len() > MAX_RULES_PER_FILE {
+        tracing::warn!(
+            file = %file.display(),
+            skipped = rules.len() - MAX_RULES_PER_FILE,
+            "too many rules to import; the rest were skipped"
+        );
+    }
+    let shown = tilde(file, home);
+    let why = format!("Imported from {shown}");
     rules
         .into_iter()
+        .take(MAX_RULES_PER_FILE)
         .map(|(heading, body)| {
             let words: Vec<&str> = body
                 .lines()
@@ -119,12 +161,23 @@ pub fn candidates(text: &str, file: &Path) -> Vec<NewEntry> {
                 why: why.clone(),
                 user_answer: None,
                 source: Source {
-                    import: Some(file.display().to_string()),
+                    import: Some(shown.clone()),
                     ..Source::default()
                 },
             }
         })
         .collect()
+}
+
+/// `path` with the home folder written as `~`, so the user's account name
+/// never lands in stored text. The same rule names the source of every
+/// entry, so what an import matches on stays stable.
+fn tilde(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
 }
 
 /// Whether `path` may be read: a regular file, and when it is a symlink, one
@@ -150,6 +203,16 @@ fn safe_to_read(path: &Path) -> bool {
 /// imported from the same file (whatever the user did with them). Returns
 /// how many entries it added.
 pub fn import_once(store: &DecisionStore, files: &[PathBuf], now_ms: i64) -> Result<usize, String> {
+    import_once_from(store, files, now_ms, accounts::home().as_deref())
+}
+
+/// [`import_once`] with the home folder named (tests give their own).
+pub fn import_once_from(
+    store: &DecisionStore,
+    files: &[PathBuf],
+    now_ms: i64,
+    home: Option<&Path>,
+) -> Result<usize, String> {
     let mut added = 0;
     for file in files {
         if !safe_to_read(file) {
@@ -158,7 +221,7 @@ pub fn import_once(store: &DecisionStore, files: &[PathBuf], now_ms: i64) -> Res
         let Ok(Some(text)) = read_capped(file) else {
             continue;
         };
-        for entry in candidates(&text, file) {
+        for entry in candidates_from(&text, file, home) {
             let proposed = store
                 .propose_import(entry, now_ms)
                 .map_err(|e| e.to_string())?;

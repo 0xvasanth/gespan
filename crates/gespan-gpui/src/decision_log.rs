@@ -253,8 +253,9 @@ enum SwitchAction {
 }
 
 /// The first apply at startup regenerates when the log is on; turning it on
-/// imports the user's existing preferences once, then regenerates; turning it off removes what Gespan wrote. An unchanged
-/// switch, or the log off from the start, does nothing.
+/// imports the user's existing preferences once, then regenerates; turning
+/// it off removes what Gespan wrote. An unchanged switch, or the log off from
+/// the start, does nothing.
 fn switch_action(previous: Option<bool>, on: bool) -> Option<SwitchAction> {
     match (previous, on) {
         (Some(was), now) if was == now => None,
@@ -299,6 +300,9 @@ pub(crate) fn decision_log_switched(on: bool) {
 /// (once: rules already imported are skipped) and tells My tasks to look
 /// again. Does nothing while the log is off or not open.
 fn import_global_preferences(homes: gespan_core::decisions::harness::Homes) {
+    // One import at a time: a quick on, off, on must not run two together.
+    static IMPORTING: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = IMPORTING.lock().unwrap_or_else(|e| e.into_inner());
     if !gespan_core::decisions::enabled() {
         return;
     }
