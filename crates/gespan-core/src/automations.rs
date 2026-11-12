@@ -358,7 +358,10 @@ fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
             return Err("Choose a Pilot for this automation.".into());
         }
     }
-    if input.review_results.is_some() && matches!(input.action, AutomationAction::Pilot { .. }) {
+    if input.enabled
+        && input.review_results.is_some()
+        && matches!(input.action, AutomationAction::Pilot { .. })
+    {
         return Err(REVIEW_PILOT_ERROR.into());
     }
     if !matches!(
@@ -3684,6 +3687,30 @@ mod tests {
         review.review_results = Some(crate::review_policy::ReviewResults::Draft);
         assert!(service.upsert(review).is_ok());
         assert!(service.upsert(waking("pilot-1")).is_ok());
+    }
+
+    #[test]
+    fn a_legacy_review_pilot_automation_can_be_disabled_and_deleted_but_not_enabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        // A row saved before upsert refused this combination.
+        let mut saved = save(&mut service, vec![]);
+        saved.action = AutomationAction::Pilot {
+            pilot_id: "pilot-1".into(),
+        };
+        saved.review_results = Some(crate::review_policy::ReviewResults::Post);
+        saved.enabled = true;
+        write_automation(&service.conn, &saved).unwrap();
+        let id = saved.id.clone();
+
+        assert!(!service.set_enabled(&id, false).unwrap().enabled);
+        assert_eq!(
+            service.set_enabled(&id, true).unwrap_err(),
+            "A pull request review automation can't wake a Pilot."
+        );
+        assert!(!stored(&service, &id).enabled);
+        service.delete(&id).unwrap();
+        assert!(get(&service.conn, &id).unwrap().is_none());
     }
 
     #[test]
