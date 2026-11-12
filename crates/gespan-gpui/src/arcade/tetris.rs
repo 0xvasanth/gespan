@@ -445,8 +445,8 @@ mod tests {
     }
     /// Fill row `y` except column `gap`, colouring each cell with `color(x)`.
     fn fill_row(t: &mut Tetris, y: usize, gap: Option<usize>, color: impl Fn(usize) -> u8) {
-        for x in 0..COLS {
-            t.board[y][x] = (Some(x) != gap).then(|| color(x));
+        for (x, cell) in t.board[y].iter_mut().enumerate().take(COLS) {
+            *cell = (Some(x) != gap).then(|| color(x));
         }
     }
     /// A vertical I piece of `color` dropped into column `x`.
@@ -555,10 +555,10 @@ mod tests {
         let mut t = game();
         t.piece = vertical_i(4, 0);
         t.piece.y = 5;
-        for y in 5..9 {
-            for x in 0..COLS {
+        for row in t.board.iter_mut().take(9).skip(5) {
+            for (x, cell) in row.iter_mut().enumerate().take(COLS) {
                 if x != 4 {
-                    t.board[y][x] = Some(1);
+                    *cell = Some(1);
                 }
             }
         }
@@ -751,8 +751,8 @@ mod tests {
         let xs = t.piece.cells().map(|c| c.0);
         let mid = (xs.iter().min().unwrap() + xs.iter().max().unwrap()) / 2;
         assert!((14..=17).contains(&mid), "{xs:?}");
-        for x in 0..32 {
-            t.board[13][x] = (x != 20).then_some(2);
+        for (x, cell) in t.board[13].iter_mut().enumerate().take(32) {
+            *cell = (x != 20).then_some(2);
         }
         t.piece = Piece {
             kind: 0,
