@@ -1,0 +1,36 @@
+crates/gespan-gpui/src/settings/glass_tests.rs
+  s_c589f1ba8a8fa6::t_39f2925c27cadf 704-747
+crates/gespan-gpui/src/settings/pages/dictation.rs
+  s_c589f1ba8a8fa6::t_f96d5b417672a2 182-196,268,317,323,326-327,332-333,335-336,338-345,364-367,428-433,435-442
+  s_c589f1ba8a8fa6::t_0d1b6ae359cfd3 360
+  s_c589f1ba8a8fa6::t_a5520e51cc7e7a 434,443-444
+crates/gespan-gpui/src/settings/pages/diagnostics.rs
+  s_c589f1ba8a8fa6::t_07db6af521e860 72-75,77-105,141-142,147-148,153-154,156-157,240-254,326,345,354
+  s_7a8c7041476d04::t_4e627067220117 76
+crates/gespan-gpui/src/settings/pages/mod.rs
+  s_c589f1ba8a8fa6::t_447669c839cb52 29-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62c7746910b62a2bbec031935dcb4b3d6eaced9e",
+  "prompts": {},
+  "sessions": {
+    "s_7a8c7041476d04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "633f75e3-97e3-4e3b-b5ee-0a3b6f60854f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_c589f1ba8a8fa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39f78400-f644-4002-b3b7-119922fa07b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
