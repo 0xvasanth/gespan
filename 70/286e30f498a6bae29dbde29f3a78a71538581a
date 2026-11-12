@@ -1,0 +1,39 @@
+spikes/sqlite-vec-bench/results/bench.jsonl
+  s_59289c1f4cffc4::t_2a3c0951cbbf06 1-37
+spikes/sqlite-vec-bench/scripts/build_corpus.py
+  s_59289c1f4cffc4::t_c811c57525efc4 67,70
+  s_59289c1f4cffc4::t_5a69c249bb20f3 1-66,68-69,71-112
+spikes/sqlite-vec-bench/README.md
+  s_59289c1f4cffc4::t_4e6e4ac3609576 1-139
+spikes/sqlite-vec-bench/results/embed.jsonl
+  s_59289c1f4cffc4::t_2a3c0951cbbf06 1-4
+spikes/sqlite-vec-bench/src/main.rs
+  s_59289c1f4cffc4::t_054759abe6932a 1-159,167-169,171-572
+  s_59289c1f4cffc4::t_d1d1e16215d29a 160-162,164-166
+  s_59289c1f4cffc4::t_badc3dfa214eb0 170
+  s_59289c1f4cffc4::t_9af0653f19fa70 163
+spikes/sqlite-vec-bench/results/compare.jsonl
+  s_59289c1f4cffc4::t_2a3c0951cbbf06 1-3
+spikes/sqlite-vec-bench/scripts/embed_code.py
+  s_59289c1f4cffc4::t_0f778d888c5429 1-76
+spikes/sqlite-vec-bench/Cargo.toml
+  s_59289c1f4cffc4::t_aeffb05946a68d 1-23
+spikes/sqlite-vec-bench/Cargo.lock
+  s_59289c1f4cffc4::t_6a6bac1052f041 1-3270
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "70286e30f498a6bae29dbde29f3a78a71538581a",
+  "prompts": {},
+  "sessions": {
+    "s_59289c1f4cffc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31cc82b6-78e2-47a5-8996-0a796d9c6a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

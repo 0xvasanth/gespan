@@ -1,0 +1,84 @@
+crates/gespan-gpui/src/my_tasks/filter.rs
+  s_59289c1f4cffc4::t_6f03117c506511 66,71,76,91
+  s_59289c1f4cffc4::t_9fb140f3cc31c1 81
+  s_59289c1f4cffc4::t_2ce2ba392ce645 116
+crates/gespan-core/src/decisions/tests/review.rs
+  s_59289c1f4cffc4::t_bfde0297b289d8 1-422
+crates/gespan-gpui/src/my_tasks.rs
+  s_59289c1f4cffc4::t_8e7000e44d70f2 1-3,9,17,57-58,81-87,135-140,155-165,212-218,362-364,368-370
+  s_59289c1f4cffc4::t_23d712e893d3be 31-42
+crates/gespan-gpui/src/shell/my_tasks_tests.rs
+  s_59289c1f4cffc4::t_10ddceb6cbdefa 1182-1183,1237-1238,1295-1296,1314-1315,1359-1360,1393-1394,1398,1438-1439,1459-1460
+  s_59289c1f4cffc4::t_8da47046c5d441 1082,1085-1086,1272-1275,1286-1289,1336-1339,1349-1352,1391,1578-1580
+  s_59289c1f4cffc4::t_47d857124d0678 1081,1083-1084,1087-1181,1184-1236,1239-1271,1276-1285,1290-1294,1297-1313,1316-1335,1340-1348,1353-1358,1361-1390,1392,1395-1397,1399-1437,1440-1458,1461-1577,1581-1593
+crates/gespan-core/src/tasks.rs
+  s_59289c1f4cffc4::t_355b61927a2b0f 253-255,259,265,275
+crates/gespan-core/src/decisions/tests/mod.rs
+  s_59289c1f4cffc4::t_23979108ad5065 4
+crates/gespan-gpui/src/my_tasks/pane.rs
+  s_59289c1f4cffc4::t_63412ba5bc1d58 164-169,183-187
+crates/gespan-gpui/src/my_tasks/past.rs
+  s_59289c1f4cffc4::t_6d9c5c8529f732 655-659
+  s_59289c1f4cffc4::t_23d712e893d3be 74
+  s_59289c1f4cffc4::t_e8ca5d86f7a5ce 181,183-191
+  s_59289c1f4cffc4::t_9fb140f3cc31c1 45-73,75-102,170-180,197,414-419,422-426,854-859,919
+  s_59289c1f4cffc4::t_28e91786383168 182
+crates/gespan-gpui/src/my_tasks/decision.rs
+  s_59289c1f4cffc4::t_b1e6d95c58b433 1-8,10-113,115-160,162-174,176-186,188-193,195-216,218-237,239-272,274-347
+  s_59289c1f4cffc4::t_63412ba5bc1d58 161,175,187,194,217,238,273
+  s_59289c1f4cffc4::t_8da47046c5d441 9
+  s_7a8c7041476d04::t_e5301550a7174c 114
+crates/gespan-gpui/src/shell.rs
+  s_59289c1f4cffc4::t_23d712e893d3be 804-808,1087,1242-1244
+crates/gespan-gpui/src/my_tasks/record.rs
+  s_59289c1f4cffc4::t_63412ba5bc1d58 83,125-132
+crates/gespan-gpui/src/shell/my_tasks.rs
+  s_59289c1f4cffc4::t_23d712e893d3be 3,7,333-335,339-356,360-405,419,476,478-480,498-579
+  s_59289c1f4cffc4::t_8da47046c5d441 357-359
+  s_59289c1f4cffc4::t_dba6cf6a4be693 580
+crates/gespan-gpui/src/my_tasks/list.rs
+  s_59289c1f4cffc4::t_6d9c5c8529f732 22,35,47-49
+crates/gespan-core/src/decisions/store.rs
+  s_59289c1f4cffc4::t_5fe468ac83c347 11-13
+  s_59289c1f4cffc4::t_8da47046c5d441 221-226
+  s_59289c1f4cffc4::t_aad4994cf3847f 198-220,227-260,287-289,558-565
+  s_59289c1f4cffc4::t_5c01bdf1a8de52 566-567
+crates/gespan-core/src/tasks/log.rs
+  s_59289c1f4cffc4::t_355b61927a2b0f 15,149-156
+crates/gespan-core/src/decisions/mod.rs
+  s_59289c1f4cffc4::t_23979108ad5065 8,16-17
+  s_59289c1f4cffc4::t_8da47046c5d441 20
+crates/gespan-core/src/decisions/review.rs
+  s_59289c1f4cffc4::t_0af4baafbf9c97 1-36,41-42,45,58-60,63,138
+  s_59289c1f4cffc4::t_6a671878cb4fe8 37-40,43-44,46-57,61-62,64-137
+crates/gespan-core/src/store/my_tasks.rs
+  s_59289c1f4cffc4::t_355b61927a2b0f 406-411,413-415
+crates/gespan-core/src/decisions/entry.rs
+  s_59289c1f4cffc4::t_23979108ad5065 151-178,225-226,240
+crates/gespan-gpui/src/my_tasks/card.rs
+  s_7a8c7041476d04::t_99f0032c0c57d1 298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "28852d5f8c8604fee659359671e73b809590927b",
+  "prompts": {},
+  "sessions": {
+    "s_59289c1f4cffc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31cc82b6-78e2-47a5-8996-0a796d9c6a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_7a8c7041476d04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "633f75e3-97e3-4e3b-b5ee-0a3b6f60854f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

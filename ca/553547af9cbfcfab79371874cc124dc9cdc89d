@@ -1,0 +1,45 @@
+crates/gespan-memory/src/schema.rs
+  s_59289c1f4cffc4::t_3e38243fed72fc 1-8,11-52,57-58
+  s_59289c1f4cffc4::t_bc641d95393df9 9-10,53-56
+crates/gespan-memory/Cargo.toml
+  s_59289c1f4cffc4::t_3e38243fed72fc 1-17
+crates/gespan-memory/src/entry.rs
+  s_59289c1f4cffc4::t_5aedf8556c3df3 15,40
+  s_59289c1f4cffc4::t_3e38243fed72fc 1-14,16-39,41-165
+crates/gespan-memory/src/store.rs
+  s_59289c1f4cffc4::t_3e38243fed72fc 1-238,243-349
+  s_59289c1f4cffc4::t_bc641d95393df9 239-242
+crates/gespan-memory/tests/lifecycle.rs
+  s_59289c1f4cffc4::t_3e38243fed72fc 1-21,29-111,115,118-217,221-222,226-266,271-278,283-292,297-307,315-319,327-332
+  s_59289c1f4cffc4::t_bc641d95393df9 22-28,112-114,116-117,218-220,223-225,267-270,279-282,293-296,308-314,320-326
+crates/gespan-core/Cargo.toml
+  s_59289c1f4cffc4::t_3e38243fed72fc 74
+.github/workflows/ci.yml
+  s_59289c1f4cffc4::t_3e38243fed72fc 230
+crates/gespan-memory/src/error.rs
+  s_59289c1f4cffc4::t_3e38243fed72fc 1-24
+crates/gespan-memory/src/lib.rs
+  s_59289c1f4cffc4::t_3e38243fed72fc 1-16
+Cargo.toml
+  s_59289c1f4cffc4::t_3e38243fed72fc 3
+Cargo.lock
+  s_59289c1f4cffc4::t_5e9fb646ceb231 1362-1370
+crates/gespan-gpui/Cargo.lock
+  s_59289c1f4cffc4::t_2fafe2a36ce213 2711,2879-2886
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca553547af9cbfcfab79371874cc124dc9cdc89d",
+  "prompts": {},
+  "sessions": {
+    "s_59289c1f4cffc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31cc82b6-78e2-47a5-8996-0a796d9c6a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

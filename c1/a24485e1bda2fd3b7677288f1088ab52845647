@@ -1,0 +1,51 @@
+crates/gespan-core/src/decisions/vector.rs
+  s_59289c1f4cffc4::t_b4b2b3b4a922da 56-84
+crates/gespan-core/src/decisions/tests/nomic_latency.rs
+  s_59289c1f4cffc4::t_70f0dadd695457 89-111
+  s_59289c1f4cffc4::t_5630cd9bae1d69 9,42-43
+  s_59289c1f4cffc4::t_cb76b33e6202de 51-88,112-114
+crates/gespan-core/src/decisions/tests/review.rs
+  s_59289c1f4cffc4::t_83b5e7605cff4f 525-528,534-535,537
+crates/gespan-core/src/decisions/embed.rs
+  s_59289c1f4cffc4::t_f7db11f088c1a6 102-107,110-112,299-306
+  s_59289c1f4cffc4::t_3c641a0d39ec69 163,173-228,246,307
+  s_59289c1f4cffc4::t_b4b2b3b4a922da 21-24
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_59289c1f4cffc4::t_96c42beca943ae 867-887
+crates/gespan-core/src/decisions/store.rs
+  s_59289c1f4cffc4::t_70f0dadd695457 148-156,173-182,185,188
+  s_59289c1f4cffc4::t_747460c7baecba 921
+  s_59289c1f4cffc4::t_b4b2b3b4a922da 16,183-184,186-187,196-201,218-219,225-230,236,239-247,288-295,297,303,395,457,553-555,588,655,702,708,909-912,914-920,922-937,961,963-969,971-988,990,993-995
+crates/gespan-core/src/decisions/tests/vector.rs
+  s_59289c1f4cffc4::t_232e26958a2b2e 4,12-13,108-111,147-150,152-153,156,158,172-200,247-248,345-361,363,365,371-375,377-379,386-387,394-395,399-400,436-437,439-479,484-497,499-530,533-545,563,566,570,575,578-581,587,589-590,600-603,606,610
+  s_59289c1f4cffc4::t_9873fc7264bae8 597-599
+  s_59289c1f4cffc4::t_70f0dadd695457 202-209,480-483,531-532,582-586
+  s_59289c1f4cffc4::t_43a67fe0fee5fe 564-565,567-569,571
+  s_59289c1f4cffc4::t_a0fc9208d60241 329-331,385
+  s_59289c1f4cffc4::t_4b595ca5efe268 201
+crates/gespan-core/Cargo.toml
+  s_59289c1f4cffc4::t_9827bb21392b84 10,26-32
+crates/gespan-gpui/src/decision_log.rs
+  s_59289c1f4cffc4::t_70f0dadd695457 4,504,534,945,977-980
+  s_59289c1f4cffc4::t_96c42beca943ae 398-400,941-944,946-976,981-1009
+  s_59289c1f4cffc4::t_b28323045a711b 11,397,421-425,432-437,444,447-460,462-464,470-472,476-478,482-487,489,491-498,529
+  s_59289c1f4cffc4::t_0c5e26cf2553a0 461,479-481
+crates/gespan-gpui/Cargo.lock
+  s_59289c1f4cffc4::t_9aff9f1891aa6e 2863,2877,2895,3043,3079,5014,8009,11425
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c1a24485e1bda2fd3b7677288f1088ab52845647",
+  "prompts": {},
+  "sessions": {
+    "s_59289c1f4cffc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31cc82b6-78e2-47a5-8996-0a796d9c6a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}

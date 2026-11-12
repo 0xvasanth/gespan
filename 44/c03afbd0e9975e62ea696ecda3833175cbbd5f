@@ -1,0 +1,108 @@
+crates/gespan-gpui/Cargo.toml
+  s_59289c1f4cffc4::t_d2deec6baac032 8-12
+crates/gespan-core/src/decisions/mod.rs
+  s_59289c1f4cffc4::t_eca7293bbf0441 4,18
+  s_59289c1f4cffc4::t_85de968c27adfe 15
+crates/gespan-core/migrations/gespan/snapshots/0002_snapshot.toml
+  s_59289c1f4cffc4::t_f4cff20bb9d1b3 1-2238
+crates/gespan-gpui/src/settings/preferences.rs
+  s_59289c1f4cffc4::t_41d12231b93a55 76-79,188,654-666
+  s_59289c1f4cffc4::t_07f9660e5ca152 667
+crates/gespan-core/src/decisions/tests/context.rs
+  s_59289c1f4cffc4::t_85de968c27adfe 149-151
+  s_59289c1f4cffc4::t_52680958544caa 103-148,152-159
+crates/gespan-core/src/store/db.rs
+  s_59289c1f4cffc4::t_80481ab7b27194 128-132,182-184,190,192-210,226-227,277
+  s_59289c1f4cffc4::t_85de968c27adfe 185-189
+  s_59289c1f4cffc4::t_fc5800c2b973bc 191
+crates/gespan-gpui/src/settings/widgets.rs
+  s_59289c1f4cffc4::t_41d12231b93a55 496
+crates/gespan-core/Cargo.toml
+  s_59289c1f4cffc4::t_f038fd863b55c6 8-11,20-27
+crates/gespan-core/src/decisions/tests/review.rs
+  s_59289c1f4cffc4::t_52680958544caa 516-537
+crates/gespan-core/src/orm.rs
+  s_59289c1f4cffc4::t_f038fd863b55c6 47,81-98,101-106
+  s_59289c1f4cffc4::t_85de968c27adfe 99-100
+  s_59289c1f4cffc4::t_671cba0d467169 107-108
+crates/gespan-core/src/decisions/tests/vector.rs
+  s_59289c1f4cffc4::t_2a95ae814effb8 158-161,165,168
+  s_59289c1f4cffc4::t_85f0a9c2aa5e72 11
+  s_59289c1f4cffc4::t_bd845434e29dea 162-164,166-167
+  s_59289c1f4cffc4::t_e23d403b6e8f43 1-10,12-149,153-157,169-179,187-357,361-437,442
+  s_59289c1f4cffc4::t_85de968c27adfe 150-152,180-186,358-360,438-441
+crates/gespan-core/src/orm/kind.rs
+  s_59289c1f4cffc4::t_eca7293bbf0441 48,59,119
+crates/gespan-core/migrations/gespan/history.toml
+  s_59289c1f4cffc4::t_f4cff20bb9d1b3 12-16
+crates/gespan-core/src/decisions/vector.rs
+  s_59289c1f4cffc4::t_7feaa6fa90321c 1-13,15-24,27-30,33-63,65-162,164-165
+  s_59289c1f4cffc4::t_f4cff20bb9d1b3 14
+  s_59289c1f4cffc4::t_85de968c27adfe 25-26,31-32,163
+  s_59289c1f4cffc4::t_d15737187365c2 64
+crates/gespan-core/src/decisions/review.rs
+  s_59289c1f4cffc4::t_71f816f5a0aa25 43-45
+crates/gespan-core/src/decisions/store.rs
+  s_59289c1f4cffc4::t_fbbdc5a30c1432 10,12,16-17,20-30,103-107,118-183,188-213,218-239,242-261,324-355,357,375-378,402,415-417,481,483,512-515,535,547-550,581,603,617-619,643-649,654-656,662-666,671-677,685,688-689,700,704-705,713-728,829-837,845-859,861-921,1025-1026
+  s_59289c1f4cffc4::t_85de968c27adfe 184-187,214-217,240-241,667-670
+  s_59289c1f4cffc4::t_eca7293bbf0441 53-54
+  s_59289c1f4cffc4::t_c70bfcaafcda17 860
+crates/gespan-gpui/src/settings/pages/providers.rs
+  s_59289c1f4cffc4::t_5a6a9da62d4ecf 280
+  s_59289c1f4cffc4::t_85de968c27adfe 284-298
+  s_59289c1f4cffc4::t_41d12231b93a55 299
+crates/gespan-core/src/decisions/tests/mod.rs
+  s_59289c1f4cffc4::t_d557dc0020496f 5-6
+  s_59289c1f4cffc4::t_85f0a9c2aa5e72 11
+crates/gespan-core/migrations/gespan/migrations/0002_decision_vectors.sql
+  s_59289c1f4cffc4::t_f4cff20bb9d1b3 1-6
+crates/gespan-core/src/decisions/entry.rs
+  s_59289c1f4cffc4::t_cb768276f4841b 227-229,244
+crates/gespan-gpui/src/decision_log.rs
+  s_59289c1f4cffc4::t_85de968c27adfe 424-427,442-443
+  s_59289c1f4cffc4::t_a079a03e967d8c 472-483
+  s_59289c1f4cffc4::t_5a6a9da62d4ecf 377-382,386-423,428-441,444-471,484-507
+  s_59289c1f4cffc4::t_278e380fcfdfe5 508
+crates/gespan-core/src/decisions/tests/toolkit.rs
+  s_59289c1f4cffc4::t_85de968c27adfe 941-943
+  s_59289c1f4cffc4::t_52680958544caa 914-940,944-950
+crates/gespan-core/src/decisions/embed.rs
+  s_59289c1f4cffc4::t_efaa7e06bc4a6a 1-231
+crates/gespan-core/src/decisions/tests/nomic_latency.rs
+  s_59289c1f4cffc4::t_d557dc0020496f 1-24,27-49
+  s_7a8c7041476d04::t_45a52aedcc2435 25-26
+crates/gespan-gpui/src/settings/model.rs
+  s_59289c1f4cffc4::t_41d12231b93a55 585-589
+  s_59289c1f4cffc4::t_681f9a813baf5e 584
+crates/gespan-gpui/src/shell/settings.rs
+  s_59289c1f4cffc4::t_41d12231b93a55 449-453
+crates/gespan-core/src/decisions/context.rs
+  s_59289c1f4cffc4::t_52680958544caa 20-21
+  s_59289c1f4cffc4::t_71f816f5a0aa25 34-44
+crates/gespan-gpui/Cargo.lock
+  s_59289c1f4cffc4::t_36aee94da059e0 131,133,696-701,1051-1059,1235-1249,1665-1714,1818-1848,2225-2230,2310-2324,2840,2847,2878,2893,3041,3077,3870-3871,3979-3984,4237-4242,4902-4907,4937-4952,4988-4997,5024,5162-5183,5257-5271,6011-6032,6109-6132,7043-7048,7059-7069,7630-7642,8025,8266-8286,8423-8428,8949-8981,9602-9610,9641-9646,9671-9698,9739-9744,11475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44c03afbd0e9975e62ea696ecda3833175cbbd5f",
+  "prompts": {},
+  "sessions": {
+    "s_59289c1f4cffc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31cc82b6-78e2-47a5-8996-0a796d9c6a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_7a8c7041476d04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "633f75e3-97e3-4e3b-b5ee-0a3b6f60854f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
