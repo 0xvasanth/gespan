@@ -173,7 +173,7 @@ mod tests {
         ]);
         let original = serde_json::to_vec(&values).unwrap();
         std::fs::write(&old, &original).unwrap();
-        let desktop = std::fs::read(&path).unwrap();
+        let desktop = crate::orm::settled_bytes(&path);
         let store = Store::open_gespan(&path).unwrap();
         assert_eq!(
             store.setting("workspace").unwrap().as_deref(),
@@ -186,7 +186,7 @@ mod tests {
         store.save_setting("workspace", "new tabs").unwrap();
         drop(store);
         assert_eq!(std::fs::read(&old).unwrap(), original);
-        assert_eq!(std::fs::read(&path).unwrap(), desktop);
+        assert_eq!(crate::orm::settled_bytes(&path), desktop);
         let reopened = Store::open_gespan(&path).unwrap();
         assert_eq!(
             reopened.setting("workspace").unwrap().as_deref(),

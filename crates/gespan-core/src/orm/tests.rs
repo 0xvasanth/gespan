@@ -693,3 +693,33 @@ fn an_adopted_file_has_every_index_of_a_fresh_install() {
         }
     }
 }
+
+#[test]
+fn every_migration_splits_into_statements_on_every_platform() {
+    // Toasty splits a migration on "\n-- #[toasty::breakpoint]\n". A file
+    // checked out with CRLF (Git's default on Windows) does not split, runs
+    // as one statement and creates only its first table. .gitattributes
+    // keeps migrations LF; this fails if that ever stops holding.
+    for kind in Kind::ALL {
+        for migration in kind.migrations().migrations() {
+            assert!(
+                !migration.sql().contains('\r'),
+                "{} {} has CRLF line endings",
+                kind.name(),
+                migration.name()
+            );
+            let statements = migration
+                .sql()
+                .split("\n-- #[toasty::breakpoint]\n")
+                .filter(|sql| !sql.trim().is_empty())
+                .count();
+            let creates = migration.sql().matches("CREATE TABLE").count();
+            assert!(
+                statements >= creates,
+                "{} {} splits into {statements} statements for {creates} tables",
+                kind.name(),
+                migration.name()
+            );
+        }
+    }
+}
