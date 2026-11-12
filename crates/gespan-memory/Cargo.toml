@@ -1,0 +1,17 @@
+[package]
+name = "gespan-memory"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Built under the root workspace now, and later under the gespan-gpui
+# workspace too once gespan-core depends on it, so nothing here inherits from
+# either workspace.
+[dependencies]
+# The same bundled SQLite build gespan-graph and board-store use.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
