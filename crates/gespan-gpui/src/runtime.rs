@@ -315,6 +315,18 @@ fn run_turn_using(
             &transcript.rows[start..],
             settings.pilot_message_id.as_deref(),
         )?;
+        // The decision log counts only what the human typed. The session's
+        // first message decides whether anything in it ever counts.
+        if !settings.replay_failed_turn && crate::decision_log::typed_by_user(&settings) {
+            let store = locked(&store)?;
+            let opens = !transcript.rows[..start].iter().any(Row::is_prompt)
+                && store.history_before(summary.id)?.is_none();
+            if let Err(error) =
+                crate::decision_log::record_typed(&store, summary.id, &prompt, opens)
+            {
+                tracing::warn!(%error, "could not record the typed message");
+            }
+        }
         let mut info =
             settings
                 .turn_model
@@ -994,6 +1006,17 @@ fn run_turn_using(
                             }
                         }
                         Event::FollowUp(message) => {
+                            // A steer the human typed; app and agent ones are not.
+                            if message.typed
+                                && let Err(error) = crate::decision_log::record_typed(
+                                    &*locked(&store)?,
+                                    summary.id,
+                                    &message.text,
+                                    false,
+                                )
+                            {
+                                tracing::warn!(%error, "could not record the typed message");
+                            }
                             let at = transcript.begin("user");
                             transcript.rows[at].sent_at =
                                 message.sent_at.or(transcript.rows[at].sent_at);
