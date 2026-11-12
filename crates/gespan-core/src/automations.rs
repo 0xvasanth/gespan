@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use chrono::{Datelike, Local, TimeZone, Timelike};
 use std::path::Path;
 
+pub mod review_setup;
+
 fn now_millis() -> i64 {
     crate::time::now_ms().min(i64::MAX as u64) as i64
 }
@@ -80,6 +82,9 @@ pub struct Automation {
     pub session_folder_id: String,
     pub reuse_session: bool,
     pub runtime_mode: String,
+    /// Set on automations made by the review setup; where the review goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_results: Option<crate::review_policy::ReviewResults>,
     /// With the Pilot action the session settings above are kept but unused.
     #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
     pub action: AutomationAction,
@@ -132,6 +137,9 @@ pub struct AutomationUpsert {
     #[serde(default)]
     pub reuse_session: bool,
     pub runtime_mode: String,
+    /// Set on automations made by the review setup; where the review goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_results: Option<crate::review_policy::ReviewResults>,
     #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
     pub action: AutomationAction,
     #[serde(default = "default_trigger_kind")]
@@ -339,7 +347,7 @@ fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
     }
     if !matches!(
         input.runtime_mode.as_str(),
-        "supervised" | "auto-accept-edits" | "auto" | "full-access"
+        "supervised" | "auto-accept-edits" | "auto" | "full-access" | "read-only"
     ) {
         return Err("Invalid automation run mode.".into());
     }
@@ -830,6 +838,7 @@ impl Service {
             session_folder_id: automation.session_folder_id.trim().to_string(),
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode,
+            review_results: automation.review_results,
             action: automation.action,
             trigger_kind: automation.trigger_kind,
             trigger_event: automation.trigger_event.trim().to_string(),
@@ -1413,6 +1422,7 @@ impl AutomationUpsert {
             session_folder_id: String::new(),
             reuse_session: false,
             runtime_mode: "auto".into(),
+            review_results: None,
             action: AutomationAction::Session,
             trigger_kind: "time".into(),
             trigger_event: String::new(),
@@ -1440,6 +1450,7 @@ impl AutomationUpsert {
             session_folder_id: automation.session_folder_id.clone(),
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode.clone(),
+            review_results: automation.review_results,
             action: automation.action.clone(),
             trigger_kind: automation.trigger_kind.clone(),
             trigger_event: automation.trigger_event.clone(),
@@ -3736,6 +3747,23 @@ mod tests {
         assert_eq!(
             service.upsert(homeless).unwrap_err(),
             "Choose a project for this automation."
+        );
+    }
+
+    #[test]
+    fn read_only_is_a_valid_run_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let mut draft = waking("pilot-1");
+        draft.runtime_mode = "read-only".into();
+        assert_eq!(
+            service.upsert(draft.clone()).unwrap().runtime_mode,
+            "read-only"
+        );
+        draft.runtime_mode = "readonly".into();
+        assert_eq!(
+            service.upsert(draft).unwrap_err(),
+            "Invalid automation run mode."
         );
     }
 
