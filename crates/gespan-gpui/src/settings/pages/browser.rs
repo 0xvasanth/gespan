@@ -93,7 +93,7 @@ fn switch_label(ready: bool) -> AnyElement {
                 .bg(content(0.07))
                 .border_1()
                 .border_color(crate::glass::edge())
-                .child(icon("globe", 18.).text_color(content(0.8))),
+                .child(icon("internet", 18.).text_color(content(0.8))),
         )
         .child(
             div()
