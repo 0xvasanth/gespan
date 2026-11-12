@@ -425,18 +425,16 @@ impl Client {
         Ok(())
     }
     pub(super) fn permissions(&self, request: &Request) -> Value {
-        let mut rules = if request.settings.access == AccessMode::FullAccess {
+        let access = request.settings.effective_access();
+        let mut rules = if access == AccessMode::FullAccess {
             vec![("*", "allow")]
         } else {
             vec![("*", "ask"), ("question", "allow")]
         };
-        if matches!(
-            request.settings.access,
-            AccessMode::AutoAcceptEdits | AccessMode::Auto
-        ) {
+        if matches!(access, AccessMode::AutoAcceptEdits | AccessMode::Auto) {
             rules.push(("edit", "allow"));
         }
-        if request.settings.access == AccessMode::Auto {
+        if access == AccessMode::Auto {
             rules.push(("read", "allow"));
         }
         let everything = rules[0].1;
@@ -502,7 +500,9 @@ impl Client {
             };
             return Ok(result["id"].as_str().map(str::to_owned));
         }
-        let agent = if request.settings.plan || request.settings.access == AccessMode::ReadOnly {
+        let agent = if request.settings.plan
+            || request.settings.effective_access() == AccessMode::ReadOnly
+        {
             "plan"
         } else {
             request
