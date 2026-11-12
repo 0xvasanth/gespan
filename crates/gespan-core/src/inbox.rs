@@ -87,6 +87,8 @@ pub struct Item {
     pub project_name: String,
     pub project_path: String,
     pub attention_reason: String,
+    /// Who opened it, where the provider's list says (GitHub).
+    pub author: String,
     /// What happened on the item, when this item stands for one event on
     /// it (a comment, a failed check, a review request, a merge or an
     /// assignment) rather than the item itself. Such items are offered to
@@ -250,6 +252,8 @@ pub struct Details {
     pub base_ref_name: String,
     pub head_ref_name: String,
     pub review_decision: String,
+    /// Who is asked to review, where the provider says (GitHub).
+    pub review_requests: Vec<String>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -357,6 +361,8 @@ pub struct StatusFilter {
 #[serde(default, rename_all = "camelCase")]
 pub struct Filters {
     pub assigned_to_me: bool,
+    /// GitHub only: pull requests that ask for your review.
+    pub review_requested: bool,
     pub hidden_projects: Vec<String>,
     pub hidden_linear_projects: Vec<String>,
     pub hidden_kinds: Vec<String>,
@@ -367,6 +373,7 @@ impl Default for Filters {
     fn default() -> Self {
         Self {
             assigned_to_me: false,
+            review_requested: false,
             hidden_projects: vec![],
             hidden_linear_projects: vec![],
             hidden_kinds: vec![],
@@ -395,6 +402,10 @@ impl Filters {
             return false;
         }
         if !tracker && self.hidden_kinds.contains(&item.kind) {
+            return false;
+        }
+        // Review requests are pull requests; GitHub picks which ones.
+        if self.review_requested && source == "github" && item.kind != "pr" {
             return false;
         }
         let linear_project = if item.project_id.is_empty() {
@@ -585,8 +596,13 @@ impl ViewState {
         let mut jira = self.hidden_jira_projects.clone();
         jira.sort();
         format!(
-            "{}:{}:{}:{}:{}",
+            "{}{}:{}:{}:{}:{}",
             self.filters.assigned_to_me,
+            if self.filters.review_requested {
+                ":review"
+            } else {
+                ""
+            },
             self.filters.fetch_state(),
             paths.join("|"),
             teams.join(","),
@@ -750,14 +766,21 @@ pub fn github_repositories(project: &Path) -> Result<Vec<String>, String> {
     })
 }
 
+/// The `gh --search` that lists only pull requests asking for your review.
+pub const REVIEW_REQUESTED_SEARCH: &str = "review-requested:@me";
+
 fn github_work_items(
     project: &Path,
     repo: &str,
     kind: &str,
-    assigned_to_me: bool,
+    filters: &Filters,
     state: &str,
     limit: u32,
 ) -> Result<Vec<Item>, String> {
+    let Some(search) = github_search(filters, kind) else {
+        return Ok(vec![]);
+    };
+    let assigned_to_me = filters.assigned_to_me;
     github_call(
         project,
         "git_github_work_items",
@@ -766,11 +789,31 @@ fn github_work_items(
             "kind": kind,
             "assignedToMe": assigned_to_me,
             "state": state,
-            "search": "",
+            "search": search,
             "limit": limit,
         }),
-        || github::git_github_work_items_for(project, repo, kind, assigned_to_me, state, "", limit),
+        || {
+            github::git_github_work_items_for(
+                project,
+                repo,
+                kind,
+                assigned_to_me,
+                state,
+                search,
+                limit,
+            )
+        },
     )
+}
+
+/// What `gh` searches for `kind` under `filters`, or `None` when nothing of
+/// that kind can match: review requests are never issues.
+fn github_search(filters: &Filters, kind: &str) -> Option<&'static str> {
+    match (filters.review_requested, kind) {
+        (true, "pr") => Some(REVIEW_REQUESTED_SEARCH),
+        (true, _) => None,
+        (false, _) => Some(""),
+    }
 }
 
 fn collect_repo_items(
@@ -1113,7 +1156,7 @@ impl Service {
                             project,
                             repo,
                             kind,
-                            state.filters.assigned_to_me,
+                            &state.filters,
                             state.filters.fetch_state(),
                             limit,
                         ),
@@ -1460,6 +1503,49 @@ fn run_command(
         Err(format!("{program} returned no output"))
     } else {
         Ok(stdout)
+    }
+}
+
+#[cfg(test)]
+mod review_requested_view_tests {
+    use super::*;
+
+    #[test]
+    fn the_review_requested_view_asks_github_for_review_requests_only() {
+        let review = Filters {
+            review_requested: true,
+            ..Default::default()
+        };
+        assert_eq!(github_search(&review, "pr"), Some(REVIEW_REQUESTED_SEARCH));
+        // Issues never ask for a review, so none are fetched.
+        assert_eq!(github_search(&review, "issue"), None);
+        assert_eq!(github_search(&Filters::default(), "pr"), Some(""));
+        assert_eq!(github_search(&Filters::default(), "issue"), Some(""));
+
+        // A cached issue hides at once, before the refetch lands; other
+        // sources ignore the view.
+        let issue = Item {
+            provider: "github".into(),
+            kind: "issue".into(),
+            ..Default::default()
+        };
+        let pr = Item {
+            kind: "pr".into(),
+            ..issue.clone()
+        };
+        assert!(!review.matches(&issue, "github", ""));
+        assert!(review.matches(&pr, "github", ""));
+        let linear = Item {
+            provider: "linear".into(),
+            ..issue.clone()
+        };
+        assert!(review.matches(&linear, "linear", ""));
+
+        // The view is part of the fetch scope, so switching refetches.
+        let mut state = ViewState::default();
+        let all = state.fetch_scope(&[]);
+        state.filters.review_requested = true;
+        assert_ne!(state.fetch_scope(&[]), all);
     }
 }
 

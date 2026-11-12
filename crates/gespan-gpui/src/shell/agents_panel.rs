@@ -226,19 +226,28 @@ fn pill(ink: Hsla, fill: Hsla, edge: Hsla, label: String) -> Div {
     div()
         .flex_shrink_0()
         .h(px(20.))
-        .pl(px(7.))
-        .pr(px(8.))
+        .pl(px(8.))
+        .pr(px(9.))
         .rounded_full()
         .flex()
         .items_center()
-        .gap(px(5.))
+        .gap(px(6.))
         .bg(fill)
         .border_1()
         .border_color(edge)
         .text_size(px(11.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(ink)
-        .child(div().size(px(6.)).rounded_full().bg(ink))
+        .child(
+            div()
+                .size(px(6.))
+                .rounded_full()
+                .bg(ink)
+                // The mock's 3px halo, so a live dot reads as live.
+                .shadow(vec![
+                    BoxShadow::new(px(0.), px(0.), ink.opacity(0.25)).spread_radius(px(3.)),
+                ]),
+        )
         .child(label)
 }
 
@@ -485,9 +494,28 @@ impl Shell {
                     .into_any_element(),
             );
         }
-        let tint = background_base().opacity(0.72);
+        // Dark: a frosted plate only a little lighter than the sidebar
+        // (#16161a at 72%), not a slab of the window's base colour.
+        let tint = if is_light() {
+            background_base().opacity(0.72)
+        } else {
+            Hsla::from(rgb(0x16161a)).opacity(0.72)
+        };
         let shadow = if is_light() { black(0.12) } else { black(0.45) };
-        let hold = self.agents_hold_button(cx);
+        // Once the list scrolls, the footer says how many rows sit below the
+        // first six instead of offering Hold all (the status bar keeps it).
+        let more = agents.len().saturating_sub(LIST_ROWS);
+        let hold = if fixed.is_some() {
+            div()
+                .debug_selector(|| "agents-scroll-more".into())
+                .px(px(8.))
+                .text_size(px(11.5))
+                .text_color(content(0.45))
+                .child(format!("Scroll for {more} more"))
+                .into_any_element()
+        } else {
+            self.agents_hold_button(cx)
+        };
         div()
             .id("agents-panel")
             .debug_selector(|| "agents-panel".into())
@@ -535,6 +563,7 @@ impl Shell {
                         div()
                             .flex_shrink_0()
                             .text_size(px(12.5))
+                            .line_height(px(16.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(content(1.))
                             .child("Agents"),
@@ -546,6 +575,7 @@ impl Shell {
                             .min_w_0()
                             .truncate()
                             .text_size(px(11.5))
+                            .line_height(px(16.))
                             .text_color(content(0.5))
                             .child(counts.header_text()),
                     ),
@@ -619,7 +649,8 @@ impl Shell {
                     .inset_0()
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(content(0.12)),
+                    .border_color(content(0.12))
+                    .shadow(vec![BoxShadow::new(px(0.), px(1.), content(0.12)).inset()]),
             )
             .into_any_element()
     }
@@ -719,7 +750,7 @@ impl Shell {
             .items_center()
             .gap(px(9.))
             .px(px(8.))
-            .py(px(6.))
+            .py(px(7.))
             .rounded(px(8.))
             .when(selected, |d| d.bg(content(0.08)))
             .hover(|s| s.bg(content(0.06)))
@@ -734,7 +765,7 @@ impl Shell {
                         div()
                             .truncate()
                             .text_size(px(12.5))
-                            .line_height(px(17.))
+                            .line_height(px(15.))
                             .text_color(content(0.92))
                             .child(agent.title.clone()),
                     )
@@ -742,7 +773,7 @@ impl Shell {
                         div()
                             .truncate()
                             .text_size(px(11.))
-                            .line_height(px(15.))
+                            .line_height(px(13.))
                             .text_color(content(0.5))
                             .child(meta),
                     ),

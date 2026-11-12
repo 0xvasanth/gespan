@@ -165,6 +165,26 @@ fn every_workspace_preset_has_a_swatch_and_picking_one_applies_it(cx: &mut TestA
             "{id} has a swatch"
         );
     }
+    // The name sits left of the swatches on their line, and each accent dot
+    // is centred in its swatch.
+    let name = visual
+        .debug_bounds("settings-workspace-theme-name")
+        .unwrap();
+    let first = visual
+        .debug_bounds("settings-workspace-theme-default")
+        .unwrap();
+    assert!(name.right() <= first.left());
+    assert!((name.center().y - first.center().y).abs() < px(1.));
+    for (id, ..) in palettes::PALETTES {
+        let swatch = visual
+            .debug_bounds(format!("settings-workspace-theme-{id}").leak())
+            .unwrap();
+        let dot = visual
+            .debug_bounds(format!("settings-workspace-theme-dot-{id}").leak())
+            .unwrap();
+        assert!((dot.center().x - swatch.center().x).abs() < px(0.5), "{id}");
+        assert!((dot.center().y - swatch.center().y).abs() < px(0.5), "{id}");
+    }
     let last = palettes::PALETTES.last().unwrap().0;
     click(visual, &format!("settings-workspace-theme-{last}"));
     let mut expected = Preferences::default();
@@ -300,4 +320,251 @@ fn the_preview_line_names_each_choice() {
     assert!(line.starts_with("System · Harbor preset · Custom accent · Glass off"));
     p.accent_color = None;
     assert!(appearance_summary(&p, false, false, true, true).contains("Default accent"));
+}
+
+#[test]
+fn the_inbox_filter_shows_muted_custom_or_matching_projects() {
+    use super::notification_preferences::project_shown;
+    // name, detail, muted, custom
+    let projects = [
+        ("acme/api", "~/code/api", false, false),
+        ("acme/dashboard", "~/code/dash", false, true),
+        ("notes", "~/notes", true, false),
+    ];
+    let names = |show: &str, query: &str| {
+        projects
+            .iter()
+            .filter(|(n, d, m, c)| project_shown(show, query, n, d, *m, *c))
+            .map(|p| p.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names("all", "").len(), 3);
+    assert_eq!(names("muted", ""), ["notes"]);
+    assert_eq!(names("custom", ""), ["acme/dashboard"]);
+    assert_eq!(names("all", " ACME "), ["acme/api", "acme/dashboard"]);
+    assert_eq!(names("all", "code/dash"), ["acme/dashboard"], "by path");
+    assert!(names("muted", "acme").is_empty(), "both must hold");
+}
+
+#[gpui::test]
+fn providers_draw_one_card_per_agent_and_hide_controls_an_absent_cli_cannot_use(
+    cx: &mut TestAppContext,
+) {
+    use gespan_core::provider::Kind;
+    let (window, mut visual) = window(Section::Providers, Preferences::default(), cx);
+    let visual = &mut visual;
+    // While the check runs, no agent is called installed or not.
+    window
+        .update(visual, |view, _, cx| {
+            view.discovery_loading = true;
+            view.discovery.binaries = vec![(Kind::Codex, Some("/bin/codex".into()))];
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual
+            .debug_bounds("settings-agent-installed-codex")
+            .is_none()
+    );
+    window
+        .update(visual, |view, _, cx| {
+            view.discovery_loading = false;
+            view.discovery.binaries = Kind::ALL
+                .into_iter()
+                .map(|kind| (kind, (kind == Kind::Codex).then(|| "/bin/codex".into())))
+                .collect();
+            view.ctx.catalogs.insert(
+                Kind::Codex.id().into(),
+                vec![("gpt-5".into(), "GPT-5".into())],
+            );
+            view.ctx.catalogs.insert(
+                Kind::Claude.id().into(),
+                vec![("opus".into(), "Opus".into())],
+            );
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    for kind in Kind::ALL {
+        let id = kind.id();
+        assert!(
+            visual
+                .debug_bounds(format!("settings-agent-{id}").leak())
+                .is_some(),
+            "{id} has its card"
+        );
+        let select = visual
+            .debug_bounds(format!("settings-select-{id}").leak())
+            .is_some();
+        let picker = visual
+            .debug_bounds(format!("settings-toggle-{id}").leak())
+            .is_some();
+        // Only the installed CLI offers a model and the picker switch, even
+        // where a model catalogue exists for one that isn't installed.
+        assert_eq!(select, kind == Kind::Codex, "{id} model select");
+        assert_eq!(
+            visual
+                .debug_bounds(format!("settings-agent-installed-{id}").leak())
+                .is_some(),
+            kind == Kind::Codex,
+            "{id} installed pill"
+        );
+        assert_eq!(picker, kind == Kind::Codex, "{id} picker toggle");
+    }
+}
+
+#[test]
+fn keybindings_group_by_area_and_split_into_caps() {
+    use super::pages::{BINDINGS, by_area, key_caps};
+    let areas = by_area(BINDINGS);
+    let names: Vec<_> = areas.iter().map(|(a, _)| *a).collect();
+    assert_eq!(
+        names.first(),
+        Some(&"App"),
+        "in the order they first appear"
+    );
+    let total: usize = areas.iter().map(|(_, rows)| rows.len()).sum();
+    assert_eq!(total, BINDINGS.len(), "every binding lands in one area");
+    for (area, rows) in &areas {
+        assert!(
+            rows.iter()
+                .all(|r| r.command.starts_with(&format!("{area}: ")))
+        );
+    }
+    assert_eq!(key_caps("⌘⇧P"), ["⌘", "⇧", "P"]);
+    assert_eq!(key_caps("⌘⇧Space"), ["⌘", "⇧", "Space"]);
+    assert_eq!(key_caps("Ctrl+Shift+P"), ["Ctrl", "Shift", "P"]);
+    // The plus key itself is a cap, not a separator.
+    assert_eq!(key_caps("⌘+"), ["⌘", "+"]);
+    assert_eq!(key_caps("Ctrl++"), ["Ctrl", "+"]);
+    assert!(key_caps("").is_empty());
+}
+
+#[gpui::test]
+fn the_keybinding_filter_narrows_areas_and_a_chip_jumps_to_one(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Keybindings, Preferences::default(), cx);
+    let visual = &mut visual;
+    assert!(
+        visual
+            .debug_bounds("settings-keybinding-jump-App")
+            .is_some()
+    );
+    assert!(
+        visual
+            .debug_bounds("settings-keybinding-jump-Terminal")
+            .is_some()
+    );
+    click(visual, "settings-keybinding-jump-Terminal");
+    window
+        .update(visual, |view, _, _| {
+            assert_eq!(
+                view.revealed.as_deref(),
+                Some("Terminal"),
+                "the area flashes"
+            );
+        })
+        .unwrap();
+    window
+        .update(visual, |view, _, cx| {
+            view.keybinding_filter
+                .update(cx, |i, cx| i.set_text("terminal".into(), cx))
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual
+            .debug_bounds("settings-keybinding-jump-Terminal")
+            .is_some()
+    );
+    assert!(
+        visual
+            .debug_bounds("settings-keybinding-jump-Tab")
+            .is_none(),
+        "areas with no match drop out"
+    );
+    assert!(visual.debug_bounds("shortcut-Terminal: New").is_some());
+    assert!(visual.debug_bounds("shortcut-App: Settings").is_none());
+}
+
+#[gpui::test]
+fn dictation_leads_with_its_shortcut(cx: &mut TestAppContext) {
+    let (_, mut visual) = window(Section::Dictation, Preferences::default(), cx);
+    let visual = &mut visual;
+    let shortcut = visual
+        .debug_bounds("settings-row-dictation-shortcut")
+        .unwrap();
+    let model = visual.debug_bounds("dictation-model-group").unwrap();
+    assert!(shortcut.bottom() <= model.top(), "Shortcut comes first");
+}
+
+#[gpui::test]
+fn skills_list_in_project_personal_and_gespan_cards(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Skills, Preferences::default(), cx);
+    let visual = &mut visual;
+    window
+        .update(visual, |view, _, cx| {
+            view.discovery.skills = [("review", "project"), ("notes", "user")]
+                .map(|(name, scope)| data::Skill {
+                    name: name.into(),
+                    description: String::new(),
+                    path: format!("/skills/{name}/SKILL.md").into(),
+                    scope: scope.into(),
+                    provider: "agents".into(),
+                })
+                .to_vec();
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let project = visual.debug_bounds("settings-skills-project").unwrap();
+    let personal = visual.debug_bounds("settings-skills-personal").unwrap();
+    assert!(project.bottom() <= personal.top(), "Project first");
+    // A kind with no skills shows no empty card.
+    assert!(visual.debug_bounds("settings-skills-gespan").is_none());
+    assert_eq!(super::pages::skill_bucket("builtin"), 2);
+}
+
+#[gpui::test]
+fn archive_lists_its_projects_and_conversations_and_deletes_them(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Archive, Preferences::default(), cx);
+    let visual = &mut visual;
+    window
+        .update(visual, |view, _, cx| {
+            view.ctx.cwd = "/work/api".into();
+            view.ctx.project_label = "api".into();
+            view.ctx.archived = vec![ArchivedSession {
+                id: 7,
+                title: "Old spike".into(),
+                provider: "claude".into(),
+                updated_at: 1_760_000_000_000,
+            }];
+            view.ctx.archived_projects = vec![("/work/old".into(), "old".into())];
+            cx.notify();
+        })
+        .unwrap();
+    // Drawing both kinds of row once is the regression: Delete once set its
+    // hover twice and took the app down.
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("settings-archived-count").is_some());
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let log = seen.clone();
+    let entity = window.root(visual).unwrap();
+    let _keep = visual.update(|_, cx| {
+        cx.subscribe(&entity, move |_, event: &SettingsEvent, _| {
+            log.borrow_mut().push(match event {
+                SettingsEvent::Delete(id) => format!("delete:{id}"),
+                SettingsEvent::DeleteProject(path) => format!("delete-project:{path}"),
+                _ => "other".into(),
+            })
+        })
+    });
+    click(visual, "settings-delete-7");
+    click(visual, "settings-delete-project-0");
+    assert_eq!(*seen.borrow(), ["delete:7", "delete-project:/work/old"]);
 }

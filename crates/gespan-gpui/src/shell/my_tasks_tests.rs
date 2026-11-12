@@ -38,6 +38,7 @@ pub(super) fn flow_task(key: &str, project: &str, since_ms: u64) -> TaskItem {
         project: project.into(),
         headline: format!("Approve {key}?"),
         who: "Release Flow".into(),
+        agent: None,
         source_label: format!("Release · {key}"),
         source: Source::FlowRun(key.into()),
         body: Body::Flow {
@@ -533,7 +534,7 @@ fn history_shows_four_turns_and_loads_four_more(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("my-tasks-history").is_some());
     assert!(visual.debug_bounds("my-tasks-turn-3").is_some());
     assert!(visual.debug_bounds("my-tasks-turn-4").is_none());
-    assert!(visual.debug_bounds("my-tasks-history-start").is_none());
+    assert!(visual.debug_bounds("my-tasks-load-earlier").is_some());
     // Scrolled to the top of the history, scrolling further up loads more.
     let history = visual.debug_bounds("my-tasks-history").unwrap();
     for _ in 0..40 {
@@ -557,16 +558,13 @@ fn history_shows_four_turns_and_loads_four_more(cx: &mut TestAppContext) {
     // The older turns open above the ones already read.
     assert!(visual.debug_bounds("my-tasks-turn-0").is_some());
     assert!(visual.debug_bounds("my-tasks-load-earlier").is_none());
-    assert!(visual.debug_bounds("my-tasks-history-start").is_some());
 }
 
-#[gpui::test]
-fn tool_calls_show_as_one_line(cx: &mut TestAppContext) {
-    let window = setup(cx);
-    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+/// A session whose last turn ran `calls` tool calls back to back.
+fn tool_run(window: WindowHandle<Shell>, visual: &mut VisualTestContext, calls: usize) {
     let id = other_session(window, visual);
-    let tool = |id: &str| {
-        let mut call = gespan_core::tool::ToolCall::new(id, "Bash");
+    let tool = |id: String| {
+        let mut call = gespan_core::tool::ToolCall::new(&id, "Bash");
         call.input = serde_json::json!({ "command": "cargo test" }).to_string();
         serde_json::to_string(&call).unwrap()
     };
@@ -574,17 +572,160 @@ fn tool_calls_show_as_one_line(cx: &mut TestAppContext) {
         .update(visual, |shell, _, cx| {
             shell.sessions[&id].update(cx, |view, cx| {
                 view.push_history_for_test("user", "Run the tests", cx);
-                view.push_history_for_test("tool", &tool("t1"), cx);
-                view.push_history_for_test("tool", &tool("t2"), cx);
+                for n in 0..calls {
+                    view.push_history_for_test("tool", &tool(format!("t{n}")), cx);
+                }
             });
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn each_tool_call_is_its_own_pill_on_one_row(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    tool_run(window, visual, 2);
     let (_, _controls) = waiting_page(window, visual, vec![approval("a1")]);
-    // Both calls are on one line that counts them.
+    // One row for the run, counting both calls, with a pill for each.
     assert!(visual.debug_bounds("my-tasks-tools-0-2").is_some());
     assert!(
         visual.debug_bounds("my-tasks-tools-0-1").is_none(),
-        "not one line each"
+        "one row, not one each"
+    );
+    let first = visual
+        .debug_bounds("my-tasks-tool-0-0")
+        .expect("first pill");
+    let second = visual
+        .debug_bounds("my-tasks-tool-0-1")
+        .expect("second pill");
+    assert_eq!(first.origin.y, second.origin.y, "side by side");
+    assert!(second.origin.x > first.origin.x + first.size.width);
+    assert!(visual.debug_bounds("my-tasks-tools-more-0").is_none());
+}
+
+#[gpui::test]
+fn a_long_run_of_tool_calls_folds_into_more(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    tool_run(window, visual, 5);
+    let (_, _controls) = waiting_page(window, visual, vec![approval("a1")]);
+    assert!(visual.debug_bounds("my-tasks-tools-0-5").is_some());
+    assert!(visual.debug_bounds("my-tasks-tool-0-2").is_some());
+    assert!(visual.debug_bounds("my-tasks-tool-0-3").is_none());
+    assert!(visual.debug_bounds("my-tasks-tools-more-0").is_some());
+}
+
+/// A Bash approval for `command`, as Claude Code sends one.
+fn bash(id: &str, command: &str) -> gespan_core::agent::Approval {
+    let mut call = gespan_core::tool::ToolCall::new(&format!("call-{id}"), "Bash");
+    call.input = serde_json::json!({ "command": command }).to_string();
+    gespan_core::agent::Approval {
+        id: id.into(),
+        title: "Allow Bash?".into(),
+        detail: command.into(),
+        can_remember: true,
+        tool: Some(call),
+    }
+}
+
+#[gpui::test]
+fn a_shell_command_sits_in_one_unwrapped_line_with_the_answer_hint(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    // Far wider than the card: it must stay on one line, not wrap.
+    let long = format!(
+        "gh pr create --base main --title \"{}\"",
+        "keep the version ".repeat(12)
+    );
+    let (_, _controls) = waiting_page(window, visual, vec![bash("a1", &long)]);
+    let well = visual
+        .debug_bounds("my-tasks-command")
+        .expect("the command well");
+    let card = visual.debug_bounds("my-tasks-card").unwrap();
+    assert!(
+        well.size.height < px(48.),
+        "one 19px line plus padding: {well:?}"
+    );
+    assert!(well.size.width <= card.size.width);
+    assert!(visual.debug_bounds("my-tasks-card-hint").is_some());
+    assert!(
+        visual.debug_bounds("approval-detail").is_none(),
+        "no second copy"
+    );
+}
+
+#[gpui::test]
+fn a_multi_line_command_shows_every_line(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (_, _controls) = waiting_page(
+        window,
+        visual,
+        vec![bash("a1", "cd web\nbun install\nbun run build")],
+    );
+    let well = visual
+        .debug_bounds("my-tasks-command")
+        .expect("the command well");
+    assert!(well.size.height >= px(57.), "three 19px lines: {well:?}");
+}
+
+#[gpui::test]
+fn a_request_with_no_command_keeps_the_full_detail(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (_, _controls) = waiting_page(window, visual, vec![approval("a1")]);
+    assert!(visual.debug_bounds("my-tasks-command").is_none());
+    assert!(visual.debug_bounds("approval-detail").is_some());
+}
+
+#[gpui::test]
+fn enter_on_the_page_allows_the_selected_request_once(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (_, controls) = waiting_page(
+        window,
+        visual,
+        vec![bash("a1", "git push"), bash("a2", "ls")],
+    );
+    let view = page(window, visual);
+    window
+        .update(visual, |_, window, cx| {
+            view.focus_handle(cx).focus(window, cx)
+        })
+        .unwrap();
+    visual.simulate_keystrokes("enter");
+    let sent = controls.try_recv().expect("Enter answered");
+    assert_eq!(sent.id, "a1");
+    assert!(matches!(sent.decision, gespan_core::agent::Decision::Allow));
+    assert!(controls.try_recv().is_err(), "one answer for one press");
+}
+
+#[gpui::test]
+fn enter_while_typing_or_with_a_modifier_answers_nothing(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (_, controls) = waiting_page(window, visual, vec![bash("a1", "git push")]);
+    let view = page(window, visual);
+    window
+        .update(visual, |_, window, cx| {
+            let search = view.read(cx).search.focus_handle(cx);
+            search.focus(window, cx);
+        })
+        .unwrap();
+    visual.simulate_keystrokes("enter");
+    assert!(
+        controls.try_recv().is_err(),
+        "Enter in the search allowed a command"
+    );
+    window
+        .update(visual, |_, window, cx| {
+            view.focus_handle(cx).focus(window, cx)
+        })
+        .unwrap();
+    visual.simulate_keystrokes("cmd-enter shift-enter");
+    assert!(
+        controls.try_recv().is_err(),
+        "a modified Enter allowed a command"
     );
 }
 
@@ -782,6 +923,8 @@ fn the_page_opens_on_waiting_and_answered_lists_what_you_chose(cx: &mut TestAppC
     click(visual, &first);
     assert!(visual.debug_bounds("my-tasks-past-answer").is_some());
     assert!(visual.debug_bounds("my-tasks-remember").is_none());
+    // The Answered segment counts what its list holds.
+    assert!(visual.debug_bounds("my-tasks-count-answered-2").is_some());
     // Waiting has nothing left, and its count says so.
     click(visual, "my-tasks-tab-waiting");
     assert_eq!(

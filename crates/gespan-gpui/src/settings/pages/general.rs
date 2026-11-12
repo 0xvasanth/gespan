@@ -63,10 +63,33 @@ impl SettingsView {
             // A shortcut another app holds reads as waiting on you, under
             // the description it qualifies.
             let description = div()
-                .child(self.description(format!(
-                    "Press {} from any app. Return starts a session in the background; ⌘Return opens it. Change the shortcut in Keybindings.",
-                    super::keybindings::quick_composer_label(&p)
-                )))
+                .child(
+                    div()
+                        .mt(px(2.))
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(4.))
+                        .text_size(px(12.))
+                        .line_height(px(18.))
+                        .text_color(content(0.62))
+                        .child("Press")
+                        .child(
+                            div()
+                                .debug_selector(|| "settings-quick-composer-keys".into())
+                                .px(px(5.))
+                                .rounded(px(4.))
+                                .border_1()
+                                .border_color(glass::edge())
+                                .font_family(crate::fonts::monospace())
+                                .text_size(px(10.5))
+                                .line_height(px(16.))
+                                .child(super::keybindings::quick_composer_label(&p)),
+                        )
+                        .child(
+                            "from any app. Return starts a session in the background; ⌘Return opens it.",
+                        ),
+                )
                 .when_some(self.ctx.quick_error.clone(), |d, error| {
                     d.child(
                         div()
@@ -99,7 +122,7 @@ impl SettingsView {
             Some("keep-awake"),
             !cfg!(target_os = "macos"),
             "Keep screen awake",
-            Some("Stop the idle timer from dimming and locking the screen, so a locked laptop doesn't pause running agents. Closing the lid or locking the screen yourself still does.".into()),
+            Some("Stop the idle timer from dimming and locking the screen, so a locked laptop doesn't pause running agents.".into()),
             vec![self.segmented(
                 "keep-awake",
                 "Keep screen awake",
@@ -129,7 +152,7 @@ impl SettingsView {
             Some("terminal-placement"),
             false,
             "Terminal",
-            Some("Where new terminals open: docked below the chat, as a tab in the right panel, or as their own tabs in the title bar.".into()),
+            Some("Where new terminals open: below the chat, in the right panel, or as their own tabs.".into()),
             vec![self.segmented(
                 "terminal-placement",
                 "Terminal",
@@ -160,7 +183,9 @@ impl SettingsView {
                 Some("pilot-menu-bar-icon"),
                 false,
                 "Menu bar icon",
-                Some("Chat with a Pilot or open the quick composer from the macOS menu bar. Turn this off to hide the icon.".into()),
+                Some(
+                    "Chat with a Pilot or open the quick composer from the macOS menu bar.".into(),
+                ),
                 vec![self.toggle(
                     "pilot-menu-bar-icon",
                     "Menu bar icon",
@@ -260,7 +285,7 @@ impl SettingsView {
                     ),
             )
             .child(
-                self.icon_action_with_tip("whats-new", "sparkles", "What's new")
+                self.icon_action_with_tip("whats-new", "star", "What's new")
                     .on_click(
                         cx.listener(|_, _, _, cx| {
                             cx.emit(crate::settings::SettingsEvent::WhatsNew)

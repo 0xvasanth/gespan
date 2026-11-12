@@ -34,6 +34,8 @@ pub struct GitHubWorkItem {
     pub assignees: Vec<GitHubAssignee>,
     pub draft: bool,
     pub repo: String,
+    /// Who opened it, when the list says.
+    pub author: String,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -45,6 +47,8 @@ pub struct GitHubWorkItemDetails {
     pub base_ref_name: String,
     pub head_ref_name: String,
     pub review_decision: String,
+    /// Who is asked to review: user logins, or team names.
+    pub review_requests: Vec<String>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -184,9 +188,9 @@ pub(super) fn git_github_work_items_for(
     };
     let limit = limit.clamp(1, 100).to_string();
     let fields = if kind == "pr" {
-        "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft"
+        "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author"
     } else {
-        "number,title,url,state,stateReason,createdAt,updatedAt,labels,assignees"
+        "number,title,url,state,stateReason,createdAt,updatedAt,labels,assignees,author"
     };
     let mut args = vec![
         kind.to_string(),
@@ -231,9 +235,9 @@ pub(super) fn git_github_work_item_for(
     let repo = format!("{owner}/{name}");
     let number = number.to_string();
     let fields = if kind == "pr" {
-        "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft"
+        "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author"
     } else {
-        "number,title,url,state,stateReason,createdAt,updatedAt,labels,assignees"
+        "number,title,url,state,stateReason,createdAt,updatedAt,labels,assignees,author"
     };
     let json = gh_checked(
         root,
@@ -293,7 +297,7 @@ pub(super) fn git_github_work_item_details_for(
     let repo = format!("{owner}/{name}");
     let number = number.to_string();
     let fields = if kind == "pr" {
-        "body,author,baseRefName,headRefName,reviewDecision"
+        "body,author,baseRefName,headRefName,reviewDecision,reviewRequests"
     } else {
         "body,author"
     };
@@ -323,8 +327,29 @@ fn parse_github_work_item_details(json: &str) -> Result<GitHubWorkItemDetails, S
         head_ref_name: String,
         #[serde(default)]
         review_decision: Option<String>,
+        #[serde(default)]
+        review_requests: Vec<Reviewer>,
+    }
+    /// A user has a login; a team has a name (and a slug).
+    #[derive(Deserialize)]
+    struct Reviewer {
+        #[serde(default)]
+        login: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        slug: String,
     }
     let row: Row = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    let review_requests = row
+        .review_requests
+        .into_iter()
+        .filter_map(|reviewer| {
+            [reviewer.login, reviewer.name, reviewer.slug]
+                .into_iter()
+                .find(|value| !value.trim().is_empty())
+        })
+        .collect();
     let author = row.author.map(|author| author.login).unwrap_or_default();
     let author_avatar_url = github_avatar_url(&author);
     Ok(GitHubWorkItemDetails {
@@ -334,6 +359,7 @@ fn parse_github_work_item_details(json: &str) -> Result<GitHubWorkItemDetails, S
         base_ref_name: row.base_ref_name,
         head_ref_name: row.head_ref_name,
         review_decision: row.review_decision.unwrap_or_default(),
+        review_requests,
     })
 }
 
@@ -1296,6 +1322,8 @@ fn parse_github_work_items(
         assignees: Vec<RowAssignee>,
         #[serde(default)]
         is_draft: bool,
+        #[serde(default)]
+        author: Option<RowAssignee>,
     }
     let rows: Vec<Row> = serde_json::from_str(json).map_err(|error| error.to_string())?;
     Ok(rows
@@ -1327,6 +1355,7 @@ fn parse_github_work_items(
                 .collect(),
             draft: row.is_draft,
             repo: repo.to_string(),
+            author: row.author.map(|author| author.login).unwrap_or_default(),
         })
         .collect())
 }
@@ -1506,6 +1535,7 @@ fn parse_github_pr_states(json: &str, repo: &str) -> Result<Vec<GitHubPrState>, 
                 assignees: Vec::new(),
                 draft: row.is_draft,
                 repo: repo.to_string(),
+                author: String::new(),
             },
             head_oid: row.head_ref_oid.trim().to_string(),
             checks: row
@@ -1620,6 +1650,33 @@ mod automation_event_tests {
             assert!(error.contains("not a GitHub account"), "{login:?}: {error}");
         }
         assert!(git_github_permission_for(&root, "not a repo", "alice").is_err());
+    }
+
+    #[test]
+    fn list_rows_carry_their_author_and_details_their_requested_reviewers() {
+        let rows = parse_github_work_items(
+            r#"[{"number":1,"title":"A","url":"u","state":"OPEN","author":{"login":"vasanth"}},
+                {"number":2,"title":"B","url":"u","state":"OPEN"}]"#,
+            "pr",
+            "acme/app",
+        )
+        .unwrap();
+        assert_eq!(rows[0].author, "vasanth");
+        // Older or ghost rows have none, and the Inbox falls back.
+        assert_eq!(rows[1].author, "");
+
+        let details = parse_github_work_item_details(
+            r#"{"body":"","author":{"login":"vasanth"},"reviewDecision":"REVIEW_REQUIRED",
+                "reviewRequests":[{"__typename":"User","login":"cubic"},
+                                  {"__typename":"Team","name":"Core","slug":"core"},
+                                  {"__typename":"User","login":""}]}"#,
+        )
+        .unwrap();
+        // A user by login, a team by name; an empty entry is dropped.
+        assert_eq!(details.review_requests, ["cubic", "Core"]);
+        assert_eq!(details.review_decision, "REVIEW_REQUIRED");
+        let issue = parse_github_work_item_details(r#"{"body":"x","author":null}"#).unwrap();
+        assert!(issue.review_requests.is_empty());
     }
 
     #[test]

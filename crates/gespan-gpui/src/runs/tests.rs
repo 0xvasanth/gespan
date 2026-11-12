@@ -731,3 +731,137 @@ fn the_project_control_steps_aside_while_one_automation_is_shown(cx: &mut TestAp
     view.read_with(cx, |view, _| assert_eq!(view.filter().automation, None));
     assert!(cx.debug_bounds("runs-filter-project-all").is_some());
 }
+
+#[test]
+fn item_label_names_a_repository_by_its_own_name() {
+    let label = |title: Option<&str>, key: Option<&str>| item_label(title, key);
+    // A title loses the owner but keeps its words.
+    assert_eq!(
+        label(Some("langfuse/langfuse#20110 bug: dataset evals"), None).as_deref(),
+        Some("langfuse#20110 bug: dataset evals")
+    );
+    // Nested GitLab groups keep only the project.
+    assert_eq!(
+        label(Some("group/sub/app#7 Fix login"), None).as_deref(),
+        Some("app#7 Fix login")
+    );
+    assert_eq!(label(Some("acme/app#3"), None).as_deref(), Some("app#3"));
+    // A title that is not `owner/repo#n` is shown as written.
+    assert_eq!(
+        label(Some("ENG-4 Flaky upload"), Some("linear:issue:ENG-4")).as_deref(),
+        Some("ENG-4 Flaky upload")
+    );
+    assert_eq!(
+        label(Some("Fix #12 in docs"), None).as_deref(),
+        Some("Fix #12 in docs")
+    );
+    assert_eq!(
+        label(Some("a/b#x1 odd"), None).as_deref(),
+        Some("a/b#x1 odd")
+    );
+
+    // Without a title, a key reads `repo#n`, also for per-occurrence keys.
+    assert_eq!(
+        label(None, Some("github:issue:langfuse/langfuse:19943")).as_deref(),
+        Some("langfuse#19943")
+    );
+    assert_eq!(
+        label(
+            Some("   "),
+            Some("github:pull_request_opened:acme/app:3:99")
+        )
+        .as_deref(),
+        Some("app#3")
+    );
+    // Tracker keys show their identifier; unknown shapes stay as they are.
+    assert_eq!(
+        label(None, Some("linear:issue:ENG-4")).as_deref(),
+        Some("ENG-4")
+    );
+    assert_eq!(label(None, Some("nightly")).as_deref(), Some("nightly"));
+    assert_eq!(label(None, Some("  ")), None);
+    assert_eq!(label(None, None), None);
+}
+
+#[gpui::test]
+fn rows_show_short_repository_names(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    let mut titled = run("titled", "a", "succeeded", 2_000);
+    titled.event_title = Some("langfuse/langfuse#20110 bug: evals".into());
+    titled.event_key = Some("github:issue:langfuse/langfuse:20110".into());
+    let mut keyed = run("keyed", "a", "succeeded", 1_000);
+    keyed.event_key = Some("github:issue:langfuse/langfuse:19943".into());
+    view.update(cx, |view, cx| {
+        view.apply(vec![titled, keyed], vec![], cx);
+        let items: Vec<_> = view.rows().into_iter().map(|row| row.item).collect();
+        assert_eq!(
+            items,
+            vec![
+                Some("langfuse#20110 bug: evals".to_string()),
+                Some("langfuse#19943".to_string())
+            ]
+        );
+    });
+}
+
+#[gpui::test]
+fn more_holds_cancelled_and_skipped(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![
+                run("c", "a", "cancelled", 3_000),
+                run("s", "a", "skipped", 2_000),
+                run("ok", "a", "succeeded", 1_000),
+            ],
+            vec![],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    // Five segments: no Cancelled or Skipped of their own.
+    assert!(cx.debug_bounds("runs-filter-status-more").is_some());
+    assert!(cx.debug_bounds("runs-filter-status-cancelled").is_none());
+    assert!(cx.debug_bounds("runs-filter-status-skipped").is_none());
+    view.read_with(cx, |view, _| assert_eq!(view.more_label(), "More"));
+
+    // Clicking More opens its menu.
+    let more = cx.debug_bounds("runs-filter-status-more").unwrap();
+    cx.simulate_click(more.center(), Default::default());
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert!(view.more_menu.is_some()));
+
+    // Picking from it filters, closes it, and the segment names the pick.
+    view.update(cx, |view, cx| {
+        let menu = view.more_menu.as_ref().unwrap().0.clone();
+        menu.update(cx, |_, cx| {
+            cx.emit(MenuEvent::Picked("skipped".into(), None))
+        });
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert!(view.more_menu.is_none());
+        assert_eq!(view.filter().status, Some("skipped"));
+        assert_eq!(ids(&view.rows()), vec!["s"]);
+        assert_eq!(view.more_label(), "Skipped");
+    });
+    view.update(cx, |view, cx| view.pick_more("cancelled", cx));
+    view.read_with(cx, |view, _| {
+        assert_eq!(ids(&view.rows()), vec!["c"]);
+        assert_eq!(view.more_label(), "Cancelled");
+    });
+    // An unknown pick changes nothing; All brings the word More back.
+    view.update(cx, |view, cx| view.pick_more("failed", cx));
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.filter().status, Some("cancelled"))
+    });
+    let all = cx.debug_bounds("runs-filter-status-all").unwrap();
+    cx.simulate_click(all.center(), Default::default());
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.filter().status, None);
+        assert_eq!(view.more_label(), "More");
+    });
+}

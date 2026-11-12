@@ -1,8 +1,5 @@
 use crate::{
-    settings::{
-        SettingsEvent, SettingsView,
-        widgets::{note, secondary_button},
-    },
+    settings::{SettingsEvent, SettingsView, widgets::note},
     theme::*,
 };
 use gpui::{AnyElement, Context, Role, SharedString, div, prelude::*, px};
@@ -41,10 +38,20 @@ impl SettingsView {
                     .items_center()
                     .gap_3()
                     .border_t_1()
-                    .border_color(content(0.05))
+                    .border_color(crate::glass::hairline())
                     .px_4()
                     .py(px(10.))
-                    .child(provider_icon(&session.provider, 14.))
+                    .child(
+                        div()
+                            .size(px(18.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(5.))
+                            .bg(content(0.08))
+                            .child(provider_icon(&session.provider, 12.)),
+                    )
                     .child(
                         div()
                             .id(SharedString::from(format!("archived-session-{id}")))
@@ -67,26 +74,20 @@ impl SettingsView {
                             .child(date),
                     )
                     .child(
-                        secondary_button(
+                        crate::glass::button(
                             SharedString::from(format!("unarchive-{id}")),
                             "Unarchive",
-                            false,
-                            false,
+                            crate::glass::Button::Glass,
                         )
-                        .child("Unarchive")
+                        .role(Role::Button)
+                        .aria_label("Unarchive")
+                        .h(px(28.))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(SettingsEvent::Archive(id, false))
                         })),
                     )
                     .child(
-                        secondary_button(
-                            SharedString::from(format!("delete-{id}")),
-                            "Delete",
-                            true,
-                            false,
-                        )
-                        .child("Delete")
-                        .on_click(
+                        delete_button(SharedString::from(format!("delete-{id}"))).on_click(
                             cx.listener(move |_, _, _, cx| cx.emit(SettingsEvent::Delete(id))),
                         ),
                     )
@@ -109,9 +110,24 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .when(ix > 0, |d| d.border_t_1().border_color(content(0.05)))
+                    .when(ix > 0, |d| {
+                        d.border_t_1().border_color(crate::glass::hairline())
+                    })
                     .px_4()
-                    .py(px(10.))
+                    .py(px(12.))
+                    .child(
+                        div()
+                            .size(px(32.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(9.))
+                            .bg(content(0.07))
+                            .border_1()
+                            .border_color(crate::glass::edge())
+                            .child(icon("folder", 16.).text_color(content(0.75))),
+                    )
                     .child(
                         div()
                             .min_w_0()
@@ -122,34 +138,31 @@ impl SettingsView {
                             .child(
                                 div()
                                     .truncate()
+                                    .font_family(crate::fonts::monospace())
                                     .text_size(px(11.))
-                                    .text_color(content(0.35))
+                                    .text_color(content(0.55))
                                     .child(path.clone()),
                             ),
                     )
                     .child(
-                        secondary_button(
+                        crate::glass::button(
                             SharedString::from(format!("unarchive-project-{ix}")),
                             "Unarchive",
-                            false,
-                            false,
+                            crate::glass::Button::Glass,
                         )
-                        .child("Unarchive")
+                        .role(Role::Button)
+                        .aria_label("Unarchive")
+                        .h(px(28.))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(SettingsEvent::UnarchiveProject(unarchive.clone()))
                         })),
                     )
                     .child(
-                        secondary_button(
-                            SharedString::from(format!("delete-project-{ix}")),
-                            "Delete",
-                            true,
-                            false,
-                        )
-                        .child("Delete")
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(SettingsEvent::DeleteProject(delete.clone()))
-                        })),
+                        delete_button(SharedString::from(format!("delete-project-{ix}"))).on_click(
+                            cx.listener(move |_, _, _, cx| {
+                                cx.emit(SettingsEvent::DeleteProject(delete.clone()))
+                            }),
+                        ),
                     )
                     .into_any_element()
             })
@@ -166,7 +179,48 @@ impl SettingsView {
                 None,
                 projects,
             ),
-            self.group(None, false, SharedString::from(title), None, None, rows),
+            self.group(
+                None,
+                false,
+                SharedString::from(title),
+                None,
+                (!self.ctx.archived.is_empty()).then(|| {
+                    let n = self.ctx.archived.len();
+                    div()
+                        .debug_selector(|| "settings-archived-count".into())
+                        .text_size(px(11.5))
+                        .text_color(content(0.55))
+                        .child(format!(
+                            "{n} {}",
+                            if n == 1 { "conversation" } else { "conversations" }
+                        ))
+                        .into_any_element()
+                }),
+                rows,
+            ),
         ]
     }
+}
+
+/// Delete, as red text: it cannot be undone, but it is not the main answer.
+fn delete_button(id: SharedString) -> gpui::Stateful<gpui::Div> {
+    use crate::settings::widgets::red;
+    let selector = format!("settings-{id}");
+    div()
+        .id(id)
+        .debug_selector(move || selector.clone())
+        .role(Role::Button)
+        .aria_label("Delete")
+        .cursor_pointer()
+        .h(px(28.))
+        .px(px(12.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .rounded(px(9.))
+        .text_size(px(13.))
+        .whitespace_nowrap()
+        .text_color(red(1.))
+        .hover(|s| s.bg(red(0.1)))
+        .child("Delete")
 }

@@ -5,6 +5,62 @@ use crate::conversation::approval_card::Card;
 use crate::glass::{self, Button};
 use gpui::{AnyElement, Div, ElementId, FontWeight, SharedString, Stateful, px};
 
+/// The card's headline for a shell command, in place of the request's own
+/// question: "Claude Code wants to run a command".
+pub(super) fn command_line(agent: Option<&str>) -> String {
+    format!("{} wants to run a command", agent.unwrap_or("The agent"))
+}
+
+/// The command as the design's code well: monospace, one line per line,
+/// never wrapped; a line too long for the card scrolls sideways.
+fn code_well(command: &str) -> Stateful<Div> {
+    div()
+        .id("my-tasks-command")
+        .debug_selector(|| "my-tasks-command".into())
+        .overflow_x_scroll()
+        .px(px(12.))
+        .py(px(10.))
+        .rounded(px(10.))
+        .bg(if is_light() {
+            content(0.05)
+        } else {
+            black(0.35)
+        })
+        .border_1()
+        .border_color(glass::edge())
+        .font_family(crate::fonts::monospace())
+        .text_size(px(12.))
+        .line_height(px(19.))
+        .text_color(if is_light() {
+            content(0.85)
+        } else {
+            gpui::rgb(0xd6d6d6).into()
+        })
+        .children(
+            command
+                .lines()
+                .map(|line| div().whitespace_nowrap().child(line.to_owned())),
+        )
+}
+
+/// The ↵ chip on the answer Enter gives.
+fn enter_chip() -> Div {
+    div()
+        .px(px(5.))
+        .rounded(px(4.))
+        .border_1()
+        // On the primary plate: light in the dark theme, dark in the light.
+        .border_color(if is_light() { white(0.3) } else { black(0.2) })
+        .font_family(crate::fonts::monospace())
+        .text_size(px(10.5))
+        .text_color(if is_light() {
+            white(0.75)
+        } else {
+            gpui::rgb(0x444444).into()
+        })
+        .child("\u{21b5}")
+}
+
 /// An answer button in one of the glass weights.
 pub(super) fn answer(
     id: impl Into<ElementId>,
@@ -67,22 +123,67 @@ pub(super) fn choice_weight(ix: usize) -> Button {
 }
 
 impl MyTasks {
+    /// Enter on the page itself (not in the search or a note): allows the
+    /// selected tool request once, as the ↵ chip on that answer says.
+    pub(super) fn enter(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key != "enter"
+            || event.keystroke.modifiers.modified()
+            || event.is_held
+            || self.tab != Tab::Waiting
+            || !self.focus.is_focused(window)
+        {
+            return;
+        }
+        let shown = self.visible(cx);
+        let Some(task) = self.selected_in(&shown) else {
+            return;
+        };
+        if let (Body::Approval { approval, .. }, Source::Session(session)) =
+            (&task.body, &task.source)
+        {
+            let event = Event::Decide {
+                session: *session,
+                request: approval.id.clone(),
+                decision: Decision::Allow,
+            };
+            cx.emit(event);
+        }
+    }
+
     pub(super) fn card(&mut self, task: &TaskItem, cx: &mut Context<Self>) -> AnyElement {
         let mut buttons: Vec<AnyElement> = Vec::new();
         let mut body: Vec<AnyElement> = Vec::new();
+        let mut title = task.headline.clone();
+        let mut aside = task.who.clone();
+        let mut hint = None;
         match &task.body {
             Body::Approval { approval, cwd } => {
                 let Source::Session(session) = task.source else {
                     return div().into_any_element();
                 };
                 let card = Card::new(approval, cwd.as_deref());
-                if !card.is_empty() {
+                if let Some(command) = card.lone_command() {
+                    title = command_line(task.agent.as_deref());
+                    if let Some(tool) = &approval.tool {
+                        aside = tool.name.clone();
+                    }
+                    body.push(code_well(command).into_any_element());
+                } else if !card.is_empty() {
                     body.push(card.render(true));
                 }
+                hint = Some("Answering moves to the next task");
                 for (id, label, weight, decision) in approval_answers(approval.can_remember) {
                     let request = approval.id.clone();
                     buttons.push(
                         answer(id, id.into(), label, weight)
+                            .when(matches!(decision, Decision::Allow), |d| {
+                                d.child(enter_chip())
+                            })
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(Event::Decide {
                                     session,
@@ -238,20 +339,22 @@ impl MyTasks {
                     .child(super::list::tile(task.kind, 28.))
                     .child(
                         div()
+                            .debug_selector(|| "my-tasks-card-title".into())
                             .flex_1()
                             .min_w_0()
                             .text_size(px(17.))
                             .line_height(px(28.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(task.headline.clone()),
+                            .child(title),
                     )
                     .child(
                         div()
+                            .debug_selector(|| "my-tasks-card-aside".into())
                             .flex_shrink_0()
                             .pt(px(6.))
                             .text_size(px(11.5))
-                            .text_color(content(0.45))
-                            .child(task.who.clone()),
+                            .text_color(super::list::faint())
+                            .child(aside),
                     ),
             )
             .children(body)
@@ -262,7 +365,17 @@ impl MyTasks {
                         .flex_wrap()
                         .items_center()
                         .gap(px(8.))
-                        .children(buttons),
+                        .children(buttons)
+                        .when_some(hint, |d, hint| {
+                            d.child(
+                                div()
+                                    .debug_selector(|| "my-tasks-card-hint".into())
+                                    .ml_auto()
+                                    .text_size(px(11.5))
+                                    .text_color(super::list::faint())
+                                    .child(hint),
+                            )
+                        }),
                 )
             })
             .into_any_element()

@@ -96,11 +96,13 @@ impl Default for State {
     }
 }
 
-fn now() -> i64 {
+pub(super) fn now() -> i64 {
     gespan_core::time::now_ms().min(i64::MAX as u64) as i64
 }
 
-fn service_lock(service: &ServiceHandle) -> Result<std::sync::MutexGuard<'_, Service>, String> {
+pub(super) fn service_lock(
+    service: &ServiceHandle,
+) -> Result<std::sync::MutexGuard<'_, Service>, String> {
     service
         .lock()
         .map_err(|_| "Automations are unavailable".into())
@@ -862,9 +864,17 @@ impl Shell {
                 .spawn(async move { write(&mut *service_lock(&service)?) });
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                if let Err(error) = result {
-                    tracing::warn!(%error, "automation run result was not saved");
-                    this.error = Some(format!("Could not save automation result: {error}"));
+                match &result {
+                    Err(error) => {
+                        tracing::warn!(%error, "automation run result was not saved");
+                        this.error = Some(format!("Could not save automation result: {error}"));
+                    }
+                    // A run the Inbox started from an item follows its record.
+                    Ok(run) => {
+                        if let Some(inbox) = &this.inbox {
+                            inbox.update(cx, |inbox, cx| inbox.run_updated(run, cx));
+                        }
+                    }
                 }
                 this.refresh_run_views(cx);
                 cx.notify();

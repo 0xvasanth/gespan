@@ -1,5 +1,5 @@
 //! Exact project identity and timestamp semantics of notification preferences.
-use super::{Preferences, SettingsView, widgets::secondary_button};
+use super::{Preferences, SettingsView, widgets::glass_secondary};
 use crate::{
     input,
     notifications::{
@@ -180,6 +180,29 @@ impl Preferences {
         p["disabled"] = json!(disabled);
     }
 }
+/// Whether a project row shows under the filter (`all`, `muted` or
+/// `custom`, where some category is off) and the search, which matches its
+/// name or where it lives.
+pub(super) fn project_shown(
+    show: &str,
+    query: &str,
+    name: &str,
+    detail: &str,
+    muted: bool,
+    custom: bool,
+) -> bool {
+    let query = query.trim().to_lowercase();
+    let found = query.is_empty()
+        || name.to_lowercase().contains(&query)
+        || detail.to_lowercase().contains(&query);
+    found
+        && match show {
+            "muted" => muted,
+            "custom" => custom,
+            _ => true,
+        }
+}
+
 fn valid_project(p: &Value) -> bool {
     ["id", "name", "detail"]
         .iter()
@@ -346,7 +369,7 @@ impl SettingsView {
                     .text_color(content(0.45))
                     .child("Permission needed")
                     .child(
-                        secondary_button(
+                        glass_secondary(
                             "notifications-system-settings",
                             SETTINGS_LABEL,
                             false,
@@ -567,7 +590,7 @@ impl SettingsView {
             })
             .when(!muted.is_empty(), |d| {
                 d.child(
-                    secondary_button(
+                    glass_secondary(
                         format!("resume-{key}"),
                         "Resume notifications",
                         false,
@@ -582,7 +605,7 @@ impl SettingsView {
                 )
             })
             .child(
-                secondary_button(
+                glass_secondary(
                     format!("mute-{key}"),
                     if muted.is_empty() {
                         "Mute notifications"
@@ -630,7 +653,7 @@ impl SettingsView {
                     .border_b_1()
                     .border_color(content(0.05))
                     .child(
-                        secondary_button(
+                        glass_secondary(
                             "notification-select-all",
                             "Select all projects",
                             false,
@@ -658,12 +681,8 @@ impl SettingsView {
                     .into_any_element(),
             );
         }
-        for (ix, project) in projects.iter().enumerate() {
-            let id = project.id.clone();
-            let expand_id = id.clone();
-            let select_id = id.clone();
-            let expanded = self.notification_state.expanded.as_ref() == Some(&id);
-            let muted = self.prefs.project_muted(&id, gespan_core::time::now_ms());
+        let now = gespan_core::time::now_ms();
+        let state_of = |this: &Self, project: &Project| {
             let categories: Vec<_> = CATEGORIES
                 .iter()
                 .filter(|(cat, _)| match project.kind.as_str() {
@@ -675,11 +694,43 @@ impl SettingsView {
             let enabled_count = categories
                 .iter()
                 .filter(|(cat, _)| {
-                    !self.prefs.project_notifications[&id]["disabled"]
+                    !this.prefs.project_notifications[&project.id]["disabled"]
                         .as_array()
                         .is_some_and(|values| values.iter().any(|v| v.as_str() == Some(cat)))
                 })
                 .count();
+            let muted = this.prefs.project_muted(&project.id, now);
+            (categories, enabled_count, muted)
+        };
+        let counts = projects.iter().fold((0, 0, 0), |(all, m, c), project| {
+            let (categories, enabled, muted) = state_of(self, project);
+            (
+                all + 1,
+                m + usize::from(muted),
+                c + usize::from(enabled < categories.len()),
+            )
+        });
+        let show = self.inbox_show;
+        let query = self.inbox_query.clone();
+        let mut shown = 0;
+        for (ix, project) in projects.iter().enumerate() {
+            let (categories, enabled_count, muted) = state_of(self, project);
+            if !project_shown(
+                show,
+                &query,
+                &project.name,
+                &project.detail,
+                muted,
+                enabled_count < categories.len(),
+            ) {
+                continue;
+            }
+            shown += 1;
+            let custom = !muted && enabled_count < categories.len();
+            let id = project.id.clone();
+            let expand_id = id.clone();
+            let select_id = id.clone();
+            let expanded = self.notification_state.expanded.as_ref() == Some(&id);
             let status = if muted {
                 "All notifications paused".into()
             } else if enabled_count == categories.len() {
@@ -720,21 +771,21 @@ impl SettingsView {
                                     gpui::Toggled::False
                                 })
                                 .cursor_pointer()
-                                .w(px(36.))
-                                .h(px(20.))
+                                .w(px(30.))
+                                .h(px(18.))
                                 .relative()
                                 .rounded_full()
                                 .bg(if enabled {
                                     accent_color()
                                 } else {
-                                    content(0.2)
+                                    content(0.16)
                                 })
                                 .child(
                                     div()
                                         .absolute()
                                         .top(px(2.))
-                                        .left(px(if enabled { 18. } else { 2. }))
-                                        .size(px(16.))
+                                        .left(px(if enabled { 14. } else { 2. }))
+                                        .size(px(14.))
                                         .rounded_full()
                                         .bg(gpui::rgb(0xffffff)),
                                 )
@@ -755,8 +806,10 @@ impl SettingsView {
             rows.push(
                 div()
                     .id(("notification-project", ix))
-                    .border_b_1()
-                    .border_color(content(0.05))
+                    .debug_selector(move || format!("settings-notification-project-{ix}"))
+                    .when(shown > 1, |d| {
+                        d.border_t_1().border_color(crate::glass::hairline())
+                    })
                     .child(
                         div()
                             .flex()
@@ -764,10 +817,10 @@ impl SettingsView {
                             .flex_wrap()
                             .gap_3()
                             .px_4()
-                            .py(px(14.))
+                            .py(px(7.))
                             .when(selecting, |d| {
                                 d.child(
-                                    secondary_button(
+                                    glass_secondary(
                                         format!("select-notification-{id}"),
                                         format!("Select {}", project.name),
                                         false,
@@ -809,11 +862,17 @@ impl SettingsView {
                                     .gap_3()
                                     .child(icon("folder", 16.))
                                     .child(
+                                        // Name and state on one line.
                                         div()
                                             .flex_1()
                                             .min_w_0()
+                                            .flex()
+                                            .items_baseline()
+                                            .gap(px(10.))
                                             .child(
                                                 div()
+                                                    .flex_shrink_0()
+                                                    .max_w(gpui::relative(0.6))
                                                     .truncate()
                                                     .text_size(px(13.))
                                                     .font_weight(gpui::FontWeight::MEDIUM)
@@ -821,9 +880,14 @@ impl SettingsView {
                                             )
                                             .child(
                                                 div()
-                                                    .mt_1()
-                                                    .text_size(px(12.))
-                                                    .text_color(content(0.45))
+                                                    .min_w_0()
+                                                    .truncate()
+                                                    .text_size(px(11.5))
+                                                    .text_color(if custom {
+                                                        accent_color()
+                                                    } else {
+                                                        content(0.55)
+                                                    })
                                                     .child(format!(
                                                         "{}{status}",
                                                         if project.kind == "local" {
@@ -865,11 +929,84 @@ impl SettingsView {
                     .into_any_element(),
             );
         }
+        if !projects.is_empty() && shown == 0 {
+            rows.push(
+                div()
+                    .debug_selector(|| "settings-inbox-no-match".into())
+                    .px_4()
+                    .py(px(14.))
+                    .text_size(px(12.))
+                    .text_color(content(0.55))
+                    .child("No project matches.")
+                    .into_any_element(),
+            );
+        }
         if projects.is_empty() {
             rows.push(div().id("project-notification-accessible-3").role(Role::Status).px_4().py(px(14.)).text_size(px(12.)).text_color(content(0.45)).child("Open a project or connect an Inbox provider to configure its notifications.").into_any_element());
         }
+        let (all, muted_count, custom_count) = counts;
+        let toolbar = (!projects.is_empty()).then(|| {
+            let filter = crate::glass::segmented()
+                .id("inbox-show")
+                .debug_selector(|| "settings-segmented-inbox-show".into())
+                .role(Role::RadioGroup)
+                .aria_label("Show")
+                .children(
+                    [
+                        ("all", "All", all),
+                        ("muted", "Muted", muted_count),
+                        ("custom", "Custom", custom_count),
+                    ]
+                    .map(|(value, label, n)| {
+                        crate::glass::segment(
+                            gpui::SharedString::from(format!("inbox-show-{value}")),
+                            label,
+                            show == value,
+                        )
+                        .debug_selector(move || format!("settings-inbox-show-{value}"))
+                        .role(Role::RadioButton)
+                        .aria_label(format!("{label}, {n}"))
+                        .aria_selected(show == value)
+                        .child(crate::glass::count(n, false))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.inbox_show = value;
+                            cx.notify();
+                        }))
+                    }),
+                );
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .mt(px(4.))
+                .child(
+                    crate::glass::field()
+                        .flex_1()
+                        .debug_selector(|| "settings-inbox-search".into())
+                        .child(icon("search", 14.).text_color(content(0.5)))
+                        .child(div().flex_1().min_w_0().child(self.inbox_filter.clone())),
+                )
+                .child(filter)
+                .into_any_element()
+        });
+        let action = glass_secondary(
+            "notification-select-projects",
+            if selecting { "Done" } else { "Select projects" },
+            false,
+            projects.is_empty(),
+        )
+        .child(if selecting { "Done" } else { "Select projects" })
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.notification_state.selecting = !this.notification_state.selecting;
+            this.notification_state.selected.clear();
+            cx.notify();
+        }))
+        .into_any_element();
+        if self.glass() {
+            return self.glass_group(Some("project-notifications"),"Project notifications",Some("Choose sounds, banners and sidebar indicators by category. Mute pauses them without changing your choices. Unread items stay marked in Inbox.".into()),Some(action),toolbar,rows);
+        }
         self.group(Some("project-notifications"),true,"Project notifications",Some("Choose sounds, banners and sidebar indicators by category. Mute pauses them without changing your choices. Unread items stay marked in Inbox.".into()),
-            Some(secondary_button("notification-select-projects",if selecting {"Done"} else {"Select projects"},false,projects.is_empty()).child(if selecting {"Done"} else {"Select projects"})
+            Some(glass_secondary("notification-select-projects",if selecting {"Done"} else {"Select projects"},false,projects.is_empty()).child(if selecting {"Done"} else {"Select projects"})
                 .on_click(cx.listener(|this,_,_,cx| {this.notification_state.selecting = !this.notification_state.selecting;this.notification_state.selected.clear();cx.notify();})).into_any_element()),rows)
     }
     pub(super) fn notification_overlay(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -955,7 +1092,7 @@ impl SettingsView {
                                 .flex()
                                 .justify_between()
                                 .child(
-                                    secondary_button(
+                                    glass_secondary(
                                         "cancel-custom-notification-mute",
                                         "Cancel",
                                         false,
@@ -970,7 +1107,7 @@ impl SettingsView {
                                     )),
                                 )
                                 .child(
-                                    secondary_button(
+                                    glass_secondary(
                                         "save-custom-notification-mute",
                                         "Mute until then",
                                         false,
@@ -1124,7 +1261,7 @@ impl SettingsView {
                             .flex()
                             .gap(px(2.))
                             .child(
-                                secondary_button(
+                                glass_secondary(
                                     "mute-previous-month",
                                     "Previous month",
                                     false,
@@ -1145,7 +1282,7 @@ impl SettingsView {
                                 )),
                             )
                             .child(
-                                secondary_button("mute-next-month", "Next month", false, false)
+                                glass_secondary("mute-next-month", "Next month", false, false)
                                     .child(icon("chevron-right", 14.))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(custom) = &mut this.notification_state.custom {

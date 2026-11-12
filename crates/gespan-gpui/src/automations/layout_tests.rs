@@ -238,7 +238,7 @@ fn card_sparkline_has_ten_days(cx: &mut TestAppContext) {
         bar(&mut visual, &busy.id, day);
         assert_eq!(
             bar(&mut visual, &quiet.id, day),
-            gpui::px(2.),
+            gpui::px(3.),
             "empty day stub"
         );
     }
@@ -251,8 +251,8 @@ fn card_sparkline_has_ten_days(cx: &mut TestAppContext) {
     let today = bar(&mut visual, &busy.id, 9);
     let three_ago = bar(&mut visual, &busy.id, 6);
     let nine_ago = bar(&mut visual, &busy.id, 0);
-    assert_eq!(bar(&mut visual, &busy.id, 1), gpui::px(2.));
-    assert!(today > three_ago && three_ago > nine_ago && nine_ago > gpui::px(2.));
+    assert_eq!(bar(&mut visual, &busy.id, 1), gpui::px(3.));
+    assert!(today > three_ago && three_ago > nine_ago && nine_ago > gpui::px(3.));
 
     // A new run shows on the next refresh.
     page.service
@@ -1572,66 +1572,86 @@ fn a_trigger_listens_to_one_repository(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn card_shows_the_latest_result_as_a_status_pill(cx: &mut TestAppContext) {
+fn only_a_recent_success_shows_as_a_pill_and_failures_colour_their_day(cx: &mut TestAppContext) {
     let page = page();
     let time = AutomationTrigger::new("time", "daily");
     let failed = save(&page, "Failed", "/work/app", time.clone());
     let passed = save(&page, "Passed", "/work/app", time.clone());
+    let cancelled = save(&page, "Cancelled", "/work/app", time.clone());
     let never = save(&page, "Never", "/work/app", time);
     {
         let mut service = page.service.lock().unwrap();
-        for (automation, status) in [(&failed, "failed"), (&passed, "succeeded")] {
-            let run = service.run_now(&automation.id, now()).unwrap();
+        // Passed: a failure three days ago, then a success today.
+        for (automation, days_ago, status) in [
+            (&passed, 3, "failed"),
+            (&passed, 0, "succeeded"),
+            (&failed, 0, "failed"),
+            (&cancelled, 0, "cancelled"),
+        ] {
+            let run = service.run_now(&automation.id, noon(days_ago)).unwrap();
             service
-                .update_run(&run.id, status, None, None, now())
+                .update_run(&run.id, status, None, None, noon(days_ago))
                 .unwrap();
         }
     }
     let (window, mut visual) = open(&page, "/work/app", cx);
 
-    // The pill reads the stored result in words.
-    let pills = window
-        .read_with(&visual, |view, _| {
-            [&failed.id, &passed.id, &never.id].map(|id| {
-                let automation = view.automations.iter().find(|a| &a.id == id).unwrap();
-                layout::last_run_pill(
-                    automation.last_run_status.as_deref(),
-                    automation.last_run_at,
-                    now(),
-                )
-            })
-        })
+    // Only the recent success is a pill, right after its bars.
+    let pill = format!("automation-last-run-pill-{}", passed.id);
+    assert!(visual.drawn(&pill).is_some());
+    assert!(
+        visual
+            .drawn(&format!("automation-last-run-{}", passed.id))
+            .is_none()
+    );
+    let bars = visual
+        .drawn(&format!("automation-spark-{}", passed.id))
         .unwrap();
+    let pill_bounds = visual.drawn(&pill).unwrap();
     assert_eq!(
-        pills[0],
-        Some(("Failed just now".into(), crate::glass::Tone::Bad))
+        pill_bounds.origin.x,
+        bars.origin.x + bars.size.width + gpui::px(8.),
+        "the pill follows the bars, not the card's edge"
     );
-    assert_eq!(
-        pills[1],
-        Some(("Last run just now".into(), crate::glass::Tone::Ok))
-    );
-    assert_eq!(pills[2], None);
-
-    // Cards with a result draw the pill; one never run keeps the plain line.
-    for id in [&failed.id, &passed.id] {
+    // A failure, a cancellation or no run at all reads as the plain line,
+    // pushed against the card's right edge.
+    for id in [&failed.id, &cancelled.id, &never.id] {
         assert!(
             visual
                 .drawn(&format!("automation-last-run-pill-{id}"))
-                .is_some()
+                .is_none()
         );
-        assert!(visual.drawn(&format!("automation-last-run-{id}")).is_none());
+        let line = visual
+            .drawn(&format!("automation-last-run-{id}"))
+            .unwrap_or_else(|| panic!("{id} has no last-run line"));
+        let card = visual.drawn(&format!("automation-card-{id}")).unwrap();
+        let right = |b: gpui::Bounds<gpui::Pixels>| b.origin.x + b.size.width;
+        assert!(right(card) - right(line) <= gpui::px(14.), "{id}");
     }
-    assert!(
-        visual
-            .drawn(&format!("automation-last-run-{}", never.id))
-            .is_some()
+
+    // Days with a failed run are marked so their bar draws rose.
+    let failed_days = window
+        .read_with(&visual, |view, _| {
+            (
+                view.spark_failed.get(&passed.id).cloned().unwrap(),
+                view.spark_failed.get(&failed.id).cloned().unwrap(),
+                view.spark_failed.get(&never.id).cloned().unwrap(),
+            )
+        })
+        .unwrap();
+    let mut expected = vec![false; SPARK];
+    expected[SPARK - 4] = true;
+    assert_eq!(
+        failed_days.0, expected,
+        "three days ago failed, today passed"
     );
-    assert!(
-        visual
-            .drawn(&format!("automation-last-run-pill-{}", never.id))
-            .is_none()
-    );
+    let mut today = vec![false; SPARK];
+    today[SPARK - 1] = true;
+    assert_eq!(failed_days.1, today);
+    assert_eq!(failed_days.2, vec![false; SPARK]);
 }
+
+const SPARK: usize = layout::SPARK_DAYS;
 
 #[gpui::test]
 fn new_button_leaves_the_open_automation_for_the_gallery(cx: &mut TestAppContext) {

@@ -630,6 +630,17 @@ mod inbox_settings {
     use gespan_core::inbox::{OptionRow, Status};
 
     fn inbox_page(cx: &mut TestAppContext) -> (WindowHandle<Shell>, VisualTestContext) {
+        settings_page(Section::Inbox, cx)
+    }
+
+    fn connections_page(cx: &mut TestAppContext) -> (WindowHandle<Shell>, VisualTestContext) {
+        settings_page(Section::Services, cx)
+    }
+
+    fn settings_page(
+        section: Section,
+        cx: &mut TestAppContext,
+    ) -> (WindowHandle<Shell>, VisualTestContext) {
         cx.update(crate::shell::bind_keys);
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = crate::shell::tests::window(cx);
@@ -637,7 +648,7 @@ mod inbox_settings {
         visual.simulate_resize(gpui::size(px(1500.), px(2200.)));
         window
             .update(&mut visual, |shell, w, cx| {
-                shell.open_settings(Section::Inbox, w, cx)
+                shell.open_settings(section, w, cx)
             })
             .unwrap();
         visual.run_until_parked();
@@ -658,10 +669,15 @@ mod inbox_settings {
 
     #[gpui::test]
     fn settings_opens_the_connect_dialog_in_place_for_each_provider(cx: &mut TestAppContext) {
-        let (window, mut visual) = inbox_page(cx);
+        let (window, mut visual) = connections_page(cx);
         let visual = &mut visual;
         for provider in ["gitlab", "azuredevops", "jira", "plane", "linear"] {
-            click(visual, format!("settings-connect-{provider}"));
+            // Nothing is connected: the empty page's Add connection opens
+            // the picker, and its Connect closes it for the dialog.
+            click(visual, "settings-add-connection".into());
+            assert!(visual.debug_bounds("settings-services-picker").is_some());
+            click(visual, format!("settings-picker-connect-{provider}"));
+            assert!(visual.debug_bounds("settings-services-picker").is_none());
             assert!(
                 visual.debug_bounds("inbox-connect-dialog").is_some(),
                 "{provider} opens the dialog"
@@ -693,9 +709,10 @@ mod inbox_settings {
 
     #[gpui::test]
     fn the_inbox_view_does_not_show_a_dialog_opened_from_settings(cx: &mut TestAppContext) {
-        let (window, mut visual) = inbox_page(cx);
+        let (window, mut visual) = connections_page(cx);
         let visual = &mut visual;
-        click(visual, "settings-connect-plane".into());
+        click(visual, "settings-add-connection".into());
+        click(visual, "settings-picker-connect-plane".into());
         window
             .update(visual, |shell, w, cx| {
                 shell.close_settings(w, cx);
@@ -709,7 +726,7 @@ mod inbox_settings {
 
     #[gpui::test]
     fn linear_teams_are_picked_in_settings_once_connected(cx: &mut TestAppContext) {
-        let (window, mut visual) = inbox_page(cx);
+        let (window, mut visual) = connections_page(cx);
         let visual = &mut visual;
         assert!(visual.debug_bounds("settings-linear-teams").is_none());
         // A toggle refetches, and this test has no Linear to answer: seed again.
@@ -756,6 +773,75 @@ mod inbox_settings {
         seed(visual);
         click(visual, "settings-linear-team-1".into());
         assert!(hidden(window, visual).is_empty());
+    }
+
+    #[gpui::test]
+    fn settings_inbox_holds_no_services_and_points_to_connections(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        for provider in ["github", "gitlab", "azuredevops", "jira", "plane", "linear"] {
+            assert!(
+                visual
+                    .debug_bounds(format!("settings-connect-{provider}").leak())
+                    .is_none(),
+                "{provider} is set up in Connections now"
+            );
+        }
+        assert!(visual.debug_bounds("settings-add-connection").is_none());
+        click(visual, "settings-open-connections".into());
+        window
+            .update(visual, |shell, _, cx| {
+                assert_eq!(
+                    shell.settings.as_ref().unwrap().read(cx).section,
+                    Section::Services
+                )
+            })
+            .unwrap();
+        assert!(visual.debug_bounds("settings-services-empty").is_some());
+    }
+
+    #[gpui::test]
+    fn the_inbox_add_connection_button_opens_settings_connections(cx: &mut TestAppContext) {
+        cx.update(crate::shell::bind_keys);
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let (window, _, _) = crate::shell::tests::window(cx);
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        let visual = &mut visual;
+        visual.simulate_resize(gpui::size(px(1500.), px(1000.)));
+        window
+            .update(visual, |shell, w, cx| shell.open_inbox(w, cx))
+            .unwrap();
+        visual.run_until_parked();
+        click(visual, "inbox-add-connection".into());
+        window
+            .update(visual, |shell, _, cx| {
+                let settings = shell.settings.as_ref().expect("Settings opens");
+                assert_eq!(settings.read(cx).section, Section::Services);
+                assert!(
+                    !shell
+                        .inbox
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .connections_menu_open()
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_picker_filters_by_chip_and_closes_on_escape(cx: &mut TestAppContext) {
+        let (_, mut visual) = connections_page(cx);
+        let visual = &mut visual;
+        click(visual, "settings-add-connection".into());
+        assert!(visual.debug_bounds("settings-picker-github").is_some());
+        click(visual, "settings-services-chip-issues".into());
+        assert!(visual.debug_bounds("settings-picker-github").is_none());
+        assert!(visual.debug_bounds("settings-picker-linear").is_some());
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("settings-services-picker").is_none());
     }
 }
 

@@ -7,6 +7,8 @@ use crate::glass;
 pub(super) const SPARK_DAYS: usize = 10;
 const CARD_RADIUS: f32 = 12.;
 const SPARK_HEIGHT: f32 = 16.;
+/// An empty day's stub.
+const EMPTY_BAR: f32 = 3.;
 
 /// The editor section a summary card jumps to, in the order the Instructions
 /// tab draws them.
@@ -93,14 +95,15 @@ impl Automations {
                 div()
                     .debug_selector(move || selector)
                     .px(px(6.))
-                    .pt(px(if index == 0 { 2. } else { 10. }))
+                    .pt(px(if index == 0 { 2. } else { 8. }))
                     .pb(px(2.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(self.project_mark(&cwd, 14.))
+                    .child(self.project_swatch(&cwd))
                     .child(
                         glass::eyebrow(self.project_label(&cwd))
+                            .line_height(px(14.))
                             .flex_1()
                             .min_w_0()
                             .truncate(),
@@ -120,12 +123,14 @@ impl Automations {
         let selected = !self.gallery && self.selected.as_deref() == Some(&id);
         let kind = Kind::from_id(&automation.harness);
         let model = gespan_core::store::native_model(&automation.model, &automation.harness);
-        let mark = automation
+        let glyph = automation
             .triggers()
             .first()
-            .map_or_else(|| "time".to_string(), |t| t.kind.clone());
+            .map_or("clock", |t| trigger_glyph(&t.kind, &t.event));
         let zeros = [0; SPARK_DAYS];
         let counts = self.sparklines.get(&id).map_or(&zeros[..], Vec::as_slice);
+        let clean = [false; SPARK_DAYS];
+        let failed = self.spark_failed.get(&id).map_or(&clean[..], Vec::as_slice);
         let selector = format!("automation-card-{id}");
         // The selected automation is an accent-edged card; the rest are
         // plain glass.
@@ -158,18 +163,23 @@ impl Automations {
                             .flex()
                             .items_center()
                             .gap(px(10.))
-                            .child(icon_tile(&mark, 30., 14.))
+                            .child(tile(
+                                30.,
+                                icon(glyph, 14.)
+                                    .text_color(content(0.92))
+                                    .into_any_element(),
+                            ))
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(2.))
                                     .child(
                                         div()
                                             .truncate()
                                             .text_size(px(13.))
+                                            .line_height(px(18.))
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .child(automation.name.clone()),
                                     )
@@ -177,6 +187,7 @@ impl Automations {
                                         div()
                                             .truncate()
                                             .text_size(px(11.5))
+                                            .line_height(px(16.))
                                             .text_color(content(0.55))
                                             .child(format!(
                                                 "{} · {}",
@@ -197,9 +208,8 @@ impl Automations {
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .gap(px(10.))
-                            .child(sparkline(&id, counts))
+                            .gap(px(8.))
+                            .child(sparkline(&id, counts, failed))
                             .child(last_run_note(
                                 &id,
                                 automation.last_run_status.as_deref(),
@@ -210,7 +220,7 @@ impl Automations {
                     .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx))),
             )
             .child(
-                div().absolute().right(px(12.)).top(px(19.)).child(
+                div().absolute().right(px(12.)).top(px(18.)).child(
                     editor::toggle(SharedString::from(format!("toggle-{toggle_id}")), enabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.toggle(toggle_id.clone(), !enabled, cx)
@@ -390,13 +400,18 @@ impl Automations {
     }
 }
 
-/// One bar per day, its height following the count; empty days draw as a
-/// flat stub so the row keeps its rhythm.
-fn sparkline(id: &str, counts: &[usize]) -> gpui::Stateful<gpui::Div> {
+/// One bar per day, its height following the count and its colour the
+/// day's outcome: green for runs, rose when one of them failed. Empty days
+/// draw as a short stub so the row keeps its rhythm.
+fn sparkline(id: &str, counts: &[usize], failed: &[bool]) -> gpui::Stateful<gpui::Div> {
     let peak = counts.iter().copied().max().unwrap_or(0).max(1);
     let total: usize = counts.iter().sum();
     div()
         .id(SharedString::from(format!("automation-spark-{id}")))
+        .debug_selector({
+            let selector = format!("automation-spark-{id}");
+            move || selector
+        })
         .role(Role::Image)
         .aria_label(match total {
             0 => format!("No runs in the last {SPARK_DAYS} days"),
@@ -410,21 +425,56 @@ fn sparkline(id: &str, counts: &[usize]) -> gpui::Stateful<gpui::Div> {
         .gap(px(2.))
         .children(counts.iter().enumerate().map(|(day, &count)| {
             let selector = format!("automation-spark-{id}-{day}");
+            let outcome = match (count, failed.get(day).copied().unwrap_or(false)) {
+                (0, _) => DayOutcome::Empty,
+                (_, true) => DayOutcome::Failed,
+                _ => DayOutcome::Ran,
+            };
             div()
                 .debug_selector(move || selector)
                 .w(px(4.))
                 .rounded(px(2.))
                 .h(px(if count == 0 {
-                    2.
+                    EMPTY_BAR
                 } else {
                     4. + (SPARK_HEIGHT - 4.) * count as f32 / peak as f32
                 }))
-                .bg(if count == 0 {
-                    content(0.12)
-                } else {
-                    accent_color().opacity(0.8)
-                })
+                .bg(outcome.color())
         }))
+}
+
+/// How a sparkline day went.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum DayOutcome {
+    Empty,
+    Ran,
+    Failed,
+}
+
+impl DayOutcome {
+    fn color(self) -> gpui::Hsla {
+        match (self, is_light()) {
+            (Self::Empty, false) => white(0.12),
+            (Self::Empty, true) => content(0.12),
+            (Self::Ran, false) => gpui::rgba(0x6ee7b7bf).into(),
+            (Self::Ran, true) => glass::Tone::Ok.ink().opacity(0.75),
+            (Self::Failed, false) => gpui::rgba(0xfda4afd9).into(),
+            (Self::Failed, true) => glass::Tone::Bad.ink().opacity(0.85),
+        }
+    }
+}
+
+/// Per sparkline day, oldest first: whether any run that day failed.
+pub(super) fn failed_days(history: &[AutomationRun], days: usize, now: i64) -> Vec<bool> {
+    let failed = history
+        .iter()
+        .filter(|run| run.status == "failed")
+        .cloned()
+        .collect::<Vec<_>>();
+    automations::runs_per_day(&failed, days, now)
+        .into_iter()
+        .map(|count| count > 0)
+        .collect()
 }
 
 fn last_run(at: Option<i64>, now: i64) -> String {
@@ -442,7 +492,7 @@ fn ago(at: i64, now: i64) -> String {
         0 => "just now".into(),
         1..60 => format!("{minutes}m ago"),
         60..1440 => format!("{}h ago", minutes / 60),
-        1440..10_080 => format!("{}d ago", minutes / 1440),
+        1440..WEEK_MINUTES => format!("{}d ago", minutes / 1440),
         _ => chrono::DateTime::from_timestamp_millis(at)
             .map(|date| {
                 date.with_timezone(&chrono::Local)
@@ -453,64 +503,71 @@ fn ago(at: i64, now: i64) -> String {
     }
 }
 
-/// The card's latest-run pill: the result in words and its tone, so colour
-/// is never the only cue. `None` when there is no known result to show.
-pub(super) fn last_run_pill(
-    status: Option<&str>,
-    at: Option<i64>,
-    now: i64,
-) -> Option<(String, glass::Tone)> {
-    use glass::Tone;
-    let when = at.filter(|at| *at > 0).map(|at| ago(at, now));
-    let pill = match (status?, when) {
-        ("running", _) => ("Running now".into(), Tone::Running),
-        ("pending", _) => ("Queued".into(), Tone::Running),
-        ("succeeded", Some(when)) => (format!("Last run {when}"), Tone::Ok),
-        ("failed", Some(when)) => (format!("Failed {when}"), Tone::Bad),
-        ("skipped", Some(when)) => (format!("Skipped {when}"), Tone::Waiting),
-        ("cancelled", Some(when)) => (format!("Cancelled {when}"), Tone::Muted),
-        _ => return None,
-    };
-    Some(pill)
+const WEEK_MINUTES: i64 = 10_080;
+
+/// The card's "Last run" as a green pill: only for a success within the last
+/// week. Anything older, failed or cancelled reads as the plain line, and
+/// the bars carry the failures.
+pub(super) fn recent_success(status: Option<&str>, at: Option<i64>, now: i64) -> Option<String> {
+    let at = at.filter(|at| *at > 0)?;
+    (status == Some("succeeded") && (now - at).max(0) / 60_000 < WEEK_MINUTES)
+        .then(|| format!("Last run {}", ago(at, now)))
 }
 
-/// "Last run …" beneath a card: a status pill once the latest result is
-/// known, plain text before that.
+/// "Last run …" beneath a card: a pill right after the bars for a recent
+/// success, else plain text against the card's right edge.
 fn last_run_note(id: &str, status: Option<&str>, at: Option<i64>, now: i64) -> AnyElement {
     let id = id.to_owned();
-    match last_run_pill(status, at, now) {
-        Some((label, tone)) => glass::status(label, tone)
+    match recent_success(status, at, now) {
+        Some(label) => glass::status(label, glass::Tone::Ok)
             .h(px(18.))
             .text_size(px(11.))
             .debug_selector(move || format!("automation-last-run-pill-{id}"))
             .into_any_element(),
         None => div()
             .debug_selector(move || format!("automation-last-run-{id}"))
+            .ml_auto()
+            .min_w_0()
             .truncate()
             .text_size(px(11.5))
+            .line_height(px(16.))
             .text_color(content(0.55))
             .child(last_run(at, now))
             .into_any_element(),
     }
 }
 
-/// A rounded glass tile holding a trigger's mark.
-pub(super) fn icon_tile(kind: &str, side: f32, glyph: f32) -> gpui::Div {
-    tile(side, trigger_mark(kind, glyph))
+/// The glyph on an automation's tile: what starts it, not who hosts it.
+pub(super) fn trigger_glyph(kind: &str, event: &str) -> &'static str {
+    if kind == "time" {
+        "clock"
+    } else if event.contains("issue") {
+        "alert-circle"
+    } else if event.contains("pull_request") {
+        "git-pull-request"
+    } else if event.contains("push") || event.contains("commit") {
+        "git-commit"
+    } else {
+        "zap"
+    }
 }
 
-/// A gallery glyph in the card's ink.
-pub(super) fn icon_glyph(path: &'static str, side: f32) -> AnyElement {
-    icon(path, side).text_color(content(0.9)).into_any_element()
+/// A gallery glyph in the given ink.
+pub(super) fn icon_glyph(path: &'static str, side: f32, ink: gpui::Hsla) -> AnyElement {
+    icon(path, side).text_color(ink).into_any_element()
 }
 
-/// A rounded glass tile around a glyph: a card's icon plate.
+/// The `.tile` plate: a 9px-rounded glass square around a glyph.
 pub(super) fn tile(side: f32, glyph: AnyElement) -> gpui::Div {
     div()
         .size(px(side))
         .flex_shrink_0()
-        .rounded(px(side * 0.27))
-        .bg(glass::fill_strong())
+        .rounded(px(9.))
+        .bg(if is_light() {
+            glass::fill_strong()
+        } else {
+            white(0.07)
+        })
         .border_1()
         .border_color(glass::edge())
         .flex()
@@ -549,38 +606,45 @@ mod tests {
     }
 
     #[test]
-    fn last_run_pill_names_the_result_in_words() {
-        use glass::Tone;
+    fn only_a_recent_success_reads_as_a_pill() {
         let now = 1_800_000_000_000;
         let hours_ago = Some(now - 6 * 3_600_000);
-        let pill = |status| last_run_pill(Some(status), hours_ago, now);
         assert_eq!(
-            pill("succeeded"),
-            Some(("Last run 6h ago".into(), Tone::Ok))
+            recent_success(Some("succeeded"), hours_ago, now),
+            Some("Last run 6h ago".into())
         );
-        // Anything but success says what happened, so colour is never the
-        // only cue.
-        assert_eq!(pill("failed"), Some(("Failed 6h ago".into(), Tone::Bad)));
+        // Six days is still recent; eight is a date on the plain line.
+        let six_days = Some(now - 6 * 86_400_000);
         assert_eq!(
-            pill("skipped"),
-            Some(("Skipped 6h ago".into(), Tone::Waiting))
+            recent_success(Some("succeeded"), six_days, now),
+            Some("Last run 6d ago".into())
         );
         assert_eq!(
-            pill("cancelled"),
-            Some(("Cancelled 6h ago".into(), Tone::Muted))
+            recent_success(Some("succeeded"), Some(now - 8 * 86_400_000), now),
+            None
         );
-        // A live run is about now, whenever it was scheduled.
-        assert_eq!(pill("running"), Some(("Running now".into(), Tone::Running)));
-        assert_eq!(pill("pending"), Some(("Queued".into(), Tone::Running)));
+        // Failures and cancellations show on the bars, not as a pill.
+        for status in ["failed", "cancelled", "skipped", "running", "pending"] {
+            assert_eq!(
+                recent_success(Some(status), hours_ago, now),
+                None,
+                "{status}"
+            );
+        }
+        assert_eq!(recent_success(None, hours_ago, now), None);
+        assert_eq!(recent_success(Some("succeeded"), None, now), None);
+        assert_eq!(recent_success(Some("succeeded"), Some(0), now), None);
+    }
+
+    #[test]
+    fn tile_glyph_follows_what_starts_the_automation() {
+        assert_eq!(trigger_glyph("github", "issue_opened"), "alert-circle");
+        assert_eq!(trigger_glyph("linear", "issue_created"), "alert-circle");
         assert_eq!(
-            last_run_pill(Some("running"), None, now),
-            Some(("Running now".into(), Tone::Running))
+            trigger_glyph("github", "pull_request_opened"),
+            "git-pull-request"
         );
-        // No result yet, an unknown status, or a finished result with no time
-        // fall back to the plain "Last run …" line.
-        assert_eq!(last_run_pill(None, hours_ago, now), None);
-        assert_eq!(pill("exploded"), None);
-        assert_eq!(last_run_pill(Some("failed"), None, now), None);
-        assert_eq!(last_run_pill(Some("succeeded"), Some(0), now), None);
+        assert_eq!(trigger_glyph("time", ""), "clock");
+        assert_eq!(trigger_glyph("gitlab", "something_new"), "zap");
     }
 }

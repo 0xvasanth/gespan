@@ -16,7 +16,7 @@ impl Automations {
             template_card(
                 "automation-scratch".into(),
                 "Start from scratch",
-                layout::icon_glyph("plus", 16.),
+                layout::icon_glyph("plus", 16., content(0.92)),
                 "Write your own instructions and choose a trigger.",
                 None,
             )
@@ -63,7 +63,7 @@ impl Automations {
                 template_card(
                     SharedString::from(format!("template-{}", template.id)),
                     template.name.clone(),
-                    layout::icon_glyph(path, 16.),
+                    layout::icon_glyph(path, 16., eyebrow_ink()),
                     template.description.clone(),
                     Some(schedule),
                 )
@@ -78,7 +78,7 @@ impl Automations {
                 .into_any_element(),
             );
         }
-        // CSS's two-column card grid, capped at 1024px and set against the list.
+        // CSS's two-column card grid, 960px of cards at most, set against the list.
         let mut grid = div().flex().flex_col().gap(px(14.));
         let mut iter = cards.into_iter();
         while let Some(left) = iter.next() {
@@ -119,7 +119,7 @@ impl Automations {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(1024.))
+                    .max_w(px(1032.))
                     .px(px(36.))
                     .pt(px(26.))
                     .pb(px(40.))
@@ -131,11 +131,15 @@ impl Automations {
                             .flex()
                             .flex_col()
                             .gap(px(6.))
-                            .child(glass::eyebrow("New automation").text_color(eyebrow_ink()))
+                            .child(
+                                glass::eyebrow("New automation")
+                                    .line_height(px(13.))
+                                    .text_color(eyebrow_ink()),
+                            )
                             .child(
                                 div()
                                     .text_size(px(24.))
-                                    .line_height(px(30.))
+                                    .line_height(px(29.))
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
                                     .child("Pick an example or start from scratch."),
                             ),
@@ -179,18 +183,19 @@ fn template_card(
         .flex_col()
         .gap(px(10.))
         .hover(|s| s.bg(glass::fill_strong()))
-        .child(layout::tile(36., glyph))
+        .child(layout::tile(32., glyph))
         .child(
             div()
                 .text_size(px(14.5))
+                .line_height(px(18.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .child(title),
         )
         .child(
             div()
-                .text_size(px(12.5))
-                .line_height(px(18.))
-                .text_color(content(0.62))
+                .text_size(px(12.))
+                .line_height(px(17.))
+                .text_color(content(0.68))
                 .child(description.into()),
         )
         .when_some(schedule, |d, (kind, label)| {
@@ -198,16 +203,16 @@ fn template_card(
                 div().mt_auto().flex().child(
                     div()
                         .h(px(24.))
-                        .px(px(9.))
+                        .px(px(11.))
                         .flex()
                         .items_center()
                         .gap(px(6.))
                         .rounded_full()
-                        .bg(glass::fill_strong())
+                        .bg(glass::fill())
                         .border_1()
                         .border_color(glass::edge())
-                        .text_size(px(11.5))
-                        .text_color(content(0.75))
+                        .text_size(px(12.))
+                        .text_color(content(0.68))
                         .child(trigger_mark(&kind, 12.))
                         .child(label),
                 ),

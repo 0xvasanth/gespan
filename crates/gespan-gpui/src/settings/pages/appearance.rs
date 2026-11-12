@@ -2,7 +2,9 @@
 //! background and Diff colors cards.
 use crate::glass::{self, Button};
 use crate::popover::{Align, Anchor, Side, popover};
-use crate::settings::{Preferences, SettingsEvent, SettingsView, SliderKind};
+use crate::settings::{
+    Preferences, SettingsEvent, SettingsView, SliderKind, widgets::picture_option,
+};
 use crate::theme::*;
 use crate::window_blur::BLUR_ADJUSTABLE;
 use gpui::{
@@ -38,6 +40,10 @@ fn effect_description(effect: &str) -> &'static str {
         _ => "Shows the original artwork.",
     }
 }
+
+/// A preset swatch's accent dot: the mock's 34% radial stop inside a 26px
+/// swatch, about 10px across.
+const SWATCH_DOT: f32 = 10.;
 
 /// The sidebar entries Layout offers as chips, in the sidebar's own order:
 /// (id for Shell::change_sidebar_option, label).
@@ -170,37 +176,6 @@ fn ringed(d: gpui::Stateful<Div>, selected: bool) -> gpui::Stateful<Div> {
             d.border_color(gpui::transparent_black())
         }
     })
-}
-
-/// A picture option: a small preview over its name, ringed in the accent
-/// once chosen.
-fn picture_option(
-    id: SharedString,
-    preview: Div,
-    label: &'static str,
-    selected: bool,
-) -> gpui::Stateful<Div> {
-    div()
-        .id(id)
-        .cursor_pointer()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(8.))
-        .text_size(px(12.))
-        .text_color(content(if selected { 1. } else { 0.62 }))
-        .hover(|s| s.text_color(content(1.)))
-        .child(preview.overflow_hidden().relative().border_1().map(|d| {
-            if selected {
-                d.border_color(accent_color()).shadow(vec![
-                    gpui::BoxShadow::new(px(0.), px(0.), accent_color().opacity(0.35))
-                        .spread_radius(px(2.)),
-                ])
-            } else {
-                d.border_color(content(0.1))
-            }
-        }))
-        .child(label)
 }
 
 /// A stand-in for each background effect, drawn over the chosen image's
@@ -364,7 +339,7 @@ impl SettingsView {
         page.push(self.group(
             None,
             false,
-            "Color",
+            "Colour",
             Some("Tint the window and main-pane surfaces.".into()),
             None,
             color,
@@ -473,11 +448,19 @@ impl SettingsView {
             .flex_none()
             .overflow_hidden()
             .rounded(px(12.))
-            .bg(linear_gradient(
-                135.,
-                linear_color_stop(rgb(0x8f64f6), 0.),
-                linear_color_stop(rgb(0x459bf7), 1.),
-            ))
+            .bg(rgb(0x17151c))
+            // The desktop behind the window: a soft violet-to-blue wash.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(12.))
+                    .bg(linear_gradient(
+                        135.,
+                        linear_color_stop(Hsla::from(rgb(0x8f64f6)).opacity(0.55), 0.),
+                        linear_color_stop(Hsla::from(rgb(0x459bf7)).opacity(0.4), 1.),
+                    )),
+            )
             .child(
                 div()
                     .absolute()
@@ -584,7 +567,6 @@ impl SettingsView {
                                 .role(Role::Button)
                                 .aria_label("Restore defaults")
                                 .h(px(30.))
-                                .child(icon("rotate-ccw", 14.).text_color(content(0.62)))
                                 .on_click(cx.listener(|this, _, _, cx| this.restore_defaults(cx))),
                         ),
                     ),
@@ -600,11 +582,20 @@ impl SettingsView {
             .iter()
             .find(|(id, ..)| *id == selected)
             .map_or("Custom", |(_, label, ..)| label);
+        // The chosen preset's name sits left of the swatches, on their line.
         div()
             .flex()
-            .flex_col()
-            .items_end()
-            .gap(px(6.))
+            .items_center()
+            .gap(px(12.))
+            .child(
+                div()
+                    .debug_selector(|| "settings-workspace-theme-name".into())
+                    .min_w(px(64.))
+                    .text_right()
+                    .text_size(px(13.))
+                    .text_color(content(1.))
+                    .child(name),
+            )
             .child(
                 div()
                     .id("workspace-theme-presets")
@@ -612,8 +603,7 @@ impl SettingsView {
                     .role(Role::RadioGroup)
                     .aria_label("Workspace theme")
                     .flex()
-                    .flex_wrap()
-                    .justify_end()
+                    .items_center()
                     .gap(px(8.))
                     .children(crate::settings::palettes::PALETTES.iter().map(
                         |&(id, label, dark, pale)| {
@@ -637,20 +627,23 @@ impl SettingsView {
                             .rounded_full()
                             .cursor_pointer()
                             .child(
+                                // The preset's surface, its accent a
+                                // centred dot.
                                 div()
-                                    .relative()
                                     .size_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .rounded_full()
-                                    .overflow_hidden()
                                     .bg(rgb(palette.surface))
                                     .border_1()
                                     .border_color(content(0.15))
                                     .child(
                                         div()
-                                            .absolute()
-                                            .top(px(10.))
-                                            .left(px(10.))
-                                            .size(px(9.))
+                                            .debug_selector(move || {
+                                                format!("settings-workspace-theme-dot-{id}")
+                                            })
+                                            .size(px(SWATCH_DOT))
                                             .rounded_full()
                                             .bg(rgb(palette.accent)),
                                     ),
@@ -662,13 +655,6 @@ impl SettingsView {
                             ))
                         },
                     )),
-            )
-            .child(
-                div()
-                    .debug_selector(|| "settings-workspace-theme-name".into())
-                    .text_size(px(11.5))
-                    .text_color(content(0.55))
-                    .child(name),
             )
             .into_any_element()
     }

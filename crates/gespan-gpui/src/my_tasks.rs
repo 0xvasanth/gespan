@@ -72,6 +72,9 @@ pub(crate) struct TaskItem {
     pub project: String,
     pub headline: String,
     pub who: String,
+    /// The agent that asked ("Claude Code", "Pilot"), shown as a pill on its
+    /// row; `None` for a Flow step, whose kind already says Flow.
+    pub agent: Option<String>,
     pub source_label: String,
     pub source: Source,
     pub body: Body,
@@ -348,6 +351,7 @@ impl Render for MyTasks {
             .id("my-tasks")
             .debug_selector(|| "my-tasks".into())
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::enter))
             .size_full()
             .flex()
             .text_color(content(1.))

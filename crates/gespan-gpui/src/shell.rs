@@ -28,6 +28,7 @@ mod image_lightbox_tests;
 mod import_sessions;
 mod in_flight;
 mod inbox_ask;
+mod inbox_automations;
 mod layout;
 mod menu_bar;
 mod mobile_host;
@@ -258,6 +259,12 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("escape", DismissMenu, context),
         KeyBinding::new(&format!("{modifier}-b"), ToggleSidebar, context),
         KeyBinding::new(&format!("{modifier}-k"), FocusSearch, context),
+        // Inside Settings, Find searches the settings.
+        KeyBinding::new(
+            &format!("{modifier}-f"),
+            crate::settings::FocusSettingsSearch,
+            Some("SettingsView"),
+        ),
         KeyBinding::new(&format!("{modifier}-shift-f"), SearchFiles, context),
         KeyBinding::new(&format!("{modifier}-alt-t"), CloseOtherTabs, context),
         KeyBinding::new(&format!("{modifier}-shift-]"), NextTab, context),

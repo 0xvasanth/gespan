@@ -5,7 +5,7 @@ use crate::{
     input::{self, Input},
     settings::{
         Section, SettingsEvent, SettingsView,
-        widgets::{red, secondary_button},
+        widgets::{glass_secondary, red},
     },
     theme::*,
 };
@@ -63,6 +63,24 @@ pub(super) fn status_line(view: &MachineView) -> String {
     }
 }
 
+/// The pill colour for a machine's status: online is fine, off is quiet,
+/// offline is a problem, and the rest wait on someone.
+pub(super) fn status_tone(view: &MachineView) -> crate::glass::Tone {
+    use crate::glass::Tone;
+    if !view.machine.enabled {
+        return Tone::Muted;
+    }
+    if view.version_mismatch.is_some() {
+        return Tone::Waiting;
+    }
+    match view.snapshot.online {
+        Online::Online => Tone::Ok,
+        Online::Connecting => Tone::Running,
+        Online::Offline { .. } => Tone::Bad,
+        _ => Tone::Waiting,
+    }
+}
+
 /// The upgrade button's text. A machine without herdr has nothing to
 /// upgrade, and one running a later herdr would go back to the pinned one,
 /// so for both the button says what it installs rather than Upgrade.
@@ -94,7 +112,7 @@ enum Upgrade {
 impl SettingsView {
     /// Re-reads the list whenever Connections opens.
     pub(in crate::settings) fn watch_herdr_machines(&mut self, cx: &mut Context<Self>) {
-        if self.section == Section::Connections && crate::machines::visible(cx) {
+        if self.section == Section::Devices && crate::machines::visible(cx) {
             crate::machines::reload(cx);
         }
     }
@@ -342,36 +360,73 @@ impl SettingsView {
         let online = view.machine.enabled && view.snapshot.online == Online::Online;
         // Only an enabled machine has a connection to retry.
         let retry = view.machine.enabled && !online;
+        let tone = if preparing {
+            crate::glass::Tone::Running
+        } else {
+            status_tone(view)
+        };
         div()
             .border_b_1()
-            .border_color(content(0.1))
+            .border_color(crate::glass::hairline())
             .child(
                 div()
                     .id(SharedString::from(format!("herdr-machine-{id}")))
                     .debug_selector(move || format!("herdr-machine-{row}"))
                     .flex()
                     .items_center()
-                    .gap_3()
-                    .p_4()
-                    .child(icon("globe", 20.).text_color(content(if online { 0.7 } else { 0.35 })))
+                    .gap(px(14.))
+                    .px_4()
+                    .py(px(14.))
+                    .child(
+                        div()
+                            .size(px(32.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(9.))
+                            .bg(content(0.07))
+                            .border_1()
+                            .border_color(crate::glass::edge())
+                            .child(icon("globe", 16.).text_color(content(if online {
+                                0.8
+                            } else {
+                                0.45
+                            }))),
+                    )
                     .child(
                         div()
                             .min_w_0()
                             .flex_1()
                             .child(
                                 div()
-                                    .truncate()
-                                    .text_size(px(13.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(label.clone()),
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .min_w_0()
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_size(px(13.))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(label.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .id(SharedString::from(format!("herdr-status-{id}")))
+                                            .role(Role::Status)
+                                            .min_w_0()
+                                            .child(crate::glass::status(status, tone)),
+                                    ),
                             )
-                            .child(paragraph(view.machine.target.clone()).mt_1())
                             .child(
-                                paragraph(status)
+                                div()
                                     .mt_1()
-                                    .text_color(content(0.5))
-                                    .id(SharedString::from(format!("herdr-status-{id}")))
-                                    .role(Role::Status),
+                                    .truncate()
+                                    .font_family(crate::fonts::monospace())
+                                    .text_size(px(11.5))
+                                    .text_color(content(0.55))
+                                    .child(view.machine.target.clone()),
                             ),
                     )
                     .child(
@@ -382,7 +437,7 @@ impl SettingsView {
                             .when(retry, |d| {
                                 let (selector, retry_id) = (id.clone(), id.clone());
                                 d.child(
-                                    secondary_button(
+                                    glass_secondary(
                                         SharedString::from(format!("herdr-retry-{id}")),
                                         format!("Retry {label}"),
                                         false,
@@ -405,7 +460,7 @@ impl SettingsView {
                                     install => format!("{install} on {label}"),
                                 };
                                 d.child(
-                                    secondary_button(
+                                    glass_secondary(
                                         SharedString::from(format!("herdr-upgrade-{id}")),
                                         aria,
                                         false,
@@ -425,7 +480,7 @@ impl SettingsView {
                             .child(self.herdr_switch(view, cx))
                             .child({
                                 let selector = remove_id.clone();
-                                secondary_button(
+                                glass_secondary(
                                     SharedString::from(format!("herdr-remove-{id}")),
                                     format!("Remove {label}"),
                                     true,
@@ -493,7 +548,7 @@ impl SettingsView {
                     .flex()
                     .gap_2()
                     .child(
-                        secondary_button(
+                        glass_secondary(
                             "herdr-remove-yes",
                             format!("Remove {label}"),
                             true,
@@ -512,7 +567,7 @@ impl SettingsView {
                         })),
                     )
                     .child(
-                        secondary_button("herdr-remove-cancel", "Cancel", false, disabled)
+                        glass_secondary("herdr-remove-cancel", "Cancel", false, disabled)
                             .debug_selector(|| "herdr-remove-cancel".into())
                             .child("Cancel")
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -548,7 +603,6 @@ impl SettingsView {
                 .id("herdr-machines")
                 .debug_selector(|| "herdr-machines".into())
                 .relative()
-                .mt_8()
                 .child(self.reveal_probe("herdr-machines"))
                 .child(
                     div()
@@ -560,10 +614,10 @@ impl SettingsView {
         ];
         if !views.is_empty() {
             let mut list = div()
-                .mt_4()
-                .rounded_xl()
+                .rounded(px(14.))
                 .border_1()
-                .border_color(content(0.1))
+                .border_color(crate::glass::edge())
+                .bg(crate::glass::fill())
                 .overflow_hidden();
             for view in &views {
                 list = list.child(self.herdr_machine_row(view, cx));
@@ -574,10 +628,10 @@ impl SettingsView {
                 div()
                     .id("herdr-machines-empty")
                     .debug_selector(|| "herdr-machines-empty".into())
-                    .mt_4()
-                    .rounded_xl()
+                    .rounded(px(14.))
                     .border_1()
-                    .border_color(content(0.15))
+                    .border_color(crate::glass::edge())
+                    .bg(crate::glass::fill())
                     .px_5()
                     .py_8()
                     .text_center()
@@ -593,7 +647,6 @@ impl SettingsView {
                     .id("herdr-machines-error")
                     .debug_selector(|| "herdr-machines-error".into())
                     .role(Role::Alert)
-                    .mt_4()
                     .rounded_lg()
                     .bg(red(0.05))
                     .p_3()
@@ -609,7 +662,6 @@ impl SettingsView {
         let add_disabled = self.herdr.adding || not_bundled || self.herdr_target(cx).is_empty();
         page.push(
             div()
-                .mt_4()
                 .flex()
                 .items_center()
                 .gap_2()
@@ -628,7 +680,7 @@ impl SettingsView {
                         .child(input),
                 )
                 .child(
-                    secondary_button("herdr-add", "Add", false, add_disabled)
+                    glass_secondary("herdr-add", "Add", false, add_disabled)
                         .debug_selector(|| "herdr-add".into())
                         .child(icon("plus", 16.))
                         .child("Add")
@@ -723,7 +775,7 @@ mod tests {
                 |_, cx| {
                     cx.new(|cx| {
                         let mut view = SettingsView::new(
-                            Section::Connections,
+                            Section::Devices,
                             Preferences::default(),
                             SettingsContext::default(),
                             cx,
@@ -1091,9 +1143,7 @@ mod tests {
             .unwrap();
         assert_eq!(reloads(cx), 1);
         window
-            .update(cx, |view, _, cx| {
-                view.select_section(Section::Connections, cx)
-            })
+            .update(cx, |view, _, cx| view.select_section(Section::Devices, cx))
             .unwrap();
         assert_eq!(reloads(cx), 2);
     }

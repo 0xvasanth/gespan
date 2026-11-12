@@ -8,17 +8,16 @@ use gpui::{AnyElement, BoxShadow, Div, FontWeight, Hsla, Role, SharedString, Sta
 
 /// The queue column's width, as in the approved design.
 pub(super) const LIST_WIDTH: f32 = 360.;
-/// A task waiting this long shows its wait in the waiting colour.
+/// A task waiting this long is in the "Over 1 hour" group.
 const LONG_WAIT_MS: u64 = 60 * 60 * 1000;
 const EIGHT_HOURS_MS: u64 = 8 * LONG_WAIT_MS;
 
 /// A kind's mark in the list and on the card.
 pub(super) fn kind_icon(kind: Kind) -> &'static str {
     match kind {
-        Kind::Question => "chat",
-        Kind::Approval => "terminal",
-        Kind::FlowApproval => "git-merge",
-        Kind::PilotChoice => "queue-list",
+        Kind::Approval => "task-terminal",
+        Kind::Question | Kind::PilotChoice => "task-question",
+        Kind::FlowApproval => "task-flow",
         Kind::DraftReview => "git-pull-request-draft",
     }
 }
@@ -37,13 +36,35 @@ pub(super) fn kind_status(kind: Kind) -> (&'static str, Tone) {
 
 /// The colour of a kind's mark on its tile.
 fn kind_ink(kind: Kind) -> Hsla {
-    match kind {
-        Kind::Approval => Tone::Waiting.ink(),
-        Kind::Question => gpui::rgb(if is_light() { 0x6d4fd6 } else { 0xc0affc }).into(),
-        Kind::FlowApproval => diff_foreground(true),
-        Kind::PilotChoice => accent_color(),
-        Kind::DraftReview => Tone::Muted.ink(),
-    }
+    let (dark, light) = match kind {
+        Kind::Approval => (0xe8c547, 0xa86b00),
+        Kind::Question | Kind::PilotChoice => (0xc0affc, 0x6d4fd6),
+        Kind::FlowApproval => (0x6ee7b7, 0x15874f),
+        // A draft review waits quietly, like the muted status beside it.
+        Kind::DraftReview => (0xa3a3a3, 0x666666),
+    };
+    gpui::rgb(if is_light() { light } else { dark }).into()
+}
+
+/// The faint ink of times and hints (the design's third text tone).
+pub(super) fn faint() -> Hsla {
+    content(if is_light() { 0.5 } else { 0.56 })
+}
+
+/// The agent a task comes from, as a small pill after its kind.
+pub(super) fn agent_pill(name: String) -> Div {
+    div()
+        .h(px(22.))
+        .px(px(10.))
+        .rounded_full()
+        .bg(glass::fill())
+        .border_1()
+        .border_color(glass::edge())
+        .flex()
+        .items_center()
+        .text_size(px(11.))
+        .text_color(content(0.64))
+        .child(name)
 }
 
 /// The square a kind's mark sits on, at the start of a row or the card.
@@ -52,7 +73,11 @@ pub(super) fn tile(kind: Kind, side: f32) -> Div {
         .size(px(side))
         .flex_shrink_0()
         .rounded(px(side * 0.28))
-        .bg(glass::fill_strong())
+        .bg(if is_light() {
+            glass::fill_strong()
+        } else {
+            white(0.07)
+        })
         .border_1()
         .border_color(glass::edge())
         .flex()
@@ -111,7 +136,7 @@ pub(super) fn group_label(
         .debug_selector(move || selector.clone())
         .px(px(8.))
         .pt(px(if first { 4. } else { 12. }))
-        .pb(px(6.))
+        .pb(px(4.))
         .into_any_element()
 }
 
@@ -133,12 +158,19 @@ pub(super) fn task_row(id: String, on: bool) -> Stateful<Div> {
         .border_1()
         .border_color(gpui::transparent_black())
         .when(on, |d| {
-            d.bg(glass::fill_strong())
-                .border_color(glass::edge())
-                .shadow(vec![
-                    BoxShadow::new(px(0.), px(1.), white(if is_light() { 0.9 } else { 0.08 }))
-                        .inset(),
-                ])
+            d.bg(if is_light() {
+                glass::fill_strong()
+            } else {
+                white(0.07)
+            })
+            .border_color(if is_light() {
+                glass::edge()
+            } else {
+                white(0.12)
+            })
+            .shadow(vec![
+                BoxShadow::new(px(0.), px(1.), white(if is_light() { 0.9 } else { 0.08 })).inset(),
+            ])
         })
         .when(!on, |d| d.hover(|s| s.bg(glass::hover_fill())))
 }
@@ -202,11 +234,6 @@ impl MyTasks {
             let key = task.key.clone();
             let on = selected.as_deref() == Some(task.key.as_str());
             let (word, tone) = kind_status(task.kind);
-            let wait_ink = if wait >= LONG_WAIT_MS {
-                Tone::Waiting.ink()
-            } else {
-                content(0.45)
-            };
             rows.push(
                 task_row(format!("my-tasks-row-{}", task.key), on)
                     .aria_label(SharedString::from(task.headline.clone()))
@@ -220,14 +247,24 @@ impl MyTasks {
                             .gap(px(3.))
                             .child(row_title(
                                 task.headline.clone(),
-                                Some((waited(wait), wait_ink)),
+                                Some((waited(wait), faint())),
                             ))
                             .child(row_line(format!(
                                 "{} \u{b7} {}",
                                 task.source_label,
                                 project_name(&task.project)
                             )))
-                            .child(div().mt(px(4.)).flex().child(glass::status(word, tone))),
+                            .child(
+                                div()
+                                    .mt(px(4.))
+                                    .flex()
+                                    .gap(px(6.))
+                                    .child(glass::status(word, tone))
+                                    .children(task.agent.clone().map(|name| {
+                                        let selector = format!("my-tasks-agent-{}", task.key);
+                                        agent_pill(name).debug_selector(move || selector.clone())
+                                    })),
+                            ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.select(&key, cx)))
                     .into_any_element(),
@@ -262,12 +299,15 @@ impl MyTasks {
                         .debug_selector(move || format!("my-tasks-count-waiting-{waiting}")),
                 ),
             ))
-            // The Answered list is capped, so it carries no count.
             .child(segment(
                 Tab::Answered,
                 "my-tasks-tab-answered",
                 "Answered",
-                None,
+                Some({
+                    let answered = self.past.len();
+                    glass::count(answered, false)
+                        .debug_selector(move || format!("my-tasks-count-answered-{answered}"))
+                }),
             ))
             .child(segment(
                 Tab::Decisions,

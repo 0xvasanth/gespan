@@ -562,6 +562,30 @@ impl Shell {
                         this.inbox_automation_events(items.clone(), cx)
                     }
                     inbox::Event::ConnectionsChanged => this.refresh_connected_trackers(cx),
+                    inbox::Event::AutomationsWanted(item) => {
+                        this.inbox_automations_wanted(item.as_ref().clone(), cx)
+                    }
+                    inbox::Event::RunAutomation { item, automation } => {
+                        this.run_inbox_automation(item.as_ref().clone(), automation.clone(), cx)
+                    }
+                    inbox::Event::ReviewWithAgent(item) => {
+                        this.review_inbox_item(item.as_ref().clone(), window, cx)
+                    }
+                    inbox::Event::NewPullRequestAutomation(item) => {
+                        this.new_inbox_automation(item.as_ref().clone(), window, cx)
+                    }
+                    inbox::Event::OpenRuns { automation, name } => this.open_runs(
+                        runs::RunsFilter {
+                            automation: Some(automation.clone()),
+                            automation_name: Some(name.clone()),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    ),
+                    inbox::Event::OpenConnections => {
+                        this.open_settings(crate::settings::Section::Services, window, cx)
+                    }
                 },
             ));
             self.app_view_events

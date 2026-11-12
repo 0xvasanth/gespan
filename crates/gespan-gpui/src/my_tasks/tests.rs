@@ -14,6 +14,7 @@ pub(super) fn task(key: &str, kind: Kind, project: &str, waited_min: u64) -> Tas
         project: project.into(),
         headline: format!("Task {key}"),
         who: "Builder asks".into(),
+        agent: None,
         source_label: format!("Session {key}"),
         source: Source::FlowRun(key.into()),
         body: Body::Flow {
@@ -402,6 +403,37 @@ fn scrolling_up_at_the_top_loads_one_page_per_gesture(cx: &mut TestAppContext) {
         loads.get(),
         1,
         "one flick asks for one page, not all of them"
+    );
+}
+
+#[gpui::test]
+fn a_row_names_its_agent_after_its_kind_and_a_flow_step_does_not(cx: &mut TestAppContext) {
+    let (window, mut visual) = page(cx);
+    let mut asked = task("a", Kind::Approval, "/work/web", 5);
+    asked.agent = Some("Claude Code".into());
+    show(
+        window,
+        &mut visual,
+        vec![asked, task("f", Kind::FlowApproval, "/work/web", 3)],
+    );
+    let pill = visual.debug_bounds("my-tasks-agent-a").expect("agent pill");
+    let row = visual.debug_bounds("my-tasks-row-a").unwrap();
+    assert!(row.contains(&pill.origin), "the pill sits in its own row");
+    assert!(pill.size.height <= px(22.));
+    // A Flow step's kind already says Flow: no second pill.
+    assert!(visual.debug_bounds("my-tasks-agent-f").is_none());
+}
+
+#[test]
+fn a_pilot_choice_keeps_its_word_but_wears_the_question_mark() {
+    assert_eq!(super::list::kind_status(Kind::PilotChoice).0, "Choice");
+    assert_eq!(
+        super::list::kind_icon(Kind::PilotChoice),
+        super::list::kind_icon(Kind::Question)
+    );
+    assert_ne!(
+        super::list::kind_icon(Kind::Approval),
+        super::list::kind_icon(Kind::FlowApproval)
     );
 }
 

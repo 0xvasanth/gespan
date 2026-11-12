@@ -109,6 +109,7 @@ impl AssetSource for Assets {
    "sparkles"=>include_bytes!("../assets/hugeicons/sparkles.svg"),
    "square-lock"=>include_bytes!("../assets/hugeicons/square-lock.svg"),
    "star"=>include_bytes!("../assets/hugeicons/star.svg"),
+   "wrench"=>include_bytes!("../assets/hugeicons/wrench.svg"),
    "star-filled"=>include_bytes!("../assets/hugeicons/star-filled.svg"),
    "trash"=>include_bytes!("../assets/hugeicons/trash.svg"),
    "chevron-up"=>include_bytes!("../assets/hugeicons/chevron-up.svg"),
@@ -142,6 +143,7 @@ impl AssetSource for Assets {
    "git-pull-request-closed"=>include_bytes!("../assets/hugeicons/git-pull-request-closed.svg"),
    "git-pull-request"=>include_bytes!("../assets/hugeicons/git-pull-request.svg"),
    "external-link"=>include_bytes!("../assets/hugeicons/external-link.svg"),
+   "arrow-up-right"=>include_bytes!("../assets/arrow-up-right.svg"),
    "folder-add"=>include_bytes!("../assets/hugeicons/folder-add.svg"),
    "fold-vertical"=>include_bytes!("../assets/hugeicons/fold-vertical.svg"),
    "git-branch-2"=>include_bytes!("../assets/hugeicons/git-branch-2.svg"),
@@ -228,6 +230,21 @@ fn icon_body(path: &str) -> Option<&'static str> {
         // ContextMeter's empty 14px ring (radius 6, stroke 2) on a 24 grid.
         "context-ring" => "<circle cx='12' cy='12' r='10.29' stroke-width='3.43'/>",
         "window" => "<rect x='3' y='4' width='18' height='16' rx='3'/><path d='M3 9h18'/>",
+        // lucide's Terminal, MessageSquare, GitPullRequest and ArrowUpRight
+        // at the task page's 1.8 and 2 strokes, and a 2.4 check for its pills.
+        "task-terminal" => {
+            "<polyline points='4 17 10 11 4 5' stroke-width='1.8'/><line x1='12' y1='19' x2='20' y2='19' stroke-width='1.8'/>"
+        }
+        "task-question" => {
+            "<path d='M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' stroke-width='1.8'/>"
+        }
+        "task-flow" => {
+            "<circle cx='18' cy='18' r='3' stroke-width='1.8'/><circle cx='6' cy='6' r='3' stroke-width='1.8'/><path d='M13 6h3a2 2 0 0 1 2 2v7' stroke-width='1.8'/><line x1='6' y1='9' x2='6' y2='21' stroke-width='1.8'/>"
+        }
+        "arrow-up-right" => {
+            "<line x1='7' y1='17' x2='17' y2='7' stroke-width='2'/><polyline points='7 7 17 7 17 17' stroke-width='2'/>"
+        }
+        "check-bold" => "<polyline points='20 6 9 17 4 12' stroke-width='2.4'/>",
         // lucide's Maximize2, Shield and Pencil.
         "maximize-2" => "<path d='M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'/>",
         "shield" => {

@@ -5,8 +5,10 @@ mod avatar;
 mod checks;
 mod diff;
 mod document;
+mod menu;
 mod ui;
 pub(crate) use avatar::image as avatar_image;
+pub(crate) use menu::{ItemAutomation, ItemRun, new_automation_event};
 pub(crate) use ui::relative_time;
 
 use crate::{
@@ -67,8 +69,28 @@ pub(crate) enum Event {
     },
     AskClosed,
     ItemsChanged(Vec<Item>),
+    /// The ⋯ menu opened on a pull request: the Shell answers with
+    /// `set_item_automations`.
+    AutomationsWanted(Box<Item>),
+    /// Run an automation now with this pull request as its event item.
+    RunAutomation {
+        item: Box<Item>,
+        automation: String,
+    },
+    /// Run the project's review automation on this pull request, or open its
+    /// setup when there is none.
+    ReviewWithAgent(Box<Item>),
+    /// The automation editor, with a pull request trigger.
+    NewPullRequestAutomation(Box<Item>),
+    /// Runs, filtered to this automation.
+    OpenRuns {
+        automation: String,
+        name: String,
+    },
     /// A tracker was connected or disconnected.
     ConnectionsChanged,
+    /// Add connection: Settings › Connections holds the catalogue.
+    OpenConnections,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -81,6 +103,13 @@ enum Tab {
 /// Only a GitHub pull request diff can widen to whole files.
 pub(crate) fn shows_full_file(item: &gespan_core::inbox::Item) -> bool {
     item.provider == "github" && item.kind == "pr"
+}
+
+#[cfg(test)]
+impl Inbox {
+    pub(crate) fn connections_menu_open(&self) -> bool {
+        self.connections_open
+    }
 }
 
 pub(crate) struct Inbox {
@@ -128,7 +157,6 @@ pub(crate) struct Inbox {
     post_error: Option<String>,
     thread_error: Option<String>,
     expanded_comments: std::collections::HashSet<String>,
-    merge_action: String,
     reply: Option<(String, String)>,
     generation: u64,
     detail_generation: u64,
@@ -150,9 +178,14 @@ pub(crate) struct Inbox {
     start_project: PathBuf,
     project_picker: bool,
     project_anchor: AnchorSlot,
+    /// The document's ⋯ menu.
     action_menu: bool,
     action_anchor: AnchorSlot,
-    pr_action_anchors: [AnchorSlot; 4],
+    /// The pull request automations the ⋯ menu offers, for `automations_for`.
+    item_automations: Vec<ItemAutomation>,
+    automations_for: Option<String>,
+    /// Runs started from an item's ⋯ menu, by item key.
+    item_runs: std::collections::HashMap<String, ItemRun>,
     action_error: Option<String>,
     action_notice: Option<String>,
     confirm_action: Option<String>,
@@ -255,7 +288,8 @@ impl Inbox {
             })
             .unwrap_or_else(|_| (ViewState::default(), cwd.clone()));
         state.filters.hidden_projects = other_projects(&projects, &cwd);
-        let search = cx.new(|cx| Input::field("Filter inbox", "Filter inbox", content(0.4), cx));
+        let search =
+            cx.new(|cx| Input::field("Search the inbox", "Search the inbox", content(0.4), cx));
         let comment = cx.new(Input::inbox_comment);
         let connect_url = cx.new(|cx| Input::field("Instance URL", "https://", content(0.4), cx));
         let connect_email = cx.new(|cx| Input::field("Email", "you@example.com", content(0.4), cx));
@@ -373,7 +407,6 @@ impl Inbox {
             post_error: None,
             thread_error: None,
             expanded_comments: Default::default(),
-            merge_action: "merge".into(),
             reply: None,
             generation: 0,
             detail_generation: 0,
@@ -395,7 +428,9 @@ impl Inbox {
             project_anchor: AnchorSlot::default(),
             action_menu: false,
             action_anchor: AnchorSlot::default(),
-            pr_action_anchors: std::array::from_fn(|_| AnchorSlot::default()),
+            item_automations: vec![],
+            automations_for: None,
+            item_runs: Default::default(),
             action_error: None,
             action_notice: None,
             confirm_action: None,
@@ -778,7 +813,6 @@ impl Inbox {
         self.post_error = None;
         self.thread_error = None;
         self.expanded_comments.clear();
-        self.merge_action = "merge".into();
         self.confirm_action = None;
         self.action_error = None;
         self.action_notice = None;
@@ -844,7 +878,7 @@ impl Inbox {
                             .is_none_or(|old| old.body != details.body)
                         {
                             this.document = Some(cx.new(|cx| {
-                                document::InboxDocument::new(
+                                document::InboxDocument::description(
                                     details.body.clone(),
                                     this.document_cwd(),
                                     cx,

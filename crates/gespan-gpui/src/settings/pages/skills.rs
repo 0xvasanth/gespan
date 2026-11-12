@@ -2,13 +2,28 @@ use crate::{
     settings::{
         SettingsView,
         management::Target,
-        widgets::{icon_action, note, page_header, secondary_button},
+        widgets::{glass_secondary, icon_action, note},
     },
     theme::*,
 };
 use gpui::{
     AnyElement, ClipboardItem, Context, Focusable, Role, SharedString, div, prelude::*, px,
 };
+/// The skills page's cards: (title, where they live).
+const SKILL_BUCKETS: [(&str, &str); 3] = [
+    ("Project", "this project's .agents/skills"),
+    ("Personal", "your ~/.agents/skills"),
+    ("Gespan", "built in"),
+];
+/// Which card a skill lists in, by its scope.
+pub(in crate::settings) fn skill_bucket(scope: &str) -> usize {
+    match scope {
+        "user" => 1,
+        "builtin" => 2,
+        _ => 0,
+    }
+}
+
 impl SettingsView {
     fn skill_create_form(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let e = self.management.as_ref().expect("open skill form");
@@ -211,10 +226,11 @@ impl SettingsView {
         let mut list = div()
             .mx_auto()
             .w_full()
-            .max_w(px(1024.))
-            .py_8()
+            .max_w(px(860.))
+            .pt(px(28.))
+            .pb(px(40.))
             .map(|d| if preview_open { d.px_4() } else { d.px_8() })
-            .child(page_header(
+            .child(crate::settings::widgets::glass_page_header(
                 "Skills",
                 "Discover and manage file skills from project, personal, and harness folders.",
             ))
@@ -225,6 +241,7 @@ impl SettingsView {
                     .items_center()
                     .justify_between()
                     .gap_3()
+                    .pt(px(22.))
                     .pb_3()
                     .child(
                         div()
@@ -233,35 +250,26 @@ impl SettingsView {
                             .flex()
                             .items_center()
                             .gap_3()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(content(0.4))
-                                    .flex_shrink_0()
-                                    .child(if self.discovery_loading {
-                                        "…".into()
-                                    } else {
+                            // The count once it's known; nothing while loading.
+                            .when(!self.discovery_loading, |d| {
+                                d.child(
+                                    crate::glass::status(
                                         format!(
                                             "{} {}",
                                             skills.len(),
                                             if skills.len() == 1 { "skill" } else { "skills" }
-                                        )
-                                    }),
-                            )
+                                        ),
+                                        crate::glass::Tone::Muted,
+                                    )
+                                    .debug_selector(|| "settings-skills-count".into()),
+                                )
+                            })
                             .child(
-                                div()
-                                    .h(px(28.))
-                                    .max_w(px(208.))
+                                crate::glass::field()
+                                    .max_w(px(260.))
                                     .min_w_0()
                                     .flex_1()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(content(0.1))
-                                    .px_2()
-                                    .child(icon("search-01", 14.))
+                                    .child(icon("search-01", 14.).text_color(content(0.5)))
                                     .child(
                                         div().min_w_0().flex_1().child(self.skill_filter.clone()),
                                     ),
@@ -286,7 +294,7 @@ impl SettingsView {
                             ),
                     )
                     .child(
-                        secondary_button(
+                        glass_secondary(
                             "add-skill",
                             if adding {
                                 "Close skill form"
@@ -348,8 +356,11 @@ impl SettingsView {
                         .into_any_element(),
                 );
             }
-            let count = skills.len();
+            // Project, Personal and Gespan skills each get their own card.
+            let mut buckets: [Vec<AnyElement>; 3] = Default::default();
             for (ix, skill) in skills.into_iter().enumerate() {
+                let b = skill_bucket(&skill.scope);
+                let first_in = buckets[b].is_empty();
                 let path = skill.path.clone();
                 let skill_path = path.display().to_string();
                 let enabled = !self.prefs.disabled_skill_paths.contains(&skill_path);
@@ -357,18 +368,18 @@ impl SettingsView {
                 let copy = path.clone();
                 let reveal = path.clone();
                 let name = skill.name.clone();
-                rows.push(
+                buckets[b].push(
                     div()
                         .id(SharedString::from(format!("settings-skill-{ix}")))
                         .when(!enabled, |d| d.opacity(0.5))
                         .when(self.skill_preview.as_ref() == Some(&path), |d| {
                             d.bg(content(0.05))
                         })
-                        .when(ix + 1 < count, |d| {
-                            d.border_b_1().border_color(content(0.05))
+                        .when(!first_in, |d| {
+                            d.border_t_1().border_color(crate::glass::hairline())
                         })
-                        .px_3()
-                        .py_2()
+                        .px_4()
+                        .py(px(10.))
                         .line_height(px(16.))
                         .child(
                             div()
@@ -390,23 +401,6 @@ impl SettingsView {
                                             this.preview_skill(preview.clone(), cx);
                                             cx.notify();
                                         })),
-                                )
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .rounded_full()
-                                        .bg(content(0.1))
-                                        .px(px(6.))
-                                        .py(px(2.))
-                                        .text_size(px(10.))
-                                        .text_color(content(0.6))
-                                        .child(if skill.scope == "user" {
-                                            "PERSONAL"
-                                        } else if skill.scope == "builtin" {
-                                            "GESPAN"
-                                        } else {
-                                            "PROJECT"
-                                        }),
                                 )
                                 .child(
                                     div()
@@ -513,14 +507,43 @@ impl SettingsView {
                         .into_any_element(),
                 );
             }
-            list = list.child(
-                div()
-                    .overflow_hidden()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(content(0.1))
-                    .children(rows),
-            );
+            if !rows.is_empty() {
+                list = list.child(crate::glass::card().overflow_hidden().children(rows));
+            }
+            for (b, cards) in buckets.into_iter().enumerate() {
+                if cards.is_empty() {
+                    continue;
+                }
+                let (title, hint) = SKILL_BUCKETS[b];
+                list = list.child(
+                    div()
+                        .debug_selector(move || format!("settings-skills-{}", title.to_lowercase()))
+                        .mt(px(18.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .px(px(4.))
+                                .flex()
+                                .items_baseline()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(title),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(content(0.55))
+                                        .child(format!("{} · {hint}", cards.len())),
+                                ),
+                        )
+                        .child(crate::glass::card().overflow_hidden().children(cards)),
+                );
+            }
         }
         list = list.child(div().pt_3().text_size(px(12.)).line_height(px(16.)).text_color(content(0.4))
             .child("Hidden skills stay on disk but leave Gespan's picker. Provider-managed skills and commands are unchanged."));
@@ -601,9 +624,13 @@ impl SettingsView {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    .when(split, |d| d.max_w(px(720.)).border_l_1())
-                    .when(!split, |d| d.border_t_1())
-                    .border_color(content(0.1))
+                    .when(split, |d| d.max_w(px(720.)))
+                    // The preview is a card of its own beside the list.
+                    .rounded(px(14.))
+                    .border_1()
+                    .border_color(crate::glass::edge())
+                    .bg(crate::glass::fill())
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
                     .child(

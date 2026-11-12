@@ -1,11 +1,12 @@
 //! Diagnostics: the local diagnostics actions and the last 7 days of
 //! failure counters. Nothing here sends anything; a report only leaves the
 //! machine when the user sends the saved zip on themselves.
-use crate::settings::{SettingsView, widgets::secondary_button};
+use crate::glass::Button;
+use crate::settings::SettingsView;
 use crate::theme::*;
 use chrono::NaiveDate;
 use gespan_core::diagnostics::{self, metrics::Count};
-use gpui::{AnyElement, ClipboardItem, Context, Task, div, prelude::*, px};
+use gpui::{AnyElement, ClipboardItem, Context, SharedString, Task, div, prelude::*, px};
 use std::collections::BTreeMap;
 
 /// Days the counters view covers, today included.
@@ -88,86 +89,137 @@ impl SettingsView {
         if self.diagnostics.counters.is_none() && self.diagnostics.loading.is_none() {
             self.load_counters(cx);
         }
-        let help = vec![self.row(
-            Some("diagnostics-actions"),
-            true,
-            "Report an issue",
-            Some(
-                self.diagnostics
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| {
-                        "Logs stay on this machine. A report shows you every file before it is saved, and Gespan never sends it: you email it or attach it to a GitHub issue."
-                            .into()
-                    })
-                    .into(),
-            ),
-            vec![
+        let description: SharedString = self
+            .diagnostics
+            .error
+            .clone()
+            .unwrap_or_else(|| {
+                "Logs stay on this machine. A report shows you every file before it is saved, and Gespan never sends it: you email it or attach it to a GitHub issue."
+                    .into()
+            })
+            .into();
+        let flash = self.flashing(Some("diagnostics-actions"));
+        let card = crate::glass::card()
+            .debug_selector(|| "settings-row-diagnostics-actions".into())
+            .relative()
+            .p(px(16.))
+            .flex()
+            .items_start()
+            .gap(px(12.))
+            .when(flash, |d| d.border_color(accent_color().opacity(0.6)))
+            .child(self.reveal_probe("diagnostics-actions"))
+            .child(
                 div()
+                    .size(px(32.))
+                    .flex_none()
                     .flex()
-                    .flex_wrap()
                     .items_center()
-                    .gap_2()
+                    .justify_center()
+                    .rounded(px(9.))
+                    .bg(content(0.07))
+                    .border_1()
+                    .border_color(crate::glass::edge())
+                    .child(icon("shield-alert", 16.).text_color(content(0.8))),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
                     .child(
-                        secondary_button("settings-report-issue", "Report an issue", false, false)
-                            .debug_selector(|| "settings-report-issue".into())
-                            .child("Report an issue…")
-                            .on_click(cx.listener(|_, _, window, cx| {
-                                window.dispatch_action(Box::new(crate::report::ReportIssue), cx)
-                            })),
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child("Report an issue"),
                     )
                     .child(
-                        secondary_button("settings-open-logs", "Open logs folder", false, false)
-                            .debug_selector(|| "settings-open-logs".into())
-                            .child("Open logs folder")
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                let open = cx
-                                    .background_executor()
-                                    .spawn(async { diagnostics::open_logs_folder() });
-                                cx.spawn(async move |this, cx| {
-                                    let error = open.await.err();
-                                    let _ = this.update(cx, |this, cx| {
-                                        this.diagnostics.error =
-                                            error.map(|e| format!("Open logs folder: {e}"));
-                                        cx.notify();
-                                    });
-                                })
-                                .detach();
-                            })),
-                    )
-                    .child(
-                        secondary_button(
-                            "settings-copy-diagnostics",
-                            "Copy diagnostics",
-                            false,
-                            false,
-                        )
-                        .debug_selector(|| "settings-copy-diagnostics".into())
-                        .child("Copy diagnostics")
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            // It scans the log and crash folders.
-                            let summary = cx
-                                .background_executor()
-                                .spawn(async { diagnostics::summary() });
-                            cx.spawn(async move |_, cx| {
-                                let summary = summary.await;
-                                cx.update(|cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(summary))
-                                })
-                            })
-                            .detach();
-                        })),
-                    )
-                    .into_any_element(),
-            ],
-        )];
+                        div()
+                            .mt(px(2.))
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(content(0.62))
+                            .child(description),
+                    ),
+            );
+        let buttons = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(
+                crate::glass::button("settings-report-issue", "Report an issue…", Button::Primary)
+                    .debug_selector(|| "settings-report-issue".into())
+                    .role(gpui::Role::Button)
+                    .aria_label("Report an issue")
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(crate::report::ReportIssue), cx)
+                    })),
+            )
+            .child(
+                crate::glass::button("settings-open-logs", "Open logs folder", Button::Glass)
+                    .debug_selector(|| "settings-open-logs".into())
+                    .role(gpui::Role::Button)
+                    .aria_label("Open logs folder")
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        let open = cx
+                            .background_executor()
+                            .spawn(async { diagnostics::open_logs_folder() });
+                        cx.spawn(async move |this, cx| {
+                            let error = open.await.err();
+                            let _ = this.update(cx, |this, cx| {
+                                this.diagnostics.error =
+                                    error.map(|e| format!("Open logs folder: {e}"));
+                                cx.notify();
+                            });
+                        })
+                        .detach();
+                    })),
+            )
+            .child(
+                crate::glass::button(
+                    "settings-copy-diagnostics",
+                    "Copy diagnostics",
+                    Button::Glass,
+                )
+                .debug_selector(|| "settings-copy-diagnostics".into())
+                .role(gpui::Role::Button)
+                .aria_label("Copy diagnostics")
+                .on_click(cx.listener(|_, _, _, cx| {
+                    // It scans the log and crash folders.
+                    let summary = cx
+                        .background_executor()
+                        .spawn(async { diagnostics::summary() });
+                    cx.spawn(async move |_, cx| {
+                        let summary = summary.await;
+                        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(summary)))
+                    })
+                    .detach();
+                })),
+            )
+            .into_any_element();
+        // Today's failures, once counted, wait on the section's right.
+        let today = match &self.diagnostics.counters {
+            Some(Ok(rows)) => rows.iter().map(|r| r.today).sum::<u64>(),
+            _ => 0,
+        };
         vec![
-            self.group(None, true, "Help", None, None, help),
-            self.group(
+            self.glass_group(
                 None,
-                false,
+                "Help",
+                None,
+                None,
+                None,
+                vec![card.into_any_element()],
+            ),
+            buttons,
+            self.glass_group(
+                None,
                 "Last 7 days",
                 Some("Failures counted on this machine, by kind. Never error text.".into()),
+                (today > 0).then(|| {
+                    crate::glass::status(format!("{today} today"), crate::glass::Tone::Waiting)
+                        .debug_selector(|| "settings-counters-today".into())
+                        .into_any_element()
+                }),
                 None,
                 self.counter_rows(),
             ),
@@ -192,16 +244,31 @@ impl SettingsView {
                 "settings-counters-empty",
                 "No failures in the last 7 days.".into(),
             )],
-            Some(Ok(rows)) => rows
-                .iter()
-                .enumerate()
-                .map(|(ix, row)| {
+            Some(Ok(rows)) => {
+                let most = rows.iter().map(|r| r.week).max().unwrap_or(1).max(1);
+                let head = |label: &'static str| crate::glass::eyebrow(label);
+                std::iter::once(
+                    div()
+                        .px_4()
+                        .py(px(8.))
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(div().flex_1().min_w_0().child(head("Name")))
+                        .child(div().w(px(120.)).child(head("Kind")))
+                        .child(div().w(px(70.)).child(head("Today")))
+                        .child(div().w(px(150.)).child(head("Last 7 days")))
+                        .into_any_element(),
+                )
+                .chain(rows.iter().map(|row| {
                     let selector = format!("settings-counter-{}-{}", row.name, row.kind);
+                    let share = row.week as f32 / most as f32;
                     div()
                         .debug_selector(move || selector.clone())
-                        .when(ix > 0, |d| d.border_t_1().border_color(content(0.06)))
+                        .border_t_1()
+                        .border_color(crate::glass::hairline())
                         .px_4()
-                        .py_2()
+                        .py(px(9.))
                         .flex()
                         .items_center()
                         .gap_3()
@@ -216,27 +283,63 @@ impl SettingsView {
                                 .child(row.name.clone()),
                         )
                         .child(
-                            div()
-                                .w(px(110.))
-                                .font_family(crate::fonts::monospace())
-                                .text_color(content(0.55))
-                                .child(row.kind),
+                            div().w(px(120.)).child(
+                                div()
+                                    .flex_none()
+                                    .max_w_full()
+                                    .px(px(6.))
+                                    .py(px(1.))
+                                    .rounded(px(5.))
+                                    .bg(content(0.07))
+                                    .border_1()
+                                    .border_color(crate::glass::edge())
+                                    .truncate()
+                                    .font_family(crate::fonts::monospace())
+                                    .text_size(px(11.))
+                                    .text_color(content(0.7))
+                                    .child(row.kind),
+                            ),
                         )
                         .child(
                             div()
                                 .w(px(70.))
-                                .text_color(content(0.55))
+                                .text_color(if row.today > 0 {
+                                    crate::glass::Tone::Waiting.ink()
+                                } else {
+                                    content(0.55)
+                                })
                                 .child(format!("{} today", row.today)),
                         )
                         .child(
                             div()
-                                .w(px(80.))
-                                .text_color(content(0.9))
-                                .child(format!("{} in 7 days", row.week)),
+                                .w(px(150.))
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .w(px(64.))
+                                        .h(px(4.))
+                                        .rounded_full()
+                                        .bg(content(0.08))
+                                        .child(
+                                            div()
+                                                .h_full()
+                                                .w(gpui::relative(share))
+                                                .rounded_full()
+                                                .bg(accent_color()),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_color(content(0.9))
+                                        .child(format!("{} in 7 days", row.week)),
+                                ),
                         )
                         .into_any_element()
-                })
-                .collect(),
+                }))
+                .collect()
+            }
         }
     }
 }
@@ -320,10 +423,10 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_is_in_the_app_group_after_general() {
+    fn diagnostics_closes_the_app_group() {
         let (group, sections) = crate::settings::model::GROUPS[0];
         assert_eq!(group, "App");
-        assert_eq!(&sections[..2], &[Section::General, Section::Diagnostics]);
+        assert_eq!(sections.last(), Some(&Section::Diagnostics));
         assert!(Section::ALL.contains(&Section::Diagnostics));
         assert_eq!(Section::Diagnostics.label(), "Diagnostics");
         for query in ["diagnostics", "crash", "logs folder", "report issue"] {

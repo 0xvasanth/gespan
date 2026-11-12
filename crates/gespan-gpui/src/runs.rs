@@ -4,6 +4,7 @@
 use crate::{
     glass,
     input::{self, Input},
+    popover::{Anchor, AnchorSlot, Menu, MenuAction, MenuEvent},
     theme::*,
 };
 use chrono::{Local, TimeZone};
@@ -89,6 +90,47 @@ impl RunRow {
         .flatten()
         .any(|text| text.to_lowercase().contains(&query))
     }
+}
+
+/// What a row names its item by: the event's title, else its key, with a
+/// repository named by its own name only, as `langfuse#20110 bug: …`.
+/// A title starting `owner/repo#12` loses `owner/`; a key such as
+/// `github:issue:owner/repo:12` reads `repo#12`, and a tracker key such as
+/// `linear:issue:ENG-4` reads `ENG-4`. Anything else is shown as it is.
+pub(crate) fn item_label(title: Option<&str>, key: Option<&str>) -> Option<String> {
+    if let Some(title) = title.map(str::trim).filter(|title| !title.is_empty()) {
+        let (head, rest) = title.split_once(char::is_whitespace).unwrap_or((title, ""));
+        let short = head
+            .split_once('#')
+            .filter(|(path, number)| {
+                path.contains('/')
+                    && !number.is_empty()
+                    && number.bytes().all(|b| b.is_ascii_digit())
+            })
+            .and_then(|(path, number)| {
+                let repo = path.rsplit('/').next().filter(|repo| !repo.is_empty())?;
+                Some(format!("{repo}#{number}"))
+            });
+        return Some(match short {
+            Some(short) if rest.trim().is_empty() => short,
+            Some(short) => format!("{short} {}", rest.trim_start()),
+            None => title.to_string(),
+        });
+    }
+    let key = key.map(str::trim).filter(|key| !key.is_empty())?;
+    let parts: Vec<&str> = key.split(':').collect();
+    Some(match parts.as_slice() {
+        [_, _, path, number, ..]
+            if path.contains('/')
+                && !number.is_empty()
+                && number.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            let repo = path.rsplit('/').next().unwrap_or(path);
+            format!("{repo}#{number}")
+        }
+        [_, _, id] if !id.is_empty() => id.to_string(),
+        _ => key.to_string(),
+    })
 }
 
 /// How long a run took from start to finish: `45s`, `6m 02s`, `1h 03m`.
@@ -221,6 +263,9 @@ pub(crate) struct Runs {
     search: Entity<Input>,
     query: String,
     _search_changed: Subscription,
+    /// The open "More" status menu: Cancelled and Skipped.
+    more_menu: Option<(Entity<Menu>, Subscription)>,
+    more_anchor: AnchorSlot,
 }
 
 impl EventEmitter<Event> for Runs {}
@@ -251,6 +296,8 @@ impl Runs {
             search,
             query: String::new(),
             _search_changed: search_changed,
+            more_menu: None,
+            more_anchor: AnchorSlot::default(),
         };
         runs.refresh(cx);
         runs
@@ -348,6 +395,53 @@ impl Runs {
         &self.filter
     }
 
+    /// The statuses the "More" segment holds, in its menu's order.
+    const MORE: [(&'static str, &'static str); 2] =
+        [("cancelled", "Cancelled"), ("skipped", "Skipped")];
+
+    /// What the "More" segment reads: the status it holds once one is
+    /// chosen, so the filter in force stays visible.
+    pub(crate) fn more_label(&self) -> &'static str {
+        Self::MORE
+            .iter()
+            .find(|(status, _)| self.filter.status == Some(*status))
+            .map_or("More", |(_, label)| label)
+    }
+
+    /// A pick from the "More" menu: filter to that status.
+    pub(crate) fn pick_more(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some((status, _)) = Self::MORE.iter().find(|(status, _)| *status == id) {
+            self.set_filter(
+                RunsFilter {
+                    status: Some(status),
+                    ..self.filter.clone()
+                },
+                cx,
+            );
+        }
+    }
+
+    fn open_more(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let items = Self::MORE
+            .iter()
+            .map(|(status, label)| {
+                MenuAction::new(*status, *label)
+                    .checked(self.filter.status == Some(*status))
+                    .into()
+            })
+            .collect();
+        let menu = cx.new(|cx| Menu::new("More statuses", items, window, cx));
+        let events = cx.subscribe_in(&menu, window, |this, _, event: &MenuEvent, _, cx| {
+            this.more_menu = None;
+            if let MenuEvent::Picked(id, _) = event {
+                this.pick_more(id, cx);
+            }
+            cx.notify();
+        });
+        self.more_menu = Some((menu, events));
+        cx.notify();
+    }
+
     /// Narrows the list to runs whose words contain `query`.
     pub(crate) fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
         if self.query != query {
@@ -428,11 +522,7 @@ impl Runs {
                     id: run.id.clone(),
                     created_at: run.created_at,
                     trigger: trigger_label(run),
-                    item: run
-                        .event_title
-                        .clone()
-                        .or_else(|| run.event_key.clone())
-                        .filter(|item| !item.trim().is_empty()),
+                    item: item_label(run.event_title.as_deref(), run.event_key.as_deref()),
                     automation: owner
                         .map_or_else(|| "Deleted automation".into(), |owner| owner.name.clone()),
                     project: owner.map(|owner| owner.cwd.clone()),
@@ -531,13 +621,11 @@ impl Runs {
                 cx,
             ));
         }
-        let statuses = [
+        let mut statuses = [
             (None, "All", None),
             (Some("running"), "Running", Some(glass::Tone::Running)),
             (Some("succeeded"), "Succeeded", Some(glass::Tone::Ok)),
             (Some("failed"), "Failed", Some(glass::Tone::Bad)),
-            (Some("cancelled"), "Cancelled", None),
-            (Some("skipped"), "Skipped", None),
         ]
         .into_iter()
         .map(|(status, label, dot)| {
@@ -559,6 +647,24 @@ impl Runs {
             )
         })
         .collect::<Vec<_>>();
+        statuses.push({
+            // Cancelled and Skipped sit behind one segment.
+            let label = self.more_label();
+            let selected = label != "More";
+            glass::segment("runs-filter-status-more", label, selected)
+                .relative()
+                .child(self.more_anchor.probe())
+                .debug_selector(|| "runs-filter-status-more".into())
+                .role(Role::Button)
+                .aria_label(if selected {
+                    format!("{label}. More statuses")
+                } else {
+                    "More statuses".to_string()
+                })
+                .aria_selected(selected)
+                .on_click(cx.listener(|this, _, window, cx| this.open_more(window, cx)))
+                .into_any_element()
+        });
         // A filter set from an automation's page shows what it keeps and the
         // way back to every automation.
         let automation = self.automation_label().map(|name| {
@@ -593,10 +699,7 @@ impl Runs {
                 glass::field()
                     .debug_selector(|| "runs-search".into())
                     .ml_auto()
-                    // Shrinks before it wraps under the status control.
-                    .flex_1()
-                    .min_w(px(160.))
-                    .max_w(px(220.))
+                    .w(px(220.))
                     .child(icon("search", 14.).text_color(content(0.45)))
                     .child(div().flex_1().min_w_0().child(self.search.clone())),
             )
@@ -634,7 +737,7 @@ impl Runs {
                     .child(
                         div()
                             .flex_none()
-                            .text_color(content(0.64))
+                            .text_color(content(0.62))
                             .child(format!("{} ·", row.trigger)),
                     )
                     .child(
@@ -659,20 +762,19 @@ impl Runs {
                 glass::Button::Glass,
             )
             .h(px(28.))
-            .px(px(11.))
-            .text_size(px(12.))
-            .child(icon("external-link", 12.).text_color(content(0.9)))
+            .child(icon("arrow-up-right", 12.).text_color(content(0.9)))
             .aria_label("Open thread")
         } else {
             div()
                 .id(SharedString::from(open_id.clone()))
                 .h(px(28.))
-                .px(px(11.))
+                .px(px(14.))
                 .flex()
                 .flex_none()
                 .items_center()
+                .gap(px(7.))
                 .rounded(px(9.))
-                .text_size(px(12.))
+                .text_size(px(13.))
                 .whitespace_nowrap()
                 .text_color(content(0.3))
                 .child("Open thread")
@@ -704,7 +806,8 @@ impl Runs {
                     .flex_shrink_0()
                     .font_family(crate::fonts::monospace())
                     .text_size(px(12.))
-                    .text_color(content(0.64))
+                    .line_height(px(17.))
+                    .text_color(content(0.62))
                     .child(clock(row.created_at)),
             )
             .child(
@@ -713,19 +816,20 @@ impl Runs {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
                     .child(title)
                     .child(
                         div()
                             .truncate()
-                            .text_size(px(12.))
-                            .text_color(content(0.45))
+                            .text_size(px(11.5))
+                            .line_height(px(16.))
+                            .text_color(content(0.55))
                             .child(owner),
                     )
                     .when_some(row.error.clone(), |d, error| {
                         d.child(
                             div()
-                                .text_size(px(12.))
+                                .text_size(px(11.5))
+                                .line_height(px(16.))
                                 .text_color(glass::Tone::Bad.ink().opacity(0.85))
                                 .line_clamp(2)
                                 .text_ellipsis()
@@ -818,13 +922,18 @@ impl Runs {
                             div()
                                 .px(px(4.))
                                 .flex()
-                                .items_baseline()
+                                .items_center()
                                 .gap(px(10.))
-                                .child(glass::eyebrow(label).text_color(content(0.92)))
+                                .child(
+                                    glass::eyebrow(label)
+                                        .line_height(px(16.))
+                                        .text_color(content(0.92)),
+                                )
                                 .child(
                                     div()
-                                        .text_size(px(12.))
-                                        .text_color(content(0.45))
+                                        .text_size(px(11.5))
+                                        .line_height(px(16.))
+                                        .text_color(content(0.55))
                                         .child(run_count(count)),
                                 ),
                         )
@@ -927,5 +1036,8 @@ impl Render for Runs {
                     .child(self.filters(cx))
                     .child(self.panel(rows, today_start, cx)),
             )
+            .children(self.more_menu.as_ref().map(|(menu, _)| {
+                crate::popover::menu_popover(menu, Anchor::Slot(self.more_anchor.clone()), cx)
+            }))
     }
 }

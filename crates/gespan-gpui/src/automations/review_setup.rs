@@ -644,8 +644,8 @@ impl Automations {
                             .items_center()
                             .gap(px(12.))
                             .child(layout::tile(
-                                36.,
-                                layout::icon_glyph("git-pull-request", 16.),
+                                32.,
+                                layout::icon_glyph("git-pull-request", 16., content(0.92)),
                             ))
                             .child(
                                 div()

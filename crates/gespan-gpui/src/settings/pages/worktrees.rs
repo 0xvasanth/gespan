@@ -3,7 +3,7 @@ use crate::{
     settings::{
         SettingsView,
         management::Target,
-        widgets::{note, secondary_button},
+        widgets::{glass_secondary, note},
     },
     theme::*,
 };
@@ -41,6 +41,20 @@ fn setup_line(record: &Record) -> Option<String> {
     });
     let parts: Vec<String> = copied.into_iter().chain(outcome).collect();
     (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
+/// A worktree's pill: what its folder and working copy hold right now.
+pub(super) fn worktree_state(
+    missing: bool,
+    dirty: Option<bool>,
+) -> (&'static str, crate::glass::Tone) {
+    use crate::glass::Tone;
+    match (missing, dirty) {
+        (true, _) => ("Missing folder", Tone::Bad),
+        (false, Some(true)) => ("Uncommitted changes", Tone::Waiting),
+        (false, Some(false)) => ("Clean", Tone::Ok),
+        (false, None) => ("Status unavailable", Tone::Muted),
+    }
 }
 
 impl SettingsView {
@@ -265,7 +279,7 @@ impl SettingsView {
                 }))
                 .child(
                     div().flex().justify_end().child(
-                        secondary_button("save-worktree-scripts", "Save scripts", false, !changed)
+                        glass_secondary("save-worktree-scripts", "Save scripts", false, !changed)
                             .child("Save scripts")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if changed {
@@ -283,7 +297,7 @@ impl SettingsView {
         let ready = !self.discovery_loading
             && self.discovery.worktrees.error.is_none()
             && !self.discovery.worktrees.main.is_empty();
-        let mut page=vec![div().relative().child(self.reveal_probe("project-worktrees")).flex().items_center().gap_1().child(project).child(secondary_button("create-settings-worktree","Create worktree",false,!ready).child(icon("plus",12.)).child("Create worktree").on_click(cx.listener(move|this,_,window,cx|{if ready{this.open_management(Target::Worktree,window,cx);}}))).into_any_element(),div().mt_4().flex().items_center().justify_between().gap_3().child(div().min_w_0().flex_1().text_size(px(12.)).line_height(px(18.)).text_color(content(0.5)).child("Sessions can share a worktree. Deleting one keeps its sessions by default and discards uncommitted changes. Its branch and commits are kept unless the branch is merged and you choose to delete it.")).child(self.refresh_button("refresh-settings-worktrees","Refresh",cx)).into_any_element()];
+        let mut page=vec![div().relative().child(self.reveal_probe("project-worktrees")).flex().items_center().gap_1().child(project).child(glass_secondary("create-settings-worktree","Create worktree",false,!ready).child(icon("plus",12.)).child("Create worktree").on_click(cx.listener(move|this,_,window,cx|{if ready{this.open_management(Target::Worktree,window,cx);}}))).into_any_element(),div().mt_4().flex().items_center().justify_between().gap_3().child(div().min_w_0().flex_1().text_size(px(12.)).line_height(px(18.)).text_color(content(0.5)).child("Sessions can share a worktree. Deleting one keeps its sessions by default and discards uncommitted changes. Its branch and commits are kept unless the branch is merged and you choose to delete it.")).child(self.refresh_button("refresh-settings-worktrees","Refresh",cx)).into_any_element()];
         if self.selected_project.is_empty() {
             page.push(note("Add a project to manage its worktrees."));
         } else if self.discovery_loading {
@@ -303,9 +317,10 @@ impl SettingsView {
             page.push(
                 div()
                     .mt_4()
-                    .rounded_xl()
+                    .rounded(px(14.))
                     .border_1()
-                    .border_color(content(0.1))
+                    .border_color(crate::glass::edge())
+                    .bg(crate::glass::fill())
                     .px_4()
                     .py_8()
                     .flex()
@@ -331,9 +346,10 @@ impl SettingsView {
             page.push(
                 div()
                     .mt_4()
-                    .rounded_xl()
+                    .rounded(px(14.))
                     .border_1()
-                    .border_color(content(0.1))
+                    .border_color(crate::glass::edge())
+                    .bg(crate::glass::fill())
                     .overflow_hidden()
                     .children(trees.into_iter().enumerate().map(|(ix, tree)| {
                         let t = &tree.tree;
@@ -344,88 +360,98 @@ impl SettingsView {
                             .iter()
                             .filter(|(_, p, _)| gespan_core::files::is_equal_or_inside(p, &t.path))
                             .count();
-                        let status = if t.missing {
-                            "Missing folder"
-                        } else if tree.dirty == Some(true) {
-                            "Uncommitted changes"
-                        } else if tree.dirty == Some(false) {
-                            "Clean"
-                        } else {
-                            "Status unavailable"
-                        };
+                        let (state, tone) = worktree_state(t.missing, tree.dirty);
                         let blocked = tree.locked || t.branch.is_none();
+                        let branch = t
+                            .branch
+                            .as_ref()
+                            .map(|b| format!("Current branch: {b}"))
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "Detached at {}",
+                                    t.head.chars().take(7).collect::<String>()
+                                )
+                            });
+                        let mut meta = format!(
+                            "{branch}   {count} {} in this worktree",
+                            if count == 1 { "session" } else { "sessions" }
+                        );
+                        if tree.unpushed > 0 {
+                            meta.push_str(&format!(" · {} unpublished commits", tree.unpushed));
+                        }
                         div()
-                            .p_4()
+                            .px_4()
+                            .py(px(14.))
                             .flex()
                             .items_start()
-                            .gap_3()
-                            .border_b_1()
-                            .border_color(content(0.1))
-                            .child(icon("folder-tree", 16.))
+                            .gap(px(14.))
+                            .when(ix > 0, |d| {
+                                d.border_t_1().border_color(crate::glass::hairline())
+                            })
+                            .child(
+                                div()
+                                    .size(px(32.))
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded(px(9.))
+                                    .bg(content(0.07))
+                                    .border_1()
+                                    .border_color(crate::glass::edge())
+                                    .child(icon("git-branch", 16.).text_color(content(0.8))),
+                            )
                             .child(
                                 div()
                                     .min_w_0()
                                     .flex_1()
                                     .child(
                                         div()
-                                            .text_size(px(13.))
-                                            .font_weight(gpui::FontWeight::MEDIUM)
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
                                             .child(
-                                                path.file_name()
-                                                    .unwrap_or_default()
-                                                    .to_string_lossy()
-                                                    .into_owned(),
-                                            ),
+                                                div()
+                                                    .text_size(px(13.))
+                                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                                    .child(
+                                                        path.file_name()
+                                                            .unwrap_or_default()
+                                                            .to_string_lossy()
+                                                            .into_owned(),
+                                                    ),
+                                            )
+                                            .child(
+                                                crate::glass::status(state, tone).debug_selector(
+                                                    move || format!("tree-state-{ix}"),
+                                                ),
+                                            )
+                                            .when(tree.locked, |d| {
+                                                d.child(crate::glass::status(
+                                                    "Locked",
+                                                    crate::glass::Tone::Muted,
+                                                ))
+                                            }),
                                     )
                                     .child(
                                         div()
                                             .mt_1()
-                                            .text_size(px(11.))
-                                            .text_color(content(0.4))
+                                            .truncate()
+                                            .font_family(crate::fonts::monospace())
+                                            .text_size(px(11.5))
+                                            .text_color(content(0.55))
                                             .child(t.path.clone()),
                                     )
                                     .child(
                                         div()
-                                            .mt_2()
+                                            .mt(px(6.))
                                             .flex()
                                             .items_center()
                                             .gap_1()
-                                            .text_size(px(11.))
+                                            .text_size(px(11.5))
                                             .text_color(content(0.55))
                                             .child(icon("git-branch", 12.))
-                                            .child(
-                                                t.branch
-                                                    .as_ref()
-                                                    .map(|b| format!("Current branch: {b}"))
-                                                    .unwrap_or_else(|| {
-                                                        format!(
-                                                            "Detached at {}",
-                                                            t.head
-                                                                .chars()
-                                                                .take(7)
-                                                                .collect::<String>()
-                                                        )
-                                                    }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .mt_2()
-                                            .text_size(px(11.))
-                                            .text_color(content(0.55))
-                                            .child(format!(
-                                                "{count} {} in this worktree · {status}{}{}",
-                                                if count == 1 { "session" } else { "sessions" },
-                                                if tree.unpushed > 0 {
-                                                    format!(
-                                                        " · {} unpublished commits",
-                                                        tree.unpushed
-                                                    )
-                                                } else {
-                                                    String::new()
-                                                },
-                                                if tree.locked { " · Locked" } else { "" }
-                                            )),
+                                            .child(meta),
                                     )
                                     .when_some(
                                         tree.setup.as_ref().and_then(setup_line),
@@ -461,23 +487,31 @@ impl SettingsView {
                                     }),
                             )
                             .child(
-                                secondary_button(
+                                crate::glass::icon_button(
                                     SharedString::from(format!("reveal-tree-{ix}")),
-                                    format!("Reveal {}", t.branch.as_deref().unwrap_or("worktree")),
-                                    false,
-                                    t.missing,
+                                    "folder-open",
                                 )
-                                .child(icon("folder-open", 16.))
-                                .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                                .role(gpui::Role::Button)
+                                .aria_label(format!(
+                                    "Reveal {}",
+                                    t.branch.as_deref().unwrap_or("worktree")
+                                ))
+                                .when(t.missing, |d| d.opacity(0.4))
+                                .when(!t.missing, |d| {
+                                    d.on_click(move |_, _, cx| cx.reveal_path(&path))
+                                }),
                             )
                             .child(
-                                secondary_button(
+                                crate::glass::icon_button(
                                     SharedString::from(format!("delete-tree-{ix}")),
-                                    format!("Delete {}", t.branch.as_deref().unwrap_or("worktree")),
-                                    false,
-                                    blocked,
+                                    "trash",
                                 )
-                                .child(icon("trash", 16.))
+                                .role(gpui::Role::Button)
+                                .aria_label(format!(
+                                    "Delete {}",
+                                    t.branch.as_deref().unwrap_or("worktree")
+                                ))
+                                .when(blocked, |d| d.opacity(0.4))
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
                                         if !blocked {
@@ -530,6 +564,25 @@ mod tests {
         assert_eq!(
             line(0, Some(Outcome::Cancelled)).unwrap(),
             "Setup cancelled"
+        );
+    }
+
+    #[test]
+    fn a_worktree_pill_says_what_its_folder_holds() {
+        use crate::glass::Tone;
+        assert_eq!(worktree_state(false, Some(false)), ("Clean", Tone::Ok));
+        assert_eq!(
+            worktree_state(false, Some(true)),
+            ("Uncommitted changes", Tone::Waiting)
+        );
+        // A missing folder wins over whatever the last status said.
+        assert_eq!(
+            worktree_state(true, Some(false)),
+            ("Missing folder", Tone::Bad)
+        );
+        assert_eq!(
+            worktree_state(false, None),
+            ("Status unavailable", Tone::Muted)
         );
     }
 }

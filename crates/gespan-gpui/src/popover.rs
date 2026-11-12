@@ -310,6 +310,9 @@ pub(crate) struct Popover {
     on_dismiss: Option<Dismiss>,
     consume_outside_press: bool,
     modal_classic: Option<bool>,
+    /// The glass pages' menu card: 14px corners, a darker tint, a brighter
+    /// rule and top highlight, and a long soft drop.
+    glass_menu: bool,
     /// Paint an opaque card instead of frosting what is behind it.
     solid: bool,
     animate: bool,
@@ -329,6 +332,7 @@ pub(crate) fn popover(id: impl Into<ElementId>, anchor: Anchor) -> Popover {
         on_dismiss: None,
         consume_outside_press: true,
         modal_classic: None,
+        glass_menu: false,
         solid: false,
         animate: true,
         fit: (None, None),
@@ -350,6 +354,11 @@ impl Popover {
     /// rule and the dialog tint.
     pub(crate) fn modal_surface(mut self, classic: bool) -> Self {
         self.modal_classic = Some(classic);
+        self
+    }
+    /// The glass pages' menu card (Inbox's ⋯ menu).
+    pub(crate) fn glass_menu(mut self) -> Self {
+        self.glass_menu = true;
         self
     }
     /// An opaque card, for popovers that open over dense text where a
@@ -443,17 +452,23 @@ impl RenderOnce for Popover {
 impl Popover {
     fn render_at(self, enter: f32, viewport: gpui::Size<Pixels>) -> impl IntoElement {
         let (viewport_width, viewport_height) = (viewport.width, viewport.height);
-        let radius = if self.modal_classic.is_some() {
+        let radius = if self.glass_menu {
+            14.
+        } else if self.modal_classic.is_some() {
             16.
         } else {
             RADIUS
         };
-        let border = if self.modal_classic.is_some() {
+        let border = if self.glass_menu {
+            0.14
+        } else if self.modal_classic.is_some() {
             crate::modal::BORDER
         } else {
             0.1
         };
-        let tint = if self.modal_classic.is_some() {
+        let tint = if self.glass_menu && !crate::theme::is_light() {
+            Hsla::from(rgba(0x18181ce0))
+        } else if self.modal_classic.is_some() {
             let mut fill = crate::theme::pane_fill();
             fill.a = 0.55;
             fill
@@ -484,7 +499,11 @@ impl Popover {
             })
             .rounded(px(radius))
             .opacity(enter)
-            .shadow(shadow())
+            .shadow(if self.glass_menu {
+                glass_menu_shadow()
+            } else {
+                shadow()
+            })
             .child(glass(tint, radius, self.solid))
             .child(
                 div()
@@ -583,6 +602,24 @@ pub(crate) fn paint_surface(bounds: Bounds<Pixels>, window: &mut Window) {
 /// The default popover glass tint.
 pub(crate) fn glass_tint() -> Hsla {
     tint()
+}
+/// The glass menu's top highlight and long drop.
+fn glass_menu_shadow() -> Vec<BoxShadow> {
+    let light = crate::theme::is_light();
+    vec![
+        BoxShadow::new(
+            px(0.),
+            px(1.),
+            crate::theme::white(if light { 0.9 } else { 0.12 }),
+        )
+        .inset(),
+        BoxShadow::new(
+            px(0.),
+            px(24.),
+            crate::theme::black(if light { 0.14 } else { 0.55 }),
+        )
+        .blur_radius(px(60.)),
+    ]
 }
 /// The popover's two-layer drop shadow.
 pub(crate) fn shadow() -> Vec<BoxShadow> {

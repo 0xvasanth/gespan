@@ -14,7 +14,13 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 
 enum Row {
     Markdown(MarkdownRow, Pixels),
-    Image { url: String, alt: String },
+    Image {
+        url: String,
+        alt: String,
+    },
+    /// A description's heading, drawn as a small uppercase label after a
+    /// hairline instead of a large bold line.
+    Section(String),
 }
 
 pub(super) struct InboxDocument {
@@ -29,7 +35,14 @@ pub(super) struct InboxDocument {
 }
 
 impl InboxDocument {
-    pub(super) fn new(text: String, cwd: PathBuf, _: &mut Context<Self>) -> Self {
+    pub(super) fn new(text: String, cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self::build(text, cwd, false, cx)
+    }
+    /// A pull request or issue description, whose headings are sections.
+    pub(super) fn description(text: String, cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self::build(text, cwd, true, cx)
+    }
+    fn build(text: String, cwd: PathBuf, sections: bool, _: &mut Context<Self>) -> Self {
         let mut spans = Vec::new();
         let mut open: Option<(usize, String, String)> = None;
         for (event, range) in Parser::new_ext(&text, Options::all()).into_offset_iter() {
@@ -54,11 +67,11 @@ impl InboxDocument {
             if range.start < at || range.end > text.len() {
                 continue;
             }
-            append_markdown(&mut rows, &text[at..range.start], &cwd);
+            append_markdown(&mut rows, &text[at..range.start], &cwd, sections);
             rows.push(Row::Image { url, alt });
             at = range.end;
         }
-        append_markdown(&mut rows, &text[at..], &cwd);
+        append_markdown(&mut rows, &text[at..], &cwd, sections);
         Self {
             rows,
             layout: None,
@@ -72,9 +85,17 @@ impl InboxDocument {
     }
 }
 
-fn append_markdown(rows: &mut Vec<Row>, text: &str, cwd: &std::path::Path) {
+fn append_markdown(rows: &mut Vec<Row>, text: &str, cwd: &std::path::Path, sections: bool) {
     for block in &markdown_model::parse_full(text).blocks {
         for mut row in markdown::rows(&block.block) {
+            if sections
+                && let Part::Text { runs, heading } = &row.part
+                && *heading > 0
+            {
+                let title = runs.iter().map(|run| run.text.as_str()).collect::<String>();
+                rows.push(Row::Section(title.trim().to_string()));
+                continue;
+            }
             markdown::resolve_file_links(&mut row, &cwd.to_string_lossy());
             // Transcript code is chunked for virtualization. A document displays
             // the whole fence in a single bordered code block instead.
@@ -269,6 +290,14 @@ impl InboxDocument {
                     .on_click(move |_, _, cx| cx.open_url(&url))
                     .into_any_element()
             }
+            Row::Section(title) => div()
+                .w_full()
+                .debug_selector(|| "inbox-description-section".into())
+                .when(ix > 0, |d| {
+                    d.child(div().h(px(1.)).my(px(14.)).bg(crate::theme::content(0.07)))
+                })
+                .child(crate::glass::eyebrow(title.clone()).mb(px(8.)))
+                .into_any_element(),
             Row::Markdown(row, code_width) => {
                 let id: SharedString = format!("inbox-document-{ix}").into();
                 let body: AnyElement = match &row.part {

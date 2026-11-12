@@ -1,5 +1,5 @@
 //! React Settings forms and their asynchronous actions.
-use super::widgets::{note, secondary_button};
+use super::widgets::{glass_secondary, note};
 use super::*;
 use gespan_core::provider::Kind;
 
@@ -681,7 +681,7 @@ impl SettingsView {
                 if self.management.as_ref().is_some_and(|e| e.error.is_some()) {
                     actions =
                         actions.child(
-                            secondary_button("retry-cli", "Retry CLI inspection", false, busy)
+                            glass_secondary("retry-cli", "Retry CLI inspection", false, busy)
                                 .child("Retry")
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.inspect_cli(kind, false, cx)
@@ -695,7 +695,7 @@ impl SettingsView {
                     .map(|i| i.path.clone());
                 actions = actions
                     .child(
-                        secondary_button("reveal-cli", "Open CLI location", false, path.is_none())
+                        glass_secondary("reveal-cli", "Open CLI location", false, path.is_none())
                             .child("Open location")
                             .on_click(move |_, _, cx| {
                                 if let Some(path) = &path {
@@ -704,7 +704,7 @@ impl SettingsView {
                             }),
                     )
                     .child(
-                        secondary_button("edit-cli", "Edit CLI path", false, busy)
+                        glass_secondary("edit-cli", "Edit CLI path", false, busy)
                             .child("Edit path")
                             .on_click(cx.listener(|this, _, window, cx| {
                                 if let Some(e) = &mut this.management {
@@ -723,7 +723,7 @@ impl SettingsView {
                     .into_any_element();
             } else if self.prefs.binary_paths.contains_key(kind.id()) {
                 actions = actions.child(
-                    secondary_button("auto-cli", "Use auto-detected path", false, busy)
+                    glass_secondary("auto-cli", "Use auto-detected path", false, busy)
                         .child("Use auto-detected path")
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(e) = &mut this.management {
@@ -865,7 +865,7 @@ impl SettingsView {
                             .gap_3()
                             .child(title)
                             .child(
-                                secondary_button(
+                                glass_secondary(
                                     "close-management",
                                     "Close dialog",
                                     false,
