@@ -1,11 +1,13 @@
-//! AppearancePage, ChatBackgroundCard, workspace themes and AccentColorPicker.
+//! AppearancePage: a live preview, then Theme, Color, Glass, Layout, Chat
+//! background and Diff colors cards.
+use crate::glass::{self, Button};
 use crate::popover::{Align, Anchor, Side, popover};
-use crate::settings::{SettingsEvent, SettingsView, SliderKind, widgets::secondary_button};
+use crate::settings::{Preferences, SettingsEvent, SettingsView, SliderKind};
 use crate::theme::*;
 use crate::window_blur::BLUR_ADJUSTABLE;
 use gpui::{
-    AnyElement, Context, Focusable, Role, SharedString, Window, div, linear_color_stop,
-    linear_gradient, prelude::*, px, rgb,
+    AnyElement, Context, Div, Focusable, FontWeight, Hsla, Role, SharedString, Window, div,
+    linear_color_stop, linear_gradient, prelude::*, px, rgb,
 };
 
 /// ACCENT_COLOR_PRESETS, after the Default swatch.
@@ -36,6 +38,17 @@ fn effect_description(effect: &str) -> &'static str {
         _ => "Shows the original artwork.",
     }
 }
+
+/// The sidebar entries Layout offers as chips, in the sidebar's own order:
+/// (id for Shell::change_sidebar_option, label).
+const SIDEBAR_CHIPS: [(&str, &str); 6] = [
+    ("sidebar-inbox", "Inbox"),
+    ("sidebar-automations", "Automations"),
+    ("sidebar-pilots", "Pilots"),
+    ("sidebar-board", "Board"),
+    ("sidebar-notes", "Notes"),
+    ("sidebar-activity", "Activity"),
+];
 
 pub(crate) fn parse_hex(text: &str) -> Option<u32> {
     let hex = text.strip_prefix('#')?;
@@ -88,6 +101,166 @@ fn transparent_window_description(platform: bool, light: bool) -> &'static str {
     }
 }
 
+/// The accent's name as the picker labels it.
+fn accent_name(accent: Option<&str>) -> &'static str {
+    match accent {
+        None => "Default",
+        Some(hex) => ACCENTS
+            .iter()
+            .find(|(c, _)| Some(*c) == parse_hex(hex))
+            .map_or("Custom", |(_, label)| label),
+    }
+}
+
+/// The preview's one line: every choice the little window reflects.
+pub(in crate::settings) fn appearance_summary(
+    p: &Preferences,
+    light: bool,
+    boxy: bool,
+    platform: bool,
+    blur: bool,
+) -> String {
+    let theme = match p.theme.as_str() {
+        "light" => "Light",
+        "dark" => "Dark",
+        _ => "System",
+    };
+    let preset = crate::settings::palettes::PALETTES
+        .iter()
+        .find(|(id, ..)| *id == p.workspace_theme)
+        .map_or("Custom", |(_, label, ..)| label);
+    let glass = if !platform {
+        "Opaque window".to_owned()
+    } else if light {
+        "Opaque in light mode".to_owned()
+    } else if !p.inset_glass {
+        "Glass off".to_owned()
+    } else if blur {
+        format!(
+            "Glass on, {}% opacity, {}px blur",
+            p.sidebar_opacity, p.sidebar_blur
+        )
+    } else {
+        format!("Glass on, {}% opacity", p.sidebar_opacity)
+    };
+    format!(
+        "{theme} · {preset} preset · {} accent · {glass} · {} workspace",
+        accent_name(p.accent_color.as_deref()),
+        if boxy { "Boxy" } else { "Rounded" },
+    )
+}
+
+/// A bar of placeholder text in the preview.
+fn bar(width: f32, alpha: f32) -> Div {
+    div()
+        .h(px(7.))
+        .w(gpui::relative(width))
+        .rounded(px(3.))
+        .bg(content(alpha))
+}
+
+/// The ring a selected round swatch wears.
+fn ringed(d: gpui::Stateful<Div>, selected: bool) -> gpui::Stateful<Div> {
+    d.border_2().map(|d| {
+        if selected {
+            d.border_color(content(1.)).shadow(vec![
+                gpui::BoxShadow::new(px(0.), px(0.), content(0.2)).spread_radius(px(2.)),
+            ])
+        } else {
+            d.border_color(gpui::transparent_black())
+        }
+    })
+}
+
+/// A picture option: a small preview over its name, ringed in the accent
+/// once chosen.
+fn picture_option(
+    id: SharedString,
+    preview: Div,
+    label: &'static str,
+    selected: bool,
+) -> gpui::Stateful<Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(8.))
+        .text_size(px(12.))
+        .text_color(content(if selected { 1. } else { 0.62 }))
+        .hover(|s| s.text_color(content(1.)))
+        .child(preview.overflow_hidden().relative().border_1().map(|d| {
+            if selected {
+                d.border_color(accent_color()).shadow(vec![
+                    gpui::BoxShadow::new(px(0.), px(0.), accent_color().opacity(0.35))
+                        .spread_radius(px(2.)),
+                ])
+            } else {
+                d.border_color(content(0.1))
+            }
+        }))
+        .child(label)
+}
+
+/// A stand-in for each background effect, drawn over the chosen image's
+/// colours so the six read apart at a glance.
+fn effect_tile(effect: &str, image: Option<&str>) -> Div {
+    let deep: Hsla = rgb(0x3b2a5e).into();
+    let sea: Hsla = rgb(0x1f3a5c).into();
+    let ink = accent_color();
+    let tile = div().w(px(84.)).h(px(52.)).rounded(px(10.));
+    match effect {
+        "none" => match image {
+            Some(path) => tile.child(
+                crate::image_memory::preview(std::path::PathBuf::from(path))
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Cover),
+            ),
+            None => tile.bg(linear_gradient(
+                135.,
+                linear_color_stop(deep, 0.),
+                linear_color_stop(sea, 1.),
+            )),
+        },
+        "dither" => tile
+            .bg(sea)
+            .flex()
+            .flex_wrap()
+            .children((0..84).map(move |ix| {
+                div()
+                    .size(px(4.))
+                    .when((ix / 21 + ix) % 2 == 0, |d| d.bg(deep))
+            })),
+        "ascii" => tile
+            .bg(black(1.))
+            .p(px(3.))
+            .font_family(crate::fonts::monospace())
+            .text_size(px(8.))
+            .line_height(px(9.))
+            .text_color(ink)
+            .child("#%*+=-:.#%*+=-:.#%*+=-:.#%*+=-:.#%*+=-:.#%*+="),
+        "halftone" => tile
+            .bg(black(1.))
+            .p(px(2.))
+            .flex()
+            .flex_wrap()
+            .gap(px(2.))
+            .children((0..96).map(move |_| div().size(px(3.)).rounded_full().bg(ink))),
+        "scanlines" => tile
+            .bg(rgb(0x10101a))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .children((0..13).map(move |_| div().h(px(2.)).w_full().bg(deep))),
+        _ => tile.bg(linear_gradient(
+            135.,
+            linear_color_stop(deep.opacity(0.6), 0.),
+            linear_color_stop(sea.opacity(0.4), 1.),
+        )),
+    }
+}
+
 impl SettingsView {
     pub(super) fn appearance_page(
         &mut self,
@@ -101,6 +274,8 @@ impl SettingsView {
                     cx.window_appearance(),
                     gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
                 ));
+        let mut page = vec![self.preview_card(light, cx)];
+
         let mut theme = vec![self.row(
             Some("theme"),
             true,
@@ -115,36 +290,12 @@ impl SettingsView {
                 |this, v, cx| this.update(cx, |p| p.theme = v.into()),
             )],
         )];
-        let options = crate::settings::palettes::PALETTES
-            .iter()
-            .map(|&(id, label, dark, pale)| {
-                let palette = if light { pale } else { dark };
-                (
-                    id.to_owned(),
-                    SharedString::from(label),
-                    Some(swatch(
-                        palette.surface,
-                        palette.panel,
-                        palette.solid,
-                        palette.accent,
-                    )),
-                )
-            })
-            .collect();
         theme.push(self.row(
             Some("workspace-theme"),
             false,
             "Workspace theme",
             Some("Choose a color preset.".into()),
-            vec![self.select(
-                "workspace-theme",
-                "Workspace theme",
-                &p.workspace_theme,
-                options,
-                Some(192.),
-                cx,
-                |this, v, cx| this.update(cx, |p| p.apply_workspace_theme(v)),
-            )],
+            vec![self.preset_swatches(light, cx)],
         ));
         #[cfg(target_os = "linux")]
         if cx.compositor_name() == "Wayland" {
@@ -171,25 +322,8 @@ impl SettingsView {
             Some("Used for the composer send button and your message bubbles.".into()),
             vec![accent_picker],
         ));
-        theme.push(self.row(
-            Some("diff-colors"),
-            false,
-            "Diff colors",
-            Some("Colorblind and High contrast use blue and orange for changes.".into()),
-            vec![self.segmented(
-                "diff-colors",
-                "Diff colors",
-                &p.diff_palette,
-                &[
-                    ("default", "Default"),
-                    ("colorblind", "Colorblind"),
-                    ("high-contrast", "High contrast"),
-                ],
-                cx,
-                |this, v, cx| this.update(cx, |p| p.diff_palette = v.into()),
-            )],
-        ));
-        let mut page = vec![self.group(None, true, "Theme", None, None, theme)];
+        page.push(self.group(None, true, "Theme", None, None, theme));
+
         let color = vec![
                 self.row(
                     Some("hue"),
@@ -227,7 +361,15 @@ impl SettingsView {
                     )],
                 ),
             ];
-        page.push(self.group(None, false, "Color", None, None, color));
+        page.push(self.group(
+            None,
+            false,
+            "Color",
+            Some("Tint the window and main-pane surfaces.".into()),
+            None,
+            color,
+        ));
+
         let opaque = light || !p.inset_glass || !GLASS_PLATFORM;
         let mut translucency = vec![self.row(
             Some("inset-glass"),
@@ -243,7 +385,7 @@ impl SettingsView {
                 |this, on, cx| this.update(cx, |p| p.inset_glass = on),
             )],
         )];
-        translucency.extend([self.row(
+        translucency.push(self.row(
             Some("sidebar-opacity"),
             false,
             "Sidebar opacity",
@@ -254,7 +396,7 @@ impl SettingsView {
                 opaque,
                 cx,
             )],
-        )]);
+        ));
         if BLUR_ADJUSTABLE {
             translucency.push(self.row(
                 Some("blur"),
@@ -283,7 +425,7 @@ impl SettingsView {
         page.push(self.group(
             None,
             false,
-            "Translucency",
+            "Glass",
             Some(if light {
                 "Translucency is available in dark mode.".into()
             } else if cfg!(target_os = "linux") && cx.compositor_name() == "Wayland" {
@@ -296,29 +438,345 @@ impl SettingsView {
             None,
             translucency,
         ));
+        page.push(self.layout_group(cx));
         page.push(self.chat_background_card(cx));
-        let layout = vec![
-            self.row(
+        page.push(self.diff_group(cx));
+        page
+    }
+
+    /// A small window drawn from the current choices, with the line that
+    /// names them and Restore defaults.
+    fn preview_card(&mut self, light: bool, cx: &mut Context<Self>) -> AnyElement {
+        let p = &self.prefs;
+        let boxy = self.ctx.new_layout_boxy;
+        let glass_on = GLASS_PLATFORM && !light && p.inset_glass;
+        let palette = crate::settings::palettes::palette(&p.workspace_theme, light);
+        let mut shell: Hsla = rgb(palette.surface).into();
+        shell.a = if glass_on {
+            (p.sidebar_opacity as f32 / 100.).clamp(0.2, 1.)
+        } else {
+            1.
+        };
+        let mut pane: Hsla = rgb(palette.panel).into();
+        pane.a = if glass_on && p.body_glass { 0.55 } else { 1. };
+        let picked = p
+            .accent_color
+            .as_deref()
+            .and_then(parse_hex)
+            .map(|c| Hsla::from(rgb(c)));
+        let summary = appearance_summary(p, light, boxy, GLASS_PLATFORM, BLUR_ADJUSTABLE);
+        let desk = div()
+            .debug_selector(|| "appearance-preview".into())
+            .relative()
+            .w(px(340.))
+            .h(px(190.))
+            .flex_none()
+            .overflow_hidden()
+            .rounded(px(12.))
+            .bg(linear_gradient(
+                135.,
+                linear_color_stop(rgb(0x8f64f6), 0.),
+                linear_color_stop(rgb(0x459bf7), 1.),
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .inset(px(14.))
+                    .rounded(px(10.))
+                    .bg(shell)
+                    .border_1()
+                    .border_color(content(0.12))
+                    .flex()
+                    .when(!boxy, |d| d.p(px(6.)).gap(px(6.)))
+                    .child(
+                        div()
+                            .w(px(70.))
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .p(px(4.))
+                            .when(boxy, |d| d.pt(px(10.)))
+                            .child(bar(0.7, 0.18))
+                            .child(bar(1., 0.08))
+                            .child(bar(1., 0.08))
+                            .child(bar(0.8, 0.08)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .bg(pane)
+                            .map(|d| {
+                                if boxy {
+                                    d.border_l_1().border_color(content(0.1)).rounded_r(px(9.))
+                                } else {
+                                    d.rounded(px(8.))
+                                }
+                            })
+                            .p(px(10.))
+                            .flex()
+                            .flex_col()
+                            .justify_end()
+                            .gap(px(6.))
+                            .child(
+                                div().flex().justify_end().child(
+                                    div()
+                                        .w(px(110.))
+                                        .h(px(18.))
+                                        .rounded(px(9.))
+                                        .bg(picked.map_or(content(0.1), |c| c.opacity(0.35))),
+                                ),
+                            )
+                            .child(bar(0.75, 0.14))
+                            .child(bar(0.55, 0.1))
+                            .child(
+                                div()
+                                    .h(px(22.))
+                                    .rounded(px(7.))
+                                    .border_1()
+                                    .border_color(content(0.12))
+                                    .bg(content(0.04))
+                                    .flex()
+                                    .justify_end()
+                                    .p(px(3.))
+                                    .child(
+                                        div()
+                                            .w(px(16.))
+                                            .rounded(px(5.))
+                                            .bg(picked.unwrap_or_else(|| content(0.9))),
+                                    ),
+                            ),
+                    ),
+            );
+        glass::card()
+            .p(px(18.))
+            .flex()
+            .items_center()
+            .gap(px(20.))
+            .child(desk)
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(content(1.))
+                            .child("Preview"),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "appearance-summary".into())
+                            .text_size(px(12.))
+                            .line_height(px(17.))
+                            .text_color(content(0.62))
+                            .child(summary),
+                    )
+                    .child(
+                        div().mt(px(4.)).flex().child(
+                            glass::button("restore-defaults", "Restore defaults", Button::Ghost)
+                                .debug_selector(|| "settings-restore-defaults".into())
+                                .role(Role::Button)
+                                .aria_label("Restore defaults")
+                                .h(px(30.))
+                                .child(icon("rotate-ccw", 14.).text_color(content(0.62)))
+                                .on_click(cx.listener(|this, _, _, cx| this.restore_defaults(cx))),
+                        ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Every workspace preset as a split swatch, its surface with its
+    /// accent dot, and the chosen preset named beneath.
+    fn preset_swatches(&self, light: bool, cx: &mut Context<Self>) -> AnyElement {
+        let selected = self.prefs.workspace_theme.clone();
+        let name = crate::settings::palettes::PALETTES
+            .iter()
+            .find(|(id, ..)| *id == selected)
+            .map_or("Custom", |(_, label, ..)| label);
+        div()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap(px(6.))
+            .child(
+                div()
+                    .id("workspace-theme-presets")
+                    .debug_selector(|| "settings-workspace-theme-presets".into())
+                    .role(Role::RadioGroup)
+                    .aria_label("Workspace theme")
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(8.))
+                    .children(crate::settings::palettes::PALETTES.iter().map(
+                        |&(id, label, dark, pale)| {
+                            let palette = if light { pale } else { dark };
+                            let on = id == selected;
+                            ringed(
+                                div()
+                                    .id(SharedString::from(format!("workspace-theme-{id}")))
+                                    .debug_selector(move || {
+                                        format!("settings-workspace-theme-{id}")
+                                    })
+                                    .role(Role::RadioButton)
+                                    .aria_label(label)
+                                    .aria_selected(on)
+                                    .tooltip(move |_, cx| {
+                                        cx.new(|_| crate::conversation::HintTooltip(label)).into()
+                                    }),
+                                on,
+                            )
+                            .size(px(26.))
+                            .rounded_full()
+                            .cursor_pointer()
+                            .child(
+                                div()
+                                    .relative()
+                                    .size_full()
+                                    .rounded_full()
+                                    .overflow_hidden()
+                                    .bg(rgb(palette.surface))
+                                    .border_1()
+                                    .border_color(content(0.15))
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top(px(10.))
+                                            .left(px(10.))
+                                            .size(px(9.))
+                                            .rounded_full()
+                                            .bg(rgb(palette.accent)),
+                                    ),
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.update(cx, |p| p.apply_workspace_theme(id.to_owned()))
+                                },
+                            ))
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "settings-workspace-theme-name".into())
+                    .text_size(px(11.5))
+                    .text_color(content(0.55))
+                    .child(name),
+            )
+            .into_any_element()
+    }
+
+    /// Workspace style as pictures, Interface scale, Tab animations, the
+    /// sidebar's entries as chips and Compact view.
+    fn layout_group(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.prefs.clone();
+        let boxy = self.ctx.new_layout_boxy;
+        let styles = div()
+            .id("segmented-new-layout-style")
+            .debug_selector(|| "settings-segmented-new-layout-style".into())
+            .role(Role::RadioGroup)
+            .aria_label("Workspace style")
+            .flex()
+            .gap(px(14.))
+            .children(
+                [("rounded", "Rounded"), ("boxy", "Boxy")].map(|(value, label)| {
+                    let on = (value == "boxy") == boxy;
+                    let frame: Hsla = content(0.06);
+                    let preview = div()
+                        .w(px(112.))
+                        .h(px(72.))
+                        .rounded(px(10.))
+                        .bg(black(if is_light() { 0.08 } else { 0.4 }))
+                        .map(|d| {
+                            if value == "boxy" {
+                                d.pl(px(20.)).child(
+                                    div()
+                                        .size_full()
+                                        .bg(frame)
+                                        .border_l_1()
+                                        .border_color(content(0.1)),
+                                )
+                            } else {
+                                d.p(px(6.)).pl(px(26.)).child(
+                                    div()
+                                        .size_full()
+                                        .rounded(px(6.))
+                                        .bg(frame)
+                                        .border_1()
+                                        .border_color(content(0.1)),
+                                )
+                            }
+                        });
+                    picture_option(
+                        SharedString::from(format!("segmented-new-layout-style-{value}")),
+                        preview,
+                        label,
+                        on,
+                    )
+                    .debug_selector(move || format!("settings-new-layout-style-{value}"))
+                    .role(Role::RadioButton)
+                    .aria_label(label)
+                    .aria_selected(on)
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(SettingsEvent::NewLayoutBoxy(value == "boxy"))
+                    }))
+                }),
+            )
+            .into_any_element();
+        let v = self.ctx.sidebar;
+        let chip_on = |id: &str| match id {
+            "sidebar-inbox" => v.inbox,
+            "sidebar-automations" => v.automations,
+            "sidebar-pilots" => p.pilots,
+            "sidebar-board" => p.board,
+            "sidebar-notes" => p.notes,
+            _ => p.working_agents,
+        };
+        let chips = div()
+            .flex()
+            .flex_wrap()
+            .justify_end()
+            .gap(px(6.))
+            .max_w(px(360.))
+            .children(SIDEBAR_CHIPS.map(|(id, label)| {
+                let on = chip_on(id);
+                let flash = self.flashing(Some(id));
+                div().relative().child(self.reveal_probe(id)).child(
+                    glass::chip(SharedString::from(format!("toggle-{id}")), label, on)
+                        .debug_selector(move || format!("settings-toggle-{id}"))
+                        .role(Role::Switch)
+                        .aria_label(label)
+                        .aria_toggled(if on {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
+                        .when(flash, |d| d.border_color(accent_color()))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SettingsEvent::SidebarOption(id))
+                        })),
+                )
+            }))
+            .into_any_element();
+        let rows = vec![
+            self.row_parts(
                 Some("new-layout-style"),
                 true,
                 "Workspace style",
-                Some(if cfg!(target_os = "macos") {
-                    "Choose a rounded card or a full-height boxy workspace. ⌘⌥L switches between them.".into()
+                Some(self.description(if cfg!(target_os = "macos") {
+                    "Choose a rounded card or a full-height boxy workspace. ⌘⌥L switches between them."
                 } else {
-                    "Choose a rounded card or a full-height boxy workspace. Ctrl+Alt+L switches between them.".into()
-                }),
-                vec![self.segmented(
-                    "new-layout-style",
-                    "Workspace style",
-                    if self.ctx.new_layout_boxy {
-                        "boxy"
-                    } else {
-                        "rounded"
-                    },
-                    &[("rounded", "Rounded"), ("boxy", "Boxy")],
-                    cx,
-                    |_, value, cx| cx.emit(SettingsEvent::NewLayoutBoxy(value == "boxy")),
-                )],
+                    "Choose a rounded card or a full-height boxy workspace. Ctrl+Alt+L switches between them."
+                })),
+                vec![styles],
+                true,
             ),
             self.row(
                 Some("interface-scale"),
@@ -346,43 +804,77 @@ impl SettingsView {
                     |this, on, cx| this.update(cx, |p| p.tab_animations = on),
                 )],
             ),
+            self.row_parts(
+                None,
+                false,
+                "Sidebar",
+                Some(self.description("Choose what the sidebar lists.")),
+                vec![chips],
+                true,
+            ),
+            self.row(
+                Some("compact-session-cards"),
+                false,
+                "Compact view",
+                Some("Tighter sidebar rows and session cards.".into()),
+                vec![self.toggle(
+                    "compact-session-cards",
+                    "Compact view",
+                    v.compact,
+                    false,
+                    cx,
+                    |_, _, cx| cx.emit(SettingsEvent::SidebarOption("compact-session-cards")),
+                )],
+            ),
         ];
-        page.push(self.group(None, false, "Layout", None, None, layout));
-        page.push(self.sidebar_group(cx));
-        page
+        self.group(None, false, "Layout", None, None, rows)
     }
 
-    /// The sidebar's entries and card density, once the Focused sidebar's
-    /// options menu.
-    fn sidebar_group(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let v = self.ctx.sidebar;
-        let p = &self.prefs;
-        // (id for Shell::change_sidebar_option, label, on)
-        let rows: [(&'static str, &'static str, bool); 7] = [
-            ("sidebar-notes", "Notes", p.notes),
-            ("sidebar-board", "Board", p.board),
-            ("sidebar-automations", "Automations", v.automations),
-            ("sidebar-inbox", "Inbox", v.inbox),
-            ("sidebar-pilots", "Pilots", p.pilots),
-            ("sidebar-activity", "Activity", p.working_agents),
-            ("compact-session-cards", "Compact view", v.compact),
-        ];
-        let rows = rows
-            .into_iter()
-            .enumerate()
-            .map(|(ix, (id, label, on))| {
-                self.row(
-                    Some(id),
-                    ix == 0,
-                    label,
-                    None,
-                    vec![self.toggle(id, label, on, false, cx, move |_, _, cx| {
-                        cx.emit(SettingsEvent::SidebarOption(id))
-                    })],
-                )
-            })
-            .collect();
-        self.group(None, false, "Sidebar", None, None, rows)
+    /// Diff colors, with a two-line diff in the chosen palette.
+    fn diff_group(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let line = |add: bool, text: &'static str| {
+            div()
+                .px(px(8.))
+                .bg(diff_background(add, false))
+                .text_color(diff_foreground(add))
+                .whitespace_nowrap()
+                .child(text)
+        };
+        let preview = div()
+            .debug_selector(|| "settings-diff-preview".into())
+            .w(px(220.))
+            .overflow_hidden()
+            .rounded(px(8.))
+            .border_1()
+            .border_color(glass::edge())
+            .font_family(crate::fonts::monospace())
+            .text_size(px(11.))
+            .line_height(px(17.))
+            .child(line(false, "− const pinned = run.version"))
+            .child(line(true, "+ const pinned = run.pinnedVersion"))
+            .into_any_element();
+        let row = self.row(
+            Some("diff-colors"),
+            true,
+            "Diff colors",
+            Some("Colorblind and High contrast use blue and orange for changes.".into()),
+            vec![
+                preview,
+                self.segmented(
+                    "diff-colors",
+                    "Diff colors",
+                    &self.prefs.diff_palette.clone(),
+                    &[
+                        ("default", "Default"),
+                        ("colorblind", "Colorblind"),
+                        ("high-contrast", "High contrast"),
+                    ],
+                    cx,
+                    |this, v, cx| this.update(cx, |p| p.diff_palette = v.into()),
+                ),
+            ],
+        );
+        self.group(None, false, "Diff colors", None, None, vec![row])
     }
 
     /// AccentColorPicker: Default plus six presets and a custom color.
@@ -400,102 +892,109 @@ impl SettingsView {
             .then(|| value.as_deref().and_then(parse_hex))
             .flatten();
         let weak = cx.weak_entity();
-        let dot = |selected: bool, color: gpui::Hsla| {
-            div()
-                .size(px(14.))
-                .rounded_full()
-                .bg(color)
-                .when(selected, |d| d.border_2().border_color(content(0.8)))
-        };
-        let colors: Vec<(gpui::Hsla, &'static str, Option<String>)> =
-            std::iter::once((content(1.), "Default", None))
-                .chain(
-                    ACCENTS
-                        .iter()
-                        .map(|&(c, label)| (rgb(c).into(), label, Some(format!("#{c:06x}")))),
-                )
+        // Default keeps the theme's neutral ink: half ink, half page.
+        let default_fill = linear_gradient(
+            135.,
+            linear_color_stop(content(1.), 0.5),
+            linear_color_stop(background_base(), 0.5),
+        );
+        let colors: Vec<(gpui::Background, &'static str, Option<String>)> =
+            std::iter::once((default_fill, "Default", None))
+                .chain(ACCENTS.iter().map(|&(c, label)| {
+                    (
+                        gpui::Background::from(Hsla::from(rgb(c))),
+                        label,
+                        Some(format!("#{c:06x}")),
+                    )
+                }))
                 .collect();
         div()
-            .w(px(192.))
             .relative()
             .child(self.accent_anchor.probe())
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .justify_between()
-                    .gap_1()
-                    .px(px(2.))
+                    .gap(px(10.))
                     .children(
                         colors
                             .into_iter()
                             .enumerate()
-                            .map(|(ix, (color, label, hex))| {
-                                div()
-                                    .id(("accent-color", ix))
-                                    .debug_selector(move || format!("accent-color-{ix}"))
-                                    .role(Role::Button)
-                                    .aria_label(label)
-                                    .aria_selected(preset == Some(ix))
-                                    .size(px(20.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_full()
-                                    .cursor_pointer()
-                                    .child(dot(preset == Some(ix), color))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                            .map(|(ix, (fill, label, hex))| {
+                                let on = preset == Some(ix);
+                                ringed(
+                                    div()
+                                        .id(("accent-color", ix))
+                                        .debug_selector(move || format!("accent-color-{ix}"))
+                                        .role(Role::Button)
+                                        .aria_label(label)
+                                        .aria_selected(on),
+                                    on,
+                                )
+                                .size(px(26.))
+                                .rounded_full()
+                                .cursor_pointer()
+                                .child(
+                                    div()
+                                        .size_full()
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(content(0.15))
+                                        .bg(fill),
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         this.accent_custom_open = false;
                                         let hex = hex.clone();
                                         this.update(cx, |p| p.accent_color = hex);
-                                    }))
+                                    },
+                                ))
                             }),
                     )
                     .child(
-                        div()
-                            .id("accent-custom")
-                            .role(Role::Button)
-                            .aria_label("Custom color")
-                            .aria_expanded(self.accent_custom_open)
-                            .size(px(20.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .cursor_pointer()
-                            .child(
-                                div()
-                                    .size(px(14.))
-                                    .rounded_full()
-                                    .overflow_hidden()
-                                    .when(custom.is_some() || self.accent_custom_open, |d| {
-                                        d.border_2().border_color(content(0.8))
-                                    })
-                                    .map(|d| match custom {
-                                        Some(c) => d.bg(rgb(c)),
-                                        None => d.bg(linear_gradient(
-                                            135.,
-                                            linear_color_stop(rgb(0xff4d4d), 0.),
-                                            linear_color_stop(rgb(0x4d6bff), 1.),
-                                        )),
-                                    }),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.accent_custom_open = !this.accent_custom_open;
-                                if this.accent_custom_open {
-                                    let text = this
-                                        .prefs
-                                        .accent_color
-                                        .clone()
-                                        .unwrap_or_else(|| "#4da3f5".into());
-                                    this.accent_custom.update(cx, |i, cx| {
-                                        i.set_text(text, cx);
-                                        i.select_range(0..i.content.len(), cx);
-                                    });
-                                    window.focus(&this.accent_custom.focus_handle(cx), cx);
-                                }
-                                cx.notify();
-                            })),
+                        ringed(
+                            div()
+                                .id("accent-custom")
+                                .role(Role::Button)
+                                .aria_label("Custom color")
+                                .aria_expanded(self.accent_custom_open),
+                            custom.is_some() || self.accent_custom_open,
+                        )
+                        .size(px(26.))
+                        .rounded_full()
+                        .cursor_pointer()
+                        .child(
+                            div()
+                                .size_full()
+                                .rounded_full()
+                                .overflow_hidden()
+                                .border_1()
+                                .border_color(content(0.15))
+                                .map(|d| match custom {
+                                    Some(c) => d.bg(rgb(c)),
+                                    None => d.bg(linear_gradient(
+                                        135.,
+                                        linear_color_stop(rgb(0xff4d4d), 0.),
+                                        linear_color_stop(rgb(0x4d6bff), 1.),
+                                    )),
+                                }),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.accent_custom_open = !this.accent_custom_open;
+                            if this.accent_custom_open {
+                                let text = this
+                                    .prefs
+                                    .accent_color
+                                    .clone()
+                                    .unwrap_or_else(|| "#4da3f5".into());
+                                this.accent_custom.update(cx, |i, cx| {
+                                    i.set_text(text, cx);
+                                    i.select_range(0..i.content.len(), cx);
+                                });
+                                window.focus(&this.accent_custom.focus_handle(cx), cx);
+                            }
+                            cx.notify();
+                        })),
                     ),
             )
             .when(self.accent_custom_open, |d| {
@@ -547,98 +1046,112 @@ impl SettingsView {
             .filter(|path| std::path::Path::new(path).is_file());
         let empty = p.chat_background_empty;
         let session = p.chat_background_session;
-        let preview = div()
-            .p_4()
-            .child(
-                div()
-                    .overflow_hidden()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(content(0.1))
-                    .map(|d| match &image {
-                        Some(path) => d.child(
-                            div()
-                                .relative()
-                                .h(px(144.))
-                                .child(
-                                    crate::image_memory::preview(std::path::PathBuf::from(path))
-                                        .size_full()
-                                        .object_fit(gpui::ObjectFit::Cover)
-                                        .opacity(empty as f32 / 100.),
-                                )
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .bottom_2()
-                                        .left_2()
-                                        .text_size(px(11.))
-                                        .text_color(content(0.4))
-                                        .child(format!("Empty chat preview at {empty}%")),
-                                ),
-                        ),
-                        None => d.child(
-                            div()
-                                .id("choose-chat-background")
-                                .role(Role::Button)
-                                .aria_label("Choose an image")
-                                .h(px(144.))
-                                .w_full()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .justify_center()
-                                .gap_2()
-                                .text_color(content(0.4))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(content(0.05)).text_color(content(0.7)))
-                                .child(icon("image-add", 20.).text_color(content(0.4)))
-                                .child(div().text_size(px(12.)).child("Choose an image"))
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(SettingsEvent::ChooseBackground)
-                                })),
-                        ),
-                    }),
-            )
-            .when(image.is_some(), |d| {
-                d.child(
-                    div()
-                        .mt_3()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap_2()
-                        .child(
-                            secondary_button("change-chat-background", "Change", false, false)
-                                .child("Change")
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(SettingsEvent::ChooseBackground)
-                                })),
+        let thumb = div()
+            .debug_selector(|| "settings-chat-background-thumb".into())
+            .w(px(56.))
+            .h(px(36.))
+            .flex_none()
+            .overflow_hidden()
+            .rounded(px(7.))
+            .border_1()
+            .border_color(content(0.12))
+            .map(|d| match &image {
+                Some(path) => d.child(
+                    crate::image_memory::preview(std::path::PathBuf::from(path))
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Cover)
+                        .opacity(empty.max(20) as f32 / 100.),
+                ),
+                None => d
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(content(0.04))
+                    .child(icon("image-add", 16.).text_color(content(0.4))),
+            });
+        let actions: Vec<AnyElement> = match image {
+            Some(_) => vec![
+                glass::button("change-chat-background", "Change", Button::Glass)
+                    .role(Role::Button)
+                    .aria_label("Change")
+                    .h(px(30.))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::ChooseBackground)))
+                    .into_any_element(),
+                glass::button("remove-chat-background", "Remove", Button::Ghost)
+                    .role(Role::Button)
+                    .aria_label("Remove")
+                    .h(px(30.))
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.update(cx, |p| p.chat_background = None)),
+                    )
+                    .into_any_element(),
+            ],
+            None => vec![
+                glass::button("choose-chat-background", "Choose an image", Button::Glass)
+                    .role(Role::Button)
+                    .aria_label("Choose an image")
+                    .h(px(30.))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::ChooseBackground)))
+                    .into_any_element(),
+            ],
+        };
+        let mut rows =
+            vec![
+                self.row(
+                    None,
+                    true,
+                    "Image",
+                    Some(match &image {
+                        Some(_) => format!(
+                            "Shown faintly behind the chat. Empty chat preview at {empty}%."
                         )
-                        .child(
-                            secondary_button("remove-chat-background", "Remove", true, false)
-                                .child("Remove")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.update(cx, |p| p.chat_background = None)
-                                })),
-                        ),
-                )
-            })
-            .into_any_element();
-        let mut rows = vec![preview];
-        if image.is_some() {
-            rows.push(self.row(
+                        .into(),
+                        None => "Shown faintly behind the chat.".into(),
+                    }),
+                    vec![
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(thumb)
+                            .children(actions)
+                            .into_any_element(),
+                    ],
+                ),
+            ];
+        if let Some(path) = image.as_deref() {
+            let tiles = div()
+                .id("segmented-background-effect")
+                .debug_selector(|| "settings-segmented-background-effect".into())
+                .role(Role::RadioGroup)
+                .aria_label("Background effect")
+                .grid()
+                .grid_cols(3)
+                .gap(px(10.))
+                .children(EFFECTS.iter().map(|&(option, label)| {
+                    let on = p.chat_background_effect == option;
+                    picture_option(
+                        SharedString::from(format!("segmented-background-effect-{option}")),
+                        effect_tile(option, Some(path)),
+                        label,
+                        on,
+                    )
+                    .debug_selector(move || format!("settings-background-effect-{option}"))
+                    .role(Role::RadioButton)
+                    .aria_label(label)
+                    .aria_selected(on)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update(cx, |p| p.chat_background_effect = option.into())
+                    }))
+                }))
+                .into_any_element();
+            rows.push(self.row_parts(
                 None,
                 false,
                 "Background effect",
-                Some(effect_description(&p.chat_background_effect).into()),
-                vec![self.segmented(
-                    "background-effect",
-                    "Background effect",
-                    &p.chat_background_effect,
-                    &EFFECTS,
-                    cx,
-                    |this, v, cx| this.update(cx, |p| p.chat_background_effect = v.into()),
-                )],
+                Some(self.description(effect_description(&p.chat_background_effect))),
+                vec![tiles],
+                true,
             ));
             rows.push(self.row(
                 None,

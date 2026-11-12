@@ -155,7 +155,6 @@ impl Shell {
                         inbox.update(cx, |inbox, cx| inbox.toggle_linear_team(id.clone(), cx));
                     }
                 }
-                SettingsEvent::RunSetup => this.run_setup_again(window, cx),
                 SettingsEvent::WhatsNew => {
                     this.open_whats_new(crate::notifications::updater::version().into(), cx)
                 }
@@ -925,11 +924,11 @@ mod tests {
         assert!(
             (page.left()
                 - card.left()
-                - (card.size.width - px(8.) - px(1024.)).max(px(0.)) / 2.
+                - (card.size.width - px(8.) - px(860.)).max(px(0.)) / 2.
                 - px(33.))
             .abs()
                 < px(1.),
-            "React's 32px page padding plus the card border: page={page:?}, frame={card:?}"
+            "the glass page's 860px column, 32px padding and the card border: page={page:?}, frame={card:?}"
         );
         assert!(visual.debug_bounds("settings-toggle-sounds").is_some());
         assert!(visual.debug_bounds("sidebar-content").is_none());

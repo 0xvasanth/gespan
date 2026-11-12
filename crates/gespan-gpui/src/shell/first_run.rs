@@ -77,7 +77,7 @@ impl Shell {
         cx.notify();
     }
 
-    /// Settings › General › Run setup again: the card from Welcome, with
+    /// The command palette's Run setup again: the card from Welcome, with
     /// today's choices filled in. Projects stay as they are.
     pub(super) fn run_setup_again(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.is_some() {

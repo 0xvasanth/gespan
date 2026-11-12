@@ -1656,25 +1656,35 @@ mod tests {
             .unwrap();
         visual.simulate_resize(gpui::size(px(1200.), px(2600.)));
         visual.run_until_parked();
+        // Appearance lists the sections in the order they appear in the
+        // sidebar, then the compact-view switch on its own row.
         let ids = [
-            "sidebar-notes",
-            "sidebar-board",
-            "sidebar-automations",
             "sidebar-inbox",
+            "sidebar-automations",
             "sidebar-pilots",
+            "sidebar-board",
+            "sidebar-notes",
             "sidebar-activity",
             "compact-session-cards",
         ];
-        let tops: Vec<_> = ids
+        // The sidebar sections are chips that wrap across rows, so each one
+        // comes after the last in reading order: on a later row, or further
+        // right on the same row.
+        let origins: Vec<_> = ids
             .iter()
             .map(|id| {
                 visual
                     .debug_bounds(Box::leak(format!("settings-toggle-{id}").into_boxed_str()))
                     .unwrap_or_else(|| panic!("{id} has a switch"))
-                    .top()
+                    .origin
             })
             .collect();
-        assert!(tops.windows(2).all(|w| w[0] < w[1]), "{tops:?}");
+        assert!(
+            origins
+                .windows(2)
+                .all(|w| w[0].y < w[1].y || (w[0].y == w[1].y && w[0].x < w[1].x)),
+            "{origins:?}"
+        );
         assert!(
             visual
                 .debug_bounds("settings-toggle-sidebar-search")
@@ -1761,9 +1771,9 @@ mod tests {
                 })
                 .unwrap();
             visual.run_until_parked();
-            assert!(visual.debug_bounds("sidebar-activity-card").is_some());
+            assert!(visual.debug_bounds("agents-footer").is_some());
             flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("sidebar-activity-card").is_none());
+            assert!(visual.debug_bounds("agents-footer").is_none());
             window
                 .update(visual, |shell, _, cx| {
                     assert!(!shell.workspace.preferences.working_agents);
@@ -1776,7 +1786,7 @@ mod tests {
                 })
                 .unwrap();
             flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("sidebar-activity-card").is_some());
+            assert!(visual.debug_bounds("agents-footer").is_some());
             window
                 .update(visual, |shell, _, _| {
                     let saved = shell.latest_state.lock().unwrap().clone();
@@ -1792,7 +1802,7 @@ mod tests {
             })
             .unwrap();
         visual.run_until_parked();
-        assert!(visual.debug_bounds("sidebar-activity-card").is_none());
+        assert!(visual.debug_bounds("agents-footer").is_none());
     }
 
     #[gpui::test]

@@ -1,11 +1,23 @@
-//! GeneralPage and UpdateRow.
+//! GeneralPage: the version card, then Alerts and Workspace.
+use crate::glass::{self, Button, Tone};
 use crate::notifications::updater::{self, Action};
-use crate::settings::{
-    SettingsView,
-    widgets::{primary_button, secondary_button},
-};
+use crate::settings::SettingsView;
 use crate::theme::*;
-use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, FontWeight, Role, SharedString, div, linear_color_stop, linear_gradient,
+    prelude::*, px,
+};
+
+/// The pill beside the version: what the last check found. Before any check
+/// has finished it says nothing rather than claim the build is current.
+pub(in crate::settings) fn version_pill(action: &Action, current: bool) -> Option<(String, Tone)> {
+    match action {
+        Action::Install(_) => Some(("Update available".into(), Tone::Waiting)),
+        Action::Busy(label) => Some((label.clone(), Tone::Running)),
+        Action::Check if current => Some(("Up to date".into(), Tone::Ok)),
+        Action::Check => None,
+    }
+}
 
 impl SettingsView {
     pub(super) fn general_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -48,22 +60,39 @@ impl SettingsView {
         ];
         let mut workspace = Vec::new();
         if cfg!(target_os = "macos") {
-            workspace.push(self.row(
+            // A shortcut another app holds reads as waiting on you, under
+            // the description it qualifies.
+            let description = div()
+                .child(self.description(format!(
+                    "Press {} from any app. Return starts a session in the background; ⌘Return opens it. Change the shortcut in Keybindings.",
+                    super::keybindings::quick_composer_label(&p)
+                )))
+                .when_some(self.ctx.quick_error.clone(), |d, error| {
+                    d.child(
+                        div()
+                            .debug_selector(|| "settings-quick-composer-error".into())
+                            .mt(px(6.))
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(Tone::Waiting.ink())
+                            .child(error),
+                    )
+                })
+                .into_any_element();
+            workspace.push(self.row_parts(
                 Some("quick-composer"),
                 true,
                 "Quick composer",
-                Some(format!(
-                    "Press {} from any app. Return starts a session in the background; ⌘Return opens it. Change the shortcut in Keybindings.",
-                    super::keybindings::quick_composer_label(&p)
-                ).into()),
-                {let mut controls=Vec::new();if let Some(error)=&self.ctx.quick_error{controls.push(super::super::widgets::note(error.clone()));}controls.push(self.toggle(
+                Some(description),
+                vec![self.toggle(
                     "quick-composer",
                     "Quick composer",
                     p.quick_composer,
                     false,
                     cx,
                     |this, on, cx| this.update(cx, |p| p.quick_composer = on),
-                ));controls},
+                )],
+                false,
             ));
         }
         workspace.push(self.row(
@@ -142,111 +171,174 @@ impl SettingsView {
                 )],
             ));
         }
-        let version = crate::notifications::updater::version();
-        let about = vec![
-            self.row(
-                Some("update"),
-                true,
-                div()
-                    .flex()
-                    .items_baseline()
-                    .gap_2()
-                    .child("Version")
-                    .child(
-                        div()
-                            .font_family(crate::fonts::monospace())
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(content(0.45))
-                            .child(version),
-                    ),
-                Some(
-                    cx.try_global::<updater::Shared>()
-                        .and_then(|shared| updater::status(&shared.0, cx))
-                        .unwrap_or_else(|| {
-                            "View release notes and check for app and agent updates.".into()
-                        })
-                        .into(),
-                ),
-                vec![
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            secondary_button("whats-new", "What's new", false, false)
-                                .child("What's new")
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(crate::settings::SettingsEvent::WhatsNew)
-                                })),
-                        )
-                        .child(
-                            secondary_button("run-setup", "Run setup again", false, false)
-                                .child("Run setup again")
-                                .on_click(cx.listener(|_, _, _, cx| {
-                                    cx.emit(crate::settings::SettingsEvent::RunSetup)
-                                })),
-                        )
-                        .child(
-                            secondary_button(
-                                "check-harness-updates",
-                                "Check harness updates",
-                                false,
-                                false,
-                            )
-                            .child("Check harness updates")
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                cx.emit(crate::settings::SettingsEvent::CheckHarnessUpdates)
-                            })),
-                        )
-                        .child(self.app_update_button(cx))
-                        .into_any_element(),
-                ],
-            ),
-        ];
         vec![
+            self.version_card(cx),
             self.group(None, true, "Alerts", None, None, alerts),
             self.group(None, false, "Workspace", None, None, workspace),
-            self.group(None, false, "About", None, None, about),
         ]
     }
-}
-impl SettingsView {
-    /// Check for updates, or once one is found, install it in place.
-    fn app_update_button(&self, cx: &mut Context<Self>) -> AnyElement {
+
+    /// The build you are running, first, because it is what people come
+    /// here to check: the app tile, the version and what the last check
+    /// found, with release notes and harness updates as icon actions.
+    fn version_card(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let updater = cx
             .try_global::<updater::Shared>()
             .map(|shared| shared.0.clone());
-        match updater.as_ref().map(|u| updater::action(u, cx)) {
-            Some(Action::Install(version)) => {
-                let label = format!("Update to {version}");
-                let mut ink = shell_fill();
-                ink.a = 1.;
-                primary_button("check-updates", label.clone(), false)
-                    .child(icon("arrow-down-circle", 14.).text_color(ink))
-                    .child(label)
-                    .on_click(move |_, _, cx| {
-                        if let Some(updater) = &updater {
-                            updater::install(updater, cx)
-                        }
-                    })
-                    .into_any_element()
+        let action = updater
+            .as_ref()
+            .map(|u| updater::action(u, cx))
+            .unwrap_or(Action::Check);
+        let detail = updater.as_ref().and_then(|u| updater::status(u, cx));
+        let current = updater.as_ref().is_some_and(|u| updater::is_current(u, cx));
+        let pill = version_pill(&action, current);
+        // The pill already says the build is current.
+        let detail = detail
+            .filter(|_| !current)
+            .unwrap_or_else(|| "View release notes and check for app and agent updates.".into());
+        let flash = self.flashing(Some("update"));
+        glass::card()
+            .debug_selector(|| "settings-row-update".into())
+            .relative()
+            .p(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(14.))
+            .when(flash, |d| d.border_color(accent_color().opacity(0.6)))
+            .child(self.reveal_probe("update"))
+            .child(
+                div()
+                    .size(px(40.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(11.))
+                    .border_1()
+                    .border_color(glass::edge())
+                    .bg(linear_gradient(
+                        135.,
+                        linear_color_stop(gpui::Hsla::from(gpui::rgb(0xc0affc)).opacity(0.35), 0.),
+                        linear_color_stop(accent_color().opacity(0.25), 1.),
+                    ))
+                    .text_size(px(16.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(content(1.))
+                    .child("G"),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .line_height(px(18.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(content(1.))
+                                    .child(format!("Gespan {}", updater::version())),
+                            )
+                            .when_some(pill, |d, (label, tone)| {
+                                d.child(
+                                    glass::status(label, tone)
+                                        .debug_selector(|| "settings-version-status".into()),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .mt(px(2.))
+                            .text_size(px(11.5))
+                            .line_height(px(16.))
+                            .text_color(content(0.55))
+                            .child(detail),
+                    ),
+            )
+            .child(
+                self.icon_action_with_tip("whats-new", "sparkles", "What's new")
+                    .on_click(
+                        cx.listener(|_, _, _, cx| {
+                            cx.emit(crate::settings::SettingsEvent::WhatsNew)
+                        }),
+                    ),
+            )
+            .child(
+                self.icon_action_with_tip(
+                    "check-harness-updates",
+                    "hammer",
+                    "Check harness updates",
+                )
+                .on_click(cx.listener(|_, _, _, cx| {
+                    cx.emit(crate::settings::SettingsEvent::CheckHarnessUpdates)
+                })),
+            )
+            .child(self.app_update_button(action, updater, cx))
+            .into_any_element()
+    }
+
+    fn icon_action_with_tip(
+        &self,
+        id: &'static str,
+        icon: &'static str,
+        label: &'static str,
+    ) -> gpui::Stateful<gpui::Div> {
+        glass::icon_button(id, icon)
+            .role(Role::Button)
+            .aria_label(label)
+            .debug_selector(move || format!("settings-{id}"))
+            .tooltip(move |_, cx| cx.new(|_| crate::conversation::HintTooltip(label)).into())
+    }
+
+    /// Check for updates, or once one is found, install it in place.
+    fn app_update_button(
+        &self,
+        action: Action,
+        updater: Option<gpui::Entity<updater::Updater>>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let named = |button: gpui::Stateful<gpui::Div>, label: SharedString| {
+            button
+                .debug_selector(|| "settings-check-updates".into())
+                .role(Role::Button)
+                .aria_label(label)
+                .h(px(30.))
+        };
+        match action {
+            Action::Install(version) => {
+                let label = SharedString::from(format!("Update to {version}"));
+                named(
+                    glass::button("check-updates", label.clone(), Button::Primary),
+                    label,
+                )
+                .on_click(move |_, _, cx| {
+                    if let Some(updater) = &updater {
+                        updater::install(updater, cx)
+                    }
+                })
+                .into_any_element()
             }
-            Some(Action::Busy(label)) => {
-                secondary_button("check-updates", label.clone(), false, true)
-                    .child(icon("loader", 14.).text_color(content(0.7)))
-                    .child(label)
-                    .into_any_element()
+            Action::Busy(label) => {
+                let label = SharedString::from(label);
+                named(
+                    glass::button("check-updates", label.clone(), Button::Glass),
+                    label,
+                )
+                .opacity(0.6)
+                .into_any_element()
             }
-            Some(Action::Check) | None => {
-                secondary_button("check-updates", "Check for updates", false, false)
-                    .child(icon("refresh-cw", 14.).text_color(content(0.7)))
-                    .child("Check for updates")
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.emit(crate::settings::SettingsEvent::CheckAppUpdates)
-                    }))
-                    .into_any_element()
-            }
+            Action::Check => named(
+                glass::button("check-updates", "Check for updates", Button::Glass),
+                "Check for updates".into(),
+            )
+            .on_click(
+                cx.listener(|_, _, _, cx| cx.emit(crate::settings::SettingsEvent::CheckAppUpdates)),
+            )
+            .into_any_element(),
         }
     }
 }

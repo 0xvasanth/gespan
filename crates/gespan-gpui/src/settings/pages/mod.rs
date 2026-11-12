@@ -17,11 +17,15 @@ mod providers;
 mod skills;
 mod worktrees;
 
+#[cfg(test)]
+pub(super) use appearance::appearance_summary;
 pub(super) use appearance::parse_hex;
 pub(crate) use appearance::{ACCENTS, swatch};
 pub(super) use connections::ConnectionsState;
 pub(super) use diagnostics::DiagnosticsState;
 pub(super) use dictation::DictationState;
+#[cfg(test)]
+pub(super) use general::version_pill;
 pub(super) use herdr_machines::HerdrMachinesState;
 pub(crate) use keybindings::{command_shortcut, shortcut_label};
 pub(super) use mobile::MobileState;

@@ -421,16 +421,18 @@ impl Automations {
             .role(Role::Button)
             .aria_label(format!("{name}: {label}"))
             .relative()
-            .px(px(4.))
-            .rounded(px(4.))
+            .h(px(28.))
+            .px(px(8.))
+            .rounded(px(8.))
             .flex()
             .items_center()
-            .gap(px(2.))
+            .gap(px(4.))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(content(1.))
-            .border_b_1()
-            .border_color(content(0.3))
-            .hover(|s| s.bg(content(0.08)))
+            .bg(crate::glass::fill_strong())
+            .border_1()
+            .border_color(crate::glass::edge())
+            .hover(|s| s.bg(content(0.12)))
             .when(field.is_none(), |d| d.child(self.model_anchor.probe()))
             .when(field.is_some(), |d| d.child(anchor.probe()))
             .child(label)
@@ -580,7 +582,7 @@ impl Automations {
             .items_center()
             .gap(px(8.))
             .child(
-                button(
+                primary_button(
                     "review-setup-turn-on",
                     if self.saving {
                         "Turning on…"
@@ -589,9 +591,6 @@ impl Automations {
                     },
                 )
                 .debug_selector(|| "review-setup-turn-on".into())
-                .bg(content(1.))
-                .text_color(shell_fill())
-                .font_weight(gpui::FontWeight::MEDIUM)
                 .when(disabled, |d| d.opacity(0.4))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if !disabled {
@@ -605,9 +604,8 @@ impl Automations {
                     .on_click(cx.listener(|this, _, _, cx| this.customize_review(cx))),
             )
             .child(
-                button("review-setup-cancel", "Cancel")
+                ghost_button("review-setup-cancel", "Cancel")
                     .debug_selector(|| "review-setup-cancel".into())
-                    .border_color(gpui::transparent_black())
                     .on_click(cx.listener(|this, _, _, cx| this.show_gallery(cx))),
             );
         div()
@@ -622,10 +620,10 @@ impl Automations {
                     .role(Role::Dialog)
                     .aria_label("Review pull requests")
                     .w_full()
-                    .max_w(px(640.))
+                    .max_w(px(680.))
                     .mx_auto()
-                    .px(px(32.))
-                    .pt(px(20.))
+                    .px(px(36.))
+                    .pt(px(26.))
                     .pb(px(40.))
                     .flex()
                     .flex_col()
@@ -634,29 +632,55 @@ impl Automations {
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(10.))
-                            .child(icon("git-pull-request", 18.))
+                            .gap(px(12.))
+                            .child(layout::tile(
+                                36.,
+                                layout::icon_glyph("git-pull-request", 16.),
+                            ))
                             .child(
                                 div()
-                                    .text_size(px(20.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Review pull requests"),
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(4.))
+                                    .child(
+                                        crate::glass::eyebrow("New automation")
+                                            .text_color(content(0.55)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(22.))
+                                            .line_height(px(28.))
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child("Review pull requests"),
+                                    ),
                             ),
                     )
-                    .child(sentence)
-                    .children(post_warning(setup.input.results).map(|text| {
-                        div()
-                            .id("review-setup-post-warning")
-                            .debug_selector(|| "review-setup-post-warning".into())
-                            .role(Role::Note)
-                            .aria_label(text)
-                            .w_full()
-                            .text_size(px(13.))
-                            .line_height(px(18.))
-                            .text_color(content(0.6))
-                            .child(text)
-                    }))
-                    .child(line)
+                    // The sentence and what it means sit on one glass card.
+                    .child(
+                        crate::glass::card()
+                            .p(px(20.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(14.))
+                            .child(sentence)
+                            .children(post_warning(setup.input.results).map(|text| {
+                                div()
+                                    .id("review-setup-post-warning")
+                                    .debug_selector(|| "review-setup-post-warning".into())
+                                    .role(Role::Note)
+                                    .aria_label(text)
+                                    .w_full()
+                                    .text_size(px(13.))
+                                    .line_height(px(18.))
+                                    .text_color(content(0.6))
+                                    .child(text)
+                            }))
+                            .child(
+                                line.pt(px(12.))
+                                    .border_t_1()
+                                    .border_color(crate::glass::hairline()),
+                            ),
+                    )
                     .child(actions),
             )
             .into_any_element()

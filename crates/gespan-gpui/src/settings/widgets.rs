@@ -49,6 +49,51 @@ pub(super) fn page_header(title: &'static str, description: &'static str) -> Div
         )
 }
 
+/// The glass PageHeader: a larger title over one muted line.
+pub(super) fn glass_page_header(title: &'static str, description: &'static str) -> Div {
+    div()
+        .debug_selector(|| "settings-page-header".into())
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .child(
+            div()
+                .text_size(px(26.))
+                .line_height(px(30.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(content(1.))
+                .child(title),
+        )
+        .child(
+            div()
+                .max_w(px(576.))
+                .text_size(px(13.))
+                .line_height(px(20.))
+                .text_color(content(0.62))
+                .child(description),
+        )
+}
+
+/// The hue track: the colour wheel unrolled, so each position shows the hue
+/// it sets.
+fn hue_track() -> Div {
+    let stops = 8;
+    div()
+        .absolute()
+        .inset_0()
+        .rounded_full()
+        .overflow_hidden()
+        .flex()
+        .children((0..stops).map(|ix| {
+            let at = |i: usize| gpui::hsla(i as f32 / stops as f32, 0.78, 0.6, 1.);
+            div().h_full().flex_1().bg(gpui::linear_gradient(
+                90.,
+                gpui::linear_color_stop(at(ix), 0.),
+                gpui::linear_color_stop(at(ix + 1), 1.),
+            ))
+        }))
+}
+
 /// A muted line inside a group card: an empty state or a hint.
 pub(super) fn note(text: impl Into<SharedString>) -> AnyElement {
     div()
@@ -165,6 +210,16 @@ pub(crate) fn primary_button(
 }
 
 impl SettingsView {
+    /// Whether the open page uses the glass presentation; see [`Section::glass`].
+    pub(super) fn glass(&self) -> bool {
+        self.section.glass()
+    }
+
+    /// The width a slider's thumb takes from its track's travel.
+    pub(super) fn slider_thumb(&self) -> f32 {
+        if self.glass() { 16. } else { 12. }
+    }
+
     pub(super) fn flashing(&self, id: Option<&str>) -> bool {
         id.is_some() && self.revealed.as_deref() == id
     }
@@ -180,6 +235,9 @@ impl SettingsView {
         children: Vec<AnyElement>,
     ) -> AnyElement {
         let flash = self.flashing(id);
+        if self.glass() {
+            return self.glass_group(id, title, description, action, children);
+        }
         div()
             .relative()
             .when(!first, |d| d.pt_8())
@@ -231,6 +289,67 @@ impl SettingsView {
             .into_any_element()
     }
 
+    /// The glass Group: a title over a glass card whose rows part on
+    /// hairlines. The page's column spaces groups apart.
+    fn glass_group(
+        &self,
+        id: Option<&'static str>,
+        title: impl IntoElement,
+        description: Option<SharedString>,
+        action: Option<AnyElement>,
+        children: Vec<AnyElement>,
+    ) -> AnyElement {
+        let flash = self.flashing(id);
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .when_some(id, |d, id| d.child(self.reveal_probe(id)))
+            .child(
+                div()
+                    .flex()
+                    .items_end()
+                    .gap(px(12.))
+                    .px(px(4.))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .line_height(px(19.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(content(1.))
+                                    .child(title),
+                            )
+                            .when_some(description, |d, text| {
+                                d.child(
+                                    div()
+                                        .mt(px(2.))
+                                        .text_size(px(12.))
+                                        .line_height(px(18.))
+                                        .text_color(content(0.62))
+                                        .child(text),
+                                )
+                            }),
+                    )
+                    .when_some(action, |d, action| {
+                        d.child(div().flex_shrink_0().child(action))
+                    }),
+            )
+            .child(
+                crate::glass::card()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .when(flash, |d| d.border_color(accent(0.6)))
+                    .children(children),
+            )
+            .into_any_element()
+    }
+
     /// Row: a label and description beside its controls. Rows draw their
     /// own top rule, which reads the same as Tailwind's `border-b` with
     /// `last:border-b-0`.
@@ -242,7 +361,35 @@ impl SettingsView {
         description: Option<SharedString>,
         controls: Vec<AnyElement>,
     ) -> AnyElement {
+        let description = description.map(|text| self.description(text));
+        self.row_parts(id, first, label, description, controls, false)
+    }
+
+    /// A row's muted description line.
+    pub(super) fn description(&self, text: impl Into<SharedString>) -> AnyElement {
+        let glass = self.glass();
+        div()
+            .mt(px(if glass { 2. } else { 4. }))
+            .text_size(px(12.))
+            .line_height(px(if glass { 18. } else { RELAXED_12 }))
+            .text_color(content(if glass { 0.62 } else { 0.45 }))
+            .child(text.into())
+            .into_any_element()
+    }
+
+    /// [`Self::row`] with any description element. `top` aligns the label
+    /// with the top of tall controls, such as a grid of picture options.
+    pub(super) fn row_parts(
+        &self,
+        id: Option<&'static str>,
+        first: bool,
+        label: impl IntoElement,
+        description: Option<AnyElement>,
+        controls: Vec<AnyElement>,
+        top: bool,
+    ) -> AnyElement {
         let flash = self.flashing(id);
+        let glass = self.glass();
         let narrow =
             self.scroll.bounds().size.width > px(0.) && self.scroll.bounds().size.width < px(560.);
         let toggle_only = id.is_some_and(|id| {
@@ -281,17 +428,31 @@ impl SettingsView {
             .debug_selector(|| format!("settings-row-{}", id.unwrap_or("anonymous")))
             .relative()
             .flex()
-            .items_start()
+            .map(|d| {
+                if glass && !stacked && !top {
+                    d.items_center()
+                } else {
+                    d.items_start()
+                }
+            })
             .map(|d| {
                 if stacked {
                     d.flex_col().gap_3()
+                } else if glass {
+                    d.gap(px(20.))
                 } else {
                     d.gap_6()
                 }
             })
             .px_4()
             .py(px(14.))
-            .when(!first, |d| d.border_t_1().border_color(content(0.05)))
+            .when(!first, |d| {
+                d.border_t_1().border_color(if glass {
+                    crate::glass::hairline()
+                } else {
+                    content(0.05)
+                })
+            })
             .when(flash, |d| d.bg(accent(0.1)))
             .when_some(id, |d, id| d.child(self.reveal_probe(id)))
             .child(
@@ -306,16 +467,7 @@ impl SettingsView {
                             .text_color(content(1.))
                             .child(label),
                     )
-                    .when_some(description, |d, text| {
-                        d.child(
-                            div()
-                                .mt_1()
-                                .text_size(px(12.))
-                                .line_height(px(RELAXED_12))
-                                .text_color(content(0.45))
-                                .child(text),
-                        )
-                    }),
+                    .children(description),
             )
             .child(
                 div()
@@ -377,21 +529,43 @@ impl SettingsView {
                 gpui::Toggled::False
             })
             .relative()
-            .h(px(20.))
-            .w(px(36.))
             .flex_shrink_0()
             .rounded_full()
-            .bg(if on { accent_color() } else { content(0.2) })
             .when(disabled, |d| d.opacity(0.4))
-            .child(
-                div()
-                    .absolute()
-                    .top(px(2.))
-                    .left(px(if on { 18. } else { 2. }))
-                    .size(px(16.))
-                    .rounded_full()
-                    .bg(rgb(0xffffff)),
-            )
+            .map(|d| {
+                if self.glass() {
+                    // 30×18 with a 14px knob that casts a small shadow.
+                    d.h(px(18.))
+                        .w(px(30.))
+                        .bg(if on { accent_color() } else { content(0.16) })
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(2.))
+                                .left(px(if on { 14. } else { 2. }))
+                                .size(px(14.))
+                                .rounded_full()
+                                .bg(rgb(0xffffff))
+                                .shadow(vec![
+                                    gpui::BoxShadow::new(px(0.), px(1.), black(0.4))
+                                        .blur_radius(px(3.)),
+                                ]),
+                        )
+                } else {
+                    d.h(px(20.))
+                        .w(px(36.))
+                        .bg(if on { accent_color() } else { content(0.2) })
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(2.))
+                                .left(px(if on { 18. } else { 2. }))
+                                .size(px(16.))
+                                .rounded_full()
+                                .bg(rgb(0xffffff)),
+                        )
+                }
+            })
             .when(!disabled, |d| {
                 d.cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| change(this, !on, cx)))
@@ -409,6 +583,28 @@ impl SettingsView {
         cx: &mut Context<Self>,
         change: impl Fn(&mut Self, &'static str, &mut Context<Self>) + Clone + 'static,
     ) -> AnyElement {
+        if self.glass() {
+            return crate::glass::segmented()
+                .id(SharedString::from(format!("segmented-{id}")))
+                .debug_selector(move || format!("settings-segmented-{id}"))
+                .role(Role::RadioGroup)
+                .aria_label(label)
+                .children(options.iter().map(|&(option, text)| {
+                    let selected = value == option;
+                    let change = change.clone();
+                    crate::glass::segment(
+                        SharedString::from(format!("segmented-{id}-{option}")),
+                        text.to_owned(),
+                        selected,
+                    )
+                    .debug_selector(move || format!("settings-{id}-{option}"))
+                    .role(Role::RadioButton)
+                    .aria_label(text.to_owned())
+                    .aria_selected(selected)
+                    .on_click(cx.listener(move |this, _, _, cx| change(this, option, cx)))
+                }))
+                .into_any_element();
+        }
         div()
             .id(SharedString::from(format!("segmented-{id}")))
             .debug_selector(move || format!("settings-segmented-{id}"))
@@ -476,6 +672,9 @@ impl SettingsView {
             .entry(kind)
             .or_default()
             .clone();
+        if self.glass() {
+            return self.glass_slider(kind, display, disabled, fraction, slot, cx);
+        }
         div()
             .w(px(224.))
             .max_w_full()
@@ -530,14 +729,107 @@ impl SettingsView {
             )
             .into_any_element()
     }
+    /// The glass Slider: a 6px track filled with the accent up to a 16px
+    /// knob, then its value. Hue paints its own colours instead of a fill.
+    fn glass_slider(
+        &self,
+        kind: SliderKind,
+        display: String,
+        disabled: bool,
+        fraction: f32,
+        slot: AnchorSlot,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let hue = matches!(kind, SliderKind::Hue);
+        div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap_3()
+            .when(disabled, |d| d.opacity(0.4))
+            .child(
+                div()
+                    .id(SharedString::from(format!("slider-{}", kind.id())))
+                    .debug_selector(move || format!("settings-slider-{}", kind.id()))
+                    .role(Role::Slider)
+                    .aria_label(kind.label())
+                    .w(px(240.))
+                    .max_w_full()
+                    .h(px(16.))
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .child(slot.layout_probe())
+                    .child(
+                        div()
+                            .relative()
+                            .w_full()
+                            .h(px(6.))
+                            .rounded_full()
+                            .bg(content(0.1))
+                            .map(|d| {
+                                if hue {
+                                    d.child(hue_track())
+                                } else {
+                                    d.child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .left_0()
+                                            .h_full()
+                                            .w(relative(fraction))
+                                            .rounded_full()
+                                            .bg(accent_color()),
+                                    )
+                                }
+                            }),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(relative(fraction))
+                            .ml(px(-8. + 16. * (0.5 - fraction)))
+                            .size(px(16.))
+                            .rounded_full()
+                            .bg(rgb(0xffffff))
+                            .shadow(vec![
+                                gpui::BoxShadow::new(px(0.), px(1.), black(0.5))
+                                    .blur_radius(px(4.)),
+                            ]),
+                    )
+                    .when(!disabled, |d| {
+                        d.cursor_pointer().on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                this.slider_drag = Some(kind);
+                                this.slide(kind, event.position.x, cx);
+                                cx.stop_propagation();
+                            }),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .w(px(44.))
+                    .flex_shrink_0()
+                    .text_right()
+                    .text_size(px(12.))
+                    .line_height(px(16.))
+                    .text_color(content(0.62))
+                    .child(display),
+            )
+            .into_any_element()
+    }
     pub(super) fn slide(&mut self, kind: SliderKind, x: gpui::Pixels, cx: &mut Context<Self>) {
         let Some(bounds) = self.slider_tracks.borrow().get(&kind).and_then(|s| s.get()) else {
             return;
         };
         let (min, max) = kind.range();
         // A range input's thumb travels the track less its own width.
-        let travel = (bounds.size.width.as_f32() - 12.).max(1.);
-        let fraction = ((x - bounds.left()).as_f32() - 6.).clamp(0., travel) / travel;
+        let thumb = self.slider_thumb();
+        let travel = (bounds.size.width.as_f32() - thumb).max(1.);
+        let fraction = ((x - bounds.left()).as_f32() - thumb / 2.).clamp(0., travel) / travel;
         let value = min + ((max - min) as f32 * fraction).round() as u32;
         if kind.holds_until_release() {
             if self.slider_value(kind) != value {
@@ -624,12 +916,22 @@ impl SettingsView {
                     .items_center()
                     .justify_between()
                     .gap_2()
-                    .rounded_md()
                     .border_1()
-                    .border_color(content(0.1))
-                    .bg(content(0.05))
-                    .px_2()
-                    .py_1()
+                    .map(|d| {
+                        if self.glass() {
+                            d.h(px(30.))
+                                .px(px(10.))
+                                .rounded(px(8.))
+                                .border_color(crate::glass::edge())
+                                .bg(crate::glass::fill_strong())
+                        } else {
+                            d.rounded_md()
+                                .border_color(content(0.1))
+                                .bg(content(0.05))
+                                .px_2()
+                                .py_1()
+                        }
+                    })
                     .text_size(px(12.))
                     .line_height(px(16.))
                     .text_color(content(1.))
