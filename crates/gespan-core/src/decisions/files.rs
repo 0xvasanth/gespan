@@ -54,22 +54,22 @@ fn fence_run(line: &str) -> Option<(char, usize, &str)> {
     Some((ch, run, &body[run..]))
 }
 
-/// One pass over the lines. `Err(i)` when the fence opened at line `i` never
-/// closes, so the caller can treat that line as plain text and scan again.
-fn scan_sections(lines: &[&str], ignored: &[usize]) -> Result<Vec<Span>, usize> {
+/// One pass over the lines. With `fence_aware` set, markers inside code
+/// fences are skipped. Also reports whether a fence was still open at the end.
+fn scan_sections(lines: &[&str], fence_aware: bool) -> (Vec<Span>, bool) {
     let mut spans = Vec::new();
     let mut open: Option<usize> = None;
-    let mut fence: Option<(char, usize, usize)> = None;
+    let mut fence: Option<(char, usize)> = None;
     for (i, line) in lines.iter().enumerate() {
-        if let Some((ch, len, _)) = fence {
-            if closes_fence(line, ch, len) {
-                fence = None;
+        if fence_aware {
+            if let Some((ch, len)) = fence {
+                if closes_fence(line, ch, len) {
+                    fence = None;
+                }
+                continue;
             }
-            continue;
-        }
-        if !ignored.contains(&i) {
-            if let Some((ch, len)) = fence_opener(line) {
-                fence = Some((ch, len, i));
+            if let Some(opener) = fence_opener(line) {
+                fence = Some(opener);
                 continue;
             }
         }
@@ -82,26 +82,28 @@ fn scan_sections(lines: &[&str], ignored: &[usize]) -> Result<Vec<Span>, usize> 
             }
         }
     }
-    match fence {
-        Some((_, _, opener)) => Err(opener),
-        None => Ok(spans),
-    }
+    (spans, fence.is_some())
 }
 
 /// Complete sections outside code fences (``` or ~~~, closed only by the
 /// same character at least as long). A marker counts only as a whole line
 /// (ignoring surrounding whitespace). A BEGIN that is never closed, or is
-/// followed by another BEGIN first, is left alone as user text. A fence that
-/// is still open at the end of the file is not a fence: its opener is plain
-/// text, so a stray fence cannot hide Gespan's own section.
+/// followed by another BEGIN first, is left alone as user text.
+///
+/// When the fences are unbalanced (one is still open at the end of the file)
+/// they cannot be trusted, and a stray fence could hide Gespan's own section.
+/// If the fence-aware pass then finds no section, the last complete
+/// BEGIN..END pair, ignoring fences, is taken as ours: Gespan always appends
+/// at the end. That keeps regeneration idempotent for any input. Trade-off:
+/// in a file with unbalanced fences and no Gespan section yet, a user's
+/// example pair could be mistaken for ours.
 fn find_sections(lines: &[&str]) -> Vec<Span> {
-    let mut ignored = Vec::new();
-    loop {
-        match scan_sections(lines, &ignored) {
-            Ok(spans) => return spans,
-            Err(opener) => ignored.push(opener),
-        }
+    let (spans, unbalanced) = scan_sections(lines, true);
+    if !spans.is_empty() || !unbalanced {
+        return spans;
     }
+    let (blind, _) = scan_sections(lines, false);
+    blind.last().copied().into_iter().collect()
 }
 
 /// Replaces Gespan's section in `existing` with `body`, adds it when missing,
@@ -220,16 +222,37 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Writes `content` to `path` via a temp file in the same directory and a
 /// rename, so readers see the old or the new file, never a partial one. The
 /// target's permissions are kept (unix); the temp file is removed on any
-/// error. Missing parent directories are created.
-pub fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
-    let path = resolve_symlinks(path)?;
-    let path = path.as_path();
-    let dir = path
+/// error. Missing parent directories are created, but never for a path
+/// reached through a symlink.
+///
+/// A symlinked `path` is followed (so `CLAUDE.md -> AGENTS.md` keeps its
+/// link), but only while the real file's directory is inside `allowed_root`;
+/// otherwise nothing is written and `PermissionDenied` is returned. Callers
+/// pass the workspace toplevel for project files, the profile home for
+/// global ones.
+pub fn write_atomic(path: &Path, content: &str, allowed_root: &Path) -> io::Result<()> {
+    let root = fs::canonicalize(allowed_root)?;
+    let target = resolve_symlinks(path)?;
+    let through_link = target != path;
+    let dir = target
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(dir)?;
-    let name = path
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
+    if through_link {
+        // Never create directories for a path reached through a link.
+        ensure_inside(&fs::canonicalize(&dir)?, &root, path)?;
+    } else {
+        // Check the nearest existing ancestor before creating anything.
+        let existing = dir
+            .ancestors()
+            .find(|a| a.exists())
+            .unwrap_or_else(|| Path::new("."));
+        ensure_inside(&fs::canonicalize(existing)?, &root, path)?;
+        fs::create_dir_all(&dir)?;
+        ensure_inside(&fs::canonicalize(&dir)?, &root, path)?;
+    }
+    let name = target
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
     let unique = format!(
@@ -239,14 +262,44 @@ pub fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
         TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     );
     let tmp = dir.join(unique);
-    let result = write_and_rename(&tmp, path, content);
+    let result = write_and_rename(&tmp, &target, content, || {
+        // The link chain must still lead to the same file.
+        if resolve_symlinks(path)? == target {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("{} changed while being written", path.display()),
+            ))
+        }
+    });
     if result.is_err() {
         let _ = fs::remove_file(&tmp);
     }
     result
 }
 
-fn write_and_rename(tmp: &Path, path: &Path, content: &str) -> io::Result<()> {
+fn ensure_inside(dir: &Path, root: &Path, shown: &Path) -> io::Result<()> {
+    if dir.starts_with(root) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{} resolves outside {}; not writing",
+                shown.display(),
+                root.display()
+            ),
+        ))
+    }
+}
+
+fn write_and_rename(
+    tmp: &Path,
+    path: &Path,
+    content: &str,
+    recheck: impl FnOnce() -> io::Result<()>,
+) -> io::Result<()> {
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -259,13 +312,14 @@ fn write_and_rename(tmp: &Path, path: &Path, content: &str) -> io::Result<()> {
     }
     file.sync_all()?;
     drop(file);
+    recheck()?;
     fs::rename(tmp, path)
 }
 
 /// `file` as an anchored exclude pattern (`/dir/name`, '/' separators)
 /// relative to the work tree's toplevel; the exclude file's path. `None`
 /// outside git, outside the work tree, or inside `.git`.
-fn exclude_target(workspace: &Path, file: &Path) -> Option<(String, PathBuf)> {
+fn exclude_target(workspace: &Path, file: &Path) -> Option<(String, PathBuf, PathBuf)> {
     let top = crate::git::git_probe(workspace, &["rev-parse", "--show-toplevel"])?;
     let top = fs::canonicalize(top.trim()).ok()?;
     let common = super::scope::git_common_dir(workspace)?;
@@ -281,6 +335,7 @@ fn exclude_target(workspace: &Path, file: &Path) -> Option<(String, PathBuf)> {
     Some((
         format!("/{}", parts.join("/")),
         common.join("info").join("exclude"),
+        common,
     ))
 }
 
@@ -300,7 +355,7 @@ fn canonical_or_parent(file: &Path) -> PathBuf {
 /// creates inside the work tree stays out of `git status` without touching
 /// `.gitignore`. A no-op outside git or for files outside the work tree.
 pub fn ensure_excluded(workspace: &Path, file: &Path) -> io::Result<()> {
-    let Some((pattern, exclude)) = exclude_target(workspace, file) else {
+    let Some((pattern, exclude, common)) = exclude_target(workspace, file) else {
         return Ok(());
     };
     let current = match fs::read_to_string(&exclude) {
@@ -318,12 +373,12 @@ pub fn ensure_excluded(workspace: &Path, file: &Path) -> io::Result<()> {
     }
     next.push_str(&pattern);
     next.push_str(eol);
-    write_atomic(&exclude, &next)
+    write_atomic(&exclude, &next, &common)
 }
 
 /// Removes exactly the line [`ensure_excluded`] added for `file`.
 pub fn remove_excluded(workspace: &Path, file: &Path) -> io::Result<()> {
-    let Some((pattern, exclude)) = exclude_target(workspace, file) else {
+    let Some((pattern, exclude, common)) = exclude_target(workspace, file) else {
         return Ok(());
     };
     let current = match fs::read_to_string(&exclude) {
@@ -338,5 +393,5 @@ pub fn remove_excluded(workspace: &Path, file: &Path) -> io::Result<()> {
         .split_inclusive('\n')
         .filter(|l| line_body(l) != pattern)
         .collect();
-    write_atomic(&exclude, &next)
+    write_atomic(&exclude, &next, &common)
 }

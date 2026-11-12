@@ -285,8 +285,8 @@ fn ensure_excluded_for_a_file_outside_the_work_tree_is_a_no_op() {
 fn write_atomic_replaces_content_and_leaves_no_temp_file() {
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("out.md");
-    write_atomic(&path, "first").unwrap();
-    write_atomic(&path, "second ✓").unwrap();
+    write_atomic(&path, "first", tmp.path()).unwrap();
+    write_atomic(&path, "second ✓", tmp.path()).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), "second ✓");
     let names: Vec<_> = fs::read_dir(tmp.path())
         .unwrap()
@@ -295,7 +295,7 @@ fn write_atomic_replaces_content_and_leaves_no_temp_file() {
     assert_eq!(names, ["out.md"]);
     // Missing parent directories are created.
     let nested = tmp.path().join("a").join("b").join("f.md");
-    write_atomic(&nested, "n").unwrap();
+    write_atomic(&nested, "n", tmp.path()).unwrap();
     assert_eq!(fs::read_to_string(nested).unwrap(), "n");
 }
 
@@ -307,7 +307,7 @@ fn write_atomic_preserves_permissions() {
     let path = tmp.path().join("script.md");
     fs::write(&path, "x").unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
-    write_atomic(&path, "y").unwrap();
+    write_atomic(&path, "y", tmp.path()).unwrap();
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o640);
 }
@@ -321,7 +321,7 @@ fn write_atomic_never_leaves_partial_file() {
     fs::write(&path, "original").unwrap();
     fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o555)).unwrap();
     let running_as_root = fs::File::create(tmp.path().join("probe")).is_ok();
-    let result = write_atomic(&path, "replacement");
+    let result = write_atomic(&path, "replacement", tmp.path());
     fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o755)).unwrap();
     if running_as_root {
         return; // Read-only directories do not stop root.
@@ -342,7 +342,7 @@ fn write_atomic_failure_keeps_original_when_rename_fails() {
     let path = tmp.path().join("target");
     fs::create_dir(&path).unwrap();
     fs::write(path.join("child"), "x").unwrap();
-    assert!(write_atomic(&path, "data").is_err());
+    assert!(write_atomic(&path, "data", tmp.path()).is_err());
     assert!(path.join("child").exists());
     let names: Vec<_> = fs::read_dir(tmp.path())
         .unwrap()
@@ -409,7 +409,7 @@ fn write_atomic_writes_through_a_symlink_and_keeps_the_link() {
     {
         return; // Symlinks unavailable (unprivileged Windows).
     }
-    write_atomic(&link, "new").unwrap();
+    write_atomic(&link, "new", tmp.path()).unwrap();
     assert!(fs::symlink_metadata(&link)
         .unwrap()
         .file_type()
@@ -449,4 +449,181 @@ fn ensure_excluded_keeps_crlf_endings() {
         fs::read_to_string(&exclude).unwrap(),
         "# mine\r\n*.log\r\n/CLAUDE.md\r\n"
     );
+}
+
+#[test]
+fn a_stray_fence_before_the_section_and_a_balanced_block_after_it_stays_idempotent() {
+    let user_head = "intro\n```
+stray opener\n";
+    let user_tail = "\nlater\n```\ncode\n```\nend\n";
+    let existing = format!("{user_head}\n{}{user_tail}", section("old"));
+    let first = replace_section(&existing, "new");
+    assert_eq!(first.matches(BEGIN).count(), 1);
+    assert_eq!(first, format!("{user_head}\n{}{user_tail}", section("new")));
+    assert_eq!(replace_section(&first, "new"), first);
+    let second = replace_section(&first, "newer");
+    assert_eq!(second.matches(BEGIN).count(), 1);
+    assert!(second.starts_with(user_head) && second.ends_with(user_tail));
+    // Also when Gespan appended it itself.
+    let appended = replace_section(&format!("{user_head}{user_tail}"), "x");
+    assert_eq!(replace_section(&appended, "x"), appended);
+    assert_eq!(replace_section(&appended, "").matches(BEGIN).count(), 0);
+}
+
+#[test]
+fn regeneration_is_idempotent_for_generated_messy_inputs() {
+    let pool = [
+        "text  ",
+        "",
+        "```",
+        "~~~",
+        "````",
+        "```rust",
+        BEGIN,
+        END,
+        "\tindented\t",
+        "ünï ✓",
+    ];
+    let example = format!("{BEGIN}\nexample\n{END}");
+    let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as usize
+    };
+    for case in 0..400 {
+        let n = next() % 9;
+        let mut lines: Vec<String> = (0..n)
+            .map(|_| {
+                if next() % 7 == 0 {
+                    example.clone()
+                } else {
+                    pool[next() % pool.len()].to_owned()
+                }
+            })
+            .collect();
+        if next() % 3 == 0 {
+            lines.push(String::new());
+        }
+        let mut x = lines.join("\n");
+        if next() % 2 == 0 {
+            x.push('\n');
+        }
+        let r1 = replace_section(&x, "body");
+        let r2 = replace_section(&r1, "body");
+        assert_eq!(r2, r1, "case {case}: not idempotent for {x:?}");
+        let r3 = replace_section(&r1, "other");
+        assert_eq!(
+            r3.matches(BEGIN).count(),
+            r1.matches(BEGIN).count(),
+            "case {case}: section count grew for {x:?}"
+        );
+        // When the input holds nothing we would treat as ours, adding and
+        // removing a section returns the user's bytes (a missing final
+        // newline gains one).
+        if replace_section(&x, "") == x {
+            let back = replace_section(&r1, "");
+            let ok = back == x || (!x.ends_with('\n') && back == format!("{x}\n"));
+            assert!(ok, "case {case}: {x:?} came back as {back:?}");
+        }
+    }
+}
+
+#[test]
+fn write_atomic_on_a_symlink_loop_errors_and_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let a = tmp.path().join("a.md");
+    let b = tmp.path().join("b.md");
+    if !symlink_or_skip(Path::new("b.md"), &a) || !symlink_or_skip(Path::new("a.md"), &b) {
+        return;
+    }
+    assert!(write_atomic(&a, "data", tmp.path()).is_err());
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 2);
+}
+
+#[test]
+fn write_atomic_refuses_a_link_that_escapes_the_allowed_root() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let secret = outside.join("authorized_keys");
+    fs::write(&secret, "keep me").unwrap();
+    let link = root.join("CLAUDE.local.md");
+    if !symlink_or_skip(&secret, &link) {
+        return;
+    }
+    let err = write_atomic(&link, "gespan", &root).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(err.to_string().contains("CLAUDE.local.md"));
+    assert_eq!(fs::read_to_string(&secret).unwrap(), "keep me");
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+}
+
+#[test]
+fn write_atomic_refuses_a_dangling_link_that_escapes_and_creates_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(&root).unwrap();
+    let link = root.join("AGENTS.md");
+    if !symlink_or_skip(&outside.join("new").join("f.md"), &link) {
+        return;
+    }
+    assert!(write_atomic(&link, "x", &root).is_err());
+    assert!(!outside.exists(), "no directory created outside the root");
+    // Dangling but escaping through an existing outside directory.
+    fs::create_dir_all(&outside).unwrap();
+    let link2 = root.join("B.md");
+    if symlink_or_skip(&outside.join("f.md"), &link2) {
+        assert!(write_atomic(&link2, "x", &root).is_err());
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn write_atomic_follows_a_link_that_stays_inside_the_root() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    fs::create_dir_all(root.join("docs")).unwrap();
+    fs::write(root.join("docs").join("real.md"), "old").unwrap();
+    let link = root.join("CLAUDE.md");
+    if !symlink_or_skip(&Path::new("docs").join("real.md"), &link) {
+        return;
+    }
+    write_atomic(&link, "new", &root).unwrap();
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(
+        fs::read_to_string(root.join("docs").join("real.md")).unwrap(),
+        "new"
+    );
+}
+
+#[test]
+fn write_atomic_refuses_a_plain_path_outside_the_allowed_root() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    fs::create_dir_all(&root).unwrap();
+    let outside = tmp.path().join("elsewhere").join("f.md");
+    assert!(write_atomic(&outside, "x", &root).is_err());
+    assert!(!tmp.path().join("elsewhere").exists());
+}
+
+#[test]
+fn many_stray_fences_are_scanned_in_linear_passes() {
+    let mut text = "```\n".repeat(10_000);
+    text.push_str("tail");
+    let out = replace_section(&text, "body");
+    assert!(out.starts_with(&text));
+    assert_eq!(replace_section(&out, "body"), out);
+    assert_eq!(replace_section(&out, "").trim_end(), text.trim_end());
 }
