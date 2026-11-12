@@ -905,10 +905,44 @@ fn a_review_automation_runs_read_only_and_cannot_change_it(cx: &mut TestAppConte
             (editor.draft.runtime_mode.clone(), editor.dirty)
         })
         .unwrap();
-    assert_eq!((mode, dirty), (before, false));
+    assert_eq!((mode, dirty), (before.clone(), false));
+
+    // The Agent card says what the run does, not the stored mode.
+    assert_ne!(before, "read-only", "the stored mode is not read-only");
+    let agent = |window: &WindowHandle<Automations>, visual: &VisualTestContext| {
+        window
+            .read_with(visual, |view, cx| {
+                let cards = view.summary_cards(cx);
+                cards
+                    .into_iter()
+                    .find(|c| c.key == "agent")
+                    .unwrap()
+                    .secondary
+            })
+            .unwrap()
+    };
+    assert_eq!(agent(&window, &visual), "Read-only");
+    // The locked chip explains itself.
+    assert_eq!(
+        window
+            .read_with(&visual, |view, _| super::editor::access_hint(
+                &view.editor.as_ref().unwrap().draft
+            ))
+            .unwrap(),
+        Some("Reviews always run read-only")
+    );
 
     // A plain automation still chooses its access.
     click(&mut visual, &format!("automation-card-{}", plain.id));
+    assert_eq!(agent(&window, &visual), "Auto");
+    assert_eq!(
+        window
+            .read_with(&visual, |view, _| super::editor::access_hint(
+                &view.editor.as_ref().unwrap().draft
+            ))
+            .unwrap(),
+        None
+    );
     click(&mut visual, "automation-access");
     assert_eq!(menu_options(&window, &visual).len(), 5);
 }

@@ -305,7 +305,7 @@ impl Automations {
             details.push(format!("Effort {effort}"));
         }
         if draft.harness != "fx" {
-            details.push(editor::access_label(&draft.runtime_mode).into());
+            details.push(editor::access_label(editor::effective_mode(&draft)).into());
         }
         if let Some(id) = draft.action.pilot_id() {
             let pilot = Summary {
