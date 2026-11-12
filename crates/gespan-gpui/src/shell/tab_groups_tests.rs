@@ -586,24 +586,31 @@ fn crowded_strip_scrolls_instead_of_squeezing(cx: &mut TestAppContext) {
     let (window, _, here) = window(cx);
     let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(gpui::size(px(900.), px(700.)));
+    // More tabs than fit even as select-only plates.
     let ids = window
         .update(visual, |shell, _, cx| {
-            (0..20)
+            (0..40)
                 .map(|_| add_background_tab(shell, "/work/gespan", cx))
                 .collect::<Vec<_>>()
         })
         .unwrap();
     settle(visual);
-    for id in ids.iter().chain([&here]) {
-        let tab = visual
+    let width = |visual: &mut gpui::VisualTestContext, id: i64| {
+        visual
             .debug_bounds(selector(format!("title-tab-{id}")))
-            .unwrap_or_else(|| panic!("tab {id} drawn"));
-        assert!(
-            tab.size.width >= px(SELECTED_TAB_MIN_WIDTH),
-            "tab {id} squeezed to {:?}",
-            tab.size.width
-        );
+            .unwrap_or_else(|| panic!("tab {id} drawn"))
+            .size
+            .width
+    };
+    for id in &ids {
+        let w = width(visual, *id);
+        assert!(w >= px(TAB_MIN_WIDTH), "tab {id} squeezed to {w:?}");
+        assert!(w < px(SELECTED_TAB_MIN_WIDTH), "tab {id} gave way: {w:?}");
     }
+    assert!(
+        width(visual, here) >= px(SELECTED_TAB_MIN_WIDTH),
+        "selected"
+    );
     let max = window
         .update(visual, |shell, _, _| shell.tab_scroll.max_offset().x)
         .unwrap();
@@ -1318,7 +1325,8 @@ fn dragging_in_a_scrolled_strip_lands_where_dropped(cx: &mut TestAppContext) {
     visual.simulate_resize(gpui::size(px(900.), px(700.)));
     let ids = window
         .update(visual, |shell, _, cx| {
-            (0..20)
+            // Enough select-only plates to scroll well past the first.
+            (0..40)
                 .map(|_| add_background_tab(shell, "/work/gespan", cx))
                 .collect::<Vec<_>>()
         })

@@ -444,6 +444,9 @@ const STRIP_TRAIL: f32 = 6.;
 const STRIP_PAD: f32 = STRIP_LEAD + STRIP_TRAIL;
 /// The selected title tab shrinks with the others only down to this.
 const SELECTED_TAB_MIN_WIDTH: f32 = 112.;
+/// The others shrink down to a select-only plate this wide; past that the
+/// strip scrolls instead of squeezing.
+const TAB_MIN_WIDTH: f32 = TAB_PLATE_HEIGHT;
 /// Narrower tabs drop their close button.
 const TAB_CLOSE_MIN_WIDTH: f32 = 72.;
 /// The new-tab button and its leading margin.
@@ -8303,8 +8306,7 @@ impl Shell {
         let width = if share <= 0. {
             TITLE_TAB_MAX_WIDTH
         } else {
-            // Past the floor the strip scrolls instead of squeezing.
-            (avail / share).clamp(SELECTED_TAB_MIN_WIDTH, TITLE_TAB_MAX_WIDTH)
+            (avail / share).clamp(0., TITLE_TAB_MAX_WIDTH)
         };
         // The selected tab keeps a wider share; the others split the rest.
         let selected = self.active_title_tab(cx);
@@ -8345,6 +8347,13 @@ impl Shell {
             (((avail - floor * held) / (share - held)).max(0.), floor)
         } else {
             (width, width)
+        };
+        // Past the narrowest plate the strip scrolls instead of squeezing,
+        // and the selected tab keeps its full floor.
+        let (width, floor) = if width < TAB_MIN_WIDTH {
+            (TAB_MIN_WIDTH, SELECTED_TAB_MIN_WIDTH)
+        } else {
+            (width, floor)
         };
         // Fractional widths round differently from tab to tab and the error
         // adds up along the strip, so a full strip's new-tab button would
@@ -11666,8 +11675,8 @@ mod tests {
         window
             .update(cx, |shell, _, cx| {
                 shell.workspace.preferences.tab_animations = true;
-                // Crowded, but every tab still fits above the scroll floor.
-                for _ in 0..5 {
+                // Crowded: the tabs give way to fit instead of scrolling.
+                for _ in 0..12 {
                     shell.create(Kind::Codex, cx);
                 }
             })
@@ -11728,19 +11737,20 @@ mod tests {
             cx.debug_bounds(Box::leak(format!("title-tab-{id}").into_boxed_str()))
                 .unwrap()
         };
-        // The tabs shrink together, never below the scroll floor.
-        let width = bounds(cx, other).size.width;
-        assert!(width < px(TITLE_TAB_MAX_WIDTH), "crowded");
-        assert!(width >= px(SELECTED_TAB_MIN_WIDTH));
-        assert!((bounds(cx, selected).size.width - width).abs() <= px(1.));
+        assert_eq!(
+            bounds(cx, selected).size.width,
+            px(SELECTED_TAB_MIN_WIDTH),
+            "the selected tab shrinks only down to its floor"
+        );
+        assert!(bounds(cx, other).size.width < px(SELECTED_TAB_MIN_WIDTH));
+        assert!(bounds(cx, other).size.width >= px(TAB_MIN_WIDTH));
         let close = |cx: &mut gpui::VisualTestContext, id: i64| {
             cx.debug_bounds(Box::leak(format!("close-title-tab-{id}").into_boxed_str()))
         };
         assert!(close(cx, selected).is_some(), "the selected tab can close");
-        assert!(
-            close(cx, other).is_some(),
-            "so can the others above the floor"
-        );
+        if bounds(cx, other).size.width < px(TAB_CLOSE_MIN_WIDTH) {
+            assert!(close(cx, other).is_none(), "a collapsed tab only selects");
+        }
         window
             .update(cx, |shell, _, cx| {
                 assert_eq!(shell.tab_scroll.max_offset().x, px(0.), "nothing scrolls");
@@ -12631,7 +12641,7 @@ mod tests {
         assert_eq!(transcript.read_with(visual, |t, _| t.render_passes), before);
     }
     #[gpui::test]
-    fn many_blank_tabs_scroll_without_creating_sidebar_conversations(cx: &mut TestAppContext) {
+    fn many_blank_tabs_fit_without_creating_sidebar_conversations(cx: &mut TestAppContext) {
         let (window, _, _) = window(cx);
         window
             .update(cx, |shell, _, cx| {
@@ -12653,8 +12663,19 @@ mod tests {
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
-                // Past the floor, the strip scrolls instead of squeezing.
-                assert!(shell.tab_scroll.max_offset().x > px(0.));
+                // The tabs share the strip instead of scrolling it.
+                assert_eq!(
+                    shell.tab_scroll.max_offset().x,
+                    px(0.),
+                    "viewport {:?}, strip {:?}, children {}, first {:?}, last {:?}",
+                    w.viewport_size(),
+                    shell.tab_scroll.bounds(),
+                    shell.tab_scroll.children_count(),
+                    shell.tab_scroll.bounds_for_item(0),
+                    shell
+                        .tab_scroll
+                        .bounds_for_item(shell.workspace.tabs.len() - 1)
+                );
                 let id = shell.workspace.active.unwrap();
                 let anchor = Anchor::Point(gpui::point(px(400.), px(30.)));
                 shell.open_menu(MenuTarget::Tab(id), anchor, w, cx);
