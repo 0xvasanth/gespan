@@ -489,6 +489,10 @@ impl Shell {
             .get("thinking")
             .and_then(|value| value.parse().ok());
         settings.access = gespan_core::agent::AccessMode::from_id(&automation.runtime_mode);
+        settings.review = review_launch(automation, &due.run);
+        if settings.review.is_some() {
+            settings.access = gespan_core::agent::AccessMode::ReadOnly;
+        }
         WorktreeChoice::from_mode(&automation.workspace_mode, &automation.worktree_cwd)
             .apply(&mut settings);
         let store = self.store.clone();
@@ -503,6 +507,26 @@ impl Shell {
                 (automation.workspace_mode == "existing")
                     .then_some(automation.worktree_cwd.as_str()),
             )?;
+            let prompt = launch
+                .run
+                .prompt
+                .clone()
+                .unwrap_or_else(|| automation.prompt.clone());
+            let prompt = match settings.review.as_ref() {
+                Some(policy) => {
+                    let context = match policy.target.as_ref() {
+                        Some(target) if gespan_core::review_policy::needs_prefetch(kind) => {
+                            Some(gespan_core::review_policy::prefetch_context(
+                                std::path::Path::new(&automation.cwd),
+                                target,
+                            )?)
+                        }
+                        _ => None,
+                    };
+                    review_prompt(&prompt, policy, context.as_deref())
+                }
+                None => prompt,
+            };
             let store = locked(&store)?;
             let mut settings = settings;
             let mut summary = if let Some(id) = reuse {
@@ -533,7 +557,7 @@ impl Shell {
                 store.save_agent_settings(summary.id, &settings)?;
             }
             let persisted = store.persisted_session_id(summary.id)?;
-            Ok::<_, String>((summary, settings, persisted))
+            Ok::<_, String>((summary, settings, persisted, prompt))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -543,7 +567,7 @@ impl Shell {
                     this.automation_state.reserved.remove(&id);
                 }
                 match result {
-                    Ok((summary, settings, persisted)) => {
+                    Ok((summary, settings, persisted, prompt)) => {
                         let id = summary.id;
                         if reuse.is_some()
                             && this
@@ -594,11 +618,6 @@ impl Shell {
                                 .add_to_folder(&due.automation.session_folder_id, id);
                             this.persist_automation_folder(&due.automation.cwd, cx);
                         }
-                        let prompt = due
-                            .run
-                            .prompt
-                            .clone()
-                            .unwrap_or_else(|| due.automation.prompt.clone());
                         this.submit_in_background(id, prompt, settings, cx);
                         if let Some(run) = this.automation_state.running.get_mut(&id) {
                             run.submitting = false;
@@ -921,6 +940,45 @@ fn pilot_message(due: &DueAutomationRun) -> String {
     )
 }
 
+/// The policy a review automation's run carries, or `None` when the
+/// automation does not review. Results the harness cannot honour are
+/// clamped to keeping them in Gespan, so the run is told not to post.
+fn review_launch(
+    automation: &automations::Automation,
+    run: &AutomationRun,
+) -> Option<gespan_core::review_policy::ReviewPolicy> {
+    use gespan_core::review_policy::{
+        ReviewPolicy, ReviewResults, ReviewTarget, supported_results,
+    };
+    let stored = automation.review_results?;
+    let results = if supported_results(Kind::from_id(&automation.harness)).contains(&stored) {
+        stored
+    } else {
+        ReviewResults::Gespan
+    };
+    Some(ReviewPolicy {
+        results,
+        target: run
+            .event_key
+            .as_deref()
+            .and_then(ReviewTarget::from_event_key),
+    })
+}
+
+/// The prompt a review run is given: any prefetched pull request first, the
+/// policy's instruction last.
+fn review_prompt(
+    prompt: &str,
+    policy: &gespan_core::review_policy::ReviewPolicy,
+    context: Option<&str>,
+) -> String {
+    let instruction = gespan_core::review_policy::instruction(policy);
+    match context {
+        Some(context) => format!("{context}\n\n{prompt}\n\n{instruction}"),
+        None => format!("{prompt}\n\n{instruction}"),
+    }
+}
+
 fn automation_work_item(
     run: &gespan_core::automations::AutomationRun,
 ) -> Option<gespan_core::session_groups::WorkItem> {
@@ -950,6 +1008,109 @@ fn automation_work_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn review_run(event_key: Option<&str>) -> gespan_core::automations::AutomationRun {
+        gespan_core::automations::AutomationRun {
+            id: "run".into(),
+            automation_id: "auto".into(),
+            trigger: "event".into(),
+            scheduled_for: 0,
+            created_at: 0,
+            started_at: None,
+            completed_at: None,
+            status: "pending".into(),
+            session_id: None,
+            error: None,
+            event_key: event_key.map(Into::into),
+            event_kind: None,
+            event: None,
+            event_title: None,
+            prompt: None,
+            pilot_message_id: None,
+        }
+    }
+
+    fn review_automation(
+        harness: &str,
+        results: Option<gespan_core::review_policy::ReviewResults>,
+    ) -> gespan_core::automations::Automation {
+        let mut automation: gespan_core::automations::Automation =
+            serde_json::from_value(serde_json::json!({
+                "id": "auto", "name": "Review", "prompt": "Review it",
+                "harness": harness, "model": "model", "cwd": "/repo",
+                "workspaceMode": "current", "reuseSession": false,
+                "runtimeMode": "full-access", "scheduleKind": "manual",
+                "minute": 0, "time": "09:00", "dayOfWeek": 1,
+                "missedRunGraceMinutes": 0, "enabled": true,
+                "nextRunAt": 0, "createdAt": 0, "updatedAt": 0
+            }))
+            .unwrap();
+        automation.review_results = results;
+        automation
+    }
+
+    #[test]
+    fn review_runs_carry_policy_and_instruction() {
+        use gespan_core::review_policy::{ReviewResults, ReviewTarget};
+        let key = "github:pull_request_review_requested:acme/app:7:abc";
+        let target = Some(ReviewTarget {
+            repo: "acme/app".into(),
+            number: 7,
+        });
+
+        // Not a review automation.
+        let plain = review_automation("claude", None);
+        assert_eq!(review_launch(&plain, &review_run(Some(key))), None);
+
+        let draft = review_automation("claude", Some(ReviewResults::Draft));
+        let policy = review_launch(&draft, &review_run(Some(key))).unwrap();
+        assert_eq!(policy.results, ReviewResults::Draft);
+        assert_eq!(policy.target, target);
+
+        // Run now has no event key, so no target.
+        let policy = review_launch(&draft, &review_run(None)).unwrap();
+        assert_eq!(policy.results, ReviewResults::Draft);
+        assert_eq!(policy.target, None);
+
+        // A key that is not a pull request has no target either.
+        let policy = review_launch(&draft, &review_run(Some("linear:issue:lin-1"))).unwrap();
+        assert_eq!(policy.target, None);
+    }
+
+    #[test]
+    fn review_runs_carry_results_the_harness_cannot_honour_clamp_to_gespan() {
+        use gespan_core::review_policy::ReviewResults;
+        let key = "github:pull_request_review_requested:acme/app:7:abc";
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let pi = review_automation("pi", Some(results));
+            let policy = review_launch(&pi, &review_run(Some(key))).unwrap();
+            assert_eq!(policy.results, ReviewResults::Gespan, "{results:?}");
+        }
+        let claude = review_automation("claude", Some(ReviewResults::Post));
+        assert_eq!(
+            review_launch(&claude, &review_run(Some(key)))
+                .unwrap()
+                .results,
+            ReviewResults::Post
+        );
+    }
+
+    #[test]
+    fn review_runs_carry_prompt_with_context_first_and_instruction_last() {
+        let policy = gespan_core::review_policy::ReviewPolicy {
+            results: gespan_core::review_policy::ReviewResults::Gespan,
+            target: None,
+        };
+        let instruction = gespan_core::review_policy::instruction(&policy);
+        assert_eq!(
+            review_prompt("Review it", &policy, Some("CONTEXT")),
+            format!("CONTEXT\n\nReview it\n\n{instruction}")
+        );
+        assert_eq!(
+            review_prompt("Review it", &policy, None),
+            format!("Review it\n\n{instruction}")
+        );
+    }
 
     #[test]
     fn only_event_runs_have_an_alert_and_older_runs_fall_back_to_the_event() {
