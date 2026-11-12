@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-12
+
+### Changed
+
+- **Scripts:** the footer button that runs a project's commands (from
+  `.gespan/tasks.json`, `package.json` scripts, a Makefile and so on) is now
+  called Scripts instead of Actions, along with its menu, dialog, command
+  palette rows ("Run script: …") and the "Show terminal for scripts" setting.
+  Agent tools and `.gespan/tasks.json` are unchanged.
+
 ## [0.1.2] - 2026-11-12
 
 ### Added
@@ -2286,7 +2296,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/0xvasanth/gespan/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/0xvasanth/gespan/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/0xvasanth/gespan/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/0xvasanth/gespan/compare/v0.0.12...v0.1.0
