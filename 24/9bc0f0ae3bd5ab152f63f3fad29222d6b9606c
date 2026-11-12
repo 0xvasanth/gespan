@@ -1,0 +1,61 @@
+crates/gespan-gpui/src/shell/my_tasks.rs
+  s_59289c1f4cffc4::t_47b484ec80ea9a 503,511
+  s_c589f1ba8a8fa6::t_224791d880065f 515-518,540-541
+crates/gespan-gpui/src/shell/my_tasks_tests.rs
+  s_59289c1f4cffc4::t_47b484ec80ea9a 1094-1101,1180-1191,1201,1257,1316,1336,1382,1417,1463,1485,1602,1604-1605,1624-1711,1713-1740
+  s_c589f1ba8a8fa6::t_60e4066da80a84 1712
+crates/gespan-core/src/decisions/review.rs
+  s_59289c1f4cffc4::t_79954c306ae4cf 3,78-82
+crates/gespan-gpui/src/my_tasks.rs
+  s_59289c1f4cffc4::t_47b484ec80ea9a 46
+  s_59289c1f4cffc4::t_3bdd5b9b66e3e1 52
+  s_c589f1ba8a8fa6::t_7ef5ba55d09e25 31-33,37-38,40-45,47-51,173-175,232,386
+crates/gespan-core/src/decisions/service.rs
+  s_59289c1f4cffc4::t_e09fb87ae5dda8 13,72-85,122
+crates/gespan-core/src/decisions/store.rs
+  s_59289c1f4cffc4::t_79954c306ae4cf 290-291,293,315-377,603-655
+  s_c589f1ba8a8fa6::t_6acf2fd6deee5e 656
+crates/gespan-gpui/src/my_tasks/past.rs
+  s_59289c1f4cffc4::t_ab46f58e30bc9d 318-319,322-323,325-326
+  s_59289c1f4cffc4::t_47b484ec80ea9a 929-932
+  s_c589f1ba8a8fa6::t_ee99fa83fd68dd 6,47,181,301-302,305,308,311-317,320-321,324,327-329,364,863-864
+crates/gespan-core/src/decisions/toolkit.rs
+  s_59289c1f4cffc4::t_e09fb87ae5dda8 78-82,393-395,440,448-453,474-479,501-506
+  s_59289c1f4cffc4::t_6b92cd5ddd58ac 341
+crates/gespan-core/src/decisions/tests/review.rs
+  s_c589f1ba8a8fa6::t_bc5376d682660e 291-322,329-392
+crates/gespan-core/src/decisions/tests/toolkit.rs
+  s_c589f1ba8a8fa6::t_e6881f6607acce 108-167
+crates/gespan-gpui/src/my_tasks/decision.rs
+  s_c589f1ba8a8fa6::t_820bd045f5c44d 71,85,226-231,236
+crates/gespan-gpui/src/my_tasks/list.rs
+  s_c589f1ba8a8fa6::t_cb3aaeb57135ce 259
+crates/gespan-gpui/src/my_tasks/pane.rs
+  s_c589f1ba8a8fa6::t_97790b4f6c9e9a 72
+crates/gespan-gpui/src/shell.rs
+  s_c589f1ba8a8fa6::t_4d9f17094b9f08 1097-1099,9592-9615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "249bc0f0ae3bd5ab152f63f3fad29222d6b9606c",
+  "prompts": {},
+  "sessions": {
+    "s_59289c1f4cffc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31cc82b6-78e2-47a5-8996-0a796d9c6a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_c589f1ba8a8fa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39f78400-f644-4002-b3b7-119922fa07b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
