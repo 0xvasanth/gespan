@@ -1145,6 +1145,7 @@ impl SettingsView {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::ChooseBackground)))
                     .into_any_element(),
                 glass::button("remove-chat-background", "Remove", Button::Ghost)
+                    .debug_selector(|| "settings-remove-chat-background".into())
                     .role(Role::Button)
                     .aria_label("Remove")
                     .h(px(30.))
@@ -1186,7 +1187,10 @@ impl SettingsView {
                     ],
                 ),
             ];
-        if let Some(path) = image.as_deref() {
+        // Every control shows, image or not: they set how a background
+        // looks once there is one.
+        {
+            let path = image.as_deref();
             let tiles = div()
                 .id("segmented-background-effect")
                 .debug_selector(|| "settings-segmented-background-effect".into())
@@ -1199,7 +1203,7 @@ impl SettingsView {
                     let on = p.chat_background_effect == option;
                     picture_option(
                         SharedString::from(format!("segmented-background-effect-{option}")),
-                        effect_tile(option, Some(path)),
+                        effect_tile(option, path),
                         label,
                         on,
                     )

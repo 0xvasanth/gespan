@@ -841,3 +841,50 @@ fn picking_a_backdrop_gradient_saves_it_and_desktop_switches_back(cx: &mut TestA
         "desktop"
     );
 }
+
+#[gpui::test]
+fn chat_background_controls_write_their_preferences(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Appearance, Preferences::default(), cx);
+    let visual = &mut visual;
+    // Every field shows before an image is picked.
+    for selector in [
+        "settings-segmented-background-effect",
+        "settings-segmented-background-scope",
+        "settings-slider-background-empty",
+        "settings-slider-background-session",
+    ] {
+        assert!(visual.debug_bounds(selector).is_some(), "{selector}");
+    }
+    click(visual, "settings-background-effect-halftone");
+    assert_eq!(prefs(window, visual).chat_background_effect, "halftone");
+    click(visual, "settings-background-scope-all");
+    assert_eq!(prefs(window, visual).chat_background_scope, "all");
+    let track = visual
+        .debug_bounds("settings-slider-background-empty")
+        .unwrap();
+    let (min, max) = SliderKind::BackgroundEmpty.range();
+    visual.simulate_click(
+        point(track.right() - px(8.), track.center().y),
+        Default::default(),
+    );
+    visual.run_until_parked();
+    assert_eq!(prefs(window, visual).chat_background_empty, max);
+    visual.simulate_click(
+        point(track.left() + px(8.), track.center().y),
+        Default::default(),
+    );
+    visual.run_until_parked();
+    assert_eq!(prefs(window, visual).chat_background_empty, min);
+    // With an image, Remove clears it.
+    let image = tempfile::NamedTempFile::new().unwrap();
+    window
+        .update(visual, |view, _, cx| {
+            view.prefs.chat_background = Some(image.path().display().to_string());
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    click(visual, "settings-remove-chat-background");
+    assert_eq!(prefs(window, visual).chat_background, None);
+}
