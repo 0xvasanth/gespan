@@ -1,0 +1,25 @@
+crates/gespan-core/src/provider/opencode/events.rs
+  s_09449038da8e60::t_46581fd893d041 4,444-470,951-995
+crates/gespan-core/src/provider/opencode/client.rs
+  s_09449038da8e60::t_46581fd893d041 428-429,434,437,503-505
+crates/gespan-core/src/provider/opencode.rs
+  s_09449038da8e60::t_46581fd893d041 1241,1299-1303,1328-1332,1354-1357,1360-1368,1374-1381,1394-1395,1424-1426,1432-1439
+  s_09449038da8e60::t_56df68218887c9 1242-1260,1269-1298,1304-1327,1333-1353,1358-1359,1369-1373,1382-1393,1396-1416,1429-1431,1440-1453
+  s_09449038da8e60::t_a7c4068ec35ac9 1261-1268,1417-1423,1427-1428
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e6dbe9311da44a258c20ac980bf458cbd57702f",
+  "prompts": {},
+  "sessions": {
+    "s_09449038da8e60": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6decefc-34f5-421f-aeca-6c331645bfc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
