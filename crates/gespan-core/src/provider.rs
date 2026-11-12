@@ -2440,6 +2440,83 @@ cat >/dev/null"#,
             "a Bash pattern approves any arguments: {args:?}"
         );
     }
+    fn claude_argv(request: &Request) -> Vec<String> {
+        let mut command = Command::new("claude");
+        claude::configure(&mut command, request, None).unwrap();
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+    fn flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        args.iter()
+            .position(|arg| arg == flag)
+            .map(|at| args[at + 1].as_str())
+    }
+    #[test]
+    fn claude_review_launch_overrides_user_rules_and_runs_in_default_mode() {
+        use crate::review_policy::ReviewResults;
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::FullAccess,
+        ] {
+            let p = review_protocol(ReviewResults::Draft, access);
+            let args = claude_argv(&p.request);
+            // Default, not plan: plan tells the model not to post. Every Bash
+            // call still reaches the prompt tool through the ask rule.
+            assert_eq!(
+                flag(&args, "--permission-mode"),
+                Some("default"),
+                "{access:?}"
+            );
+            assert_eq!(flag(&args, "--tools"), Some("Read,Glob,Grep,Bash"));
+            assert_eq!(flag(&args, "--allowedTools"), Some("Read,Glob,Grep"));
+            assert!(!args
+                .iter()
+                .any(|a| a == "--allow-dangerously-skip-permissions"));
+            assert_eq!(args.iter().filter(|a| *a == "--settings").count(), 1);
+            let settings: Value = serde_json::from_str(flag(&args, "--settings").unwrap()).unwrap();
+            assert_eq!(settings["permissions"]["ask"], json!(["Bash"]));
+            assert_eq!(
+                settings["permissions"]["deny"],
+                json!(["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"])
+            );
+            assert_eq!(settings["disableAllHooks"], true);
+            assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], false);
+            // The repo under review supplies no settings.
+            assert!(
+                args.iter().any(|a| a == "--setting-sources=user"),
+                "{args:?}"
+            );
+            assert!(!args.iter().any(|a| a.contains("project")), "{args:?}");
+        }
+        // A review with any access chip launches exactly like ReadOnly.
+        let read_only =
+            claude_argv(&review_protocol(ReviewResults::Post, AccessMode::ReadOnly).request);
+        let full =
+            claude_argv(&review_protocol(ReviewResults::Post, AccessMode::FullAccess).request);
+        assert_eq!(read_only, full);
+    }
+    #[test]
+    fn claude_non_review_launch_is_unchanged() {
+        let mut request = protocol(Kind::Claude).request;
+        request.settings.access = AccessMode::ReadOnly;
+        let args = claude_argv(&request);
+        assert_eq!(flag(&args, "--permission-mode"), Some("plan"));
+        let settings: Value = serde_json::from_str(flag(&args, "--settings").unwrap()).unwrap();
+        assert_eq!(settings, json!({}));
+        assert!(args
+            .iter()
+            .any(|a| a == "--setting-sources=user,project,local"));
+        request.settings.access = AccessMode::FullAccess;
+        let args = claude_argv(&request);
+        assert_eq!(flag(&args, "--permission-mode"), Some("bypassPermissions"));
+        assert!(args
+            .iter()
+            .any(|a| a == "--allow-dangerously-skip-permissions"));
+        assert_eq!(flag(&args, "--tools"), None);
+    }
     fn claude_bash(p: &mut Protocol, command: &str) -> (Vec<Event>, Value) {
         let mut out = Vec::new();
         let events = p
