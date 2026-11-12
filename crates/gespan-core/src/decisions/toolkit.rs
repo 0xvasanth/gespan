@@ -15,8 +15,9 @@ const UNVERIFIED: &str = "Saved for review; not shown to other sessions because 
 const READ_ONLY: &str = "This session is read-only for the decision log: it can't propose entries. Use decisions_flag to raise a concern.";
 const SEARCH_LIMIT: usize = 5;
 const SEARCH_MAX: usize = 20;
-/// Two titles this alike (share of their words) are the same decision.
-const SAME_TITLE: f64 = 0.75;
+/// Two titles, and two texts, this alike (share of their words) are the same
+/// decision. A reversal ("tabs" to "spaces") changes the text and so differs.
+const SAME_WORDS: f64 = 0.75;
 
 /// The decision tools. Workers (`may_propose` false) get read tools and
 /// `decisions_flag` only.
@@ -222,12 +223,17 @@ fn failed(error: impl std::fmt::Display) -> String {
 }
 
 /// An entry this session may see: its project's or global, and, if pending,
-/// either carrying a user source or proposed by this very session.
+/// rejected or archived, either carrying a user source or proposed by this
+/// very session.
 fn visible_to(entry: &Entry, scope: &Scope, session: i64) -> bool {
     let in_scope = entry.scope == Scope::Global || entry.scope == *scope;
-    let hidden = entry.status == Status::Pending
-        && !has_user_source(entry)
-        && entry.source.session != Some(session);
+    // Without a user source, only the proposer sees an entry that never became
+    // (or no longer is) approved.
+    let unapproved = matches!(
+        entry.status,
+        Status::Pending | Status::Rejected | Status::Archived
+    );
+    let hidden = unapproved && !has_user_source(entry) && entry.source.session != Some(session);
     in_scope && !hidden
 }
 
@@ -321,6 +327,13 @@ fn flag(grant: &Grant, id: &str, reason: &str) -> Result<String, String> {
     let Some((entry, _)) = found.filter(|_| visible) else {
         return Ok(format!("No visible entry {id}. Nothing was flagged."));
     };
+    if entry.status != Status::Active {
+        return Err(format!(
+            "{} is {}; only active entries can be flagged.",
+            entry.label(),
+            entry.status.as_str()
+        ));
+    }
     service::with(|store| store.flag(number, grant.session, reason, now_ms()))?.map_err(failed)?;
     Ok(format!(
         "Flagged {}. The user will review it. Keep following the entry for now.",
@@ -337,13 +350,14 @@ fn words(title: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn same_title(a: &str, b: &str) -> bool {
+/// Whether two texts are the same but for a word or two.
+fn same_words(a: &str, b: &str) -> bool {
     let (a, b) = (words(a), words(b));
     if a.is_empty() || b.is_empty() {
         return false;
     }
     let shared = a.intersection(&b).count() as f64;
-    shared / a.union(&b).count() as f64 >= SAME_TITLE
+    shared / a.union(&b).count() as f64 >= SAME_WORDS
 }
 
 /// Trimmed, with every run of whitespace as one space.
@@ -351,15 +365,25 @@ fn collapse(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Whether `answer` appears in something the user wrote in `session`.
-/// Whitespace is collapsed; case matters. Agent text never counts: only the
+/// Whether `answer` appears, as whole words, in something the user wrote in
+/// `session`. Whitespace is collapsed; case matters. Agent text never counts: only the
 /// registered source's user-authored texts are searched.
 fn user_wrote(session: i64, answer: &str) -> bool {
     let answer = collapse(answer);
     !answer.is_empty()
         && service::user_texts(session)
             .iter()
-            .any(|text| collapse(text).contains(&answer))
+            .any(|text| contains_words(&collapse(text), &answer))
+}
+
+/// Whether `needle` occurs in `haystack` with the start or end of the text, or
+/// a character that is not a letter or digit, on both sides.
+fn contains_words(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(start, found)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + found.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
 }
 
 fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String> {
@@ -377,19 +401,34 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
     let verified = answer.as_deref().is_some_and(|a| user_wrote(session, a));
     let note = if verified { "" } else { UNVERIFIED };
 
-    // The same decision, already in the log or already proposed?
+    let user_source = Source {
+        session: Some(session),
+        question_ref: verified.then(|| question.clone()).flatten(),
+        user_turn: verified.then(|| answer.clone()).flatten(),
+        import: None,
+    };
+
+    // The same decision, already in the log or already proposed? Every entry
+    // the session can see is compared, not just the best search hits, so a
+    // crowded log can't hide a duplicate; so are the caller's own drafts,
+    // which nobody else sees.
     let candidates = service::with(|store| -> Result<Vec<Entry>, gespan_memory::Error> {
-        let mut found = store.search(&scope, title, SEARCH_MAX)?;
-        found.extend(
-            store
-                .pending()?
-                .into_iter()
-                .filter(|entry| entry.scope == scope && entry.source.session == Some(session)),
-        );
+        let mut found = store.visible(&scope)?;
+        for draft in store.pending()? {
+            if draft.scope == scope
+                && draft.source.session == Some(session)
+                && !found.iter().any(|entry| entry.id == draft.id)
+            {
+                found.push(draft);
+            }
+        }
         Ok(found)
     })?
     .map_err(failed)?;
-    for existing in candidates.iter().filter(|e| same_title(&e.title, title)) {
+    for existing in candidates
+        .iter()
+        .filter(|e| same_words(&e.title, title) && same_words(&e.text, text))
+    {
         match existing.status {
             Status::Active => {
                 return Ok(format!("already decided: {}", line(existing)));
@@ -414,8 +453,15 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
                     text: text.into(),
                     why: why.into(),
                 };
-                let revised = service::with(|store| store.revise_pending(existing.id, edit))?
-                    .map_err(failed)?;
+                let revised = service::with(|store| {
+                    store.revise_pending(
+                        existing.id,
+                        edit,
+                        answer.as_deref().filter(|_| verified),
+                        &user_source,
+                    )
+                })?
+                .map_err(failed)?;
                 return Ok(with_note(
                     format!("Updated your pending proposal {}.", revised.label()),
                     note,
@@ -425,12 +471,7 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
         }
     }
 
-    let source = Source {
-        session: Some(session),
-        question_ref: verified.then(|| question.clone()).flatten(),
-        user_turn: verified.then(|| answer.clone()).flatten(),
-        import: None,
-    };
+    let source = user_source;
     let new = NewEntry {
         kind: Kind::Decision,
         scope,

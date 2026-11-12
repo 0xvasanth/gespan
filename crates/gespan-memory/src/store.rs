@@ -158,8 +158,18 @@ impl Store {
     }
 
     /// Rewrite a pending entry's title, text and why in place (redacted and
-    /// capped like a new one). Anything but a pending entry is refused.
-    pub fn revise_pending(&self, id: i64, edit: Edit) -> Result<Entry, Error> {
+    /// capped like a new one), and replace its user answer and user source
+    /// (`question_ref`, `user_turn`) with the given ones in the same update,
+    /// so an old attestation never sits beside new text. The proposing
+    /// session and import marker are kept. Anything but a pending entry is
+    /// refused.
+    pub fn revise_pending(
+        &self,
+        id: i64,
+        edit: Edit,
+        user_answer: Option<&str>,
+        source: &Source,
+    ) -> Result<Entry, Error> {
         if edit.why.trim().is_empty() {
             return Err(Error::MissingWhy);
         }
@@ -168,11 +178,26 @@ impl Store {
             self.clean(&edit.text),
             self.clean(&edit.why),
         );
+        let answer = user_answer.map(|a| self.clean(a));
+        let part = |s: &Option<String>| {
+            s.as_deref()
+                .map(|v| self.clean(v))
+                .filter(|v| !v.is_empty())
+        };
         let conn = self.conn();
         let n = conn.execute(
-            "UPDATE entries SET title = ?1, text = ?2, why = ?3 \
-             WHERE id = ?4 AND status = 'pending'",
-            params![title, text, why, id],
+            "UPDATE entries SET title = ?1, text = ?2, why = ?3, user_answer = ?4, \
+             question_ref = ?5, user_turn = ?6 \
+             WHERE id = ?7 AND status = 'pending'",
+            params![
+                title,
+                text,
+                why,
+                answer,
+                part(&source.question_ref),
+                part(&source.user_turn),
+                id
+            ],
         )?;
         if n == 0 {
             return Err(missing_or(&conn, id, Error::NotPending(id))?);

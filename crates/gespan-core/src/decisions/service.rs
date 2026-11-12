@@ -89,6 +89,14 @@ pub(crate) struct Isolated {
 }
 
 #[cfg(test)]
+impl Drop for Isolated {
+    /// Closes the store before its directory goes, so Windows can delete it.
+    fn drop(&mut self) {
+        *lock(&STORE) = None;
+    }
+}
+
+#[cfg(test)]
 pub(crate) fn isolated() -> Isolated {
     static TESTS: Mutex<()> = Mutex::new(());
     let lock = lock(&TESTS);

@@ -576,7 +576,7 @@ fn near_duplicate_proposal_updates_the_existing_pending_one() {
         &FULL,
         &g,
         "decisions_propose",
-        json!({"title": "Store decisions in SQLite", "text": "First wording", "why": "first why", "user_answer": "one SQLite file"}),
+        json!({"title": "Store decisions in SQLite", "text": "Keep the decision log in one SQLite file.", "why": "first why", "user_answer": "one SQLite file"}),
     );
     let first = pending();
     assert_eq!(first.len(), 1);
@@ -584,12 +584,15 @@ fn near_duplicate_proposal_updates_the_existing_pending_one() {
         &FULL,
         &g,
         "decisions_propose",
-        json!({"title": "Store decisions in sqlite", "text": "Second wording", "why": "second why", "user_answer": "one SQLite file"}),
+        json!({"title": "Store decisions in sqlite", "text": "Keep the decision log in one SQLite file, backed up.", "why": "second why", "user_answer": "one SQLite file"}),
     );
     let rows = pending();
     assert_eq!(rows.len(), 1, "no new row");
     assert_eq!(rows[0].id, first[0].id);
-    assert_eq!(rows[0].text, "Second wording");
+    assert_eq!(
+        rows[0].text,
+        "Keep the decision log in one SQLite file, backed up."
+    );
     assert_eq!(rows[0].why, "second why");
     assert!(said.contains(&rows[0].label()), "{said}");
 }
@@ -604,17 +607,17 @@ fn an_unverified_repeat_cannot_rewrite_a_user_sourced_pending_entry() {
         &FULL,
         &g,
         "decisions_propose",
-        json!({"title": "Store decisions in SQLite", "text": "What the user agreed to", "why": "w", "user_answer": "one SQLite file"}),
+        json!({"title": "Store decisions in SQLite", "text": "Keep the log in one SQLite file", "why": "w", "user_answer": "one SQLite file"}),
     );
     let said = call(
         &FULL,
         &g,
         "decisions_propose",
-        json!({"title": "Store decisions in SQLite", "text": "Smuggled wording", "why": "w", "user_answer": "never said this"}),
+        json!({"title": "Store decisions in SQLite", "text": "Keep the log in one SQLite file today", "why": "w", "user_answer": "never said this"}),
     );
     let rows = pending();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].text, "What the user agreed to");
+    assert_eq!(rows[0].text, "Keep the log in one SQLite file");
     assert!(said.contains(&rows[0].label()), "{said}");
 }
 
@@ -627,17 +630,17 @@ fn another_sessions_pending_proposal_is_reported_not_rewritten() {
         &FULL,
         &grant(5, dir.path(), DECISIONS),
         "decisions_propose",
-        json!({"title": "Store decisions in SQLite", "text": "Session five", "why": "w", "user_answer": "one SQLite file"}),
+        json!({"title": "Store decisions in SQLite", "text": "Keep the log in one SQLite file", "why": "w", "user_answer": "one SQLite file"}),
     );
     let said = call(
         &FULL,
         &grant(6, dir.path(), DECISIONS),
         "decisions_propose",
-        json!({"title": "Store decisions in SQLite", "text": "Session six", "why": "w", "user_answer": "one SQLite file"}),
+        json!({"title": "Store decisions in SQLite", "text": "Keep the log in one SQLite file now", "why": "w", "user_answer": "one SQLite file"}),
     );
     let rows = pending();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].text, "Session five");
+    assert_eq!(rows[0].text, "Keep the log in one SQLite file");
     assert!(said.contains(&rows[0].label()), "{said}");
 }
 
@@ -677,4 +680,174 @@ fn proposal_matching_an_active_decision_returns_it_instead() {
         "{said}"
     );
     assert!(pending().is_empty(), "no row was added");
+}
+
+#[test]
+fn same_title_opposite_text_files_a_new_proposal() {
+    let _guard = isolated();
+    users_said(&[(5, &["spaces, not tabs"])]);
+    let dir = tempfile::tempdir().unwrap();
+    let active = seed(
+        &scope(dir.path()),
+        Kind::Decision,
+        "Indentation style for all source files: tabs",
+        "Indent every file with tabs.",
+        true,
+    );
+    let g = grant(5, dir.path(), DECISIONS);
+    let said = call(
+        &FULL,
+        &g,
+        "decisions_propose",
+        json!({"title": "Indentation style for all source files: spaces", "text": "Indent every file with spaces.", "why": "the user changed their mind", "user_answer": "spaces, not tabs"}),
+    );
+    assert!(!said.contains("already decided"), "{said}");
+    let rows = pending();
+    assert_eq!(rows.len(), 1, "filed for review");
+    assert_eq!(rows[0].text, "Indent every file with spaces.");
+    assert_ne!(rows[0].id, active.id);
+    // The same again, now against its own pending proposal, rewrites nothing.
+    call(
+        &FULL,
+        &g,
+        "decisions_propose",
+        json!({"title": "Indentation style for all source files: tabs", "text": "Indent every file with tabs.", "why": "w", "user_answer": "spaces, not tabs"}),
+    );
+    let rows = pending();
+    assert!(rows
+        .iter()
+        .any(|r| r.text == "Indent every file with spaces."));
+}
+
+#[test]
+fn a_verified_revision_replaces_the_old_attestation() {
+    let _guard = isolated();
+    users_said(&[(5, &["first answer", "second answer"])]);
+    let dir = tempfile::tempdir().unwrap();
+    let g = grant(5, dir.path(), DECISIONS);
+    let send = |answer: &str, text: &str| {
+        call(
+            &FULL,
+            &g,
+            "decisions_propose",
+            json!({"title": "Store decisions in SQLite", "text": text, "question": answer, "why": "w", "user_answer": answer}),
+        )
+    };
+    send("first answer", "Keep the decision log in one SQLite file.");
+    send(
+        "second answer",
+        "Keep the decision log in one SQLite file, backed up.",
+    );
+    let rows = pending();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].user_answer.as_deref(), Some("second answer"));
+    assert_eq!(rows[0].source.user_turn.as_deref(), Some("second answer"));
+    assert_eq!(
+        rows[0].source.question_ref.as_deref(),
+        Some("second answer")
+    );
+}
+
+#[test]
+fn an_answer_must_match_whole_words() {
+    let _guard = isolated();
+    users_said(&[(
+        5,
+        &["Yes, use Option for nullable fields.", "the user said so"],
+    )]);
+    let verifies = |answer: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        !propose(5, dir.path(), answer).contains(UNVERIFIED)
+    };
+    assert!(verifies("Yes, use Option"), "a phrase ending at a word");
+    assert!(
+        verifies("Yes, use Option for nullable fields"),
+        "before the full stop"
+    );
+    assert!(verifies("user said"));
+    assert!(verifies("the user said so"), "the whole text");
+    assert!(!verifies("ser said"), "starts mid-word");
+    assert!(!verifies("nullable field"), "ends mid-word");
+    assert!(!verifies("es, use Option"), "starts mid-word");
+    users_said(&[(5, &["the user said so"])]);
+    assert!(!verifies("use"), "\"use\" is not inside \"user\"");
+}
+
+#[test]
+fn rejected_or_archived_entries_without_a_user_source_stay_with_their_proposer() {
+    let _guard = isolated();
+    let dir = tempfile::tempdir().unwrap();
+    let s = scope(dir.path());
+    let g5 = grant(5, dir.path(), DECISIONS);
+    call(
+        &FULL,
+        &g5,
+        "decisions_propose",
+        json!({"title": "Odd idea", "text": "Do the odd thing", "why": "w"}),
+    );
+    let id = pending()[0].id;
+    service::with(|store| store.reject(id, 30).unwrap()).unwrap();
+    let mine = call(
+        &FULL,
+        &g5,
+        "decisions_get",
+        json!({"id": format!("D-{id}")}),
+    );
+    assert!(mine.contains("Do the odd thing"), "{mine}");
+    let theirs = call(
+        &FULL,
+        &grant(6, dir.path(), DECISIONS),
+        "decisions_get",
+        json!({"id": format!("D-{id}")}),
+    );
+    assert!(theirs.contains("No visible entry"), "{theirs}");
+    let _ = s;
+}
+
+#[test]
+fn only_active_entries_can_be_flagged() {
+    let _guard = isolated();
+    let dir = tempfile::tempdir().unwrap();
+    let s = scope(dir.path());
+    let waiting = seed(&s, Kind::Decision, "Not yet", "Waiting for review", false);
+    let g = grant(5, dir.path(), DECISIONS);
+    let error = FULL
+        .call(
+            &g,
+            "decisions_flag",
+            json!({"id": waiting.label(), "reason": "r"}),
+        )
+        .unwrap_err();
+    assert!(error.contains("active"), "{error}");
+    assert!(service::with(|s| s.open_flags().unwrap())
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn dedup_sees_entries_beyond_the_first_search_hits() {
+    let _guard = isolated();
+    let dir = tempfile::tempdir().unwrap();
+    let s = scope(dir.path());
+    for n in 0..30 {
+        seed(
+            &s,
+            Kind::Decision,
+            &format!("Storage note {n}"),
+            "Storage note",
+            true,
+        );
+    }
+    let long = "storage note ".to_string() + &"filler ".repeat(40);
+    let target = seed(&s, Kind::Decision, "Storage note", &long, true);
+    let said = call(
+        &FULL,
+        &grant(5, dir.path(), DECISIONS),
+        "decisions_propose",
+        json!({"title": "Storage note", "text": long, "why": "w"}),
+    );
+    assert!(
+        said.starts_with(&format!("already decided: {}", target.label())),
+        "{said}"
+    );
 }

@@ -399,6 +399,11 @@ fn revise_pending_rewrites_redacted_capped_text_in_place() {
                 text: "Tabs, key sk-abc123 never".into(),
                 why: "x".repeat(1_500),
             },
+            None,
+            &Source {
+                question_ref: Some("q-1".into()),
+                ..Source::default()
+            },
         )
         .unwrap();
     assert_eq!(revised.id, e.id);
@@ -422,16 +427,48 @@ fn revise_pending_refuses_active_missing_and_empty_why() {
         why: why.into(),
     };
     assert!(matches!(
-        s.revise_pending(e.id, edit("  ")),
+        s.revise_pending(e.id, edit("  "), None, &Source::default()),
         Err(Error::MissingWhy)
     ));
     assert!(matches!(
-        s.revise_pending(999, edit("w")),
+        s.revise_pending(999, edit("w"), None, &Source::default()),
         Err(Error::NotFound(999))
     ));
     s.approve(e.id, None, false, &[], 20).unwrap();
     assert!(matches!(
-        s.revise_pending(e.id, edit("w")),
+        s.revise_pending(e.id, edit("w"), None, &Source::default()),
         Err(Error::NotPending(_))
     ));
+}
+
+#[test]
+fn revise_pending_replaces_the_answer_and_source_with_the_new_ones() {
+    let (_d, s) = open();
+    let mut first = user_sourced(new(Kind::Decision, repo(), "Use tabs"));
+    first.user_answer = Some("old answer".into());
+    first.source.session = Some(4);
+    first.source.user_turn = Some("old answer".into());
+    let e = s.propose(first, 10).unwrap();
+    let edit = Edit {
+        title: "Use tabs".into(),
+        text: "t".into(),
+        why: "w".into(),
+    };
+    let new_source = Source {
+        question_ref: Some("new question".into()),
+        user_turn: Some("new answer".into()),
+        ..Source::default()
+    };
+    let r = s
+        .revise_pending(e.id, edit.clone(), Some("new answer"), &new_source)
+        .unwrap();
+    assert_eq!(r.user_answer.as_deref(), Some("new answer"));
+    assert_eq!(r.source.question_ref.as_deref(), Some("new question"));
+    assert_eq!(r.source.user_turn.as_deref(), Some("new answer"));
+    assert_eq!(r.source.session, Some(4), "the proposer is kept");
+    let r = s
+        .revise_pending(e.id, edit, None, &Source::default())
+        .unwrap();
+    assert!(r.user_answer.is_none());
+    assert!(r.source.question_ref.is_none() && r.source.user_turn.is_none());
 }
