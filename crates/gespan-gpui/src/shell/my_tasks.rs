@@ -84,7 +84,7 @@ impl Shell {
                     source_label: title.clone(),
                     source: Source::Session(id),
                     body: Body::Approval {
-                        approval: approval.clone(),
+                        approval: Box::new(approval.clone()),
                         cwd: cwd.map(str::to_owned),
                     },
                     since_ms: now,

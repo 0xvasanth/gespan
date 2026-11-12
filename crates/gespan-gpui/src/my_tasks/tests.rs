@@ -30,7 +30,7 @@ pub(super) fn page(cx: &mut TestAppContext) -> (WindowHandle<MyTasks>, VisualTes
         cx.open_window(Default::default(), |_, cx| cx.new(MyTasks::new))
             .unwrap()
     });
-    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let visual = VisualTestContext::from_window(window.into(), cx);
     visual.simulate_resize(size(px(1200.), px(800.)));
     (window, visual)
 }

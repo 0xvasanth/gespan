@@ -34,7 +34,7 @@ pub(crate) enum Source {
 #[derive(Clone)]
 pub(crate) enum Body {
     Approval {
-        approval: Approval,
+        approval: Box<Approval>,
         cwd: Option<String>,
     },
     Question(Entity<QuestionCard>),
@@ -177,6 +177,7 @@ impl MyTasks {
         cx.notify();
     }
 
+    #[cfg(test)]
     pub(crate) fn tasks(&self) -> &[TaskItem] {
         &self.tasks
     }
@@ -187,6 +188,7 @@ impl MyTasks {
 
     /// The selected task, or the first one shown when the selection is
     /// filtered out.
+    #[cfg(test)]
     pub(crate) fn selected(&self) -> Option<&TaskItem> {
         self.selected_in(&self.filter_only())
     }
@@ -201,6 +203,7 @@ impl MyTasks {
     }
 
     /// `visible` without the search text, for callers with no `App`.
+    #[cfg(test)]
     fn filter_only(&self) -> Vec<&TaskItem> {
         self.tasks
             .iter()

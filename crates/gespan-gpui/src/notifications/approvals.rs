@@ -397,7 +397,7 @@ pub(crate) enum Action {
         request_id: String,
         decision: Decision,
     },
-    /// The notices changed without a session changing (reopened), so the
+    /// The notices changed without a session changing (one was closed), so the
     /// host should sync them again.
     Changed,
 }
@@ -439,7 +439,7 @@ pub(crate) struct ApprovalNotices {
     notices: Vec<(SessionInputs, PendingInput)>,
     occurred: HashMap<InputKey, SystemTime>,
     /// Requests whose notice the user closed without deciding. They stay
-    /// pending; only their notice is gone until reopened or resolved. Kept in
+    /// pending; only their notice is gone until resolved; My tasks lists them. Kept in
     /// memory, so a relaunch shows anything still waiting again.
     closed: HashSet<InputKey>,
     /// Closed requests still waiting that would otherwise have a notice: the
@@ -519,12 +519,6 @@ impl ApprovalNotices {
         }
         self.closed.insert(key);
         // A session with another waiting request shows that one next.
-        cx.emit(Action::Changed);
-        cx.notify();
-    }
-    /// Brings every closed notice that is still waiting back.
-    pub(crate) fn reopen(&mut self, cx: &mut Context<Self>) {
-        self.closed.clear();
         cx.emit(Action::Changed);
         cx.notify();
     }
@@ -1435,7 +1429,7 @@ mod render_tests {
     }
 
     #[gpui::test]
-    fn reopening_brings_every_closed_notice_back(cx: &mut TestAppContext) {
+    fn closing_every_notice_counts_them_all_as_waiting(cx: &mut TestAppContext) {
         let sessions = vec![waiting("a", &["a1"]), waiting("b", &["b1"])];
         let (window, actions) = notices(sessions.clone(), cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
@@ -1454,13 +1448,6 @@ mod render_tests {
             })
             .unwrap();
 
-        window
-            .update(visual, |notices, _, cx| notices.reopen(cx))
-            .unwrap();
-        resync(&window, &sessions, visual);
-        visual.refresh().unwrap();
-        assert_eq!(shown(&window, visual), ["a:a1", "b:b1"]);
-        assert_eq!(hidden(&window, visual), 0);
         assert!(actions.borrow().iter().all(|action| action == "changed"));
     }
 

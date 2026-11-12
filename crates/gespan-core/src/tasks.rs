@@ -143,7 +143,7 @@ pub fn open_choice(rows: &[Row]) -> Option<OpenChoice> {
         .iter()
         .filter_map(|o| o.as_str().map(str::to_owned))
         .collect();
-    (!options.is_empty()).then(|| OpenChoice {
+    (!options.is_empty()).then_some(OpenChoice {
         row: at,
         options,
         at: row.sent_at,
@@ -192,9 +192,11 @@ pub fn flow_history(visits: &[FlowVisit]) -> History {
         });
     }
     History {
-        turns: (!entries.is_empty())
-            .then(|| vec![Turn { entries }])
-            .unwrap_or_default(),
+        turns: if entries.is_empty() {
+            Vec::new()
+        } else {
+            vec![Turn { entries }]
+        },
         earlier: 0,
     }
 }
