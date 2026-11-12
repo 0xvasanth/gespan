@@ -63,16 +63,37 @@ fn toggle<T: std::hash::Hash + Eq>(set: &mut std::collections::HashSet<T>, value
 
 impl MyTasks {
     /// Every project with a task, and any hidden one, so it can be shown again.
+    /// The project and kind of each entry on the tab shown.
+    fn tab_entries(&self) -> Vec<(&str, Option<Kind>)> {
+        match self.tab {
+            Tab::Waiting => self
+                .tasks
+                .iter()
+                .map(|t| (t.project.as_str(), Some(t.kind)))
+                .collect(),
+            Tab::Answered => self
+                .past
+                .iter()
+                .map(|t| (t.project.as_str(), Some(t.kind)))
+                .collect(),
+            Tab::Decisions => self
+                .decisions
+                .iter()
+                .map(|d| (d.project.as_str(), None))
+                .collect(),
+        }
+    }
+
     fn filter_projects(&self) -> Vec<String> {
         let mut projects: Vec<String> = Vec::new();
-        for project in self
-            .tasks
+        let entries = self.tab_entries();
+        for project in entries
             .iter()
-            .map(|t| &t.project)
-            .chain(self.filter.hidden_projects.iter())
+            .map(|(project, _)| *project)
+            .chain(self.filter.hidden_projects.iter().map(String::as_str))
         {
-            if !projects.contains(project) {
-                projects.push(project.clone());
+            if !projects.iter().any(|p| p == project) {
+                projects.push(project.to_owned());
             }
         }
         projects
@@ -85,8 +106,9 @@ impl MyTasks {
     pub(super) fn filter_menu(&self, cx: &mut Context<Self>) -> AnyElement {
         let weak = cx.entity().downgrade();
         let mut rows: Vec<AnyElement> = vec![caption("PROJECTS").into_any_element()];
+        let entries = self.tab_entries();
         for project in self.filter_projects() {
-            let count = self.tasks.iter().filter(|t| t.project == project).count();
+            let count = entries.iter().filter(|(p, _)| *p == project).count();
             let shown = !self.filter.hidden_projects.contains(&project);
             let key = project.clone();
             rows.push(
@@ -104,9 +126,14 @@ impl MyTasks {
                 .into_any_element(),
             );
         }
-        rows.push(caption("KIND").into_any_element());
-        for kind in Kind::ALL {
-            let count = self.tasks.iter().filter(|t| t.kind == kind).count();
+        let kinds = if self.tab == Tab::Decisions {
+            &[][..]
+        } else {
+            rows.push(caption("KIND").into_any_element());
+            &Kind::ALL[..]
+        };
+        for &kind in kinds {
+            let count = entries.iter().filter(|(_, k)| *k == Some(kind)).count();
             rows.push(
                 menu_row(
                     format!("my-tasks-filter-kind-{}", kind.label()),
@@ -122,12 +149,17 @@ impl MyTasks {
                 .into_any_element(),
             );
         }
-        rows.push(caption("WAITING").into_any_element());
-        for (wait, id, label) in [
-            (MinWait::Any, "any", "Any time"),
-            (MinWait::Hour, "1h", "Over 1 hour"),
-            (MinWait::EightHours, "8h", "Over 8 hours"),
-        ] {
+        let waits: &[(MinWait, &str, &str)] = if self.tab == Tab::Waiting {
+            rows.push(caption("WAITING").into_any_element());
+            &[
+                (MinWait::Any, "any", "Any time"),
+                (MinWait::Hour, "1h", "Over 1 hour"),
+                (MinWait::EightHours, "8h", "Over 8 hours"),
+            ]
+        } else {
+            &[]
+        };
+        for &(wait, id, label) in waits {
             rows.push(
                 menu_row(
                     format!("my-tasks-filter-wait-{id}"),

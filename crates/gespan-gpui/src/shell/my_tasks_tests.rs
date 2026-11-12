@@ -704,3 +704,234 @@ fn a_request_that_stops_waiting_unanswered_is_kept_as_withdrawn(cx: &mut TestApp
     assert_eq!(withdrawn.status, gespan_core::tasks::Status::Withdrawn);
     assert_eq!(withdrawn.answer, None);
 }
+
+/// Answers a question on the page, the way the user does.
+fn answer_question_on_page(
+    window: WindowHandle<Shell>,
+    visual: &mut VisualTestContext,
+    prompt: &str,
+) -> i64 {
+    let id = other_session(window, visual);
+    let (send, controls) = std::sync::mpsc::channel();
+    window
+        .update(visual, |shell, window, cx| {
+            shell.sessions[&id].update(cx, |view, cx| {
+                view.controls = Some(send);
+                view.add_question(question("q1", prompt), cx);
+            });
+            shell.open_my_tasks(window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    click(visual, "question-option-0-0");
+    if visual.debug_bounds("question-continue").is_some() {
+        click(visual, "question-continue");
+    }
+    controls.try_recv().expect("the answer reached the session");
+    window
+        .update(visual, |shell, _, cx| shell.refresh_my_tasks(cx))
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    id
+}
+
+#[gpui::test]
+fn the_page_opens_on_waiting_and_answered_lists_what_you_chose(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (id, _controls) = waiting_page(window, visual, vec![approval("a1"), approval("a2")]);
+    assert_eq!(
+        page(window, visual).read_with(visual, |p, _| p.tab),
+        crate::my_tasks::Tab::Waiting
+    );
+    click(visual, "my-tasks-allow");
+    window
+        .update(visual, |shell, _, cx| {
+            // a2 stops waiting with no answer.
+            shell.sessions[&id].update(cx, |view, _| view.set_approvals_for_test(vec![]));
+            shell.refresh_my_tasks(cx);
+        })
+        .unwrap();
+    click(visual, "my-tasks-tab-answered");
+    let first = format!("my-tasks-past-approval:{id}:a1");
+    let second = format!("my-tasks-past-approval:{id}:a2");
+    assert!(
+        visual
+            .debug_bounds(Box::leak(first.clone().into_boxed_str()))
+            .is_some()
+    );
+    assert!(
+        visual
+            .debug_bounds(Box::leak(second.clone().into_boxed_str()))
+            .is_some()
+    );
+    let shown = |visual: &mut VisualTestContext| {
+        page(window, visual).read_with(visual, |p, cx| {
+            p.visible_past(cx)
+                .iter()
+                .map(|t| (t.key.clone(), t.answer.clone()))
+                .collect::<Vec<_>>()
+        })
+    };
+    let past = shown(visual);
+    assert_eq!(past.len(), 2, "{past:?}");
+    assert!(past.contains(&(format!("approval:{id}:a1"), Some("Allowed once".into()))));
+    assert!(past.contains(&(format!("approval:{id}:a2"), None)));
+    // The detail says what was chosen; an approval is not a decision.
+    click(visual, &first);
+    assert!(visual.debug_bounds("my-tasks-past-answer").is_some());
+    assert!(visual.debug_bounds("my-tasks-remember").is_none());
+    // Waiting has nothing left, and its count says so.
+    click(visual, "my-tasks-tab-waiting");
+    assert_eq!(
+        page(window, visual).read_with(visual, |p, _| p.open_count()),
+        0
+    );
+}
+
+#[gpui::test]
+fn a_question_answered_on_the_page_is_offered_and_saved_as_a_decision(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let id = answer_question_on_page(window, visual, "How should fsidCount be kept?");
+    assert!(
+        visual.debug_bounds("my-tasks-remember").is_some(),
+        "the answer is offered as a decision"
+    );
+    let statement =
+        page(window, visual).read_with(visual, |p, cx| p.statement.read(cx).content.to_string());
+    assert_eq!(statement, "How should fsidCount be kept: A");
+    let field = page(window, visual).read_with(visual, |p, _| p.statement.clone());
+    field.update(visual, |input, cx| {
+        input.set_text("Recount fsidCount at read time.".into(), cx)
+    });
+    click(visual, "my-tasks-save-decision");
+    assert!(
+        visual.debug_bounds("my-tasks-remember").is_none(),
+        "offered once"
+    );
+    let decisions = window
+        .read_with(visual, |shell, _| {
+            crate::runtime::locked(&shell.store)
+                .unwrap()
+                .decisions()
+                .unwrap()
+        })
+        .unwrap();
+    let [decision] = &decisions[..] else {
+        panic!("one decision: {decisions:?}");
+    };
+    assert_eq!(decision.statement, "Recount fsidCount at read time.");
+    assert_eq!(decision.sources[0].key, format!("question:{id}:q1"));
+    click(visual, "my-tasks-tab-decisions");
+    assert!(
+        visual
+            .debug_bounds(Box::leak(
+                format!("my-tasks-decision-{}", decision.id).into_boxed_str()
+            ))
+            .is_some()
+    );
+    assert!(visual.debug_bounds("my-tasks-decision-statement").is_some());
+    // On Answered, the answer links to its decision instead of offering again.
+    click(visual, "my-tasks-tab-answered");
+    assert!(visual.debug_bounds("my-tasks-view-decision").is_some());
+    assert!(visual.debug_bounds("my-tasks-remember").is_none());
+}
+
+#[gpui::test]
+fn just_this_once_keeps_the_answer_without_a_decision(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    answer_question_on_page(window, visual, "Which counter?");
+    click(visual, "my-tasks-just-once");
+    assert!(visual.debug_bounds("my-tasks-remember").is_none());
+    let (past, decisions) = window
+        .read_with(visual, |shell, _| {
+            let store = crate::runtime::locked(&shell.store).unwrap();
+            (store.past_tasks().unwrap(), store.decisions().unwrap())
+        })
+        .unwrap();
+    assert_eq!(past.len(), 1);
+    assert!(decisions.is_empty());
+    // It can still be saved later from Answered.
+    click(visual, "my-tasks-tab-answered");
+    assert!(visual.debug_bounds("my-tasks-remember-start").is_some());
+}
+
+#[gpui::test]
+fn a_decision_is_edited_and_archived_on_the_decisions_tab(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let decision = window
+        .update(visual, |shell, window, cx| {
+            let id = crate::runtime::locked(&shell.store)
+                .unwrap()
+                .save_decision(
+                    "/work/gespan",
+                    "Review only my own merge requests.",
+                    "",
+                    &[],
+                    1,
+                )
+                .unwrap();
+            shell.open_my_tasks(window, cx);
+            id
+        })
+        .unwrap();
+    visual.run_until_parked();
+    click(visual, "my-tasks-tab-decisions");
+    click(visual, "my-tasks-edit-decision");
+    let field = page(window, visual).read_with(visual, |p, _| p.statement.clone());
+    assert_eq!(
+        field.read_with(visual, |input, _| input.content.to_string()),
+        "Review only my own merge requests."
+    );
+    field.update(visual, |input, cx| {
+        input.set_text("Review merge requests from my team.".into(), cx)
+    });
+    click(visual, "my-tasks-edit-save");
+    let saved = |visual: &mut VisualTestContext| {
+        window
+            .read_with(visual, |shell, _| {
+                crate::runtime::locked(&shell.store)
+                    .unwrap()
+                    .decisions()
+                    .unwrap()
+            })
+            .unwrap()
+    };
+    assert_eq!(
+        saved(visual)[0].statement,
+        "Review merge requests from my team."
+    );
+    assert_eq!(saved(visual)[0].id, decision);
+    click(visual, "my-tasks-archive-decision");
+    assert!(saved(visual).is_empty());
+    assert!(
+        visual
+            .debug_bounds(Box::leak(
+                format!("my-tasks-decision-{decision}").into_boxed_str()
+            ))
+            .is_none()
+    );
+}
+
+#[gpui::test]
+fn the_answered_filter_has_no_waiting_section_and_hides_projects(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (id, _controls) = waiting_page(window, visual, vec![approval("a1")]);
+    click(visual, "my-tasks-allow");
+    click(visual, "my-tasks-tab-answered");
+    click(visual, "my-tasks-filter");
+    assert!(visual.debug_bounds("my-tasks-filter-wait-any").is_none());
+    let project = window
+        .read_with(visual, |shell, cx| {
+            shell.sessions[&id].read(cx).summary.cwd.clone()
+        })
+        .unwrap();
+    click(visual, &format!("my-tasks-filter-project-{project}"));
+    let shown = page(window, visual).read_with(visual, |p, cx| p.visible_past(cx).len());
+    assert_eq!(shown, 0, "the hidden project's answers are filtered out");
+}

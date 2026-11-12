@@ -20,19 +20,27 @@ pub(super) const ICONS: &[&str] = &[
 impl MyTasks {
     pub(super) fn task_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let task = self.selected_in(&self.visible(cx)).cloned();
+        let banner = self.offer_banner(cx);
         let Some(task) = task else {
             return div()
                 .flex_1()
                 .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(14.))
-                .text_color(content(0.5))
-                .child(if self.tasks.is_empty() {
-                    "You're all caught up."
-                } else {
-                    "No task is selected."
-                })
+                .flex_col()
+                .children(banner)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(14.))
+                        .text_color(content(0.5))
+                        .child(if self.tasks.is_empty() {
+                            "You're all caught up."
+                        } else {
+                            "No task is selected."
+                        }),
+                )
                 .into_any_element();
         };
         let open_label = match task.source {
@@ -85,6 +93,7 @@ impl MyTasks {
             .flex()
             .flex_col()
             .child(bar)
+            .children(banner)
             .child(history)
             .child(
                 div()

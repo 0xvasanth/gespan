@@ -128,33 +128,8 @@ impl MyTasks {
                 );
             }
         }
-        let count = self.tasks.len();
         let active = self.filter.is_active();
-        let tabs = div()
-            .h(px(40.))
-            .flex_shrink_0()
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .border_b_1()
-            .border_color(content(0.07))
-            .child(
-                div()
-                    .id("my-tasks-tab-waiting")
-                    .debug_selector(|| "my-tasks-tab-waiting".into())
-                    .role(Role::Tab)
-                    .aria_selected(true)
-                    .h(px(28.))
-                    .px(px(10.))
-                    .rounded(px(6.))
-                    .bg(content(0.1))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_size(px(12.))
-                    .child("Waiting")
-                    .child(div().text_color(content(0.5)).child(count.to_string())),
-            );
+        let tabs = self.tab_pills(cx);
         let tools = div()
             .h(px(40.))
             .flex_shrink_0()
@@ -202,7 +177,33 @@ impl MyTasks {
                         cx.notify();
                     })),
             );
-        let empty = shown.is_empty();
+        let (rows, empty_text) = match self.tab {
+            Tab::Waiting => (
+                rows,
+                if self.tasks.is_empty() {
+                    "Nothing is waiting on you."
+                } else {
+                    "No tasks match the search or filters."
+                },
+            ),
+            Tab::Answered => (
+                self.past_rows(cx),
+                if self.past.is_empty() {
+                    "Nothing answered yet."
+                } else {
+                    "No answers match the search or filters."
+                },
+            ),
+            Tab::Decisions => (
+                self.decision_rows(cx),
+                if self.decisions.is_empty() {
+                    "No decisions yet."
+                } else {
+                    "No decisions match the search or filters."
+                },
+            ),
+        };
+        let empty = rows.is_empty();
         div()
             .w(px(LIST_WIDTH))
             .h_full()
@@ -217,7 +218,11 @@ impl MyTasks {
                 div()
                     .id("my-tasks-list")
                     .role(Role::ListBox)
-                    .aria_label("Waiting on you")
+                    .aria_label(match self.tab {
+                        Tab::Waiting => "Waiting on you",
+                        Tab::Answered => "Answered",
+                        Tab::Decisions => "Decisions",
+                    })
                     .min_h_0()
                     .flex_1()
                     .overflow_y_scroll()
@@ -231,11 +236,7 @@ impl MyTasks {
                                 .p(px(12.))
                                 .text_size(px(12.))
                                 .text_color(content(0.5))
-                                .child(if self.tasks.is_empty() {
-                                    "Nothing is waiting on you."
-                                } else {
-                                    "No tasks match the search or filters."
-                                }),
+                                .child(empty_text),
                         )
                     })
                     .children(rows),
