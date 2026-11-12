@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/arcade/tetris.rs
+  s_a2c0f0f2f96e87::t_97cf4563c89698 448-449,558-559,561,754-755
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44198853666e0bc32032fa9d2dd8d45ef4b1408e",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
