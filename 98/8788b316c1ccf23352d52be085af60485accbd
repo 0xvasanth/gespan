@@ -1,0 +1,44 @@
+crates/gespan-core/src/flow/store.rs
+  s_ee8f6299bd390d::t_4fc300c4dc00a3 285-286,301-302
+crates/gespan-browser/src/audit.rs
+  s_ee8f6299bd390d::t_9da16903e367ad 251,253-254,704-713
+  s_ee8f6299bd390d::t_72e60076f243a3 239-240,242-250,252,255-262,326-334,360-376,378-380,391-406,427,505-506
+  s_ee8f6299bd390d::t_0f9814e7c6592b 700-703,714-752
+crates/gespan-core/src/automations.rs
+  s_ee8f6299bd390d::t_cbeb9297e9899d 680,683-689,693,696-704,1127-1135,1137,1140,1143-1147,1213-1216,1218-1219,1222
+crates/gespan-core/src/automations/review_drafts.rs
+  s_ee8f6299bd390d::t_cbeb9297e9899d 45-55,113-117,123-134
+  s_ee8f6299bd390d::t_9da16903e367ad 118-122
+crates/gespan-graph/src/query.rs
+  s_ee8f6299bd390d::t_e5b85b4eb89a77 16,97-101
+  s_ee8f6299bd390d::t_54239799ddbd71 187,192-195,197-199,252
+docs/toasty.md
+  s_ee8f6299bd390d::t_4fc300c4dc00a3 102-110
+crates/gespan-core/src/diagnostics/metrics.rs
+  s_ee8f6299bd390d::t_cbeb9297e9899d 243-248,250-251
+crates/gespan-graph/src/schema.rs
+  s_ee8f6299bd390d::t_6adcbab847f62c 51-54,56-63
+crates/gespan-graph/src/store.rs
+  s_ee8f6299bd390d::t_7eac1d2cbc3e7b 291-292
+  s_ee8f6299bd390d::t_d2cba077f6881a 3,9,15,23,210,213-244,287-290,293-295,297-305,321,324-327,329-353,391-393,396-397,495-496,498-508,511-516,520-526,528,530-536,545-554,556-557,559-563,565,572-584,587-589,603-604,630-631,633-643
+  s_ee8f6299bd390d::t_e5b85b4eb89a77 5-7
+crates/gespan-core/tests/toasty_only.rs
+  s_ee8f6299bd390d::t_67218e9c277239 302-303
+  s_ee8f6299bd390d::t_4fc300c4dc00a3 193-194,208-209,219,300-301,304,306-310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "988788b316c1ccf23352d52be085af60485accbd",
+  "prompts": {},
+  "sessions": {
+    "s_ee8f6299bd390d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "82811030-f038-4913-8665-5b4fc077dbf3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
