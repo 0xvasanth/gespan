@@ -190,8 +190,8 @@ const QUERIES: &[(&str, usize, &str)] = &[
     ("board-store/src/views.rs", 20, "to move to Toasty"),
     (
         "gespan-browser/src/audit.rs",
-        10,
-        "a constraint trigger, and queries to move to Toasty",
+        2,
+        "a conditional upsert Toasty cannot express",
     ),
     (
         "gespan-core/src/accounts/transfer.rs",
@@ -205,13 +205,8 @@ const QUERIES: &[(&str, usize, &str)] = &[
     ),
     (
         "gespan-core/src/automations.rs",
-        17,
-        "constraint triggers, and queries to move to Toasty",
-    ),
-    (
-        "gespan-core/src/automations/review_drafts.rs",
-        2,
-        "to move to Toasty",
+        12,
+        "constraint triggers and the legacy claims upgrade for adoption",
     ),
     (
         "gespan-core/src/desktop_preferences/webview.rs",
@@ -219,14 +214,9 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "reads WebKit's database",
     ),
     (
-        "gespan-core/src/diagnostics/metrics.rs",
-        2,
-        "legacy shape, and queries to move to Toasty",
-    ),
-    (
         "gespan-core/src/flow/store.rs",
         8,
-        "constraint triggers, and queries to move to Toasty",
+        "constraint triggers, and two reads ordered by rowid, which a model cannot name",
     ),
     (
         "gespan-core/src/inbox/azure_devops.rs",
@@ -307,9 +297,17 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "to move to Toasty",
     ),
     ("gespan-graph/src/db.rs", 2, "the graph's own Toasty driver"),
-    ("gespan-graph/src/query.rs", 13, "to move to Toasty"),
+    (
+        "gespan-graph/src/query.rs",
+        12,
+        "a recursive CTE Toasty cannot express, and the per-node expansion, kept raw for speed",
+    ),
     ("gespan-graph/src/schema.rs", 5, "constraint triggers"),
-    ("gespan-graph/src/store.rs", 17, "to move to Toasty"),
+    (
+        "gespan-graph/src/store.rs",
+        5,
+        "deletes that report a count, which Toasty cannot express",
+    ),
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {

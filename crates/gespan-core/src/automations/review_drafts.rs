@@ -42,21 +42,17 @@ impl Service {
         );
         // Saving the same run again replaces it.
         self.db.run(|mut db| async move {
-            toasty::sql::statement(
-                "INSERT OR REPLACE INTO review_drafts
-                 (run_id, automation_id, cwd, title, draft_json, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-            )
-            .bind(run_id)
-            .bind(automation_id)
-            .bind(cwd)
-            .bind(title)
-            .bind(json)
-            .bind(WAITING)
-            .bind(now)
-            .exec(&mut db)
-            .await
-            .map(drop)
+            ReviewDraftRow::upsert_by_run_id(run_id)
+                .automation_id(automation_id)
+                .cwd(cwd)
+                .title(title)
+                .draft_json(json)
+                .status(WAITING)
+                .created_at(now)
+                .updated_at(now)
+                .exec(&mut db)
+                .await
+                .map(drop)
         })
     }
 
@@ -114,19 +110,28 @@ impl Service {
             return Err(format!("Unknown draft review status {status}"));
         }
         let (run_id, status) = (run_id.to_owned(), status.to_owned());
-        let changed = self.db.run(|mut db| async move {
-            toasty::sql::statement(
-                "UPDATE review_drafts SET status = ?1, updated_at = ?2
-                 WHERE run_id = ?3 AND status = ?4",
-            )
-            .bind(status)
-            .bind(now)
-            .bind(run_id)
-            .bind(WAITING)
-            .exec(&mut db)
-            .await
-        })?;
-        Ok(changed == 1)
+        // Only a waiting draft changes; the transaction holds the write lock,
+        // so the row read here is the row updated.
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let row = ReviewDraftRow::fields();
+                let waiting =
+                    ReviewDraftRow::filter(row.run_id().eq(&run_id).and(row.status().eq(WAITING)))
+                        .first()
+                        .exec(&mut *tx)
+                        .await?;
+                if waiting.is_none() {
+                    return Ok(false);
+                }
+                ReviewDraftRow::filter_by_run_id(&run_id)
+                    .update()
+                    .status(status)
+                    .updated_at(now)
+                    .exec(&mut *tx)
+                    .await?;
+                Ok(true)
+            })
+        })
     }
 }
 

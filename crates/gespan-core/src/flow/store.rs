@@ -282,7 +282,8 @@ impl FlowStore {
     }
 
     /// Newest first, at most 50. Runs made in the same millisecond come
-    /// newest-saved first, which needs `rowid`: raw SQL.
+    /// newest-saved first, which needs `rowid`. A Toasty model cannot name
+    /// it: raw SQL.
     pub fn runs(&self, flow_id: &str, limit: usize) -> Result<Vec<FlowRun>, String> {
         let query = toasty::sql::query(
             "SELECT id, run_json FROM flow_runs WHERE flow_id = ?1
@@ -297,7 +298,8 @@ impl FlowStore {
     }
 
     /// Runs that are `running` or `waiting-approval`, across all Flows, in
-    /// the order they were saved.
+    /// the order they were saved. That order needs `rowid`, which a Toasty
+    /// model cannot name: raw SQL.
     pub fn active_runs(&self) -> Result<Vec<FlowRun>, String> {
         let query = toasty::sql::query(format!(
             "SELECT id, run_json FROM flow_runs WHERE {ACTIVE} ORDER BY created_at, rowid"
