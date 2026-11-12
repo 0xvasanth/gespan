@@ -479,6 +479,7 @@ impl SettingsView {
                 )
             });
         crate::glass::card()
+            .debug_selector(|| "mobile-access-card".into())
             .overflow_hidden()
             .when(stuck, |d| {
                 let mut amber: gpui::Hsla = rgb(AMBER).into();

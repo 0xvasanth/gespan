@@ -657,3 +657,47 @@ fn an_install_hint_yields_its_command() {
     assert_eq!(install_command("broken `unterminated"), None);
     assert_eq!(install_command("empty ``"), None);
 }
+
+#[gpui::test]
+fn accept_connections_shows_once_a_phone_is_paired_and_reachable_only_while_listening(
+    cx: &mut TestAppContext,
+) {
+    let (window, mut visual) = window(Section::Devices, Preferences::default(), cx);
+    let visual = &mut visual;
+    let set = |visual: &mut VisualTestContext, phones: usize, listening: bool| {
+        window
+            .update(visual, |view, _, cx| {
+                view.ctx.mobile = Some(gespan_core::mobile::Status {
+                    enabled: true,
+                    listening,
+                    name: "desk".into(),
+                    fingerprint: None,
+                    addresses: Vec::new(),
+                    devices: (0..phones)
+                        .map(|ix| gespan_core::mobile::Device {
+                            id: format!("p{ix}"),
+                            name: format!("Phone {ix}"),
+                            fingerprint: String::new(),
+                        })
+                        .collect(),
+                    open_router: false,
+                    remote_address: String::new(),
+                    router_status: String::new(),
+                    error: None,
+                });
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        (
+            visual.debug_bounds("mobile-access-card").is_some(),
+            visual.debug_bounds("mobile-reachable").is_some(),
+        )
+    };
+    // Nothing paired: there is nothing to accept yet.
+    assert_eq!(set(visual, 0, true), (false, false));
+    assert_eq!(set(visual, 1, true), (true, true));
+    // Paired but not listening: the switch stays, Reachable doesn't.
+    assert_eq!(set(visual, 1, false), (true, false));
+}

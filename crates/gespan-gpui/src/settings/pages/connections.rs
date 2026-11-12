@@ -725,6 +725,7 @@ impl SettingsView {
         let unavailable = self.ctx.remote.is_none();
         let disabled = busy || unavailable || self.connections.revoking;
         let mut page = vec![div().relative().child(self.reveal_probe("remote-machines"))
+            .px(px(4.))
             .flex().items_end().justify_between().gap_4()
             .child(div().min_w_0().flex_1()
                 .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("Your machines"))
