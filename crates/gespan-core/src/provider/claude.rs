@@ -66,7 +66,9 @@ pub(super) fn configure(
             "Read,Glob,Grep",
         ]);
     }
-    if settings.mount.as_ref().is_some_and(|mount| mount.exclusive) {
+    // A review loads no user or project MCP server: Gespan's own tools come
+    // over the control channel, which strict mode leaves alone.
+    if review || settings.mount.as_ref().is_some_and(|mount| mount.exclusive) {
         command.arg("--strict-mcp-config");
     }
     if mode == "bypassPermissions" {
@@ -78,12 +80,13 @@ pub(super) fn configure(
     }
     if review {
         // Flag settings rank above user settings, and an ask rule beats any
-        // allow rule (deny > ask > allow), so a user's `Bash(gh:*)` cannot
-        // approve a command before it reaches the prompt tool. Hooks are off
+        // allow rule (deny > ask > allow), so a user's `Bash(gh:*)` or
+        // `mcp__github__*` cannot approve a call before it reaches the prompt
+        // tool. Hooks are off
         // because a PreToolUse hook can approve a call on its own, and the
         // sandbox must not auto-approve Bash either.
         config["permissions"] = json!({
-            "ask": ["Bash"],
+            "ask": ["Bash", "mcp__*"],
             "deny": ["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"],
         });
         config["sandbox"] = json!({"autoAllowBashIfSandboxed": false});
