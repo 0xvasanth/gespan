@@ -85,6 +85,20 @@ pub(super) fn access_label(mode: &str) -> &'static str {
         _ => "Auto",
     }
 }
+/// The access mode a run gets: a review always runs read-only, whatever mode
+/// a legacy automation stored.
+pub(super) fn effective_mode(draft: &AutomationUpsert) -> &str {
+    if draft.review_results.is_some() {
+        "read-only"
+    } else {
+        &draft.runtime_mode
+    }
+}
+/// Why the access chip is locked, shown as its tooltip.
+pub(super) fn access_hint(draft: &AutomationUpsert) -> Option<&'static str> {
+    (draft.harness != "fx" && draft.review_results.is_some())
+        .then_some("Reviews always run read-only")
+}
 pub(super) fn is_effort(id: &str) -> bool {
     matches!(
         id,
@@ -925,7 +939,7 @@ impl Automations {
                 .text_size(px(11.)),
             );
         }
-        if draft.harness != "fx" && draft.review_results.is_some() {
+        if let Some(hint) = access_hint(draft) {
             // Launch forces a review read-only, so there is nothing to choose.
             controls = controls.child(
                 div()
@@ -943,7 +957,10 @@ impl Automations {
                     .text_size(px(11.))
                     .text_color(content(0.6))
                     .child(icon("lock", 14.))
-                    .child("Read-only"),
+                    .child("Read-only")
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| crate::conversation::HintTooltip(hint)).into()
+                    }),
             );
         } else if draft.harness != "fx" {
             controls = controls.child(
