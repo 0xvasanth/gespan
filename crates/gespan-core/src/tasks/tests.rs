@@ -60,7 +60,12 @@ fn history_groups_rows_into_turns_from_each_user_message() {
 #[test]
 fn history_returns_the_last_n_turns_and_counts_the_rest() {
     let rows: Vec<Row> = (1..=6)
-        .flat_map(|n| [row("user", &format!("ask {n}")), row("assistant", &format!("reply {n}"))])
+        .flat_map(|n| {
+            [
+                row("user", &format!("ask {n}")),
+                row("assistant", &format!("reply {n}")),
+            ]
+        })
         .collect();
     let history = history(&rows, None, 4);
     assert_eq!(history.turns.len(), 4);
@@ -110,7 +115,11 @@ fn reasoning_hidden_and_blank_rows_are_skipped() {
 
 #[test]
 fn tool_rows_use_the_readable_presentation() {
-    let rows = [row("user", "Go"), bash("t1", "cargo fmt --all"), row("tool", "{")];
+    let rows = [
+        row("user", "Go"),
+        bash("t1", "cargo fmt --all"),
+        row("tool", "{"),
+    ];
     let history = history(&rows, None, 4);
     let Entry::Tools { summaries, .. } = &history.turns[0].entries[1] else {
         panic!("expected tools");
@@ -136,4 +145,153 @@ fn tools_label_counts() {
         at: None,
     };
     assert_eq!(you.tools_label(), None);
+}
+
+fn choices(options: &[&str]) -> Row {
+    row(
+        "pilot-card",
+        &serde_json::json!({ "type": "choices", "options": options }).to_string(),
+    )
+}
+
+#[test]
+fn a_choices_card_is_open_until_a_user_row_follows_it() {
+    let mut rows = vec![row("assistant", "Which first?"), choices(&["A", "B"])];
+    let open = open_choice(&rows).expect("open");
+    assert_eq!(open.row, 1);
+    assert_eq!(open.options, ["A", "B"]);
+    rows.push(row("user", "A"));
+    assert_eq!(open_choice(&rows), None);
+}
+
+#[test]
+fn only_the_latest_choices_card_counts() {
+    let rows = [
+        choices(&["Old"]),
+        row("assistant", "Again"),
+        choices(&["New", "Other"]),
+    ];
+    let open = open_choice(&rows).expect("open");
+    assert_eq!(open.row, 2);
+    assert_eq!(open.options, ["New", "Other"]);
+}
+
+#[test]
+fn other_cards_and_malformed_json_are_not_choices() {
+    assert_eq!(open_choice(&[row("pilot-card", "{\"type\":\"pr\"}")]), None);
+    assert_eq!(open_choice(&[row("pilot-card", "{")]), None);
+    assert_eq!(open_choice(&[choices(&[])]), None);
+}
+
+fn visit(
+    seq: u32,
+    state: &str,
+    status: crate::flow::VisitStatus,
+    prompt: Option<&str>,
+) -> crate::flow::FlowVisit {
+    crate::flow::FlowVisit {
+        id: format!("v{seq}"),
+        run_id: "run".into(),
+        seq,
+        state_id: state.into(),
+        status,
+        prompt: prompt.map(Into::into),
+        session_id: None,
+        outputs: None,
+        error: None,
+        retried: false,
+        note: None,
+        started_at: 1_000 * i64::from(seq),
+        finished_at: None,
+    }
+}
+
+#[test]
+fn flow_history_lists_finished_steps_then_the_prompt() {
+    use crate::flow::VisitStatus::*;
+    let visits = [
+        visit(1, "changelog", Completed, None),
+        visit(2, "ci", Completed, None),
+        visit(3, "publish", WaitingApproval, Some("Publish 0.1.3?")),
+    ];
+    assert_eq!(waiting_visit(&visits).map(|v| v.seq), Some(3));
+    let history = flow_history(&visits);
+    assert_eq!(history.earlier, 0);
+    assert_eq!(history.turns.len(), 1);
+    let entries = &history.turns[0].entries;
+    assert_eq!(entries.len(), 2);
+    let Entry::Tools { summaries, .. } = &entries[0] else {
+        panic!("expected steps");
+    };
+    assert_eq!(
+        summaries,
+        &["Step 1 · changelog · passed", "Step 2 · ci · passed"]
+    );
+    let Entry::Agent { text, .. } = &entries[1] else {
+        panic!("expected the prompt");
+    };
+    assert_eq!(text, "Publish 0.1.3?");
+}
+
+#[test]
+fn a_run_without_a_waiting_step_has_none() {
+    use crate::flow::VisitStatus::*;
+    assert!(waiting_visit(&[visit(1, "a", Running, None)]).is_none());
+}
+
+#[test]
+fn filter_keeps_by_project_kind_wait_and_query() {
+    let hour = 60 * 60 * 1000;
+    let mut filter = Filter::default();
+    assert!(filter.keeps("gespan", Kind::Question, 0, "anything"));
+    filter.hidden_projects.insert("gespan".into());
+    assert!(!filter.keeps("gespan", Kind::Question, 0, ""));
+    assert!(filter.keeps("ae-staging", Kind::Question, 0, ""));
+    filter = Filter::default();
+    filter.hidden_kinds.insert(Kind::FlowApproval);
+    assert!(!filter.keeps("gespan", Kind::FlowApproval, 0, ""));
+    assert!(filter.keeps("gespan", Kind::Approval, 0, ""));
+    filter = Filter {
+        min_wait: MinWait::Hour,
+        ..Filter::default()
+    };
+    assert!(!filter.keeps("gespan", Kind::Question, hour - 60_000, ""));
+    assert!(filter.keeps("gespan", Kind::Question, hour, ""));
+    filter.min_wait = MinWait::EightHours;
+    assert!(!filter.keeps("gespan", Kind::Question, hour, ""));
+    filter = Filter {
+        query: "FSID".into(),
+        ..Filter::default()
+    };
+    assert!(filter.keeps("gespan", Kind::Question, 0, "How is fsidCount kept?"));
+    assert!(!filter.keeps("gespan", Kind::Question, 0, "Run a script?"));
+}
+
+#[test]
+fn filter_is_active_only_when_something_is_hidden_or_a_wait_is_set() {
+    let mut filter = Filter {
+        query: "words".into(),
+        ..Filter::default()
+    };
+    assert!(!filter.is_active());
+    filter.min_wait = MinWait::Hour;
+    assert!(filter.is_active());
+    filter = Filter::default();
+    filter.hidden_kinds.insert(Kind::PilotChoice);
+    assert!(filter.is_active());
+    assert_eq!(MinWait::EightHours.minutes(), 480);
+    assert_eq!(Kind::PilotChoice.label(), "Pilot choices");
+}
+
+#[test]
+fn order_puts_the_longest_wait_first() {
+    let mut items = [
+        ("new", 300u64),
+        ("oldest", 100),
+        ("middle", 200),
+        ("tie", 100),
+    ];
+    order(&mut items, |item| item.1);
+    let names: Vec<_> = items.iter().map(|i| i.0).collect();
+    assert_eq!(names, ["oldest", "tie", "middle", "new"]);
 }

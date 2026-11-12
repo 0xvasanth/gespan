@@ -1,14 +1,25 @@
 //! My tasks: what waits on the user, and the recent history shown with it.
+use crate::flow::{FlowVisit, VisitStatus};
 use crate::tool::ToolCall;
 use crate::transcript::Row;
+use std::collections::HashSet;
 
 /// One line of a turn in the read-only history.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Entry {
-    You { text: String, at: Option<u64> },
-    Agent { text: String, at: Option<u64> },
+    You {
+        text: String,
+        at: Option<u64>,
+    },
+    Agent {
+        text: String,
+        at: Option<u64>,
+    },
     /// Back-to-back tool calls, shown as one line that never expands.
-    Tools { summaries: Vec<String>, at: Option<u64> },
+    Tools {
+        summaries: Vec<String>,
+        at: Option<u64>,
+    },
 }
 
 impl Entry {
@@ -103,6 +114,165 @@ fn tool_summary(text: &str, cwd: Option<&str>) -> String {
         "" => "Tool call".into(),
         line => line.into(),
     }
+}
+
+/// The latest `choices` card a Pilot posted, while no user message follows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenChoice {
+    pub row: usize,
+    pub options: Vec<String>,
+    pub at: Option<u64>,
+}
+
+/// The Pilot chat's open choice, if its last card asks one and the user has
+/// not written since.
+pub fn open_choice(rows: &[Row]) -> Option<OpenChoice> {
+    let at = rows
+        .iter()
+        .rposition(|r| r.first && (r.role == "pilot-card" || r.role == "user"))?;
+    let row = &rows[at];
+    if row.role != "pilot-card" {
+        return None;
+    }
+    let card: serde_json::Value = serde_json::from_str(&row.text).ok()?;
+    if card["type"] != "choices" {
+        return None;
+    }
+    let options: Vec<String> = card["options"]
+        .as_array()?
+        .iter()
+        .filter_map(|o| o.as_str().map(str::to_owned))
+        .collect();
+    (!options.is_empty()).then(|| OpenChoice {
+        row: at,
+        options,
+        at: row.sent_at,
+    })
+}
+
+/// The step of a Flow run that waits for approval.
+pub fn waiting_visit(visits: &[FlowVisit]) -> Option<&FlowVisit> {
+    visits
+        .iter()
+        .rev()
+        .find(|v| v.status == VisitStatus::WaitingApproval)
+}
+
+/// A Flow run as one turn: its earlier steps on one line, then what the
+/// waiting step asks.
+pub fn flow_history(visits: &[FlowVisit]) -> History {
+    let mut entries = Vec::new();
+    let steps: Vec<String> = visits
+        .iter()
+        .filter(|v| v.status != VisitStatus::WaitingApproval)
+        .map(|v| {
+            let status = match v.status {
+                VisitStatus::Completed => "passed",
+                status => status.as_str(),
+            };
+            format!("Step {} · {} · {status}", v.seq, v.state_id)
+        })
+        .collect();
+    if !steps.is_empty() {
+        let at = visits
+            .iter()
+            .map(|v| v.finished_at.unwrap_or(v.started_at))
+            .max();
+        entries.push(Entry::Tools {
+            summaries: steps,
+            at: at.and_then(|ms| u64::try_from(ms).ok()),
+        });
+    }
+    let waiting = waiting_visit(visits);
+    let prompt = waiting.and_then(|w| w.prompt.as_deref().filter(|p| !p.trim().is_empty()));
+    if let (Some(waiting), Some(prompt)) = (waiting, prompt) {
+        entries.push(Entry::Agent {
+            text: prompt.trim().into(),
+            at: u64::try_from(waiting.started_at).ok(),
+        });
+    }
+    History {
+        turns: (!entries.is_empty())
+            .then(|| vec![Turn { entries }])
+            .unwrap_or_default(),
+        earlier: 0,
+    }
+}
+
+/// What a task asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Kind {
+    Question,
+    Approval,
+    FlowApproval,
+    PilotChoice,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 4] = [
+        Kind::Question,
+        Kind::Approval,
+        Kind::FlowApproval,
+        Kind::PilotChoice,
+    ];
+    /// The filter menu's name for this kind.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Question => "Questions",
+            Self::Approval => "Tool approvals",
+            Self::FlowApproval => "Flow approvals",
+            Self::PilotChoice => "Pilot choices",
+        }
+    }
+}
+
+/// The WAITING filter: how long a task must have waited to be shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MinWait {
+    #[default]
+    Any,
+    Hour,
+    EightHours,
+}
+
+impl MinWait {
+    pub fn minutes(self) -> u64 {
+        match self {
+            Self::Any => 0,
+            Self::Hour => 60,
+            Self::EightHours => 480,
+        }
+    }
+}
+
+/// What the list shows. Everything is shown by default.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Filter {
+    pub hidden_projects: HashSet<String>,
+    pub hidden_kinds: HashSet<Kind>,
+    pub min_wait: MinWait,
+    pub query: String,
+}
+
+impl Filter {
+    /// Whether the filter menu hides anything; the search field is apart.
+    pub fn is_active(&self) -> bool {
+        !self.hidden_projects.is_empty()
+            || !self.hidden_kinds.is_empty()
+            || self.min_wait != MinWait::Any
+    }
+    pub fn keeps(&self, project: &str, kind: Kind, waited_ms: u64, text: &str) -> bool {
+        let query = self.query.trim().to_lowercase();
+        !self.hidden_projects.contains(project)
+            && !self.hidden_kinds.contains(&kind)
+            && waited_ms >= self.min_wait.minutes() * 60_000
+            && (query.is_empty() || text.to_lowercase().contains(&query))
+    }
+}
+
+/// Longest wait first: the earliest `since` leads; ties keep their order.
+pub fn order<T>(items: &mut [T], since: impl Fn(&T) -> u64) {
+    items.sort_by_key(since);
 }
 
 #[cfg(test)]
