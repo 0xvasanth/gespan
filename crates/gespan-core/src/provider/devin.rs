@@ -33,6 +33,20 @@ pub(super) fn supervised_args() -> Result<Vec<String>, String> {
     Ok(vec!["--config".into(), path.to_string_lossy().into_owned()])
 }
 
+/// The `--config` arguments for a pull request review: the user's config
+/// with no `allow` rule, so every command goes through Gespan's review policy
+/// instead of being approved by a grant the user made for their own work.
+pub(super) fn review_args() -> Result<Vec<String>, String> {
+    let config = without_allow_rules(read_user_config()?.as_deref())?;
+    let dir = std::env::var_os("GESPAN_NATIVE_DATA_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs_home().map(|home| PathBuf::from(home).join(".cache/gespan-native")))
+        .ok_or("No user data directory available for Devin's review config")?
+        .join("devin");
+    let path = write_once(&dir, &config)?;
+    Ok(vec!["--config".into(), path.to_string_lossy().into_owned()])
+}
+
 pub(super) fn api_key() -> Option<String> {
     let home = dirs_home()?;
     let mut candidates = Vec::new();
@@ -635,6 +649,14 @@ pub(crate) fn ask_before_edits(user: Option<&str>) -> Result<String, String> {
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
 }
 
+/// [`ask_before_edits`] with `permissions.allow` emptied.
+pub(crate) fn without_allow_rules(user: Option<&str>) -> Result<String, String> {
+    let mut config: Value =
+        serde_json::from_str(&ask_before_edits(user)?).map_err(|e| e.to_string())?;
+    config["permissions"]["allow"] = json!([]);
+    serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
+}
+
 /// Named by content so a running child's file is never rewritten in place.
 fn write_once(dir: &Path, contents: &str) -> Result<PathBuf, String> {
     let mut hasher = DefaultHasher::new();
@@ -766,6 +788,29 @@ mod tests {
         ] {
             assert!(ask_before_edits(Some(user)).is_err(), "Accepted {user}");
         }
+    }
+
+    #[test]
+    fn a_review_config_drops_every_allow_rule_and_keeps_the_rest() {
+        let user = r#"{
+            // Grants that would run a command without asking Gespan.
+            "agent": { "model": "swe-2-high" },
+            "permissions": {
+                "allow": ["Exec(gh)", "Exec(git status)"],
+                "deny": ["Write(.env*)"],
+                "ask": ["exec"]
+            }
+        }"#;
+        let config = without_allow_rules(Some(user)).unwrap();
+        let value: Value = serde_json::from_str(&config).unwrap();
+        assert_eq!(value["agent"]["model"], "swe-2-high");
+        assert_eq!(value["permissions"]["allow"], json!([]));
+        assert_eq!(value["permissions"]["deny"], json!(["Write(.env*)"]));
+        assert_eq!(ask_rules(&config), vec!["exec", ASK_EDITS_RULE]);
+        let empty: Value = serde_json::from_str(&without_allow_rules(None).unwrap()).unwrap();
+        assert_eq!(empty["permissions"]["allow"], json!([]));
+        assert!(without_allow_rules(Some(r#"{"permissions":{"allow":"x"}}"#)).is_ok());
+        assert!(without_allow_rules(Some("{} /* unterminated")).is_err());
     }
 
     #[test]
