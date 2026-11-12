@@ -8,7 +8,7 @@ use crate::review_policy::ReviewResults;
 
 /// What the reviewer is told to look for. Where the review goes is added at
 /// launch from `review_policy::instruction`, not here.
-pub const REVIEW_PROMPT: &str = "Review the newly opened pull request.\n\nCheck for:\n- Correctness bugs and regressions\n- Missing tests for the changed behavior\n- Security or data-loss risks\n- API / contract breakage\n\nBlockers first, then suggestions. Do not nitpick formatting. If the change is good, say so briefly and note residual risk.";
+pub const REVIEW_PROMPT: &str = "Review this pull request.\n\nCheck for:\n- Correctness bugs and regressions\n- Missing tests for the changed behavior\n- Security or data-loss risks\n- API / contract breakage\n\nBlockers first, then suggestions. Do not nitpick formatting. If the change is good, say so briefly and note residual risk.";
 
 /// Which pull requests start a review.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,6 +107,9 @@ mod tests {
                     assert_eq!(draft.action, AutomationAction::Session);
                     assert_eq!(draft.review_results, Some(results));
                     assert_eq!(draft.prompt, REVIEW_PROMPT);
+                    // Fits a review request as well as a newly opened PR.
+                    assert!(draft.prompt.starts_with("Review this pull request.\n"));
+                    assert!(!draft.prompt.contains("newly opened"));
                     let expected: &[&str] = match which {
                         WhichPrs::ReviewRequested => &["pull_request_review_requested"],
                         WhichPrs::Opened => &["pull_request_opened"],

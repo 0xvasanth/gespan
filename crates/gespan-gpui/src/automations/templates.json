@@ -77,7 +77,7 @@
       "event": "pull_request_review_requested"
     },
     "triggerLabel": "Review requested",
-    "prompt": "Review the newly opened pull request.\n\nCheck for:\n- Correctness bugs and regressions\n- Missing tests for the changed behavior\n- Security or data-loss risks\n- API / contract breakage\n\nLeave a structured review: blockers first, then suggestions. Do not nitpick formatting. If the change is good, say so briefly and note residual risk."
+    "prompt": "Review this pull request.\n\nCheck for:\n- Correctness bugs and regressions\n- Missing tests for the changed behavior\n- Security or data-loss risks\n- API / contract breakage\n\nLeave a structured review: blockers first, then suggestions. Do not nitpick formatting. If the change is good, say so briefly and note residual risk."
   },
   {
     "id": "dependency-audit",
