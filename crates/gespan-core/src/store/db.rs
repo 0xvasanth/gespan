@@ -125,6 +125,11 @@ impl Arg for bool {
         Value::I64(i64::from(self))
     }
 }
+impl Arg for Vec<u8> {
+    fn arg(self) -> Value {
+        Value::Bytes(self)
+    }
+}
 impl<T: Arg> Arg for Option<T> {
     fn arg(self) -> Value {
         self.map_or(Value::Null, Arg::arg)
@@ -174,6 +179,35 @@ fn from_sqlite(value: rusqlite::types::ValueRef<'_>) -> Value {
     }
 }
 
+/// A raw statement with `args` bound, for code that runs it itself (on a
+/// Toasty transaction, say: `statement(..).exec(&mut *tx)`).
+pub(crate) fn statement(sql: &str, args: Vec<Value>) -> toasty::sql::Statement {
+    args.into_iter()
+        .fold(toasty::sql::statement(sql), |s, arg| {
+            let ty = bind_type(&arg);
+            s.bind_typed(arg, ty)
+        })
+}
+
+/// A raw query with `args` bound; [`rows`] reads what it returns.
+pub(crate) fn query(sql: &str, args: Vec<Value>) -> toasty::sql::Query {
+    args.into_iter().fold(toasty::sql::query(sql), |q, arg| {
+        let ty = bind_type(&arg);
+        q.bind_typed(arg, ty)
+    })
+}
+
+/// The rows a raw Toasty query returned.
+pub(crate) fn rows(values: Vec<Value>) -> Result<Vec<SqlRow>, String> {
+    values
+        .into_iter()
+        .map(|row| match row {
+            Value::Record(record) => Ok(SqlRow(record.fields)),
+            other => Err(format!("Unexpected row {other:?}")),
+        })
+        .collect()
+}
+
 /// Where a store's SQL runs.
 #[derive(Clone, Copy)]
 pub(crate) enum Sql<'a> {
@@ -189,18 +223,8 @@ impl<'a> Sql<'a> {
     pub(crate) fn query(self, sql: &str, args: Vec<Value>) -> Result<Vec<SqlRow>, String> {
         match self {
             Sql::Orm(database) => {
-                let mut query = toasty::sql::query(sql);
-                for arg in args {
-                    let ty = bind_type(&arg);
-                    query = query.bind_typed(arg, ty);
-                }
-                let rows = database.run(|mut db| async move { query.exec(&mut db).await })?;
-                rows.into_iter()
-                    .map(|row| match row {
-                        Value::Record(record) => Ok(SqlRow(record.fields)),
-                        other => Err(format!("Unexpected row {other:?}")),
-                    })
-                    .collect()
+                let query = query(sql, args);
+                rows(database.run(|mut db| async move { query.exec(&mut db).await })?)
             }
             Sql::Conn(conn) => {
                 let mut statement = conn.prepare_cached(sql).map_err(|e| e.to_string())?;
@@ -250,11 +274,7 @@ impl<'a> Sql<'a> {
     pub(crate) fn execute(self, sql: &str, args: Vec<Value>) -> Result<usize, String> {
         match self {
             Sql::Orm(database) => {
-                let mut statement = toasty::sql::statement(sql);
-                for arg in args {
-                    let ty = bind_type(&arg);
-                    statement = statement.bind_typed(arg, ty);
-                }
+                let statement = statement(sql, args);
                 database
                     .run(|mut db| async move { statement.exec(&mut db).await })
                     .map(|count| count as usize)

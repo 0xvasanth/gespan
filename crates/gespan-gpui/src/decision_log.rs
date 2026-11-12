@@ -374,8 +374,136 @@ fn install_harness_writer(store: Database) {
             return;
         }
         let store = store.clone();
-        std::thread::spawn(move || write_harness_files(&store, true));
+        std::thread::spawn(move || {
+            write_harness_files(&store, true);
+            // Entries changed outside the log's own writes (My tasks saves
+            // and edits) get their vectors here; nothing while it is off.
+            refresh_vectors();
+        });
     }));
+}
+
+/// Whether search by meaning should be on: its setting, and the log's.
+pub(crate) fn meaning_wanted(prefs: &crate::settings::Preferences) -> bool {
+    prefs.decision_log && prefs.decision_meaning
+}
+
+/// What the "Find related decisions by meaning" row says, including how the
+/// model is doing.
+pub(crate) fn meaning_description() -> String {
+    let about = "Match decisions by what they mean, not only their words, when agents \
+                 search and when you review a proposal. Downloads a 137 MB model the first \
+                 time and runs it on this Mac.";
+    match &*MEANING_STATUS.lock().unwrap_or_else(|e| e.into_inner()) {
+        Some(status) => format!("{about} {status}"),
+        None => about.to_string(),
+    }
+}
+
+/// The last thing worth telling the user about the model (downloading, or
+/// why it could not be used); `None` once it is in use or switched off.
+static MEANING_STATUS: Mutex<Option<String>> = Mutex::new(None);
+/// What search by meaning was last switched to, so each change is applied
+/// once.
+static MEANING: Mutex<Option<bool>> = Mutex::new(None);
+/// Bumped on every switch, so a slow load that was switched off meanwhile
+/// does not turn it back on.
+static MEANING_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn set_meaning_status(status: Option<String>) {
+    *MEANING_STATUS.lock().unwrap_or_else(|e| e.into_inner()) = status;
+}
+
+/// Applies the search-by-meaning switch: called with every preferences
+/// apply. On: the model is downloaded if it is missing, loaded and handed to
+/// the log, which embeds every entry that needs it. Off: the log goes back
+/// to keyword search. All of it on its own thread, never the UI's, and
+/// never under `locked`.
+pub(crate) fn meaning_switched(on: bool) {
+    use std::sync::atomic::Ordering;
+    let previous = MEANING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .replace(on);
+    if previous == Some(on) || (previous.is_none() && !on) {
+        return;
+    }
+    let generation = MEANING_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let current = move || MEANING_GENERATION.load(Ordering::SeqCst) == generation;
+    std::thread::spawn(move || {
+        if !on {
+            set_meaning_status(None);
+            let _ = gespan_core::decisions::service::with(|log| log.set_embedder(None));
+            return;
+        }
+        match load_embedder(&current) {
+            Ok(Some(embedder)) if current() => {
+                set_meaning_status(None);
+                match gespan_core::decisions::service::with(|log| log.set_embedder(Some(embedder)))
+                {
+                    Ok(Ok(())) | Err(_) => {}
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "the decision log could not embed its entries");
+                        set_meaning_status(Some(format!("Embedding failed: {error}")));
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(%error, "the decision embedding model is not available");
+                set_meaning_status(Some(error));
+            }
+        }
+    });
+}
+
+/// Downloads (when missing) and loads the Nomic model. `None` when it was
+/// switched off while downloading.
+#[cfg(feature = "nomic")]
+fn load_embedder(
+    current: &dyn Fn() -> bool,
+) -> Result<Option<std::sync::Arc<dyn gespan_core::decisions::Embedder>>, String> {
+    use gespan_core::decisions::embed::{NOMIC_MODEL, Nomic};
+    use gespan_models::{CancelToken, ModelStatus, ModelStore, default_root};
+    let models = ModelStore::new(default_root());
+    if models.status(&NOMIC_MODEL) != ModelStatus::Ready {
+        set_meaning_status(Some("Downloading the model…".into()));
+        let cancel = CancelToken::new();
+        let downloaded = models.download(&NOMIC_MODEL, &cancel, |progress| {
+            if !current() {
+                cancel.cancel();
+            }
+            let percent = progress.downloaded * 100 / progress.total.max(1);
+            set_meaning_status(Some(format!("Downloading the model… {percent}%")));
+        });
+        match downloaded {
+            Ok(()) => {}
+            Err(gespan_models::DownloadError::Cancelled) => return Ok(None),
+            Err(e) => return Err(format!("The model could not be downloaded: {e}")),
+        }
+        if !current() {
+            return Ok(None);
+        }
+    }
+    set_meaning_status(Some("Loading the model…".into()));
+    let nomic = Nomic::load(&models.dir(&NOMIC_MODEL)).map_err(|e| e.to_string())?;
+    Ok(Some(std::sync::Arc::new(nomic)))
+}
+
+/// This build has no embedding model: search stays keyword only.
+#[cfg(not(feature = "nomic"))]
+fn load_embedder(
+    _current: &dyn Fn() -> bool,
+) -> Result<Option<std::sync::Arc<dyn gespan_core::decisions::Embedder>>, String> {
+    Err("This build of Gespan has no embedding model, so search stays by words.".into())
+}
+
+/// Embeds the log's entries that need it, while search by meaning is on.
+fn refresh_vectors() {
+    match gespan_core::decisions::service::with(|log| log.reembed()) {
+        Ok(Ok(_)) | Err(_) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "the decision log could not embed its entries"),
+    }
 }
 
 /// Regenerates (or, with `regenerate` off, removes) every harness file for

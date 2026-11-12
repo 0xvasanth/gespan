@@ -224,6 +224,9 @@ pub enum Error {
     BadValue(String),
     /// A pending entry's wording is no longer what the user was shown.
     Changed,
+    /// The embedder could not turn text into a vector, or its vectors do not
+    /// fit the log's vector table.
+    Embed(String),
 }
 
 impl fmt::Display for Error {
@@ -238,6 +241,7 @@ impl fmt::Display for Error {
             Error::FlagNotFound(id) => write!(f, "flag {id} does not exist"),
             Error::BadValue(value) => write!(f, "stored value {value:?} is not recognised"),
             Error::Changed => f.write_str("This proposal changed. Review it again."),
+            Error::Embed(error) => write!(f, "embedding: {error}"),
         }
     }
 }

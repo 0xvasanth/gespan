@@ -73,6 +73,10 @@ pub(crate) struct Preferences {
     /// Keep preferences and project decisions in Gespan and give them to
     /// every agent. Off until the user turns it on.
     pub decision_log: bool,
+    /// Find related decisions by meaning (local embeddings), not just by
+    /// words. Only applies while the decision log is on; the model is
+    /// downloaded the first time it is turned on. Off by default.
+    pub decision_meaning: bool,
     pub binary_paths: HashMap<String, String>,
     pub disabled_skill_paths: Vec<String>,
     pub skill_source_paths: Vec<String>,
@@ -181,6 +185,7 @@ impl Default for Preferences {
             keep_awake: "off".into(),
             claude_hooks: true,
             decision_log: false,
+            decision_meaning: false,
             binary_paths: HashMap::new(),
             disabled_skill_paths: Vec::new(),
             skill_source_paths: Vec::new(),
@@ -645,5 +650,19 @@ mod tests {
         assert!(!saved.decision_log);
         let on: Preferences = serde_json::from_str(r#"{"decision_log":true}"#).unwrap();
         assert!(on.decision_log);
+    }
+
+    #[test]
+    fn related_by_meaning_is_opt_in_and_needs_the_log() {
+        assert!(!Preferences::default().decision_meaning);
+        let saved: Preferences = serde_json::from_str(r#"{"decision_log":true}"#).unwrap();
+        assert!(!saved.decision_meaning, "saved before it existed: off");
+        let both: Preferences =
+            serde_json::from_str(r#"{"decision_log":true,"decision_meaning":true}"#).unwrap();
+        assert!(both.decision_meaning);
+        assert!(crate::decision_log::meaning_wanted(&both));
+        let log_off: Preferences =
+            serde_json::from_str(r#"{"decision_log":false,"decision_meaning":true}"#).unwrap();
+        assert!(!crate::decision_log::meaning_wanted(&log_off));
     }
 }

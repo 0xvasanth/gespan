@@ -446,6 +446,11 @@ impl Shell {
         // On: harness files are (re)written; switched off: what Gespan wrote
         // is removed. Off the UI thread either way.
         crate::decision_log::decision_log_switched(self.workspace.preferences.decision_log);
+        // Search by meaning: the model loads (and downloads, the first
+        // time) off the UI thread.
+        crate::decision_log::meaning_switched(crate::decision_log::meaning_wanted(
+            &self.workspace.preferences,
+        ));
         self.keep_visible_idle_agents(cx);
         gespan_core::provider::configure_idle_agents(
             self.workspace.preferences.idle_agents as usize,

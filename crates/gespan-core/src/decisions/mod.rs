@@ -1,6 +1,7 @@
 //! The decision log: preferences and project decisions shared by every agent.
 
 pub mod context;
+pub mod embed;
 pub mod entry;
 pub mod files;
 pub mod harness;
@@ -11,8 +12,10 @@ pub mod scope;
 pub mod service;
 pub mod store;
 pub(crate) mod toolkit;
+pub(crate) mod vector;
 
 pub use context::{reads_decision_file, start_context};
+pub use embed::{Embedder, HashEmbedder};
 pub use entry::{
     Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, ShownHash, Source, Status,
     MAX_FIELD_CHARS,

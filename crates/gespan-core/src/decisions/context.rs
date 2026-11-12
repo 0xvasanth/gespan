@@ -17,7 +17,8 @@ pub fn reads_decision_file(kind: Kind) -> bool {
 /// The block to inject into this session now, with its hash: `None` when the
 /// log is off or closed, the harness reads the decision file itself and
 /// Gespan's project file is in place, or `already` (the hash stored when the
-/// block was last delivered) matches. A checkout Gespan has not written yet
+/// block was last delivered) matches. With search by meaning on, the block
+/// holds preferences and pinned decisions only. A checkout Gespan has not written yet
 /// (a new worktree) gets the block, so no session goes without the log.
 pub fn start_context(
     kind: Kind,
@@ -30,7 +31,17 @@ pub fn start_context(
         return None;
     }
     let scope = scope_for(workspace);
-    let entries = match service::with(|store| store.visible(&scope)) {
+    // With search by meaning on, the start block holds the preferences and
+    // the pinned decisions; the rest come per turn or through search.
+    let entries = match service::with(|store| {
+        let by_meaning = store.embedder().is_some();
+        store.visible(&scope).map(|entries| {
+            entries
+                .into_iter()
+                .filter(|e| !by_meaning || e.kind == EntryKind::Preference || e.pinned)
+                .collect::<Vec<_>>()
+        })
+    }) {
         Ok(Ok(entries)) => entries,
         Ok(Err(error)) => {
             tracing::warn!(%error, "the decision log could not be read for the session start");

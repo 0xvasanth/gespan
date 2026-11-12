@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Search the decision log by meaning with nomic-embed-text-v1.5 (fastembed).
+nomic = ["dep:fastembed"]
+
 [dependencies]
 serde.workspace = true
 # Stored floats must reload exactly, or saved revisions stop matching.
@@ -13,6 +17,14 @@ rusqlite.workspace = true
 toasty.workspace = true
 toasty-core.workspace = true
 toasty-driver-sqlite.workspace = true
+# The decision log's vectors: `vec0`, compiled against the bundled SQLite
+# above and registered on every connection (`orm::register_sqlite_vec`).
+sqlite-vec = "0.1.9"
+# Its embedding model's pinned files and their downloader.
+gespan-models = { path = "../gespan-models" }
+# Nomic embeddings on the CPU, behind the `nomic` feature. Model files come
+# from gespan-models, so no Hugging Face client.
+fastembed = { version = "7.7", optional = true, default-features = false, features = ["ort-download-binaries-rustls-tls"] }
 # The ORM driver wrapper implements Toasty's async driver traits.
 async-trait = "0.1"
 async-channel = "2"

@@ -40,8 +40,9 @@ const SEARCH_WINDOW: usize = 50;
 
 /// Active entries in `entry`'s own scope (never global or another
 /// project's) that read like it, best match first, at most `limit`: what
-/// approving it might replace. Keyword search over title and text for now;
-/// Task 10 swaps in vectors.
+/// approving it might replace. It is the store's search over title and
+/// text: keyword search, or with search by meaning on, keyword and vector
+/// hits fused, so a rewording that shares no word is offered too.
 pub fn similar_active(store: &DecisionStore, entry: &Entry, limit: usize) -> Vec<Entry> {
     let query = format!("{} {}", entry.title, entry.text);
     let found = store

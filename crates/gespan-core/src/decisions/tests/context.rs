@@ -100,3 +100,60 @@ fn context_once_then_again_only_after_the_log_changes() {
     assert!(!again.contains("Use spaces"), "{again}");
     assert_eq!(context(Kind::Codex, dir.path(), Some(&new_hash)), None);
 }
+
+/// With search by meaning on, the session-start block keeps preferences and
+/// pinned decisions only; the other decisions come per turn or by search.
+#[test]
+fn with_search_by_meaning_the_start_block_has_preferences_and_pinned_only() {
+    let _guard = isolated();
+    let dir = tempfile::tempdir().unwrap();
+    let scope = scope_for(dir.path());
+    approve(&scope, "Use tabs");
+    let pinned = service::with(|store| {
+        let e = store
+            .propose(
+                NewEntry {
+                    kind: EntryKind::Decision,
+                    scope: scope.clone(),
+                    title: "Name branches after tickets".into(),
+                    text: "Always.".into(),
+                    why: "the user said so".into(),
+                    user_answer: None,
+                    source: Source::default(),
+                },
+                10,
+            )
+            .unwrap();
+        store.approve(e.id, None, true, &[], 20).unwrap();
+        let p = store
+            .propose(
+                NewEntry {
+                    kind: EntryKind::Preference,
+                    scope: Scope::Global,
+                    title: "Answer tersely".into(),
+                    text: "Short answers.".into(),
+                    why: "taste".into(),
+                    user_answer: None,
+                    source: Source::default(),
+                },
+                10,
+            )
+            .unwrap();
+        store.approve(p.id, None, false, &[], 20).unwrap();
+    });
+    assert!(pinned.is_ok());
+    let (all, _) = context(Kind::Codex, dir.path(), None).unwrap();
+    assert!(all.contains("Use tabs"), "{all}");
+    service::with(|store| {
+        store
+            .set_embedder(Some(std::sync::Arc::new(
+                crate::decisions::HashEmbedder::new(),
+            )))
+            .unwrap()
+    })
+    .unwrap();
+    let (block, _) = context(Kind::Codex, dir.path(), None).unwrap();
+    assert!(block.contains("Name branches after tickets"), "{block}");
+    assert!(block.contains("Answer tersely"), "{block}");
+    assert!(!block.contains("Use tabs"), "{block}");
+}

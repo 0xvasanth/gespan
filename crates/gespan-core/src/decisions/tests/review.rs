@@ -513,3 +513,25 @@ fn apply_triggers_regenerate() {
     })
     .unwrap();
 }
+
+/// With search by meaning on, a rewording that shares no whole word with the
+/// proposal is offered as what it might replace; keyword search misses it.
+/// It still never leaves the proposal's own scope.
+#[test]
+fn similar_active_finds_rewordings_by_meaning() {
+    let _guard = isolated();
+    service::with(|store| {
+        let other = Scope::Repo("github.com/o/other@0123456789ab".into());
+        let reworded = active(store, &repo(), "History", "Rebasing keeps history linear");
+        let elsewhere = active(store, &other, "Rebase", "Prefer rebase");
+        let e = propose(store, &repo(), "Rebase", "Prefer rebase");
+        assert!(similar_active(store, &e, 3).is_empty(), "no shared word");
+        store
+            .set_embedder(Some(Arc::new(crate::decisions::HashEmbedder::new())))
+            .unwrap();
+        let found: Vec<i64> = similar_active(store, &e, 3).iter().map(|x| x.id).collect();
+        assert_eq!(found, [reworded.id]);
+        assert!(!found.contains(&elsewhere.id));
+    })
+    .unwrap();
+}

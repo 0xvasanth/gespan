@@ -582,6 +582,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "decisions preferences memory remember agents project choices",
     ),
     (
+        "decision-meaning",
+        Section::Providers,
+        "Find related decisions by meaning",
+        "decisions semantic embeddings vectors similar related nomic search model",
+    ),
+    (
         "idle-agents",
         Section::Providers,
         "Keep idle agents ready",

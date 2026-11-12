@@ -45,6 +45,7 @@ impl Kind {
     pub fn models(self) -> ModelSet {
         use crate::automations::{AutomationRow, AutomationRunRow, EventClaimRow, ReviewDraftRow};
         use crate::decisions::store::DecisionFlag;
+        use crate::decisions::vector::DecisionVectorModel;
         use crate::diagnostics::metrics::DiagnosticCounter;
         use crate::flow::store::{FlowRow, FlowRunRow, FlowVisitRow};
         use crate::store::my_tasks::{MyTask, TaskDecision};
@@ -55,6 +56,7 @@ impl Kind {
                     MyTask,
                     TaskDecision,
                     DecisionFlag,
+                    DecisionVectorModel,
                     SessionRecord,
                     TauriMigration,
                     WorkspaceSnapshot,
@@ -114,6 +116,7 @@ impl Kind {
                         crate::automations::CONSTRAINTS,
                         crate::flow::store::CONSTRAINTS,
                         crate::decisions::store::CONSTRAINTS,
+                        crate::decisions::vector::CONSTRAINTS,
                     ]
                     .concat()
                 });

@@ -911,3 +911,40 @@ fn dedup_sees_entries_beyond_the_first_search_hits() {
         "{said}"
     );
 }
+
+/// With search by meaning on, `decisions_search` also finds entries that
+/// share no whole word with the query, and still only in the caller's scope.
+#[test]
+fn search_finds_by_meaning_when_it_is_on() {
+    let _guard = isolated();
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    seed(
+        &scope(dir.path()),
+        Kind::Decision,
+        "History",
+        "Rebasing keeps history linear",
+        true,
+    );
+    seed(
+        &scope(elsewhere.path()),
+        Kind::Decision,
+        "Rebase elsewhere",
+        "Prefer rebase",
+        true,
+    );
+    let g = grant(5, dir.path(), DECISIONS);
+    let search = || call(&FULL, &g, "decisions_search", json!({"query": "rebase"}));
+    assert!(search().contains("No matching"), "keyword search only");
+    service::with(|store| {
+        store
+            .set_embedder(Some(std::sync::Arc::new(
+                crate::decisions::HashEmbedder::new(),
+            )))
+            .unwrap()
+    })
+    .unwrap();
+    let found = search();
+    assert!(found.contains("Rebasing keeps history linear"), "{found}");
+    assert!(!found.contains("elsewhere"), "{found}");
+}

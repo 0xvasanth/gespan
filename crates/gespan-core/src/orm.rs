@@ -44,6 +44,7 @@ impl std::fmt::Debug for Database {
 /// Opens `path` as a `kind` database, adopting and migrating it first.
 /// `:memory:` opens a fresh in-memory database with every migration applied.
 pub fn open(kind: Kind, path: &Path) -> Result<Database, String> {
+    register_sqlite_vec();
     let memory = is_memory(path);
     if !memory {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -75,6 +76,34 @@ pub fn open(kind: Kind, path: &Path) -> Result<Database, String> {
         kind,
         path: path.into(),
     })
+}
+
+/// Registers sqlite-vec (the `vec0` module and `vec_*` functions) with
+/// every SQLite connection this process opens from now on, once, before the
+/// first open. sqlite-vec is compiled against the bundled SQLite that
+/// rusqlite and Toasty's SQLite driver share (one `libsqlite3-sys`), so the
+/// registration reaches Toasty's connections too. A connection opened before
+/// this (none of Gespan's own) would lack `vec0`.
+pub(crate) fn register_sqlite_vec() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    type Entry = unsafe extern "C" fn(
+        *mut rusqlite::ffi::sqlite3,
+        *mut *mut std::ffi::c_char,
+        *const rusqlite::ffi::sqlite3_api_routines,
+    ) -> std::ffi::c_int;
+    ONCE.call_once(|| {
+        // SAFETY: `sqlite3_vec_init` is sqlite-vec's extension entry point,
+        // whose C signature is `Entry`; the crate declares it without
+        // arguments. `sqlite3_auto_extension` only stores the pointer.
+        let rc = unsafe {
+            let init =
+                std::mem::transmute::<*const (), Entry>(sqlite_vec::sqlite3_vec_init as *const ());
+            rusqlite::ffi::sqlite3_auto_extension(Some(init))
+        };
+        if rc != rusqlite::ffi::SQLITE_OK {
+            tracing::error!(rc, "sqlite-vec could not be registered");
+        }
+    });
 }
 
 impl Database {
