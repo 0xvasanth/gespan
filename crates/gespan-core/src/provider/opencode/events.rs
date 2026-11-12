@@ -949,22 +949,28 @@ pub(super) fn error_message(value: &Value) -> String {
         .into()
 }
 
-/// The command an opencode permission asks to run: its `pattern` (a string, or
-/// an array joined into one shell line), else `metadata.command`.
+/// The command an opencode permission asks to run: the literal
+/// `metadata.command` and nothing else. `patterns` are parsed sub-texts of it,
+/// so any that is not contained in it makes the request inconsistent.
 pub(super) fn permission_command(permission: &Value) -> Option<String> {
-    let text = |value: &Value| -> Option<String> {
-        match value {
-            Value::String(text) => Some(text.clone()),
-            Value::Array(words) => {
-                let words: Option<Vec<&str>> = words.iter().map(Value::as_str).collect();
-                shlex::try_join(words?).ok()
-            }
-            _ => None,
+    let command = permission["metadata"]["command"].as_str()?;
+    if command.trim().is_empty() {
+        return None;
+    }
+    for field in ["pattern", "patterns"] {
+        let listed: Vec<&Value> = match &permission[field] {
+            Value::Null => continue,
+            Value::Array(items) => items.iter().collect(),
+            single => vec![single],
+        };
+        if listed
+            .iter()
+            .any(|entry| !entry.as_str().is_some_and(|text| command.contains(text)))
+        {
+            return None;
         }
-    };
-    text(&permission["pattern"])
-        .or_else(|| text(&permission["metadata"]["command"]))
-        .filter(|command| !command.trim().is_empty())
+    }
+    Some(command.to_owned())
 }
 
 /// What a pull request review does with a permission request. `Ask` carries
@@ -975,6 +981,8 @@ fn review_verdict(
     permission: &Value,
 ) -> Result<(Verdict, Option<String>), ()> {
     let action = action.to_lowercase();
+    // Reads are not scoped by path: they cannot leave the machine except
+    // through a command that is judged here, so a read alone does no harm.
     if ["read", "grep", "glob", "search", "find"].contains(&action.as_str()) {
         return Ok((Verdict::Allow, None));
     }
