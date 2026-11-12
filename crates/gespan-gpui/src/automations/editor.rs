@@ -1107,7 +1107,19 @@ impl Automations {
         );
         let results_row = draft.review_results.map(|current| {
             let allowed = review_setup::results_for(&draft.harness);
-            settings_row(
+            let warning = review_setup::post_warning(current).map(|text| {
+                div()
+                    .id("automation-results-post-warning")
+                    .debug_selector(|| "automation-results-post-warning".into())
+                    .role(Role::Note)
+                    .px(px(16.))
+                    .pb(px(10.))
+                    .text_size(px(11.))
+                    .line_height(px(16.))
+                    .text_color(content(0.6))
+                    .child(text)
+            });
+            let row = settings_row(
                 "Results",
                 "What happens with the review",
                 self.select_control(
@@ -1122,7 +1134,15 @@ impl Automations {
                     cx,
                 )
                 .debug_selector(|| "automation-results".into()),
-            )
+            );
+            // The warning sits beneath the choice, inside the same row.
+            div()
+                .flex()
+                .flex_col()
+                .border_b_1()
+                .border_color(content(0.07))
+                .child(row.border_b_0())
+                .children(warning)
         });
         let session = div().mt(px(32.)).child(section("Session")).child(
             div()

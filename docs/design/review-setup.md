@@ -95,6 +95,11 @@ Each bold phrase is an inline dropdown:
 | Model | the same list the editor's model picker shows | the user's default new-session model (`installed_providers::new_session_choice`) |
 | Results | keeps the review in Gespan · drafts a PR review for you to approve · posts the review on the PR | keeps the review in Gespan |
 
+When Results is "posts the review on the PR", a line beneath the choice (in
+the sheet and in the editor's Results row) reads: "Posted reviews skip your
+approval. A pull request can try to make the agent quote local files in its
+review."
+
 Under the sentence:
 
 - **A readiness line.** "GitHub connected as @login ✓", or a problem with a fix

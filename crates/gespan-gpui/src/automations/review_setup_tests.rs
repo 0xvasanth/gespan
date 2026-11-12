@@ -618,3 +618,65 @@ fn sheet_layout_fits(cx: &mut TestAppContext) {
 }
 
 use std::{cell::RefCell, rc::Rc};
+
+const POST_LINE: &str = "Posted reviews skip your approval. A pull request can try to make the agent quote local files in its review.";
+
+#[gpui::test]
+fn the_sheet_warns_beneath_post_only(cx: &mut TestAppContext) {
+    assert_eq!(POST_WARNING, POST_LINE);
+    let page = page();
+    let (window, mut visual) = open_with(&page, connected(), cx);
+    click(&mut visual, CARD);
+    pick_model(&window, &mut visual, Kind::Claude, "claude-sonnet-4-5");
+    for (results, value, shown) in [
+        ("gespan", ReviewResults::Gespan, false),
+        ("post", ReviewResults::Post, true),
+        ("draft", ReviewResults::Draft, false),
+    ] {
+        choose(&window, &mut visual, Choice::SetupResults, results);
+        assert_eq!(input(&window, &visual).results, value);
+        assert_eq!(
+            visual.drawn("review-setup-post-warning").is_some(),
+            shown,
+            "{results}"
+        );
+    }
+    // Beneath the choice: below the sentence that holds it.
+    choose(&window, &mut visual, Choice::SetupResults, "post");
+    let warning = visual.drawn("review-setup-post-warning").unwrap();
+    let sentence = visual.drawn("review-setup-sentence").unwrap();
+    assert!(warning.top() >= sentence.bottom());
+}
+
+#[gpui::test]
+fn the_editor_warns_beneath_post_only(cx: &mut TestAppContext) {
+    for (results, shown) in [
+        (ReviewResults::Gespan, false),
+        (ReviewResults::Draft, false),
+        (ReviewResults::Post, true),
+    ] {
+        let page = page();
+        let mut draft = review_draft(&ReviewSetupInput {
+            cwd: CWD.into(),
+            repo: Some("acme/app".into()),
+            which: WhichPrs::ReviewRequested,
+            harness: "claude".into(),
+            model: "claude-sonnet-4-5".into(),
+            results,
+        });
+        draft.sync_triggers(gespan_core::time::now_ms() as i64);
+        let saved = page.service.lock().unwrap().upsert(draft).unwrap();
+        let (_window, mut visual) = open(&page, CWD, cx);
+        click(&mut visual, &format!("automation-card-{}", saved.id));
+        assert_eq!(
+            visual.drawn("automation-results-post-warning").is_some(),
+            shown,
+            "{results:?}"
+        );
+        if shown {
+            let warning = visual.drawn("automation-results-post-warning").unwrap();
+            let choice = visual.drawn("automation-results").unwrap();
+            assert!(warning.top() >= choice.bottom());
+        }
+    }
+}
