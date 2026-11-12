@@ -67,7 +67,6 @@ pub(super) fn workspace_label(mode: &str) -> &'static str {
         _ => "Current",
     }
 }
-/// The access mode's label, also shown on the Agent card.
 /// What a run can do. A review automation can't wake a Pilot.
 fn action_options(review: bool) -> Vec<(String, String)> {
     if review {
@@ -76,6 +75,7 @@ fn action_options(review: bool) -> Vec<(String, String)> {
         options(&[("session", "Start a session"), ("pilot", "Wake a Pilot")])
     }
 }
+/// The access mode's label, also shown on the Agent card.
 pub(super) fn access_label(mode: &str) -> &'static str {
     match mode {
         "read-only" => "Read-only",
@@ -242,11 +242,18 @@ impl Automations {
         let Some(editor) = &mut self.editor else {
             return;
         };
+        let review = editor.draft.review_results.is_some();
+        // A review can't wake a Pilot (core refuses it) and always runs
+        // read-only, and Results is only a review's. These change nothing.
+        if (review && matches!(field, Choice::Access))
+            || (review && matches!(field, Choice::Action) && value == "pilot")
+            || (!review && matches!(field, Choice::Results))
+        {
+            return;
+        }
         match field {
             // The session settings stay in the draft while a Pilot is chosen,
             // so switching back shows them as they were.
-            // A review automation can't wake a Pilot; core rejects it.
-            Choice::Action if editor.draft.review_results.is_some() => {}
             Choice::Action => {
                 editor.draft.action = if value == "pilot" {
                     AutomationAction::Pilot {
@@ -340,7 +347,6 @@ impl Automations {
             Choice::Results => {
                 if let Some(results) = review_setup::results_from_id(&value)
                     && review_setup::results_for(&editor.draft.harness).contains(&results)
-                    && editor.draft.review_results.is_some()
                 {
                     editor.draft.review_results = Some(results);
                 }
@@ -919,7 +925,27 @@ impl Automations {
                 .text_size(px(11.)),
             );
         }
-        if draft.harness != "fx" {
+        if draft.harness != "fx" && draft.review_results.is_some() {
+            // Launch forces a review read-only, so there is nothing to choose.
+            controls = controls.child(
+                div()
+                    .id("automation-access")
+                    .role(Role::Button)
+                    .aria_label("Read-only. Reviews always run read-only")
+                    .debug_selector(|| "automation-access".into())
+                    .h(px(26.))
+                    .px(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .rounded(px(6.))
+                    .bg(content(0.06))
+                    .text_size(px(11.))
+                    .text_color(content(0.6))
+                    .child(icon("lock", 14.))
+                    .child("Read-only"),
+            );
+        } else if draft.harness != "fx" {
             controls = controls.child(
                 self.select_control(
                     "automation-access",
