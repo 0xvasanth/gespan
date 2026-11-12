@@ -30,26 +30,12 @@ impl Store {
     /// One bounded metadata query per publication. Never decode transcript
     /// bodies or model controls, or load a Conversation just to list it.
     pub fn mobile_session_metadata(&self) -> Result<HashMap<i64, MobileSessionMetadata>, String> {
-        let shared = self.shared.is_some();
-        let query = if shared {
-            "SELECT id,harness,substr(model,1,512),substr(branch,1,512),substr(worktree_cwd,1,4096),
-             coalesce(worktree_removed,0),coalesce(runtime_mode,'supervised') FROM sessions"
-        } else {
-            "SELECT cast(n.id AS TEXT),n.provider,
-             CASE WHEN json_valid(s.value) THEN substr(json_extract(s.value,'$.model'),1,512) END,
-             NULL,
-             CASE WHEN json_valid(s.value) THEN substr(json_extract(s.value,'$.worktree_cwd'),1,4096) END,
-             CASE WHEN json_valid(s.value) THEN coalesce(json_extract(s.value,'$.worktree_removed'),0) ELSE 0 END,
-             CASE WHEN json_valid(s.value) THEN coalesce(json_extract(s.value,'$.access'),'supervised') ELSE 'supervised' END
-             FROM native_sessions n LEFT JOIN native_settings s ON s.key='agent:'||n.id"
-        };
-        let sql = if shared {
-            self.sql()?
-        } else {
-            super::db::Sql::Conn(&self.conn)
-        };
+        // Bounded prefixes of each text column: Toasty 0.11 cannot project
+        // `substr`.
+        let query = "SELECT id,harness,substr(model,1,512),substr(branch,1,512),substr(worktree_cwd,1,4096),
+             coalesce(worktree_removed,0),coalesce(runtime_mode,'supervised') FROM sessions";
         let mut result = HashMap::new();
-        for row in sql.query(query, super::db::args![])? {
+        for row in self.sql()?.query(query, super::db::args![])? {
             let (id, provider, model, branch, worktree_cwd, worktree_removed, access) = (
                 row.get::<String>(0)?,
                 row.get::<String>(1)?,
@@ -59,11 +45,7 @@ impl Store {
                 row.get::<bool>(5)?,
                 row.get::<String>(6)?,
             );
-            let id = if shared {
-                self.shared_register(&id)?
-            } else {
-                id.parse::<i64>().map_err(|e| e.to_string())?
-            };
+            let id = self.shared_register(&id)?;
             result.insert(
                 id,
                 MobileSessionMetadata {
@@ -87,11 +69,7 @@ impl Store {
             worktrees: self.session_worktrees().unwrap_or_default(),
             details: self.mobile_session_metadata().unwrap_or_default(),
             drafts: self.draft_sessions().unwrap_or_default(),
-            sidebar_hidden: if self.shared.is_some() {
-                self.shared_sidebar_hidden().unwrap_or_default()
-            } else {
-                HashSet::new()
-            },
+            sidebar_hidden: self.shared_sidebar_hidden().unwrap_or_default(),
             started_by: self.started_links().unwrap_or_default(),
             orchestrations: self.orchestration_summaries().unwrap_or_default(),
             groups: projects
@@ -117,7 +95,7 @@ mod tests {
         let store = Store::open_gespan(Path::new(":memory:")).unwrap();
         let session = store.create("claude", "/project").unwrap();
         let id = store.persisted_session_id(session.id).unwrap();
-        store.conn.execute("UPDATE sessions SET model='claude:opus-5-5[effort=high]',branch='feature/mobile',worktree_cwd='/project-worktrees/mobile',runtime_mode='full-access',model_settings='broken JSON',blocks_json='broken JSON' WHERE id=?1", [&id]).unwrap();
+        store.conn().execute("UPDATE sessions SET model='claude:opus-5-5[effort=high]',branch='feature/mobile',worktree_cwd='/project-worktrees/mobile',runtime_mode='full-access',model_settings='broken JSON',blocks_json='broken JSON' WHERE id=?1", [&id]).unwrap();
         let metadata = store
             .mobile_session_metadata()
             .unwrap()
@@ -132,7 +110,7 @@ mod tests {
         assert_eq!(metadata.access, AccessMode::FullAccess);
         assert!(!metadata.worktree_removed);
         // Scalar updates need not change updated_at to appear on the phone.
-        store.conn.execute("UPDATE sessions SET model='claude:sonnet',branch='main',worktree_removed=1,runtime_mode='read-only' WHERE id=?1", [&id]).unwrap();
+        store.conn().execute("UPDATE sessions SET model='claude:sonnet',branch='main',worktree_removed=1,runtime_mode='read-only' WHERE id=?1", [&id]).unwrap();
         let next = store
             .mobile_session_metadata()
             .unwrap()
@@ -145,34 +123,19 @@ mod tests {
     }
 
     #[test]
-    fn mobile_metadata_supports_legacy_defaults_and_invalid_settings_without_history_reads() {
-        let store = Store::open(Path::new(":memory:")).unwrap();
-        let first = store.create("codex", "/project").unwrap();
-        let second = store.create("claude", "/other").unwrap();
-        store.conn.execute("INSERT INTO native_settings(key,value) VALUES('agent:'||?1,?2)", rusqlite::params![first.id, serde_json::json!({"model":"codex:gpt-6.1-sol", "worktree_cwd":"/linked", "access":"auto", "worktree_removed":true}).to_string()]).unwrap();
-        store
-            .conn
-            .execute(
-                "INSERT INTO native_settings(key,value) VALUES('agent:'||?1,'broken JSON')",
-                [second.id],
-            )
-            .unwrap();
-        store.conn.execute_batch("DROP TABLE native_rows").unwrap();
-        let metadata = store.mobile_session_metadata().unwrap();
-        assert_eq!(metadata[&first.id].model.as_deref(), Some("gpt-6.1-sol"));
-        assert_eq!(metadata[&first.id].worktree_cwd.as_deref(), Some("/linked"));
-        assert_eq!(metadata[&first.id].access, AccessMode::Auto);
-        assert!(metadata[&first.id].worktree_removed);
-        assert_eq!(metadata[&second.id], MobileSessionMetadata::default());
-    }
-
-    #[test]
     fn sidebar_snapshot_keeps_old_history_without_reading_transcripts() {
         let store = Store::open(Path::new(":memory:")).unwrap();
         let first = store.create("codex", "/work/first").unwrap();
         let second = store.create("claude", "/work/second").unwrap();
-        // A malformed body must not be decoded while gathering sidebar state.
-        store.conn.execute("INSERT INTO native_rows(session_id,row_ix,role,body,first) VALUES(?1,0,'user','not JSON',1)", [first.id]).unwrap();
+        // A malformed history must not be decoded while gathering sidebar state.
+        let original = store.persisted_session_id(first.id).unwrap();
+        store
+            .conn()
+            .execute(
+                "UPDATE sessions SET blocks_json='not JSON' WHERE id=?1",
+                [&original],
+            )
+            .unwrap();
         let snapshot = store.session_sidebar_metadata(&["/work/first".into()]);
         assert!(snapshot.worktrees.contains_key(&first.id));
         assert!(snapshot.worktrees.contains_key(&second.id));

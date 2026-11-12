@@ -1,14 +1,12 @@
 //! Synchronous SQL for the store's code that Toasty's typed API cannot
-//! express: column projections that must stay on the sessions covering index
-//! (a typed read loads every column, `blocks_json` included), json1, counted
-//! conditional updates, `INSERT ... SELECT` and multi-statement transactions
-//! shared by helpers.
+//! express: the sidebar list that must read only the sessions covering index
+//! (`INDEXED BY`), json1, bounded `substr` reads, counted conditional updates,
+//! and the `BEGIN IMMEDIATE` transactions shared by helpers.
 //!
-//! A writable store runs every statement on its Toasty database
-//! ([`crate::orm::Database`]); a read-only store (`Store::read_gespan` and the
-//! search reader) runs the same SQL on its read-only SQLite connection.
-//! Placeholders are `?1`, `?2` and so on in both.
-use rusqlite::Connection;
+//! Every statement runs on the store's Toasty database
+//! ([`crate::orm::Database`]), which a read-only store (`Store::read_gespan`
+//! and the search reader) opens read-only. Placeholders are `?1`, `?2` and so
+//! on.
 use toasty::schema::db::Type;
 use toasty::stmt::Value;
 
@@ -150,84 +148,27 @@ fn bind_type(value: &Value) -> Type {
     }
 }
 
-fn to_sqlite(value: Value) -> rusqlite::types::Value {
-    use rusqlite::types::Value as Sqlite;
-    match value {
-        Value::Null => Sqlite::Null,
-        Value::Bool(flag) => Sqlite::Integer(i64::from(flag)),
-        Value::I64(number) => Sqlite::Integer(number),
-        Value::F64(number) => Sqlite::Real(number),
-        Value::String(text) => Sqlite::Text(text),
-        Value::Bytes(bytes) => Sqlite::Blob(bytes),
-        other => Sqlite::Text(format!("{other:?}")),
-    }
-}
-
-fn from_sqlite(value: rusqlite::types::ValueRef<'_>) -> Value {
-    use rusqlite::types::ValueRef;
-    match value {
-        ValueRef::Null => Value::Null,
-        ValueRef::Integer(number) => Value::I64(number),
-        ValueRef::Real(number) => Value::F64(number),
-        ValueRef::Text(text) => Value::String(String::from_utf8_lossy(text).into_owned()),
-        ValueRef::Blob(bytes) => Value::Bytes(bytes.to_vec()),
-    }
-}
-
-/// Where a store's SQL runs.
+/// Where a store's SQL runs: its Toasty database.
 #[derive(Clone, Copy)]
-pub(crate) enum Sql<'a> {
-    /// The store's Toasty database: every writable store.
-    Orm(&'a crate::orm::Database),
-    /// A plain SQLite connection: read-only stores, and the legacy native
-    /// tables of `Store::open`.
-    Conn(&'a Connection),
-}
+pub(crate) struct Sql<'a>(pub(crate) &'a crate::orm::Database);
 
 impl<'a> Sql<'a> {
     /// Every row `sql` returns.
     pub(crate) fn query(self, sql: &str, args: Vec<Value>) -> Result<Vec<SqlRow>, String> {
-        match self {
-            Sql::Orm(database) => {
-                let mut query = toasty::sql::query(sql);
-                for arg in args {
-                    let ty = bind_type(&arg);
-                    query = query.bind_typed(arg, ty);
-                }
-                let rows = database.run(|mut db| async move { query.exec(&mut db).await })?;
-                rows.into_iter()
-                    .map(|row| match row {
-                        Value::Record(record) => Ok(SqlRow(record.fields)),
-                        other => Err(format!("Unexpected row {other:?}")),
-                    })
-                    .collect()
-            }
-            Sql::Conn(conn) => {
-                let mut statement = conn.prepare_cached(sql).map_err(|e| e.to_string())?;
-                let width = statement.column_count();
-                let mut rows = statement
-                    .query(rusqlite::params_from_iter(args.into_iter().map(to_sqlite)))
-                    .map_err(|e| e.to_string())?;
-                let mut out = Vec::new();
-                while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                    out.push(SqlRow(
-                        (0..width)
-                            .map(|ix| row.get_ref(ix).map(from_sqlite))
-                            .collect::<rusqlite::Result<_>>()
-                            .map_err(|e| e.to_string())?,
-                    ));
-                }
-                Ok(out)
-            }
+        let mut query = toasty::sql::query(sql);
+        for arg in args {
+            let ty = bind_type(&arg);
+            query = query.bind_typed(arg, ty);
         }
-    }
-
-    /// The Toasty database, for typed writes; a read-only store has none.
-    pub(crate) fn orm(self) -> Result<&'a crate::orm::Database, String> {
-        match self {
-            Sql::Orm(database) => Ok(database),
-            Sql::Conn(_) => Err("This Gespan store is read-only".into()),
-        }
+        let rows = self
+            .0
+            .run(|mut db| async move { query.exec(&mut db).await })?;
+        rows.into_iter()
+            .map(|row| match row {
+                Value::Record(record) => Ok(SqlRow(record.fields)),
+                other => Err(format!("Unexpected row {other:?}")),
+            })
+            .collect()
     }
 
     /// The first row, or `None`.
@@ -238,7 +179,7 @@ impl<'a> Sql<'a> {
     /// The first row; no row is an error, as with `rusqlite::Connection::query_row`.
     pub(crate) fn row(self, sql: &str, args: Vec<Value>) -> Result<SqlRow, String> {
         self.optional(sql, args)?
-            .ok_or_else(|| rusqlite::Error::QueryReturnedNoRows.to_string())
+            .ok_or_else(|| "Query returned no rows".to_owned())
     }
 
     /// The first column of the first row.
@@ -248,33 +189,24 @@ impl<'a> Sql<'a> {
 
     /// Runs a statement that returns no rows; the number of rows it changed.
     pub(crate) fn execute(self, sql: &str, args: Vec<Value>) -> Result<usize, String> {
-        match self {
-            Sql::Orm(database) => {
-                let mut statement = toasty::sql::statement(sql);
-                for arg in args {
-                    let ty = bind_type(&arg);
-                    statement = statement.bind_typed(arg, ty);
-                }
-                database
-                    .run(|mut db| async move { statement.exec(&mut db).await })
-                    .map(|count| count as usize)
-            }
-            Sql::Conn(conn) => conn
-                .prepare_cached(sql)
-                .and_then(|mut statement| {
-                    statement.execute(rusqlite::params_from_iter(args.into_iter().map(to_sqlite)))
-                })
-                .map_err(|e| e.to_string()),
+        let mut statement = toasty::sql::statement(sql);
+        for arg in args {
+            let ty = bind_type(&arg);
+            statement = statement.bind_typed(arg, ty);
         }
+        self.0
+            .run(|mut db| async move { statement.exec(&mut db).await })
+            .map(|count| count as usize)
     }
 
-    /// Starts a transaction that takes the write lock up front, like
-    /// `store::write_transaction`. Statements this store runs before
+    /// Starts a transaction that takes the write lock up front
+    /// (`BEGIN IMMEDIATE`). Statements this store runs before
     /// [`SqlTx::commit`] are part of it: its database has one connection.
     /// Dropping the guard without committing rolls back.
     ///
-    /// Inside, use raw SQL only. Toasty's typed API starts its own
-    /// transaction for some statements, which SQLite refuses inside this one.
+    /// Inside, a typed statement must be one database operation: Toasty
+    /// starts its own transaction for a plan of several, which SQLite
+    /// refuses inside this one.
     pub(crate) fn begin(self) -> Result<SqlTx<'a>, String> {
         self.execute("BEGIN IMMEDIATE", Vec::new())?;
         Ok(SqlTx {

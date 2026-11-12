@@ -1,19 +1,12 @@
-//! Ask sessions, kept out of every session list. The shared store marks them
-//! in its `sessions.inbox_ask` column, as older Tauri builds do. The local
-//! fallback has no such column, so it uses an `inbox-ask:<id>` setting, which
-//! `local_sessions` and `delete` already honour.
+//! Ask sessions, kept out of every session list. The store marks them in
+//! the `sessions.inbox_ask` column, as older Tauri builds do.
 use super::{Session, Store};
 use crate::{agent::Settings, inbox::ask::Context};
-use rusqlite::params;
 
 impl Store {
     /// Newest first. A row with an unreadable context is left alone.
     fn inbox_asks(&self) -> Result<Vec<(Session, Context)>, String> {
-        let rows = if self.shared.is_some() {
-            self.shared_inbox_asks()?
-        } else {
-            self.local_inbox_asks()?
-        };
+        let rows = self.shared_inbox_asks()?;
         Ok(rows
             .into_iter()
             .filter_map(|(session, raw)| Some((session, serde_json::from_str(&raw).ok()?)))
@@ -42,16 +35,7 @@ impl Store {
         let mut session = self.local_create(provider, cwd)?;
         session.title = context.session_title();
         self.title(session.id, &session.title)?;
-        if self.shared.is_some() {
-            self.shared_patch(session.id, &[("inbox_ask", serde_json::json!(raw))])?;
-        } else {
-            self.conn
-                .execute(
-                    "INSERT INTO native_settings(key,value) VALUES(?1,?2)",
-                    params![format!("inbox-ask:{}", session.id), raw],
-                )
-                .map_err(|e| e.to_string())?;
-        }
+        self.shared_patch(session.id, &[("inbox_ask", serde_json::json!(raw))])?;
         tx.commit()?;
         self.save_agent_settings(session.id, settings)?;
         Ok((session, context.clone()))
@@ -199,7 +183,7 @@ mod tests {
             .open_inbox_ask("codex", "/project", &context, &Default::default())
             .unwrap();
         store
-            .conn
+            .conn()
             .execute("UPDATE sessions SET harness='nonsense'", [])
             .unwrap();
         assert!(store.restart_inbox_ask(session.id).is_err());
@@ -248,7 +232,7 @@ mod tests {
         let (first, _) = open(&store, 1);
         let original = store.persisted_session_id(first.id).unwrap();
         store
-            .conn
+            .conn()
             .execute(
                 "UPDATE sessions SET inbox_ask='ask' WHERE id=?1",
                 [&original],
@@ -266,12 +250,12 @@ mod tests {
         let session = store.create("codex", "/project").unwrap();
         let original = store.persisted_session_id(session.id).unwrap();
         store
-            .conn
+            .conn()
             .execute(
                 "UPDATE sessions SET inbox_ask=?2 WHERE id=?1",
-                params![
-                    original,
-                    r#"{"key":"github:github.com:/acme/widgets/pull/1","title":"Item 1","url":"https://github.com/acme/widgets/pull/1","provider":"github"}"#
+                [
+                    original.as_str(),
+                    r#"{"key":"github:github.com:/acme/widgets/pull/1","title":"Item 1","url":"https://github.com/acme/widgets/pull/1","provider":"github"}"#,
                 ],
             )
             .unwrap();

@@ -1391,16 +1391,12 @@ mod importing {
     use crate::transcript::Interjection;
     use std::sync::Mutex;
 
-    fn native() -> Mutex<Store> {
-        Mutex::new(Store::open(Path::new(":memory:")).unwrap())
-    }
-
     fn shared() -> Mutex<Store> {
         Mutex::new(Store::open_gespan(Path::new(":memory:")).unwrap())
     }
 
-    fn backends() -> [(&'static str, Mutex<Store>); 2] {
-        [("native", native()), ("shared", shared())]
+    fn backends() -> [(&'static str, Mutex<Store>); 1] {
+        [("shared", shared())]
     }
 
     fn no_root(_: &str) -> Option<String> {
@@ -1734,28 +1730,18 @@ mod importing {
         store.provider_id(session.id, provider_id).unwrap();
     }
 
-    /// A session the sidebar hides: a hidden Pilot conversation on the
-    /// shared store, a hidden legacy remote session on the local one.
+    /// A session the sidebar hides: a hidden Pilot conversation.
     fn hidden_session(store: &Store, provider_id: &str) {
         let session = store.create("claude", "/project").unwrap();
         store.provider_id(session.id, provider_id).unwrap();
-        if store.uses_gespan_schema() {
-            let original = store.persisted_session_id(session.id).unwrap();
-            store
-                .conn()
-                .execute(
-                    "UPDATE sessions SET sidebar_hidden=1 WHERE id=?1",
-                    [&original],
-                )
-                .unwrap();
-        } else {
-            store
-                .save_setting(
-                    "remote-hidden-legacy.v1",
-                    &serde_json::to_string(&[session.id]).unwrap(),
-                )
-                .unwrap();
-        }
+        let original = store.persisted_session_id(session.id).unwrap();
+        store
+            .conn()
+            .execute(
+                "UPDATE sessions SET sidebar_hidden=1 WHERE id=?1",
+                [&original],
+            )
+            .unwrap();
     }
 
     #[test]
@@ -1805,11 +1791,7 @@ mod importing {
             let work = tempfile::tempdir().unwrap();
             let p = project(&work, "app");
             let pick = candidate_of(home.path(), "full", &p);
-            let table = if store.lock().unwrap().uses_gespan_schema() {
-                "sessions"
-            } else {
-                "native_sessions"
-            };
+            let table = "sessions";
             store
                 .lock()
                 .unwrap()
@@ -1842,11 +1824,7 @@ mod importing {
             let work = tempfile::tempdir().unwrap();
             let p = project(&work, "app");
             let pick = candidate_of(home.path(), "orphan", &p);
-            let (table, column) = if store.lock().unwrap().uses_gespan_schema() {
-                ("sessions", "provider_session_id")
-            } else {
-                ("native_sessions", "provider_id")
-            };
+            let (table, column) = ("sessions", "provider_session_id");
             store
                 .lock()
                 .unwrap()

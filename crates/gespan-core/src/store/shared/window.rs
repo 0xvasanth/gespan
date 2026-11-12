@@ -2,6 +2,7 @@
 //! first, older turns only on request. Row indices count from a sticky window
 //! start, so saves, turn receipts and edits never read or rewrite older blocks.
 use super::*;
+use crate::store::schema::{PilotBlock, PilotTranscript, PilotTurn};
 
 /// Turns in the first window and in each older page, as desktop pages them.
 pub const PAGE_TURNS: usize = 10;
@@ -17,11 +18,15 @@ pub struct HistoryPage {
 }
 
 impl Store {
-    pub(super) fn shared_indexed(&self, original: &str) -> Result<bool, String> {
-        self.db()?.value(
-            "SELECT EXISTS(SELECT 1 FROM pilot_transcripts WHERE session_id=?1)",
-            args![original],
-        )
+    pub(crate) fn shared_indexed(&self, original: &str) -> Result<bool, String> {
+        let original = original.to_owned();
+        self.orm()?.run(|mut db| async move {
+            PilotTranscript::filter_by_session_id(original)
+                .first()
+                .exec(&mut db)
+                .await
+                .map(|transcript| transcript.is_some())
+        })
     }
     /// The first block sequence of an indexed Pilot's window, chosen once per
     /// store so that every row index handed out for it shares one origin.
@@ -30,18 +35,25 @@ impl Store {
         if !self.shared_indexed(original)? {
             return Ok(None);
         }
-        let windows = &self.shared.as_ref().unwrap().windows;
+        let windows = &self.shared.windows;
         if let Some(from) = windows.borrow().get(&id) {
             return Ok(Some(*from));
         }
+        let original = original.to_owned();
         let from = self
-            .db()?
-            .optional(
-                "SELECT seq FROM pilot_turns WHERE session_id=?1 ORDER BY seq DESC LIMIT 1 OFFSET ?2",
-                args![original, PAGE_TURNS as i64 - 1],
-            )?
-            .map(|row| row.get::<i64>(0))
-            .transpose()?
+            .orm()?
+            .run(|mut db| async move {
+                let turn = PilotTurn::fields();
+                PilotTurn::filter(turn.session_id().eq(original))
+                    .order_by(turn.seq().desc())
+                    .limit(1)
+                    .offset(PAGE_TURNS - 1)
+                    .select(turn.seq())
+                    .exec(&mut db)
+                    .await
+            })?
+            .into_iter()
+            .next()
             .unwrap_or(0);
         windows.borrow_mut().insert(id, from);
         Ok(Some(from))
@@ -52,15 +64,22 @@ impl Store {
         from: i64,
         before: i64,
     ) -> Result<Vec<Value>, String> {
-        let records = self.db()?.query(
-            "SELECT block_json FROM pilot_blocks WHERE session_id=?1 AND seq>=?2 AND seq<?3 ORDER BY seq",
-            args![original, from, before],
-        )?;
-        let mut result = Vec::new();
-        for record in records {
-            result.push(parse(&record.get::<String>(0)?)?);
-        }
-        Ok(result)
+        let original = original.to_owned();
+        let records = self.orm()?.run(|mut db| async move {
+            let block = PilotBlock::fields();
+            PilotBlock::filter(
+                block
+                    .session_id()
+                    .eq(original)
+                    .and(block.seq().ge(from))
+                    .and(block.seq().lt(before)),
+            )
+            .order_by(block.seq().asc())
+            .select(block.block_json())
+            .exec(&mut db)
+            .await
+        })?;
+        records.iter().map(|raw| parse(raw)).collect()
     }
     /// Every block, numbered from the first. Only whole-history readers such as
     /// search use this; row indices it implies are not the window's.
@@ -78,11 +97,15 @@ impl Store {
         let Some(from) = self.shared_window(id, &original)? else {
             return Ok(None);
         };
-        let older: bool = self.db()?.value(
-            "SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND seq<?2)",
-            args![original, from],
-        )?;
-        Ok(older.then_some(from))
+        let older = self.orm()?.run(|mut db| async move {
+            let block = PilotBlock::fields();
+            PilotBlock::filter(block.session_id().eq(original).and(block.seq().lt(from)))
+                .limit(1)
+                .select(block.seq())
+                .exec(&mut db)
+                .await
+        })?;
+        Ok((!older.is_empty()).then_some(from))
     }
     /// The turns before `before`: one page, or with `all` everything older.
     /// Pages are read-only. Their rows precede the window and have no index in
@@ -100,15 +123,16 @@ impl Store {
         let mut start = 0;
         let mut more = false;
         if !all {
-            let starts = self
-                .db()?
-                .query(
-                    "SELECT seq FROM pilot_turns WHERE session_id=?1 AND seq<?2 ORDER BY seq DESC LIMIT ?3",
-                    args![&original, before, PAGE_TURNS as i64 + 1],
-                )?
-                .iter()
-                .map(|row| row.get::<i64>(0))
-                .collect::<Result<Vec<_>, _>>()?;
+            let session = original.clone();
+            let starts = self.orm()?.run(|mut db| async move {
+                let turn = PilotTurn::fields();
+                PilotTurn::filter(turn.session_id().eq(session).and(turn.seq().lt(before)))
+                    .order_by(turn.seq().desc())
+                    .limit(PAGE_TURNS + 1)
+                    .select(turn.seq())
+                    .exec(&mut db)
+                    .await
+            })?;
             if starts.len() > PAGE_TURNS {
                 start = starts[PAGE_TURNS - 1];
                 more = true;
@@ -131,6 +155,7 @@ impl Store {
                 .iter()
                 .any(|b| b["appRequestId"].as_str() == Some(message)));
         }
+        // json1: Toasty 0.11 cannot filter on a field inside a JSON column.
         self.db()?.value(
             "SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND is_user=1
              AND json_extract(block_json,'$.appRequestId')=?2)",

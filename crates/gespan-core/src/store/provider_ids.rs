@@ -2,6 +2,7 @@
 //! ones no session list shows.
 use std::collections::HashSet;
 
+use super::schema::SessionRecord;
 use super::Store;
 
 impl Store {
@@ -10,23 +11,22 @@ impl Store {
     /// orchestration workers, hidden Pilot and operator conversations, hidden
     /// legacy remote sessions). Sessions without a provider id are left out.
     pub fn provider_session_ids(&self) -> Result<HashSet<(String, String)>, String> {
-        let (sql, query) = if self.shared.is_some() {
-            (
-                self.sql()?,
-                "SELECT harness,provider_session_id FROM sessions
-                 WHERE provider_session_id IS NOT NULL AND provider_session_id<>''",
+        let rows = self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter(
+                session
+                    .provider_session_id()
+                    .is_some()
+                    .and(session.provider_session_id().ne(Some(String::new()))),
             )
-        } else {
-            (
-                super::db::Sql::Conn(&self.conn),
-                "SELECT provider,provider_id FROM native_sessions
-                 WHERE provider_id IS NOT NULL AND provider_id<>''",
-            )
-        };
-        sql.query(query, super::db::args![])?
-            .iter()
-            .map(|row| Ok((row.get(0)?, row.get(1)?)))
-            .collect()
+            .select((session.harness(), session.provider_session_id()))
+            .exec(&mut db)
+            .await
+        })?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|(harness, id)| Some((harness, id?)))
+            .collect())
     }
 }
 
@@ -111,7 +111,7 @@ mod tests {
         let pilot = store.create("claude", "/project").unwrap();
         let original = store.persisted_session_id(pilot.id).unwrap();
         store
-            .conn
+            .conn()
             .execute(
                 "UPDATE sessions SET sidebar_hidden=1,provider_session_id='pilot-thread' WHERE id=?1",
                 [&original],
@@ -121,7 +121,7 @@ mod tests {
         store.provider_id(worker.id, "worker-thread").unwrap();
         let original = store.persisted_session_id(worker.id).unwrap();
         store
-            .conn
+            .conn()
             .execute(
                 "INSERT INTO orchestration_workers VALUES(?1,'lead')",
                 [&original],

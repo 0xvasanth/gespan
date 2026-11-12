@@ -548,9 +548,9 @@ mod tests {
         assert_eq!(restored.outbox, binding.outbox);
         assert_eq!(restored.uploads[0].id, binding.uploads[0].id);
         assert_eq!(store.sessions().unwrap()[0].id, summary.id);
-        for table in ["native_sessions", "native_rows"] {
+        for table in ["sessions", "pilot_blocks"] {
             let count: i64 = store
-                .conn
+                .conn()
                 .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
                     row.get(0)
                 })

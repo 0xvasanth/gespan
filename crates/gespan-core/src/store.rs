@@ -1,5 +1,7 @@
 //! Session storage. Desktop launches use Gespan's existing schema directly.
 mod app_access;
+#[cfg(test)]
+mod conn_tests;
 pub(crate) mod db;
 mod gespan_import;
 mod in_flight;
@@ -26,21 +28,11 @@ pub(crate) use shared::blocks::project as project_desktop_blocks;
 mod side_threads;
 use crate::transcript::{Row, Transcript};
 pub use edit::EditSnapshot;
+pub use gespan_import::gespan_database;
 pub use gespan_import::native_model;
-pub use gespan_import::{gespan_database, ImportReport};
-use rusqlite::{params, Connection};
 pub use shared::{HistoryPage, PAGE_TURNS};
 pub use side_threads::DesktopSideThread;
 use std::path::Path;
-
-/// Starts a transaction that holds the write lock from its first statement.
-/// A deferred transaction that reads before it writes fails at once with
-/// "database is locked" when another connection (such as the desktop app)
-/// commits in between; SQLite cannot upgrade its stale read snapshot, so the
-/// busy timeout never applies. Taking the lock up front waits instead.
-pub(crate) fn write_transaction(conn: &Connection) -> rusqlite::Result<rusqlite::Transaction<'_>> {
-    rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
-}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Session {
@@ -70,232 +62,44 @@ pub struct Reminder {
     pub fired_at: Option<u64>,
 }
 
-const LOCAL_SESSION_COLUMNS: &str = "native_sessions.id,title,provider,cwd,provider_id,
-    (EXISTS(SELECT 1 FROM native_rows WHERE session_id=native_sessions.id)
-     OR EXISTS(SELECT 1 FROM native_settings WHERE key='follow-up:'||native_sessions.id AND json_valid(value) AND (json_type(value,'$.draft')='object' OR json_array_length(value,'$.messages')>0))),updated_at,archived,
-    pinned,work_item";
-fn local_session(r: &rusqlite::Row) -> rusqlite::Result<Session> {
-    Ok(Session {
-        id: r.get(0)?,
-        title: r.get(1)?,
-        provider: r.get(2)?,
-        cwd: r.get(3)?,
-        provider_id: r.get(4)?,
-        has_messages: r.get(5)?,
-        updated_at: r.get::<_, i64>(6)?.max(0) as u64,
-        archived: r.get(7)?,
-        pinned: r.get(8)?,
-        created_at: 0,
-        work_item: r
-            .get::<_, Option<String>>(9)?
-            .and_then(|text| serde_json::from_str(&text).ok()),
-    })
-}
-
 pub struct Store {
-    /// For [`Store::open`], the legacy `native_*` tables. For the shared
-    /// store, a plain connection to the same database: a read-only store runs
-    /// its SQL here; a writable one runs everything on [`Self::orm`] and keeps
-    /// this only so tests can arrange rows (and, in memory, to keep the
-    /// database alive).
-    conn: Connection,
     path: std::path::PathBuf,
-    /// Where the Toasty database lives: `path`, or for `:memory:` a named
-    /// in-memory database `conn` shares.
-    orm_path: std::path::PathBuf,
-    shared: Option<shared::Shared>,
-    /// The database through Toasty (`orm::Kind::Gespan`). The shared store
-    /// opens it with the store; `Store::open` on first use.
-    orm: std::cell::OnceCell<crate::orm::Database>,
+    shared: shared::Shared,
+    /// The database through Toasty (`orm::Kind::Gespan`). A read-only store
+    /// opens it read-only: SQLite refuses its writes.
+    orm: crate::orm::Database,
     /// A read-only store on a file Gespan has not adopted yet reads an
     /// adopted copy kept here, so the file itself is never changed.
     _snapshot: Option<tempfile::TempDir>,
 }
 
-/// A named in-memory database that every connection opening it shares, so a
-/// store's Toasty database and its plain connection see the same rows.
-fn memory_path() -> std::path::PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!(
-        "file:gespan-memory-{}-{n}?mode=memory&cache=shared",
-        std::process::id()
-    )
-    .into()
-}
-
 impl Store {
-    /// This store's database through Toasty (`orm::Kind::Gespan`), opened,
-    /// adopted and migrated on first use.
+    /// This store's database through Toasty (`orm::Kind::Gespan`).
     pub(crate) fn orm(&self) -> Result<&crate::orm::Database, String> {
-        if let Some(database) = self.orm.get() {
-            return Ok(database);
-        }
-        if self.shared.as_ref().is_some_and(|shared| shared.read_only) {
-            return Err("This Gespan store is read-only".into());
-        }
-        let database = crate::orm::open(crate::orm::Kind::Gespan, &self.orm_path)?;
-        Ok(self.orm.get_or_init(|| database))
+        Ok(&self.orm)
     }
-    /// Where this store's SQL runs: the Toasty database, or for a read-only
-    /// store its read-only connection.
+    /// Raw SQL on this store's database, for what Toasty's typed API cannot
+    /// express (see `store::db`).
     pub(crate) fn sql(&self) -> Result<db::Sql<'_>, String> {
-        if self.shared.as_ref().is_some_and(|shared| shared.read_only) {
-            Ok(db::Sql::Conn(&self.conn))
-        } else {
-            self.orm().map(db::Sql::Orm)
-        }
+        Ok(db::Sql(&self.orm))
     }
-    /// Where this store's sessions live: the shared tables, or for
-    /// `Store::open` the native ones.
-    pub(crate) fn session_sql(&self) -> Result<db::Sql<'_>, String> {
-        if self.shared.is_some() {
-            self.sql()
-        } else {
-            Ok(db::Sql::Conn(&self.conn))
-        }
-    }
-    /// A write transaction over the tables this store's sessions live in.
+    /// A write transaction over this store's tables.
     pub(crate) fn begin(&self) -> Result<db::SqlTx<'_>, String> {
-        self.session_sql()?.begin()
+        self.sql()?.begin()
     }
     pub fn reset_provider_id_if(&self, id: i64, expected: Option<&str>) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_reset_provider_id_if(id, expected);
-        }
-
-        self.conn
-            .execute(
-                "UPDATE native_sessions SET provider_id=NULL WHERE id=?1 AND provider_id IS ?2",
-                params![id, expected],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_reset_provider_id_if(id, expected)
     }
     pub fn provider_accounts(&self) -> Result<crate::accounts::Book, String> {
-        if self.shared.is_some() {
-            return self.shared_accounts();
-        }
-
-        use rusqlite::OptionalExtension;
-        let value: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM native_settings WHERE key='provider-accounts'",
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        value
-            .map(|v| {
-                serde_json::from_str(&v).map_err(|e| format!("Cannot read provider accounts: {e}"))
-            })
-            .unwrap_or_else(|| Ok(Default::default()))
+        self.shared_accounts()
     }
     pub fn save_provider_accounts(&self, book: &crate::accounts::Book) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_save_accounts(book);
-        }
-
-        let value = serde_json::to_string(book).map_err(|e| e.to_string())?;
-        self.conn.execute("INSERT INTO native_settings(key,value) VALUES('provider-accounts',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [value]).map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_save_accounts(book)
     }
-    /// Legacy prototype fixtures. Desktop launches use open_gespan, including
-    /// isolated development launches, so production history needs no conversion.
-    ///
-    /// The `native_*` tables stay on hand-written rusqlite, schema code
-    /// included: only fixtures and tests open them, and nothing ships data in
-    /// them. Notes and My tasks in the same file go through Toasty like the
-    /// shared store's.
+    /// A store for tests and fixtures: the shared schema, like
+    /// [`Self::open_gespan`].
     pub fn open(path: &Path) -> Result<Self, String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let orm_path = if path == Path::new(":memory:") {
-            memory_path()
-        } else {
-            path.into()
-        };
-        let conn = Connection::open(&orm_path).map_err(|e| e.to_string())?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(|e| e.to_string())?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
-          CREATE TABLE IF NOT EXISTS native_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-          CREATE TABLE IF NOT EXISTS native_sessions(id INTEGER PRIMARY KEY, title TEXT NOT NULL,
-            provider TEXT NOT NULL, cwd TEXT NOT NULL, provider_id TEXT,
-            updated_at INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0);
-          CREATE TABLE IF NOT EXISTS native_rows(session_id INTEGER NOT NULL REFERENCES native_sessions(id),
-            row_ix INTEGER NOT NULL, role TEXT NOT NULL, body TEXT NOT NULL, first INTEGER NOT NULL,
-            PRIMARY KEY(session_id,row_ix));
-          CREATE TABLE IF NOT EXISTS native_reminders(session_id INTEGER PRIMARY KEY REFERENCES native_sessions(id),
-            due_at INTEGER NOT NULL, fired_at INTEGER);").map_err(|e| e.to_string())?;
-        let columns = conn
-            .prepare("PRAGMA table_info(native_sessions)")
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        for (column, kind) in [
-            ("updated_at", "INTEGER NOT NULL DEFAULT 0"),
-            ("archived", "INTEGER NOT NULL DEFAULT 0"),
-            ("pinned", "INTEGER NOT NULL DEFAULT 0"),
-            ("work_item", "TEXT"),
-        ] {
-            if !columns.iter().any(|name| name == column) {
-                conn.execute(
-                    &format!("ALTER TABLE native_sessions ADD COLUMN {column} {kind}"),
-                    [],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
-        let has_sent_at = conn
-            .prepare("PRAGMA table_info(native_rows)")
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .iter()
-            .any(|name| name == "sent_at");
-        if !has_sent_at {
-            conn.execute("ALTER TABLE native_rows ADD COLUMN sent_at INTEGER", [])
-                .map_err(|e| e.to_string())?;
-        }
-        // Older native histories have completion times in their turn receipts.
-        // Preserve unknown ages instead of stamping all old conversations now.
-        let recorded = conn.prepare("SELECT s.id,a.value FROM native_sessions s JOIN native_settings a ON a.key='agent:'||s.id WHERE s.updated_at=0")
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
-        for (id, settings) in recorded {
-            if let Ok(settings) = serde_json::from_str::<crate::agent::Settings>(&settings) {
-                if let Some(time) = settings
-                    .turns
-                    .values()
-                    .filter_map(|turn| turn.completed_at)
-                    .max()
-                {
-                    conn.execute(
-                        "UPDATE native_sessions SET updated_at=?2 WHERE id=?1",
-                        params![id, time.min(i64::MAX as u64) as i64],
-                    )
-                    .map_err(|e| e.to_string())?;
-                }
-            }
-        }
-        Ok(Self {
-            conn,
-            path: path.into(),
-            orm_path,
-            shared: None,
-            orm: Default::default(),
-            _snapshot: None,
-        })
+        Self::open_gespan(path)
     }
     /// The selected desktop or isolated-development database.
     pub fn database_path(&self) -> &Path {
@@ -307,43 +111,13 @@ impl Store {
             .flatten()
     }
     pub fn setting(&self, key: &str) -> Result<Option<String>, String> {
-        if self.shared.is_some() {
-            return self.shared_setting(key);
-        }
-
-        use rusqlite::OptionalExtension;
-        self.conn
-            .query_row(
-                "SELECT value FROM native_settings WHERE key=?1",
-                [key],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())
+        self.shared_setting(key)
     }
     pub fn save_setting(&self, key: &str, value: &str) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_save_setting(key, value);
-        }
-
-        self.conn.execute("INSERT INTO native_settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value])
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_save_setting(key, value)
     }
     pub fn ui_state(&self) -> Result<Option<String>, String> {
-        if self.shared.is_some() {
-            return self.shared_ui_state();
-        }
-
-        use rusqlite::OptionalExtension;
-        self.conn
-            .query_row(
-                "SELECT value FROM native_settings WHERE key='workspace'",
-                [],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())
+        self.shared_ui_state()
     }
     pub fn agent_settings(&self, id: i64) -> Result<Option<crate::agent::Settings>, String> {
         let remote = id < 0 || self.remote_session(id)?.is_some();
@@ -353,82 +127,37 @@ impl Store {
                     .map(Some)
                     .map_err(|e| format!("Cannot read remote settings: {e}"));
             }
-            if id < 0 || self.shared.is_none() {
+            if id < 0 {
                 return Ok(None);
             }
         }
-        if self.shared.is_some() {
-            let mut settings = self.shared_agent(id)?;
-            if remote {
-                if let Some(settings) = settings.as_mut() {
-                    if settings.worktree_cwd.is_none() {
-                        settings.worktree_cwd = self.legacy_remote_worktree(id)?;
-                    }
+        let mut settings = self.shared_agent(id)?;
+        if remote {
+            if let Some(settings) = settings.as_mut() {
+                if settings.worktree_cwd.is_none() {
+                    settings.worktree_cwd = self.legacy_remote_worktree(id)?;
                 }
             }
-            return Ok(settings);
         }
-
-        use rusqlite::OptionalExtension;
-        let text: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM native_settings WHERE key=?1",
-                [format!("agent:{id}")],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        text.map(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
-            .transpose()
+        Ok(settings)
     }
     /// Read workspace membership without loading every session's full agent settings.
     pub fn session_worktrees(
         &self,
     ) -> Result<std::collections::HashMap<i64, Option<String>>, String> {
-        if self.shared.is_some() {
-            return self.shared_worktrees();
-        }
-
-        self.conn
-            .prepare("SELECT s.id, CASE WHEN json_valid(a.value) THEN CASE WHEN json_type(a.value, '$.worktree_cwd')='text' THEN json_extract(a.value, '$.worktree_cwd') END END FROM native_sessions s LEFT JOIN native_settings a ON a.key='agent:'||s.id")
-            .map_err(|e| e.to_string())?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<_, _>>()
-            .map_err(|e| e.to_string())
+        self.shared_worktrees()
     }
     pub fn context_usage(&self, id: i64) -> Result<Option<crate::context::Usage>, String> {
-        if self.shared.is_some() {
-            return self.shared_context(id);
-        }
-
-        use rusqlite::OptionalExtension;
-        let text: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM native_settings WHERE key=?1",
-                [format!("context:{id}")],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        text.map(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
-            .transpose()
+        self.shared_context(id)
     }
     pub fn save_context_usage(&self, id: i64, usage: &crate::context::Usage) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_patch(
-                id,
-                &[
-                    ("context_used", serde_json::json!(usage.used)),
-                    ("context_window", serde_json::json!(usage.window)),
-                ],
-            );
-        }
-
-        self.conn.execute("INSERT INTO native_settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![format!("context:{id}"), serde_json::to_string(usage).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_patch(
+            id,
+            &[
+                ("context_used", serde_json::json!(usage.used)),
+                ("context_window", serde_json::json!(usage.window)),
+            ],
+        )
     }
     pub fn save_note(&self, note: &crate::response::Note) -> Result<(), String> {
         self.save_response_note(note)
@@ -438,15 +167,7 @@ impl Store {
             .list_notes()?
             .into_iter()
             .map(|note| {
-                let source_session = self
-                    .note_source_session(&note)
-                    .or_else(|| {
-                        self.shared
-                            .is_none()
-                            .then(|| note.source_session_id.as_deref()?.parse().ok())
-                            .flatten()
-                    })
-                    .unwrap_or(0);
+                let source_session = self.note_source_session(&note).unwrap_or(0);
                 crate::response::Note {
                     id: note
                         .id
@@ -462,21 +183,6 @@ impl Store {
             })
             .collect())
     }
-    /// Read-only fallback for early native settings; list_notes owns merging it
-    /// with the desktop table, so this must never call the notes facade.
-    fn legacy_notes(&self) -> Result<Vec<crate::response::Note>, String> {
-        let mut query = self
-            .conn
-            .prepare("SELECT value FROM native_settings WHERE key LIKE 'note:%' ORDER BY key DESC")
-            .map_err(|e| e.to_string())?;
-        let rows = query
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?;
-        rows.map(|row| {
-            serde_json::from_str(&row.map_err(|e| e.to_string())?).map_err(|e| e.to_string())
-        })
-        .collect()
-    }
     pub fn save_agent_settings(
         &self,
         id: i64,
@@ -488,12 +194,7 @@ impl Store {
                 &serde_json::to_string(settings).map_err(|e| e.to_string())?,
             );
         }
-        if self.shared.is_some() {
-            return self.shared_save_agent(id, settings);
-        }
-
-        self.conn.execute("INSERT INTO native_settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![format!("agent:{id}"), serde_json::to_string(settings).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_save_agent(id, settings)
     }
     pub fn configure_agent(
         &self,
@@ -543,63 +244,17 @@ impl Store {
             }
             return Ok(());
         }
-        if self.shared.is_some() {
-            return self.shared_change_provider(id, provider);
-        }
-
-        self.conn.execute("UPDATE native_sessions SET provider=?2,provider_id=NULL WHERE id=?1 AND provider<>?2", params![id,provider]).map_err(|e|e.to_string())?;
-        Ok(())
+        self.shared_change_provider(id, provider)
     }
     pub fn save_ui_state(&self, state: &str) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_save_setting("workspace", state);
-        }
-
-        self.conn.execute("INSERT INTO native_settings(key,value) VALUES('workspace',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[state]).map_err(|e|e.to_string())?;
-        Ok(())
+        self.shared_save_setting("workspace", state)
     }
     fn local_sessions(&self) -> Result<Vec<Session>, String> {
-        if self.shared.is_some() {
-            return self.shared_sessions();
-        }
-
-        let mut stmt = self
-            .conn
-            .prepare(&format!(
-                "SELECT {LOCAL_SESSION_COLUMNS}
-                 FROM native_sessions WHERE NOT EXISTS(SELECT 1 FROM native_settings WHERE key='inbox-ask:'||native_sessions.id) ORDER BY updated_at DESC,id DESC",
-            ))
-            .map_err(|e| e.to_string())?;
-        let result = stmt
-            .query_map([], local_session)
-            .map_err(|e| e.to_string())?;
-        result
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
-    }
-    /// Ask sessions with their raw context, which `local_sessions` hides.
-    fn local_inbox_asks(&self) -> Result<Vec<(Session, String)>, String> {
-        let mut stmt = self
-            .conn
-            .prepare(&format!(
-                "SELECT {LOCAL_SESSION_COLUMNS},a.value
-                 FROM native_sessions JOIN native_settings a ON a.key='inbox-ask:'||native_sessions.id ORDER BY updated_at DESC,id DESC",
-            ))
-            .map_err(|e| e.to_string())?;
-        let result = stmt
-            .query_map([], |r| Ok((local_session(r)?, r.get(10)?)))
-            .map_err(|e| e.to_string())?;
-        result
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+        self.shared_sessions()
     }
     /// Each session another one started through the app CLI, and its caller.
     pub fn started_links(&self) -> Result<std::collections::HashMap<i64, i64>, String> {
-        let mut links = if self.shared.is_some() {
-            self.shared_started_links()?
-        } else {
-            std::collections::HashMap::new()
-        };
+        let mut links = self.shared_started_links()?;
         let saved: std::collections::HashMap<_, _> = self
             .settings_with_prefix("started-by:")?
             .into_iter()
@@ -642,78 +297,14 @@ impl Store {
     }
     /// `prefix<session id>` settings, by session id.
     fn settings_with_prefix(&self, prefix: &str) -> Result<Vec<(i64, String)>, String> {
-        if self.shared.is_some() {
-            return self.shared_settings_with_prefix(prefix);
-        }
-
-        let mut stmt = self
-            .conn
-            .prepare("SELECT key, value FROM native_settings WHERE key LIKE ?1 || '%'")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([prefix], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })
-            .map_err(|e| e.to_string())?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (key, value) = row.map_err(|e| e.to_string())?;
-            if let Some(id) = key.strip_prefix(prefix).and_then(|id| id.parse().ok()) {
-                out.push((id, value));
-            }
-        }
-        Ok(out)
+        self.shared_settings_with_prefix(prefix)
     }
     /// Sessions whose latest message is saved as a draft and not yet sent.
     pub fn draft_sessions(&self) -> Result<std::collections::HashSet<i64>, String> {
-        if self.shared.is_some() {
-            return self.shared_drafts();
-        }
-
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT CAST(substr(key,11) AS INTEGER) FROM native_settings
-                 WHERE key LIKE 'follow-up:%' AND json_valid(value)
-                 AND json_type(value,'$.draft')='object'",
-            )
-            .map_err(|e| e.to_string())?;
-        let ids = stmt
-            .query_map([], |r| r.get::<_, i64>(0))
-            .map_err(|e| e.to_string())?;
-        ids.collect::<Result<_, _>>().map_err(|e| e.to_string())
+        self.shared_drafts()
     }
     fn local_create(&self, provider: &str, cwd: &str) -> Result<Session, String> {
-        if self.shared.is_some() {
-            return self.shared_create(provider, cwd);
-        }
-
-        let updated_at = crate::response::now_ms();
-        let title = format!(
-            "New {} session",
-            crate::provider::Kind::parse(provider)
-                .ok_or_else(|| format!("Unknown provider: {provider}"))?
-                .label()
-        );
-        self.conn
-            .execute(
-                "INSERT INTO native_sessions(title,provider,cwd,updated_at) VALUES(?1,?2,?3,?4)",
-                params![title, provider, cwd, updated_at.min(i64::MAX as u64) as i64],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(Session {
-            id: self.conn.last_insert_rowid(),
-            title,
-            provider: provider.into(),
-            cwd: cwd.into(),
-            provider_id: None,
-            has_messages: false,
-            updated_at,
-            archived: false,
-            pinned: false,
-            created_at: 0,
-            work_item: None,
-        })
+        self.shared_create(provider, cwd)
     }
     /// A WAL reader for background search, independent of the writer's mutex.
     /// In-memory fixture stores must continue using their original connection.
@@ -721,22 +312,7 @@ impl Store {
         if self.path == Path::new(":memory:") {
             return Ok(None);
         }
-        if self.shared.is_some() {
-            return self.shared_search_reader().map(Some);
-        }
-        let conn =
-            Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-                .map_err(|e| e.to_string())?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(|e| e.to_string())?;
-        Ok(Some(Self {
-            conn,
-            path: self.path.clone(),
-            orm_path: self.orm_path.clone(),
-            shared: None,
-            orm: Default::default(),
-            _snapshot: None,
-        }))
+        self.shared_search_reader().map(Some)
     }
     /// Stream saved message bodies without loading conversations into the UI.
     /// Rejoin native row fragments so phrase matches span storage boundaries.
@@ -745,116 +321,18 @@ impl Store {
         query: &str,
         cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<(Vec<crate::search::Hit>, bool), String> {
-        if self.shared.is_some() {
-            return self.shared_search(query, cancel);
-        }
-
-        use std::sync::atomic::Ordering;
-        if query.trim().is_empty() || cancel.load(Ordering::Acquire) {
-            return Ok((vec![], false));
-        }
-        let flag = cancel.clone();
-        self.conn
-            .progress_handler(2000, Some(move || flag.load(Ordering::Acquire)))
-            .map_err(|e| e.to_string())?;
-        let result = (|| {
-            let summaries = self.sessions()?;
-            // Walk each conversation's primary-key range in recency order.
-            // Sorting a join containing every message body would copy the entire
-            // transcript database into SQLite's sorter on every keystroke.
-            let mut statement=self.conn.prepare("SELECT row_ix,role,body,first FROM native_rows WHERE session_id=?1 ORDER BY row_ix").map_err(|e|e.to_string())?;
-            let mut user = self
-                .conn
-                .prepare(
-                    "SELECT EXISTS(SELECT 1 FROM native_rows WHERE session_id=?1 AND role='user')",
-                )
-                .map_err(|e| e.to_string())?;
-            let mut hits = Vec::new();
-            let mut truncated = false;
-            'sessions: for summary in summaries.iter().filter(|s| !s.archived && s.has_messages) {
-                if cancel.load(Ordering::Acquire) {
-                    return Ok((vec![], false));
-                }
-                if !user
-                    .query_row([summary.id], |r| r.get::<_, bool>(0))
-                    .map_err(|e| e.to_string())?
-                {
-                    continue;
-                }
-                let flush = |current: Option<(usize, String, String)>,
-                             hits: &mut Vec<crate::search::Hit>| {
-                    if let Some((row, role, text)) = current {
-                        if let Some(hit) =
-                            crate::search::message_hit(summary, row, &role, &text, query, false)
-                        {
-                            hits.push(hit);
-                        }
-                    }
-                };
-                let mut current: Option<(usize, String, String)> = None;
-                let mut rows = statement.query([summary.id]).map_err(|e| e.to_string())?;
-                while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-                    if cancel.load(Ordering::Acquire) {
-                        return Ok((vec![], false));
-                    }
-                    let ix = row.get::<_, i64>(0).map_err(|e| e.to_string())?.max(0) as usize;
-                    let role: String = row.get(1).map_err(|e| e.to_string())?;
-                    let body: String = row.get(2).map_err(|e| e.to_string())?;
-                    let first: bool = row.get(3).map_err(|e| e.to_string())?;
-                    if first || current.is_none() {
-                        flush(current.take(), &mut hits);
-                        if hits.len() >= 400 {
-                            truncated = true;
-                            break 'sessions;
-                        }
-                        current = Some((ix, role, String::new()));
-                    }
-                    if let Some((_, _, text)) = &mut current {
-                        let mut end = body
-                            .len()
-                            .min((2 * 1024 * 1024usize).saturating_sub(text.len()));
-                        while !body.is_char_boundary(end) {
-                            end -= 1;
-                        }
-                        text.push_str(&body[..end]);
-                        truncated |= end < body.len();
-                    }
-                }
-                flush(current, &mut hits);
-                if hits.len() >= 400 {
-                    truncated = true;
-                    break;
-                }
-            }
-            let titles = summaries
-                .into_iter()
-                .filter(|s| !s.archived && s.has_messages)
-                .collect::<Vec<_>>();
-            hits.extend(crate::search::titles(&titles, query));
-            Ok((hits, truncated))
-        })();
-        self.conn
-            .progress_handler(0, None::<fn() -> bool>)
-            .map_err(|e| e.to_string())?;
-        if cancel.load(Ordering::Acquire) {
-            Ok((vec![], false))
-        } else {
-            result
-        }
+        self.shared_search(query, cancel)
     }
     /// The cursor for the turns before `load`'s rows, when a Pilot's history
     /// is paged rather than loaded whole.
     pub fn history_before(&self, session: i64) -> Result<Option<i64>, String> {
-        if self.shared.is_none() || self.remote_session(session)?.is_some() {
+        if self.remote_session(session)?.is_some() {
             return Ok(None);
         }
         self.shared_history_before(session)
     }
     /// The page of turns before `before`, or with `all` every older turn.
     pub fn load_before(&self, session: i64, before: i64, all: bool) -> Result<HistoryPage, String> {
-        if self.shared.is_none() {
-            return Ok(HistoryPage::default());
-        }
         self.shared_load_before(session, before, all)
     }
     pub fn load(&self, session: i64) -> Result<Transcript, String> {
@@ -872,68 +350,14 @@ impl Store {
             );
             return Self::project_remote_history(&snapshot).map(|(history, _)| history);
         }
-        if self.shared.is_some() {
-            return self.shared_load(session);
-        }
-
-        let mut stmt = self
-            .conn
-            .prepare("SELECT role,body,first,sent_at FROM native_rows WHERE session_id=? ORDER BY row_ix")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([session], |r| {
-                Ok(Row {
-                    role: r.get(0)?,
-                    text: r.get(1)?,
-                    first: r.get(2)?,
-                    sent_at: r
-                        .get::<_, Option<i64>>(3)?
-                        .and_then(|at| u64::try_from(at).ok()),
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        let mut rows = rows
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        // Pre-timestamp histories recorded completion and duration per run.
-        // Recover their start time where known, leaving undated history undated.
-        if let Ok(Some(settings)) = self.agent_settings(session) {
-            for (turn, info) in settings.turns {
-                if turn > rows.len() {
-                    continue;
-                }
-                let mut prompt = turn;
-                while prompt > 0 && rows[prompt - 1].is_prompt() {
-                    prompt -= 1;
-                }
-                if let Some(row) = rows.get_mut(prompt) {
-                    if row.sent_at.is_none() {
-                        row.sent_at = info
-                            .completed_at
-                            .and_then(|at| at.checked_sub(info.duration_ms));
-                    }
-                }
-            }
-        }
-        Ok(Transcript { rows })
+        self.shared_load(session)
     }
     /// Drops a conversation's transcript rows from `start` on.
     pub fn trim_rows(&mut self, session: i64, start: usize) -> Result<(), String> {
         if self.remote_session(session)?.is_some() {
             return Err("Remote transcripts are owned by the host".into());
         }
-        if self.shared.is_some() {
-            return self.shared_trim_rows(session, start);
-        }
-        let start = i64::try_from(start)
-            .map_err(|_| "Conversation row index exceeds SQLite's integer range".to_owned())?;
-        self.conn
-            .execute(
-                "DELETE FROM native_rows WHERE session_id=?1 AND row_ix>=?2",
-                params![session, start],
-            )
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        self.shared_trim_rows(session, start)
     }
     pub fn write_rows(&mut self, session: i64, start: usize, rows: &[Row]) -> Result<(), String> {
         self.write_rows_with_message(session, start, rows, None)
@@ -948,44 +372,7 @@ impl Store {
         if self.remote_session(session)?.is_some() {
             return Err("Remote transcripts are owned by the host".into());
         }
-        if self.shared.is_some() {
-            return self.shared_write_rows(session, start, rows, message_id);
-        }
-
-        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
-        {
-            let mut stmt = tx
-                .prepare(
-                    "INSERT INTO native_rows(session_id,row_ix,role,body,first,sent_at) VALUES(?1,?2,?3,?4,?5,?6)
-                ON CONFLICT(session_id,row_ix) DO UPDATE SET body=excluded.body",
-                )
-                .map_err(|e| e.to_string())?;
-            for (offset, row) in rows.iter().enumerate() {
-                stmt.execute(params![
-                    session,
-                    (start + offset) as i64,
-                    row.role,
-                    row.text,
-                    row.first,
-                    row.sent_at.and_then(|at| i64::try_from(at).ok())
-                ])
-                .map_err(|e| e.to_string())?;
-            }
-        }
-        if !rows.is_empty() {
-            tx.execute(
-                "UPDATE native_sessions SET updated_at=?2 WHERE id=?1",
-                params![
-                    session,
-                    crate::response::now_ms().min(i64::MAX as u64) as i64
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        if let Some(id) = message_id {
-            tx.execute("INSERT INTO native_settings(key,value) VALUES(?1,'1') ON CONFLICT(key) DO UPDATE SET value='1'",[format!("pilot-delivered:{session}:{id}")]).map_err(|e|e.to_string())?;
-        }
-        tx.commit().map_err(|e| e.to_string())
+        self.shared_write_rows(session, start, rows, message_id)
     }
     /// Archiving preserves the transcript, provider context and configuration,
     /// and ends the session's tool access.
@@ -1001,17 +388,7 @@ impl Store {
         if self.remote_session(id)?.is_some() {
             return self.patch_remote_session(id, serde_json::json!({"archived": archived}));
         }
-        if self.shared.is_some() {
-            return self.shared_patch(id, &[("archived", serde_json::json!(archived))]);
-        }
-
-        self.conn
-            .execute(
-                "UPDATE native_sessions SET archived=?2 WHERE id=?1",
-                params![id, archived],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_patch(id, &[("archived", serde_json::json!(archived))])
     }
     pub fn set_pinned(&self, ids: &[i64], pinned: bool) -> Result<(), String> {
         let any_remote = ids
@@ -1030,19 +407,7 @@ impl Store {
             }
             return Ok(());
         }
-        if self.shared.is_some() {
-            return self.shared_pins(ids, pinned);
-        }
-
-        for id in ids {
-            self.conn
-                .execute(
-                    "UPDATE native_sessions SET pinned=?2 WHERE id=?1",
-                    params![id, pinned],
-                )
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(())
+        self.shared_pins(ids, pinned)
     }
     /// The work item one session is linked to, read on its own instead of
     /// listing every session ([`Self::sessions`]); for callers that poll a
@@ -1052,22 +417,7 @@ impl Store {
         if let Some(remote) = self.remote_session(id)? {
             return Ok(remote.summary.work_item);
         }
-        if self.shared.is_some() {
-            return self.shared_work_item(id);
-        }
-
-        use rusqlite::OptionalExtension;
-        let text: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT work_item FROM native_sessions WHERE id=?1",
-                [id],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?
-            .ok_or("Session no longer exists")?;
-        Ok(text.and_then(|text| serde_json::from_str(&text).ok()))
+        self.shared_work_item(id)
     }
     pub fn set_work_item(
         &self,
@@ -1077,99 +427,34 @@ impl Store {
         if self.remote_session(id)?.is_some() {
             return self.patch_remote_session(id, serde_json::json!({"linkedWorkItem": item}));
         }
-        if self.shared.is_some() {
-            return self.shared_patch(
-                id,
-                &[(
-                    "linked_work_item_json",
-                    item.map(shared::encode)
-                        .transpose()?
-                        .map(serde_json::Value::String)
-                        .unwrap_or(serde_json::Value::Null),
-                )],
-            );
-        }
-
-        let text = item
-            .map(|item| serde_json::to_string(item).map_err(|e| e.to_string()))
-            .transpose()?;
-        self.conn
-            .execute(
-                "UPDATE native_sessions SET work_item=?2 WHERE id=?1",
-                params![id, text],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_patch(
+            id,
+            &[(
+                "linked_work_item_json",
+                item.map(shared::encode)
+                    .transpose()?
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null),
+            )],
+        )
     }
     /// A project's folders and folded groups.
     pub fn groups(&self, cwd: &str) -> Result<crate::session_groups::Groups, String> {
-        if self.shared.is_some() {
-            return self.shared_groups(cwd);
-        }
-
-        use rusqlite::OptionalExtension;
-        let text: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT value FROM native_settings WHERE key=?1",
-                [format!("groups:{cwd}")],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        Ok(text
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default())
+        self.shared_groups(cwd)
     }
     pub fn save_groups(
         &self,
         cwd: &str,
         groups: &crate::session_groups::Groups,
     ) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_save_setting(&format!("groups:{cwd}"), &shared::encode(groups)?);
-        }
-
-        self.conn.execute("INSERT INTO native_settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![format!("groups:{cwd}"), serde_json::to_string(groups).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_save_setting(&format!("groups:{cwd}"), &shared::encode(groups)?)
     }
     pub fn reminders(&self) -> Result<Vec<Reminder>, String> {
-        if self.shared.is_some() {
-            return self.shared_reminders();
-        }
-
-        let mut stmt = self
-            .conn
-            .prepare("SELECT session_id,due_at,fired_at FROM native_reminders ORDER BY due_at,session_id")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(Reminder {
-                    session_id: r.get(0)?,
-                    due_at: r.get::<_, i64>(1)?.max(0) as u64,
-                    fired_at: r.get::<_, Option<i64>>(2)?.map(|t| t.max(0) as u64),
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())
+        self.shared_reminders()
     }
     /// Schedules (or reschedules, re-arming) each session's reminder.
     pub fn set_reminders(&mut self, ids: &[i64], due_at: u64) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_set_reminders(ids, due_at);
-        }
-
-        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
-        for id in ids {
-            tx.execute(
-                "INSERT INTO native_reminders(session_id,due_at,fired_at) VALUES(?1,?2,NULL)
-                 ON CONFLICT(session_id) DO UPDATE SET due_at=excluded.due_at,fired_at=NULL",
-                params![id, due_at.min(i64::MAX as u64) as i64],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        tx.commit().map_err(|e| e.to_string())
+        self.shared_set_reminders(ids, due_at)
     }
     /// Re-arms only the reminder occurrence the user snoozed. A stale popup
     /// must not overwrite a newer schedule created in another window.
@@ -1179,32 +464,12 @@ impl Store {
         expected_due: u64,
         new_due: u64,
     ) -> Result<bool, String> {
-        if self.shared.is_some() {
-            return self.shared_snooze_reminder_if(id, expected_due, new_due);
-        }
-        self.conn.execute("UPDATE native_reminders SET due_at=?3,fired_at=NULL WHERE session_id=?1 AND due_at=?2",
-            params![id, expected_due.min(i64::MAX as u64) as i64, new_due.min(i64::MAX as u64) as i64]).map(|changed|changed==1).map_err(|e|e.to_string())
+        self.shared_snooze_reminder_if(id, expected_due, new_due)
     }
     /// Clears the sessions' reminders; with `expected`, only that one, so a
     /// stale delivery never clears a newer reminder.
     pub fn clear_reminders(&self, ids: &[i64], expected: Option<u64>) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_clear_reminders(ids, expected);
-        }
-
-        for id in ids {
-            match expected {
-                Some(due) => self.conn.execute(
-                    "DELETE FROM native_reminders WHERE session_id=?1 AND due_at=?2",
-                    params![id, due.min(i64::MAX as u64) as i64],
-                ),
-                None => self
-                    .conn
-                    .execute("DELETE FROM native_reminders WHERE session_id=?1", [id]),
-            }
-            .map_err(|e| e.to_string())?;
-        }
-        Ok(())
+        self.shared_clear_reminders(ids, expected)
     }
     /// Marks due, undelivered reminders delivered and returns them, once.
     pub fn take_due_reminders(&mut self, now: u64) -> Result<Vec<Reminder>, String> {
@@ -1213,19 +478,7 @@ impl Store {
             .into_iter()
             .filter(|r| r.due_at <= now && r.fired_at.is_none())
             .collect();
-        if self.shared.is_some() {
-            return self.shared_fire_reminders(&due, now);
-        }
-        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
-        for reminder in &due {
-            tx.execute(
-                "UPDATE native_reminders SET fired_at=?2 WHERE session_id=?1",
-                params![reminder.session_id, now.min(i64::MAX as u64) as i64],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        tx.commit().map_err(|e| e.to_string())?;
-        Ok(due)
+        self.shared_fire_reminders(&due, now)
     }
     /// Deletes the conversation, its settings and reminder for good.
     /// Removes the session and ends its tool access.
@@ -1239,49 +492,13 @@ impl Store {
         if self.remote_session(id)?.is_some() {
             return self.delete_remote_session(id);
         }
-        if self.shared.is_some() {
-            return self.shared_delete(id);
-        }
-
-        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM native_rows WHERE session_id=?1", [id])
-            .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM native_reminders WHERE session_id=?1", [id])
-            .map_err(|e| e.to_string())?;
-        tx.execute(
-            "DELETE FROM native_settings WHERE key IN (?1,?2,?3,?5,?6,?7,?8,?9) OR key LIKE ?4",
-            params![
-                format!("agent:{id}"),
-                format!("context:{id}"),
-                format!("follow-up:{id}"),
-                format!("pilot-delivered:{id}:%"),
-                format!("started-by:{id}"),
-                format!("orchestration:{id}"),
-                format!("orchestration-run:{id}"),
-                format!("inbox-ask:{id}"),
-                format!("automation:{id}")
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        tx.execute("DELETE FROM native_sessions WHERE id=?1", [id])
-            .map_err(|e| e.to_string())?;
-        tx.commit().map_err(|e| e.to_string())
+        self.shared_delete(id)
     }
     pub fn provider_id(&self, id: i64, provider_id: &str) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_patch(
-                id,
-                &[("provider_session_id", serde_json::json!(provider_id))],
-            );
-        }
-
-        self.conn
-            .execute(
-                "UPDATE native_sessions SET provider_id=?2 WHERE id=?1",
-                params![id, provider_id],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_patch(
+            id,
+            &[("provider_session_id", serde_json::json!(provider_id))],
+        )
     }
     /// Keep conversation history while detaching a removed working copy.
     pub fn detach_worktree(
@@ -1289,45 +506,7 @@ impl Store {
         path: &str,
         main: &str,
     ) -> Result<Vec<(Session, crate::agent::Settings)>, String> {
-        if self.shared.is_some() {
-            return self.shared_detach_worktree(path, main);
-        }
-
-        let sessions = self.sessions()?;
-        let mut changed = Vec::new();
-        for mut session in sessions {
-            let mut settings = self.agent_settings(session.id)?.unwrap_or_default();
-            let execution = settings.worktree_cwd.as_deref().unwrap_or(&session.cwd);
-            if !crate::files::is_equal_or_inside(execution, path) {
-                continue;
-            }
-            settings.worktree_cwd = Some(execution.to_owned());
-            settings.worktree_removed = true;
-            settings.revision += 1;
-            settings.new_worktree = false;
-            settings.worktree_base = None;
-            if crate::files::is_equal_or_inside(&session.cwd, path) {
-                session.cwd = main.into();
-            }
-            session.provider_id = None;
-            changed.push((session, settings));
-        }
-        let tx = write_transaction(&self.conn).map_err(|e| e.to_string())?;
-        for (session, settings) in &changed {
-            tx.execute(
-                "UPDATE native_sessions SET cwd=?2,provider_id=NULL WHERE id=?1",
-                params![session.id, session.cwd],
-            )
-            .map_err(|e| e.to_string())?;
-            tx.execute("INSERT INTO native_settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![format!("agent:{}",session.id),serde_json::to_string(settings).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
-            tx.execute(
-                "DELETE FROM native_settings WHERE key=?1",
-                [format!("context:{}", session.id)],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-        tx.commit().map_err(|e| e.to_string())?;
-        Ok(changed)
+        self.shared_detach_worktree(path, main)
     }
     /// Moves the sessions saved in `from` to `to`, as the desktop app's
     /// `session_rebase_project` does: only the folder changes.
@@ -1335,19 +514,7 @@ impl Store {
         if from.trim().is_empty() || to.trim().is_empty() {
             return Err("project paths are required".into());
         }
-        let table = if self.shared.is_some() {
-            self.shared_writable()?;
-            "sessions"
-        } else {
-            "native_sessions"
-        };
-        self.conn
-            .execute(
-                &format!("UPDATE {table} SET cwd=?2 WHERE cwd=?1"),
-                params![from, to],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_rebase_project(from, to)
     }
     /// Lists the sessions saved in the linked worktree `worktree` under its
     /// main checkout `root`, each still running in the worktree. Returns the
@@ -1372,52 +539,18 @@ impl Store {
         self.rebase_project(worktree, root)?;
         Ok(ids)
     }
-    #[cfg(test)]
-    pub(crate) fn conn(&self) -> &Connection {
-        &self.conn
-    }
     pub fn reset_provider_id(&self, id: i64) -> Result<(), String> {
-        if self.shared.is_some() {
-            return self.shared_patch(id, &[("provider_session_id", serde_json::Value::Null)]);
-        }
-
-        self.conn
-            .execute(
-                "UPDATE native_sessions SET provider_id=NULL WHERE id=?1",
-                [id],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_patch(id, &[("provider_session_id", serde_json::Value::Null)])
     }
     pub fn title(&self, id: i64, title: &str) -> Result<(), String> {
         if self.remote_session(id)?.is_some() {
             return self.patch_remote_session(id, serde_json::json!({"title": title}));
         }
-        if self.shared.is_some() {
-            return self.shared_patch(id, &[("title", serde_json::json!(title))]);
-        }
-
-        self.conn
-            .execute(
-                "UPDATE native_sessions SET title=?2 WHERE id=?1",
-                params![id, title],
-            )
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        self.shared_patch(id, &[("title", serde_json::json!(title))])
     }
     /// A late generated title cannot replace a manual rename or recreate a deleted session.
     pub fn replace_title(&self, id: i64, expected: &str, title: &str) -> Result<bool, String> {
-        if self.shared.is_some() {
-            return self.shared_replace_title(id, expected, title);
-        }
-
-        self.conn
-            .execute(
-                "UPDATE native_sessions SET title=?3 WHERE id=?1 AND title=?2",
-                params![id, expected, title],
-            )
-            .map(|count| count == 1)
-            .map_err(|error| error.to_string())
+        self.shared_replace_title(id, expected, title)
     }
 }
 
@@ -1458,7 +591,9 @@ mod tests {
             .fold_worktree_sessions("/work/app-worktrees/fix", "/work/app")
             .unwrap();
         moved.sort();
-        assert_eq!(moved, [tree.id, nested.id]);
+        let mut expected = vec![tree.id, nested.id];
+        expected.sort();
+        assert_eq!(moved, expected);
         let cwd = |id| {
             store
                 .sessions()
@@ -1603,37 +738,6 @@ mod tests {
     }
 
     #[test]
-    fn a_write_after_a_read_waits_for_another_connections_commit() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("race.db");
-        let open = || {
-            let conn = Connection::open(&path).unwrap();
-            conn.busy_timeout(std::time::Duration::from_millis(50))
-                .unwrap();
-            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
-            conn
-        };
-        let ours = open();
-        ours.execute_batch("CREATE TABLE rows(v INTEGER)").unwrap();
-        let theirs = open();
-        let tx = write_transaction(&ours).unwrap();
-        let _: i64 = tx
-            .query_row("SELECT count(*) FROM rows", [], |r| r.get(0))
-            .unwrap();
-        // The other app's write must wait for ours rather than slip in
-        // between our read and our write.
-        assert!(theirs.execute("INSERT INTO rows VALUES(2)", []).is_err());
-        tx.execute("INSERT INTO rows VALUES(1)", [])
-            .expect("our write must not fail with a stale snapshot");
-        tx.commit().unwrap();
-        theirs.execute("INSERT INTO rows VALUES(2)", []).unwrap();
-        let count: i64 = ours
-            .query_row("SELECT count(*) FROM rows", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(count, 2);
-    }
-
-    #[test]
     fn workspace_membership_reads_main_and_worktree_sessions_without_loading_history() {
         let store = super::Store::open(std::path::Path::new(":memory:")).unwrap();
         let main = store.create("codex", "/project").unwrap();
@@ -1666,12 +770,10 @@ mod tests {
         let mut store = Store::open(&path).unwrap();
         let session = store.create("codex", "/project").unwrap();
         assert!(session.updated_at > 0);
+        let original = store.persisted_session_id(session.id).unwrap();
         store
-            .conn
-            .execute(
-                "UPDATE native_sessions SET updated_at=1 WHERE id=?1",
-                [session.id],
-            )
+            .conn()
+            .execute("UPDATE sessions SET updated_at=1 WHERE id=?1", [&original])
             .unwrap();
         let rows = vec![Row {
             role: "user".into(),
@@ -1702,12 +804,6 @@ mod tests {
         use crate::tool_servers::{is_open, Access, Mount};
         let directory = tempfile::tempdir().unwrap();
         let mut store = Store::open(&directory.path().join("sessions.db")).unwrap();
-        // The hub is process-wide, and other tests archive their sessions 1, 2…
-        let first = store.create("claude", "/work").unwrap().id;
-        store
-            .conn
-            .execute("UPDATE native_sessions SET id=70000 WHERE id=?1", [first])
-            .unwrap();
         let open = |id: i64| {
             let mount = Mount {
                 session: id,
@@ -1838,7 +934,10 @@ mod tests {
         store.delete(gone.id).unwrap();
         assert_eq!(store.reminders().unwrap().len(), 1);
         assert!(store.sessions().unwrap().iter().all(|s| s.id != gone.id));
-        assert!(store.load(gone.id).unwrap().rows.is_empty());
+        assert!(
+            store.load(gone.id).map_or(true, |t| t.rows.is_empty()),
+            "nothing of a deleted conversation loads"
+        );
         store.clear_reminders(&[keep.id], None).unwrap();
         assert!(store.reminders().unwrap().is_empty());
         store.set_work_item(keep.id, None).unwrap();
@@ -1876,11 +975,12 @@ mod tests {
         store.set_work_item(linked.id, None).unwrap();
         assert_eq!(store.work_item(linked.id).unwrap(), None);
         // Unreadable JSON reads as no link, as in the list.
+        let original = store.persisted_session_id(plain.id).unwrap();
         store
-            .conn
+            .conn()
             .execute(
-                "UPDATE native_sessions SET work_item='{broken' WHERE id=?1",
-                [plain.id],
+                "UPDATE sessions SET linked_work_item_json='{broken' WHERE id=?1",
+                [&original],
             )
             .unwrap();
         assert_eq!(store.work_item(plain.id).unwrap(), None);
@@ -1909,31 +1009,6 @@ mod tests {
             .find(|s| s.id == remote.id)
             .unwrap();
         assert_eq!(listed.work_item, Some(ticket("ENG-3")));
-    }
-    #[test]
-    fn old_native_schema_migrates_idempotently_and_recovers_recorded_times() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("legacy-native.db");
-        let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("CREATE TABLE native_sessions(id INTEGER PRIMARY KEY,title TEXT NOT NULL,provider TEXT NOT NULL,cwd TEXT NOT NULL,provider_id TEXT);
-            CREATE TABLE native_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-            CREATE TABLE native_rows(session_id INTEGER NOT NULL,row_ix INTEGER NOT NULL,role TEXT NOT NULL,body TEXT NOT NULL,first INTEGER NOT NULL,PRIMARY KEY(session_id,row_ix));
-            INSERT INTO native_sessions VALUES(1,'Has a receipt','codex','/project','thread'),(2,'Unknown age','claude','/project',NULL);
-            INSERT INTO native_rows VALUES(1,0,'user','Old prompt',1),(1,1,'assistant','Old answer',1),(2,0,'user','Undated prompt',1);
-            INSERT INTO native_settings VALUES('agent:1','{\"turns\":{\"1\":{\"completed_at\":1700000000000,\"duration_ms\":5000}}}');").unwrap();
-        drop(conn);
-        for _ in 0..2 {
-            let store = Store::open(&path).unwrap();
-            let sessions = store.sessions().unwrap();
-            assert_eq!(sessions[0].updated_at, 1_700_000_000_000);
-            assert_eq!(sessions[1].updated_at, 0, "unknown ages are not invented");
-            assert!(sessions.iter().all(|session| !session.archived));
-            assert_eq!(
-                store.load(1).unwrap().rows[0].sent_at,
-                Some(1_699_999_995_000)
-            );
-            assert_eq!(store.load(2).unwrap().rows[0].sent_at, None);
-        }
     }
     #[test]
     fn send_times_survive_streaming_restart_and_queued_delivery() {

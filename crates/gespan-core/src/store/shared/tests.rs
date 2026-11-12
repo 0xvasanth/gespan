@@ -1,5 +1,5 @@
 use super::*;
-use rusqlite::params;
+use rusqlite::{params, Connection};
 
 fn has_table(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     conn.query_row(
@@ -71,7 +71,7 @@ fn saved_turn_metrics_reload_with_the_same_revision() {
 #[test]
 fn streamed_indexed_pilot_load_preserves_projection_and_revision_guards() {
     let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
-    store.conn.execute_batch(PILOT_TABLES).unwrap();
+    store.conn().execute_batch(PILOT_TABLES).unwrap();
     let blocks = (0..1_000)
         .map(|i| {
             json!({
@@ -85,21 +85,21 @@ fn streamed_indexed_pilot_load_preserves_projection_and_revision_guards() {
         let id = store.create("codex", "/project").unwrap().id;
         let original = store.persisted_session_id(id).unwrap();
         store
-            .conn
+            .conn()
             .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
             .unwrap();
         store.shared_store_blocks(id, &blocks).unwrap();
         let mut loaded = store.load(id).unwrap();
         assert_eq!(loaded.rows, blocks::project(&blocks).unwrap());
         assert_eq!(
-            store.shared.as_ref().unwrap().snapshots.borrow()[&id],
+            store.shared.snapshots.borrow()[&id],
             HistoryRevision::of(&blocks)
         );
         let from = loaded.begin("user");
         loaded.append("Continue the same conversation");
         store.write_rows(id, from, &loaded.rows[from..]).unwrap();
         assert_eq!(&store.shared_blocks(id).unwrap()[..blocks.len()], &blocks);
-        store.conn.execute("UPDATE pilot_blocks SET block_json=json_set(block_json,'$.future.external',true) WHERE session_id=?1 AND seq=1", [&original]).unwrap();
+        store.conn().execute("UPDATE pilot_blocks SET block_json=json_set(block_json,'$.future.external',true) WHERE session_id=?1 AND seq=1", [&original]).unwrap();
         let error = store
             .write_rows(id, from, &loaded.rows[from..])
             .unwrap_err();
@@ -108,7 +108,7 @@ fn streamed_indexed_pilot_load_preserves_projection_and_revision_guards() {
 }
 
 fn indexed_pilot(store: &mut Store, turns: usize) -> (i64, String, Vec<Value>) {
-    store.conn.execute_batch(PILOT_TABLES).unwrap();
+    store.conn().execute_batch(PILOT_TABLES).unwrap();
     let blocks = (0..turns)
         .flat_map(|turn| {
             [
@@ -122,19 +122,13 @@ fn indexed_pilot(store: &mut Store, turns: usize) -> (i64, String, Vec<Value>) {
     let id = store.create("codex", "/project").unwrap().id;
     let original = store.persisted_session_id(id).unwrap();
     store
-        .conn
+        .conn()
         .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
         .unwrap();
     store.shared_store_blocks(id, &blocks).unwrap();
     // As a newly opened store would: no window or revision chosen yet.
-    store.shared.as_ref().unwrap().windows.borrow_mut().clear();
-    store
-        .shared
-        .as_ref()
-        .unwrap()
-        .snapshots
-        .borrow_mut()
-        .clear();
+    store.shared.windows.borrow_mut().clear();
+    store.shared.snapshots.borrow_mut().clear();
     (id, original, blocks)
 }
 
@@ -188,16 +182,11 @@ fn window_saves_never_rewrite_or_drop_turns_before_it() {
     let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, original, blocks) = indexed_pilot(&mut store, 25);
     let older = |store: &Store| {
-        let mut query = store
-            .conn
-            .prepare("SELECT seq,block_json FROM pilot_blocks WHERE session_id=?1 AND block_id GLOB '*-[0-9]' ORDER BY seq")
-            .unwrap();
-        query
-            .query_map([&original], |r| {
+        store
+            .conn()
+            .query_map("SELECT seq,block_json FROM pilot_blocks WHERE session_id=?1 AND block_id GLOB '*-[0-9]' ORDER BY seq", [&original], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
             })
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
             .unwrap()
     };
     let before = older(&store);
@@ -222,7 +211,7 @@ fn window_saves_never_rewrite_or_drop_turns_before_it() {
         "Edited question"
     );
     let turns: i64 = store
-        .conn
+        .conn()
         .query_row(
             "SELECT count(*) FROM pilot_turns WHERE session_id=?1",
             [&original],
@@ -231,7 +220,7 @@ fn window_saves_never_rewrite_or_drop_turns_before_it() {
         .unwrap();
     assert_eq!(turns, 25);
     // A store opened after the insertion still sees all 25 turns in order.
-    store.shared.as_ref().unwrap().windows.borrow_mut().clear();
+    store.shared.windows.borrow_mut().clear();
     let page = store
         .load_before(id, store.history_before(id).unwrap().unwrap(), true)
         .unwrap();
@@ -255,23 +244,23 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
         ("app-worker-task", "/project", true, true),
         ("inbox", "/project", false, true),
     ] {
-        store.conn.execute("INSERT INTO sessions(id,cwd,harness,model,runtime_mode,title,blocks_json,created_at,updated_at,has_user_message,sidebar_hidden,
+        store.conn().execute("INSERT INTO sessions(id,cwd,harness,model,runtime_mode,title,blocks_json,created_at,updated_at,has_user_message,sidebar_hidden,
             model_settings,archived,pinned,worktree_removed,is_draft,queued_messages_json)
             VALUES(?1,?2,'codex','codex:model','supervised',?1,'not JSON',1,2,?3,?4,'{}',0,0,0,0,'[]')", params![id,cwd,user,hidden]).unwrap();
     }
     store
-        .conn
+        .conn()
         .execute(
             "INSERT INTO orchestration_workers VALUES('worker','listed-caller')",
             [],
         )
         .unwrap();
     store
-        .conn
+        .conn()
         .execute("UPDATE sessions SET inbox_ask='ask' WHERE id='inbox'", [])
         .unwrap();
     let schema_version: i64 = store
-        .conn
+        .conn()
         .query_row("PRAGMA schema_version", [], |r| r.get(0))
         .unwrap();
     drop(store);
@@ -299,7 +288,7 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
     assert_eq!(metadata.started_by[&child], parent);
     assert_eq!(
         store
-            .conn
+            .conn()
             .query_row("PRAGMA schema_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
         schema_version
@@ -319,7 +308,7 @@ fn desktop_workspace_snapshot_restores_existing_ids_and_keeps_native_override() 
         {"id":"stale-tab","layout":{"type":"leaf","id":"999999"}}
     ]});
     store
-        .conn
+        .conn()
         .execute(
             "INSERT INTO workspace_snapshot VALUES(1,?1,1)",
             [source.to_string()],
@@ -429,9 +418,9 @@ fn reading_a_file_gespan_has_not_adopted_leaves_it_alone() {
 fn indexed_pilot_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     let store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, source) = saved(&store, json!([]));
-    store.conn.execute_batch(PILOT_TABLES).unwrap();
+    store.conn().execute_batch(PILOT_TABLES).unwrap();
     store
-        .conn
+        .conn()
         .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&source])
         .unwrap();
     let blocks = vec![
@@ -443,7 +432,7 @@ fn indexed_pilot_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     store.shared_store_blocks(id, &blocks).unwrap();
     tx.commit().unwrap();
     let first_raw: String = store
-        .conn
+        .conn()
         .query_row(
             "SELECT block_json FROM pilot_blocks WHERE block_id='pilot-prompt'",
             [],
@@ -463,7 +452,7 @@ fn indexed_pilot_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     store.write_rows(id, from, &t.rows[from..]).unwrap();
     assert_eq!(
         store
-            .conn
+            .conn()
             .query_row(
                 "SELECT blocks_json FROM sessions WHERE id=?1",
                 [&source],
@@ -474,7 +463,7 @@ fn indexed_pilot_history_stays_in_its_desktop_tables_with_block_ids_intact() {
     );
     assert_eq!(
         store
-            .conn
+            .conn()
             .query_row(
                 "SELECT block_json FROM pilot_blocks WHERE block_id='pilot-prompt'",
                 [],
@@ -514,12 +503,12 @@ fn desktop_open_uses_existing_records_and_does_not_rewrite_the_database() {
     assert_eq!(store.sessions().unwrap()[0].id, row.id);
     assert_eq!(store.persisted_session_id(row.id).unwrap(), id);
     assert_eq!(settled(), original);
-    assert!(!has_table(&store.conn, "native_sessions").unwrap());
+    assert!(!has_table(&Connection::open(&path).unwrap(), "native_sessions").unwrap());
 }
 
 fn saved(store: &Store, blocks: Value) -> (i64, String) {
     let original = "existing-session-uuid";
-    store.conn.execute("INSERT INTO sessions(id,cwd,harness,model,model_settings,runtime_mode,title,provider_session_id,
+    store.conn().execute("INSERT INTO sessions(id,cwd,harness,model,model_settings,runtime_mode,title,provider_session_id,
         blocks_json,created_at,updated_at,has_user_message,provider_account_id,
         archived,pinned,worktree_removed,is_draft,queued_messages_json,sidebar_hidden)
         VALUES(?1,'/project','codex','codex:model-one','{\"reasoningEffort\":\"high\",\"futureSetting\":\"keep\"}',
@@ -538,7 +527,7 @@ fn saved(store: &Store, blocks: Value) -> (i64, String) {
 fn desktop_model_and_effort_decode_and_round_trip_without_rewriting_the_title() {
     let store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, source) = saved(&store, json!([]));
-    store.conn.execute(
+    store.conn().execute(
         "UPDATE sessions SET model='codex:gpt-6.1-sol',model_settings=?2,title='codex · Fix sidebar' WHERE id=?1",
         params![source, r#"{"reasoningEffort":"xhigh","serviceTier":"default"}"#],
     ).unwrap();
@@ -551,7 +540,7 @@ fn desktop_model_and_effort_decode_and_round_trip_without_rewriting_the_title() 
     assert_eq!(saved.model, settings.model);
     assert_eq!(saved.effort, settings.effort);
     let (model, title, controls): (String, String, String) = store
-        .conn
+        .conn()
         .query_row(
             "SELECT model,title,model_settings FROM sessions WHERE id=?1",
             [&source],
@@ -590,7 +579,7 @@ fn writes_are_visible_in_desktop_tables_and_preserve_rich_history() {
     t.append("New reply");
     store.write_rows(id, from, &t.rows[from..]).unwrap();
     let raw: String = store
-        .conn
+        .conn()
         .query_row(
             "SELECT blocks_json FROM sessions WHERE id=?1",
             [&source],
@@ -616,7 +605,7 @@ fn writes_are_visible_in_desktop_tables_and_preserve_rich_history() {
     assert_eq!(settings.model.as_deref(), Some("model-one"));
     settings.effort = Some("low".into());
     store.save_agent_settings(id, &settings).unwrap();
-    let (title,pinned,archived,controls,provider,model):(String,bool,bool,String,String,String)=store.conn.query_row(
+    let (title,pinned,archived,controls,provider,model):(String,bool,bool,String,String,String)=store.conn().query_row(
         "SELECT title,pinned,archived,model_settings,provider_session_id,model FROM sessions WHERE id=?1",[&source],
         |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).unwrap();
     assert_eq!(title, "Renamed");
@@ -672,7 +661,7 @@ fn tauri_session_with_a_harness_gpui_does_not_know_still_loads_with_the_raw_stri
     let store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, source) = saved(&store, json!([]));
     store
-        .conn
+        .conn()
         .execute(
             "UPDATE sessions SET harness='nonexistent',model='nonexistent:auto' WHERE id=?1",
             [&source],
@@ -685,7 +674,7 @@ fn tauri_session_with_a_harness_gpui_does_not_know_still_loads_with_the_raw_stri
     store.load(id).unwrap();
     store.agent_settings(id).unwrap();
     let harness: String = store
-        .conn
+        .conn()
         .query_row("SELECT harness FROM sessions WHERE id=?1", [&source], |r| {
             r.get(0)
         })
@@ -764,7 +753,7 @@ fn drafts_queues_and_receipts_keep_desktop_metadata_and_do_not_replay() {
     );
     let queued = json!([{"id":"queued","text":"Next","attachments":[{"id":"image","path":"/image.png","future":"keep"}],"futureQueue":true}]);
     store
-        .conn
+        .conn()
         .execute(
             "UPDATE sessions SET queued_messages_json=?2,is_draft=1 WHERE id=?1",
             params![source, queued.to_string()],
@@ -779,7 +768,7 @@ fn drafts_queues_and_receipts_keep_desktop_metadata_and_do_not_replay() {
     state.revision += 1;
     store.save_follow_ups(id, &state).unwrap();
     let raw: String = store
-        .conn
+        .conn()
         .query_row(
             "SELECT queued_messages_json FROM sessions WHERE id=?1",
             [&source],
@@ -799,7 +788,7 @@ fn drafts_queues_and_receipts_keep_desktop_metadata_and_do_not_replay() {
     let store = Store::open_gespan(&path).unwrap();
     assert!(store.follow_ups(id).unwrap().messages.is_empty());
     let raw: String = store
-        .conn
+        .conn()
         .query_row(
             "SELECT queued_messages_json FROM sessions WHERE id=?1",
             [&source],
@@ -824,14 +813,14 @@ fn notes_reminders_search_and_read_only_connections_use_the_same_data() {
         &store,
         json!([{"id":"u","role":"user","text":"A searchable message"}]),
     );
-    store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,source_session_id,source_cwd,created_at,updated_at,artifact_kind,slug_pending,content_kind)
+    store.conn().execute("INSERT INTO notes(id,slug,title,body,tags_json,source_session_id,source_cwd,created_at,updated_at,artifact_kind,slug_pending,content_kind)
         VALUES('existing-note','stable-slug','Note','Body','[\"tag\"]',?1,'/project',1,2,'document',0,'note')",[&source]).unwrap();
     let mut note = store.notes().unwrap().pop().unwrap();
     assert_eq!(note.source_session, id);
     note.body = "Edited note".into();
     store.save_note(&note).unwrap();
     let (slug, body, kind): (String, String, String) = store
-        .conn
+        .conn()
         .query_row(
             "SELECT slug,body,artifact_kind FROM notes WHERE id='existing-note'",
             [],
@@ -844,7 +833,7 @@ fn notes_reminders_search_and_read_only_connections_use_the_same_data() {
     );
     store.set_reminders(&[id], 1000).unwrap();
     let source_reminder: String = store
-        .conn
+        .conn()
         .query_row("SELECT session_id FROM session_reminders", [], |r| r.get(0))
         .unwrap();
     assert_eq!(source_reminder, source);
@@ -862,7 +851,7 @@ fn notes_reminders_search_and_read_only_connections_use_the_same_data() {
     store.delete(id).unwrap();
     assert_eq!(
         store
-            .conn
+            .conn()
             .query_row("SELECT count(*) FROM sessions WHERE id=?1", [source], |r| r
                 .get::<_, i64>(0))
             .unwrap(),
@@ -909,7 +898,7 @@ fn equivalent_desktop_json_can_be_saved_without_losing_rich_source_fields() {
     );
     let history = store.load(id).unwrap();
     store
-        .conn
+        .conn()
         .execute(
             "UPDATE sessions SET blocks_json=?2 WHERE id=?1",
             params![
@@ -923,7 +912,7 @@ fn equivalent_desktop_json_can_be_saved_without_losing_rich_source_fields() {
         store.shared_blocks(id).unwrap()[0]["future"],
         json!({"x":42})
     );
-    assert_eq!(store.shared.as_ref().unwrap().snapshots.borrow().len(), 1);
+    assert_eq!(store.shared.snapshots.borrow().len(), 1);
 }
 
 #[test]
@@ -967,7 +956,7 @@ fn existing_side_questions_import_their_exact_source_bound_without_writes() {
     ]);
     let (session, source) = saved(&store, original.clone());
     let schema: i64 = store
-        .conn
+        .conn()
         .query_row("PRAGMA schema_version", [], |row| row.get(0))
         .unwrap();
     let imported = store.desktop_side_threads(session).unwrap();
@@ -994,7 +983,7 @@ fn existing_side_questions_import_their_exact_source_bound_without_writes() {
     assert!(!imported.snapshot.contains("Private main reasoning"));
     assert!(!imported.snapshot.contains("Internal instruction"));
     let after: String = store
-        .conn
+        .conn()
         .query_row(
             "SELECT blocks_json FROM sessions WHERE id=?1",
             [&source],
@@ -1004,7 +993,7 @@ fn existing_side_questions_import_their_exact_source_bound_without_writes() {
     assert_eq!(parse::<Value>(&after).unwrap(), original);
     assert_eq!(
         store
-            .conn
+            .conn()
             .query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
         schema
@@ -1031,7 +1020,7 @@ fn desktop_turn_receipts_restore_exact_model_timing_metrics_and_projected_offset
     ]);
     let (id, original) = saved(&store, source.clone());
     let raw: String = store
-        .conn
+        .conn()
         .query_row(
             "SELECT blocks_json FROM sessions WHERE id=?1",
             [&original],
@@ -1087,7 +1076,7 @@ fn desktop_turn_receipts_restore_exact_model_timing_metrics_and_projected_offset
     );
     assert_eq!(
         store
-            .conn
+            .conn()
             .query_row(
                 "SELECT blocks_json FROM sessions WHERE id=?1",
                 [&original],
@@ -1178,9 +1167,9 @@ fn fresh_native_turn_receipts_persist_source_fields_without_changing_saved_prove
 fn indexed_pilot_turn_receipts_restore_and_save_in_the_original_block_table() {
     let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, original) = saved(&store, json!([]));
-    store.conn.execute_batch(PILOT_TABLES).unwrap();
+    store.conn().execute_batch(PILOT_TABLES).unwrap();
     store
-        .conn
+        .conn()
         .execute("INSERT INTO pilot_transcripts VALUES(?1)", [&original])
         .unwrap();
     let source = vec![
@@ -1225,7 +1214,7 @@ fn indexed_pilot_turn_receipts_restore_and_save_in_the_original_block_table() {
     assert_eq!(store.load(id).unwrap().rows, transcript.rows);
     assert_eq!(
         store
-            .conn
+            .conn()
             .query_row(
                 "SELECT blocks_json FROM sessions WHERE id=?1",
                 [&original],
@@ -1241,7 +1230,7 @@ fn fresh_receipt_preserves_the_matching_desktop_model_id_spelling() {
     let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let (id, original) = saved(&store, json!([]));
     store
-        .conn
+        .conn()
         .execute(
             "UPDATE sessions SET harness='claude',model='claude:sonnet-4.6' WHERE id=?1",
             [&original],
@@ -1332,7 +1321,7 @@ fn desktop_work_item_reads_a_sidebar_hidden_session_by_id() {
     }));
     store.set_work_item(hidden.id, Some(&item)).unwrap();
     store
-        .conn
+        .conn()
         .execute("UPDATE sessions SET sidebar_hidden=1 WHERE id=?1", [&key])
         .unwrap();
     // A ticket tool's scope reads the link by id, not through the listing.
@@ -1365,7 +1354,7 @@ fn bare_shell_session(store: &Store, data: &Path, harness: &str) -> i64 {
             "tool":{"kind":"execute","title":"Shell","callId":"toolu_1","status":"completed"}}]),
     );
     store
-        .conn
+        .conn()
         .execute(
             "UPDATE sessions SET harness=?2 WHERE id=?1",
             params![original, harness],
@@ -1414,4 +1403,56 @@ fn other_providers_never_read_a_claude_transcript() {
     let store = Store::open_gespan(&data.path().join("gespan.db")).unwrap();
     let id = bare_shell_session(&store, data.path(), "codex");
     assert_eq!(shown_command(&store, id).as_deref(), Some("Shell"));
+}
+
+#[test]
+fn deleting_a_session_forgets_its_settings_and_keeps_the_others() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let mut store = Store::open_gespan(&path).unwrap();
+    let gone = store.create("codex", "/project").unwrap().id;
+    let kept = store.create("codex", "/project").unwrap().id;
+    for id in [gone, kept] {
+        store.save_agent_settings(id, &Settings::default()).unwrap();
+        store
+            .save_setting(&format!("orchestration-run:{id}"), "{}")
+            .unwrap();
+        store
+            .save_setting(&format!("pilot-delivered:{id}:message"), "1")
+            .unwrap();
+    }
+    store.save_setting("workspace", "{}").unwrap();
+    store.delete(gone).unwrap();
+    let keys_of = |store: &Store, id: i64| {
+        [format!("agent:{id}"), format!("orchestration-run:{id}")]
+            .map(|key| store.setting(&key).unwrap())
+    };
+    assert_eq!(keys_of(&store, gone), [None, None]);
+    drop(store);
+
+    // The Settings database forgot them too, and kept everything else.
+    let store = Store::open_gespan(&path).unwrap();
+    assert_eq!(keys_of(&store, gone), [None, None]);
+    assert!(keys_of(&store, kept).iter().all(Option::is_some));
+    assert_eq!(
+        store
+            .setting(&format!("pilot-delivered:{kept}:message"))
+            .unwrap()
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(store.setting("workspace").unwrap().as_deref(), Some("{}"));
+    let settings = crate::orm::open(
+        crate::orm::Kind::Settings,
+        &dir.path().join("gespan.db.gpui.sqlite3"),
+    )
+    .unwrap();
+    let keys = settings
+        .run(|mut db| async move { crate::store::schema::Setting::all().exec(&mut db).await })
+        .unwrap();
+    assert!(
+        keys.iter()
+            .all(|setting| !setting.key.starts_with(&format!("pilot-delivered:{gone}:"))),
+        "no delivery receipt of the deleted session is left"
+    );
 }

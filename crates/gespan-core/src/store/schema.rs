@@ -84,19 +84,19 @@ pub(crate) struct InFlightSession {
 #[table = "notes"]
 pub(crate) struct NoteRecord {
     #[key]
-    id: String,
+    pub(crate) id: String,
     #[unique]
-    slug: String,
-    title: String,
-    body: String,
-    tags_json: String,
-    source_session_id: Option<String>,
-    source_cwd: Option<String>,
-    slug_pending: bool,
-    created_at: i64,
-    updated_at: i64,
-    content_kind: String,
-    artifact_kind: Option<String>,
+    pub(crate) slug: String,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    pub(crate) tags_json: String,
+    pub(crate) source_session_id: Option<String>,
+    pub(crate) source_cwd: Option<String>,
+    pub(crate) slug_pending: bool,
+    pub(crate) created_at: i64,
+    pub(crate) updated_at: i64,
+    pub(crate) content_kind: String,
+    pub(crate) artifact_kind: Option<String>,
 }
 
 #[derive(Debug, toasty::Model)]
