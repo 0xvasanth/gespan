@@ -1,0 +1,53 @@
+crates/gespan-gpui/src/shell/my_tasks.rs
+  s_59289c1f4cffc4::t_b7dc730fcaed1c 3,191,255,257-259,262-265,283-359
+  s_59289c1f4cffc4::t_62807ad043fff6 260-261
+  s_59289c1f4cffc4::t_7e876f9d2c41ad 360-361
+crates/gespan-core/src/tasks.rs
+  s_59289c1f4cffc4::t_1896b058c776c6 240-241,245,250,259
+crates/gespan-core/src/decisions/review.rs
+  s_59289c1f4cffc4::t_62807ad043fff6 22-25,27-29,97-100
+  s_59289c1f4cffc4::t_342343cc253324 3-4,6-9,13-14,21,26,30-71,74-83,86-96,101-121
+  s_59289c1f4cffc4::t_03636238effd1e 1-2,5,10-12,15-20,72-73,84-85,122
+crates/gespan-gpui/src/my_tasks.rs
+  s_59289c1f4cffc4::t_62807ad043fff6 33-36
+  s_59289c1f4cffc4::t_c22cca19106e9e 1-3,9,17,37-38,55-61,101-104,119-127,159-164,287-289,293-295
+crates/gespan-core/src/decisions/tests/mod.rs
+  s_59289c1f4cffc4::t_39c46fc8363e39 4
+crates/gespan-gpui/src/shell/my_tasks_tests.rs
+  s_59289c1f4cffc4::t_62807ad043fff6 655,707-712,779-783,785-792,810-813,844-847,882-884,893-896,909-913,923-927
+  s_59289c1f4cffc4::t_ffb1d83495243f 604-654,656-706,713-778,784,793-809,814-843,848-881,885-892,897-908,914-922,928-942
+crates/gespan-gpui/src/my_tasks/pane.rs
+  s_59289c1f4cffc4::t_81bd9d03a5653d 39-42,62-63,82-83
+  s_59289c1f4cffc4::t_62807ad043fff6 64-81
+crates/gespan-gpui/src/my_tasks/decision.rs
+  s_59289c1f4cffc4::t_62807ad043fff6 140
+  s_59289c1f4cffc4::t_a04dcd18b769a8 53
+  s_59289c1f4cffc4::t_c5baae95b8ec88 1-27,36-52,54-139,141-214,216-253,255-298
+  s_59289c1f4cffc4::t_81bd9d03a5653d 28-35,215,254
+crates/gespan-gpui/src/my_tasks/list.rs
+  s_59289c1f4cffc4::t_1896b058c776c6 19
+crates/gespan-gpui/src/my_tasks/card.rs
+  s_59289c1f4cffc4::t_81bd9d03a5653d 7,127-131
+crates/gespan-core/src/decisions/mod.rs
+  s_59289c1f4cffc4::t_39c46fc8363e39 6,13
+  s_59289c1f4cffc4::t_62807ad043fff6 12
+crates/gespan-core/src/decisions/tests/review.rs
+  s_59289c1f4cffc4::t_349f9d57826e8b 1-99,106-146,153-280
+  s_59289c1f4cffc4::t_62807ad043fff6 100-105,147-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6251b36ae47fcc75fe964c9a2863894cf39dc286",
+  "prompts": {},
+  "sessions": {
+    "s_59289c1f4cffc4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "31cc82b6-78e2-47a5-8996-0a796d9c6a30",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
