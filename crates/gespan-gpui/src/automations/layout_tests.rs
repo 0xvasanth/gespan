@@ -838,3 +838,116 @@ fn a_review_automation_cannot_choose_to_wake_a_pilot(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(action, AutomationAction::Session);
 }
+
+#[gpui::test]
+fn a_legacy_review_pilot_automation_can_be_switched_to_a_session_and_enabled(
+    cx: &mut TestAppContext,
+) {
+    let page = page();
+    let mut draft = AutomationUpsert::new("/work/app".into(), "codex".into(), "m".into());
+    draft.name = "Legacy".into();
+    draft.prompt = "Review.".into();
+    draft.triggers = Some(vec![AutomationTrigger::new("time", "daily")]);
+    draft.review_results = Some(ReviewResults::Post);
+    draft.action = AutomationAction::Pilot {
+        pilot_id: "pilot-1".into(),
+    };
+    draft.enabled = false;
+    draft.sync_triggers(now());
+    let legacy = page.service.lock().unwrap().upsert(draft).unwrap();
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", legacy.id));
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Action, "session".into(), cx);
+            view.save(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(stored(&page, &legacy.id).action, AutomationAction::Session);
+    assert!(
+        page.service
+            .lock()
+            .unwrap()
+            .set_enabled(&legacy.id, true)
+            .is_ok()
+    );
+}
+
+#[gpui::test]
+fn a_review_automation_runs_read_only_and_cannot_change_it(cx: &mut TestAppContext) {
+    let page = page();
+    let plain = save_review(&page, "codex", None);
+    let review = save_review(&page, "codex", Some(ReviewResults::Gespan));
+    let (window, mut visual) = open(&page, "/work/app", cx);
+
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    let before = window
+        .read_with(&visual, |view, _| {
+            view.editor.as_ref().unwrap().draft.runtime_mode.clone()
+        })
+        .unwrap();
+    // Clicking the locked chip opens no menu, and a forced choice is ignored.
+    click(&mut visual, "automation-access");
+    assert!(
+        window
+            .read_with(&visual, |v, _| v.choice.is_none())
+            .unwrap()
+    );
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Access, "full-access".into(), cx)
+        })
+        .unwrap();
+    let (mode, dirty) = window
+        .read_with(&visual, |view, _| {
+            let editor = view.editor.as_ref().unwrap();
+            (editor.draft.runtime_mode.clone(), editor.dirty)
+        })
+        .unwrap();
+    assert_eq!((mode, dirty), (before, false));
+
+    // A plain automation still chooses its access.
+    click(&mut visual, &format!("automation-card-{}", plain.id));
+    click(&mut visual, "automation-access");
+    assert_eq!(menu_options(&window, &visual).len(), 5);
+}
+
+#[gpui::test]
+fn an_ignored_choice_does_not_dirty_the_draft(cx: &mut TestAppContext) {
+    let page = page();
+    let review = save_review(&page, "codex", Some(ReviewResults::Gespan));
+    let plain = save_review(&page, "codex", None);
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    let dirty = |window: &WindowHandle<Automations>, visual: &VisualTestContext| {
+        window
+            .read_with(visual, |v, _| v.editor.as_ref().unwrap().dirty)
+            .unwrap()
+    };
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Action, "pilot".into(), cx)
+        })
+        .unwrap();
+    assert!(!dirty(&window, &visual));
+    // Results on a non-review automation is ignored the same way.
+    click(&mut visual, &format!("automation-card-{}", plain.id));
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Results, "post".into(), cx)
+        })
+        .unwrap();
+    assert!(!dirty(&window, &visual));
+    assert_eq!(
+        window
+            .read_with(&visual, |v, _| v
+                .editor
+                .as_ref()
+                .unwrap()
+                .draft
+                .review_results)
+            .unwrap(),
+        None
+    );
+}
