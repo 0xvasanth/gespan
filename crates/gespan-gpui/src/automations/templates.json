@@ -70,26 +70,14 @@
     "category": "review",
     "icon": "pr",
     "name": "Review pull requests",
-    "description": "When a pull request is opened, review the diff for bugs, regressions, and missing tests",
+    "description": "Review pull requests automatically, without changing any files",
+    "setup": "review",
     "trigger": {
       "kind": "github",
-      "event": "pull_request_opened"
+      "event": "pull_request_review_requested"
     },
-    "triggerLabel": "Pull request opened",
+    "triggerLabel": "Review requested",
     "prompt": "Review the newly opened pull request.\n\nCheck for:\n- Correctness bugs and regressions\n- Missing tests for the changed behavior\n- Security or data-loss risks\n- API / contract breakage\n\nLeave a structured review: blockers first, then suggestions. Do not nitpick formatting. If the change is good, say so briefly and note residual risk."
-  },
-  {
-    "id": "review-draft-prs",
-    "category": "review",
-    "icon": "pr",
-    "name": "Review draft PRs",
-    "description": "Give early feedback when a draft pull request is opened so issues are caught before review",
-    "trigger": {
-      "kind": "github",
-      "event": "draft_opened"
-    },
-    "triggerLabel": "Draft opened",
-    "prompt": "A draft pull request was opened. Give early, high-signal feedback.\n\nFocus on direction, missing tests, and likely bugs — not polish. Call out anything that will be expensive to change later. Keep the review short and specific to the diff."
   },
   {
     "id": "dependency-audit",
