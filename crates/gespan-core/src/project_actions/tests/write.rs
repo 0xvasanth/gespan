@@ -620,12 +620,12 @@ fn errors_read_as_sentences() {
     );
     assert_eq!(
         WriteError::Duplicate("Test".into()).to_string(),
-        "An action named “Test” already exists."
+        "A script named “Test” already exists."
     );
     assert_eq!(WriteError::Io("Disk full".into()).to_string(), "Disk full");
     assert_eq!(
-        WriteError::Invalid("Give the action a name".into()).to_string(),
-        "Give the action a name"
+        WriteError::Invalid("Give the script a name".into()).to_string(),
+        "Give the script a name"
     );
 }
 
@@ -763,7 +763,7 @@ fn a_new_command_for_a_task_gespan_cant_rewrite_is_refused() {
     }
     assert_eq!(
         WriteError::NeedsHandEdit.to_string(),
-        "This action uses arguments, per-OS commands or workspace variables; edit it in tasks.json"
+        "This script uses arguments, per-OS commands or workspace variables; edit it in tasks.json"
     );
 }
 

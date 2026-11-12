@@ -68,11 +68,11 @@ impl std::fmt::Display for WriteError {
             WriteError::Duplicate(label) => {
                 write!(
                     out,
-                    "An action named \u{201c}{label}\u{201d} already exists."
+                    "A script named \u{201c}{label}\u{201d} already exists."
                 )
             }
             WriteError::NeedsHandEdit => out.write_str(
-                "This action uses arguments, per-OS commands or workspace variables; \
+                "This script uses arguments, per-OS commands or workspace variables; \
                  edit it in tasks.json",
             ),
             WriteError::Io(message) | WriteError::Invalid(message) => out.write_str(message),
@@ -131,7 +131,7 @@ pub fn relabel<'a>(
 ) -> Result<(), WriteError> {
     let shared = shared.into();
     if draft.label.trim().is_empty() {
-        return Err(WriteError::Invalid("Give the action a name".into()));
+        return Err(WriteError::Invalid("Give the script a name".into()));
     }
     let name = draft.label.trim();
     edit(checkout, |tasks| {
@@ -295,10 +295,10 @@ fn prepare(
     refs: fn(&str) -> Result<String, WriteError>,
 ) -> Result<Draft, WriteError> {
     if draft.label.trim().is_empty() {
-        return Err(WriteError::Invalid("Give the action a name".into()));
+        return Err(WriteError::Invalid("Give the script a name".into()));
     }
     if draft.command.trim().is_empty() {
-        return Err(WriteError::Invalid("Give the action a command".into()));
+        return Err(WriteError::Invalid("Give the script a command".into()));
     }
     Ok(Draft {
         label: draft.label.trim().to_string(),
@@ -344,7 +344,7 @@ fn icon(draft: &Draft) -> Option<Object> {
 }
 
 fn not_found(label: &str) -> WriteError {
-    WriteError::Invalid(format!("There's no shared action named \"{label}\""))
+    WriteError::Invalid(format!("There's no shared script named \"{label}\""))
 }
 
 fn label_of(task: &Json) -> Option<&str> {

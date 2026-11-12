@@ -27,7 +27,7 @@ Unknown fields and invalid options produce errors instead of being ignored.
 
 ## Project actions
 
-Agents can also list and run a project's commands with the `actions` tools; see [Project actions](actions.md#agents).
+Agents can also list and run a project's commands with the `actions` tools; see [Project scripts](actions.md#agents).
 
 ## Orchestration workers
 
