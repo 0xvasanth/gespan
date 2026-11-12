@@ -4,6 +4,42 @@ use super::*;
 use crate::notifications::approvals::{InputKind, PendingInput};
 
 impl Conversation {
+    /// The session's folder, unless it lives on another machine.
+    fn task_cwd(&self) -> Option<&str> {
+        (!self.summary.cwd.starts_with("remote://")).then_some(self.summary.cwd.as_str())
+    }
+
+    /// A request of this session, as My tasks keeps it.
+    pub(crate) fn task_record(
+        &self,
+        key: String,
+        kind: gespan_core::tasks::Kind,
+        headline: String,
+        request: serde_json::Value,
+    ) -> gespan_core::tasks::TaskRecord {
+        gespan_core::tasks::TaskRecord::open(
+            key,
+            kind,
+            self.summary.cwd.clone(),
+            format!("session:{}", self.summary.id),
+            self.display_title().to_owned(),
+            headline,
+            request,
+            gespan_core::time::now_ms(),
+        )
+    }
+
+    /// Keeps an answer with its request for My tasks' history. Whichever
+    /// place it was given from (the chat, My tasks, the phone), it passes
+    /// here. A failed write loses the record, never the answer.
+    pub(crate) fn keep_task_answer(&self, record: gespan_core::tasks::TaskRecord) {
+        if let Err(error) =
+            crate::runtime::locked(&self.store).and_then(|store| store.answer_task(&record))
+        {
+            tracing::warn!(%error, "My tasks could not keep an answer");
+        }
+    }
+
     pub(crate) fn notification_was_cancelled(&self) -> bool {
         self.notification_cancelled
     }
@@ -58,6 +94,7 @@ impl Conversation {
             cx.notify();
             return false;
         };
+        let answer = crate::my_tasks::record::approval_answer(&decision);
         if controls
             .send(Control {
                 id: request_id.to_owned(),
@@ -69,7 +106,18 @@ impl Conversation {
             cx.notify();
             return false;
         }
-        self.approvals.remove(index);
+        let approval = self.approvals.remove(index);
+        if let (Some(approval), Some((answer, value))) = (approval, answer) {
+            let cwd = self.task_cwd().map(str::to_owned);
+            let record = self.task_record(
+                crate::my_tasks::record::approval_key(self.summary.id, &approval.id),
+                gespan_core::tasks::Kind::Approval,
+                crate::conversation::approval_card::Card::new(&approval, cwd.as_deref())
+                    .title(&approval),
+                crate::my_tasks::record::approval_request(&approval),
+            );
+            self.keep_task_answer(record.answered(answer, value, gespan_core::time::now_ms()));
+        }
         self.status = if !self.approvals.is_empty() {
             "Waiting for approval"
         } else if !self.questions.is_empty() {

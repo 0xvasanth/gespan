@@ -5,7 +5,7 @@ use crate::popover::AnchorSlot;
 use crate::questions::QuestionCard;
 use crate::theme::*;
 use gespan_core::agent::{Approval, Decision};
-use gespan_core::tasks::{Filter, History, Kind};
+use gespan_core::tasks::{Filter, History, Kind, SavedDecision, TaskRecord};
 use gpui::{
     Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Window, div,
     prelude::*,
@@ -16,6 +16,9 @@ mod filter;
 mod history;
 mod list;
 mod pane;
+mod past;
+pub(crate) use past::{Tab, Writing};
+pub(crate) mod record;
 
 /// Turns of history each "Load earlier" adds.
 pub(crate) const HISTORY_PAGE: usize = 4;
@@ -119,6 +122,21 @@ pub(crate) struct MyTasks {
     history_scroll: ScrollHandle,
     /// When scrolling last asked for earlier turns: one page per gesture.
     last_load: Option<std::time::Instant>,
+    /// Waiting (the default), Answered or Decisions.
+    pub(crate) tab: Tab,
+    /// Where answers and decisions are kept; set by the shell.
+    pub(crate) store: Option<crate::runtime::Database>,
+    /// Answered and withdrawn requests, newest first.
+    past: Vec<TaskRecord>,
+    decisions: Vec<SavedDecision>,
+    past_selected: Option<String>,
+    decision_selected: Option<i64>,
+    /// A decision being worded: one to save from an answer, or an edit.
+    pub(crate) statement: Entity<Input>,
+    writing: Option<Writing>,
+    /// A question or choice just answered, offered as a decision.
+    offer: Option<TaskRecord>,
+    error: Option<String>,
     _search_changed: Subscription,
 }
 
@@ -149,6 +167,16 @@ impl MyTasks {
                 .new(|cx| Input::field("Note for the run", "Note (optional)", content(0.4), cx)),
             history_scroll: ScrollHandle::new(),
             last_load: None,
+            tab: Tab::default(),
+            store: None,
+            past: Vec::new(),
+            decisions: Vec::new(),
+            past_selected: None,
+            decision_selected: None,
+            statement: cx.new(|cx| Input::field("Decision", "What you decided", content(0.4), cx)),
+            writing: None,
+            offer: None,
+            error: None,
             _search_changed,
         }
     }
@@ -194,7 +222,18 @@ impl MyTasks {
                 .map(|t| t.key.clone()),
         };
         let moved = self.selected != before;
+        let gone: Vec<String> = self
+            .tasks
+            .iter()
+            .filter(|old| !tasks.iter().any(|t| t.key == old.key))
+            .map(|t| t.key.clone())
+            .collect();
         self.tasks = tasks;
+        if !gone.is_empty() {
+            // An answer just left the list: the history has a new entry.
+            self.reload(cx);
+            self.offer_from(&gone, cx);
+        }
         self.now_ms = now_ms;
         if moved {
             self.selection_changed(cx);
@@ -313,7 +352,11 @@ impl Render for MyTasks {
             .flex()
             .text_color(content(1.))
             .child(self.list_column(cx))
-            .child(self.task_pane(cx))
+            .child(match self.tab {
+                Tab::Waiting => self.task_pane(cx),
+                Tab::Answered => self.past_pane(cx),
+                Tab::Decisions => self.decision_pane(cx),
+            })
             .when(self.filters_open, |d| d.child(self.filter_menu(cx)))
     }
 }

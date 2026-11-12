@@ -4,7 +4,7 @@ use super::*;
 use crate::conversation::approval_card::Card;
 use gpui::{AnyElement, Div, ElementId, FontWeight, SharedString, Stateful, px};
 
-fn answer(
+pub(super) fn answer(
     id: impl Into<ElementId>,
     selector: String,
     label: impl Into<SharedString>,

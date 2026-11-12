@@ -4,7 +4,7 @@
 use super::*;
 use crate::conversation::approval_card::Card;
 use crate::my_tasks::{self, Body, MyTasks, Source, TaskItem};
-use gespan_core::tasks::{self, History, Kind};
+use gespan_core::tasks::{self, History, Kind, TaskRecord};
 
 /// Turns of history a task opens with, and how many each "load more" adds.
 pub(super) const HISTORY_TURNS: usize = 4;
@@ -15,7 +15,13 @@ impl Shell {
         if let Some(view) = &self.my_tasks {
             return view.clone();
         }
-        let view = cx.new(MyTasks::new);
+        let store = self.store.clone();
+        let view = cx.new(|cx| {
+            let mut view = MyTasks::new(cx);
+            view.store = Some(store);
+            view.reload(cx);
+            view
+        });
         self.my_tasks = Some(view.clone());
         view
     }
@@ -40,12 +46,47 @@ impl Shell {
     }
 
     /// Rebuilds the list from what is waiting now. Each task keeps the time
-    /// Gespan first saw it, so its wait grows across refreshes.
+    /// Gespan first saw it, so its wait grows across refreshes. A task seen
+    /// for the first time is kept in the database; one that stopped waiting
+    /// with no answer kept is marked withdrawn there.
     pub(crate) fn refresh_my_tasks(&mut self, cx: &mut Context<Self>) {
+        let now = gespan_core::time::now_ms();
+        static LAUNCH: std::sync::Once = std::sync::Once::new();
+        LAUNCH.call_once(|| {
+            // Requests left open when Gespan last quit: their agents are gone.
+            self.with_task_store(|store| store.withdraw_tasks_before(now).map(drop));
+        });
         let mut tasks = self.collect_tasks(cx);
         let keys: HashSet<String> = tasks.iter().map(|t| t.key.clone()).collect();
-        self.my_task_seen.retain(|key, _| keys.contains(key));
+        let gone: Vec<String> = self
+            .my_task_records
+            .keys()
+            .filter(|key| !keys.contains(*key))
+            .cloned()
+            .collect();
+        for key in &gone {
+            if let Some(record) = self.my_task_records.remove(key)
+                && let Some(reply) = self.typed_choice_reply(&record, cx)
+            {
+                let value = serde_json::json!({ "text": reply, "typed": true });
+                let record = record.answered(reply, value, now);
+                self.with_task_store(|store| store.answer_task(&record));
+            }
+        }
+        if !gone.is_empty() {
+            self.with_task_store(|store| store.withdraw_tasks(&gone, now));
+        }
         self.my_task_turns.retain(|key, _| keys.contains(key));
+        for task in &mut tasks {
+            match self.my_task_records.get(&task.key) {
+                Some(record) => task.since_ms = record.asked_at,
+                None => {
+                    let record = task.record(cx);
+                    self.with_task_store(|store| store.open_task(&record));
+                    self.my_task_records.insert(task.key.clone(), record);
+                }
+            }
+        }
         // An answer sent from the page leaves it at once, even before its
         // reply shows in the session.
         self.my_task_sent.retain(|key| keys.contains(key));
@@ -56,13 +97,64 @@ impl Shell {
             .filter(|t| t.kind == Kind::FlowApproval)
             .cloned()
             .collect();
-        for task in &mut tasks {
-            task.since_ms = *self
-                .my_task_seen
-                .entry(task.key.clone())
-                .or_insert(task.since_ms);
-        }
         self.set_my_tasks(tasks, cx);
+    }
+
+    /// Runs a My tasks write; a failure is logged, never shown, since the
+    /// answer itself already went through.
+    fn with_task_store(
+        &self,
+        write: impl FnOnce(&gespan_core::store::Store) -> Result<(), String>,
+    ) {
+        if let Err(error) = crate::runtime::locked(&self.store).and_then(|store| write(&store)) {
+            tracing::warn!(%error, "My tasks could not keep a task");
+        }
+    }
+
+    /// The message the user typed to a Pilot after its choices card, when
+    /// they answered in the chat instead of on My tasks.
+    fn typed_choice_reply(&self, record: &TaskRecord, cx: &App) -> Option<String> {
+        if record.kind != Kind::PilotChoice {
+            return None;
+        }
+        let Some(Source::Pilot { pilot, .. }) = Source::from_origin(&record.origin) else {
+            return None;
+        };
+        let row: usize = record.key.rsplit(':').next()?.parse().ok()?;
+        let chat = self.pilots.as_ref()?.read(cx).chat_for(&pilot)?;
+        tasks::choice_reply(chat.read(cx).history_rows(cx), row)
+    }
+
+    /// Keeps an answer given on My tasks to a request with no chat of its
+    /// own to keep it: a Pilot choice or a Flow step.
+    fn keep_my_task_answer(&mut self, key: &str, answer: String, value: serde_json::Value) {
+        let Some(record) = self.my_task_records.remove(key) else {
+            return;
+        };
+        let record = record.answered(answer, value, gespan_core::time::now_ms());
+        self.with_task_store(|store| store.answer_task(&record));
+    }
+
+    /// Keeps a Flow step's approval or rejection, wherever it was given.
+    pub(crate) fn keep_flow_answer(&mut self, run: &str, approved: bool, note: &str) {
+        let prefix = format!("flow:{run}:");
+        let Some(key) = self
+            .my_task_records
+            .keys()
+            .find(|key| key.starts_with(&prefix))
+            .cloned()
+        else {
+            return;
+        };
+        let verdict = if approved { "Approved" } else { "Rejected" };
+        let note = note.trim();
+        let answer = if note.is_empty() {
+            verdict.to_owned()
+        } else {
+            format!("{verdict}: {note}")
+        };
+        let value = serde_json::json!({ "approved": approved, "note": note });
+        self.keep_my_task_answer(&key, answer, value);
     }
 
     fn collect_tasks(&self, cx: &App) -> Vec<TaskItem> {
@@ -92,7 +184,7 @@ impl Shell {
                 more => tasks::history(rows, cwd, more),
             };
             for approval in chat.pending_approvals() {
-                let key = format!("approval:{id}:{}", approval.id);
+                let key = my_tasks::record::approval_key(id, &approval.id);
                 found.push(TaskItem {
                     history: history(&key),
                     headline: Card::new(approval, cwd).title(approval),
@@ -111,7 +203,7 @@ impl Shell {
             }
             if let Some(card) = chat.front_question() {
                 let question = card.read(cx);
-                let key = format!("question:{id}:{}", question.id());
+                let key = my_tasks::record::question_key(id, question.id());
                 found.push(TaskItem {
                     history: history(&key),
                     headline: question.headline().to_owned(),
@@ -276,6 +368,7 @@ impl Shell {
             }
             my_tasks::Event::Choose { key, pilot, text } => {
                 self.my_task_sent.insert(key.clone());
+                self.keep_my_task_answer(key, text.clone(), serde_json::json!({ "text": text }));
                 if let Some(pilots) = self.pilots.clone() {
                     pilots.update(cx, |pilots, cx| pilots.choose(pilot, text, cx));
                 }
@@ -341,6 +434,13 @@ fn last_agent_line(history: &History) -> Option<String> {
 
 #[cfg(test)]
 impl Shell {
+    pub(crate) fn past_tasks_for_test(&self) -> Vec<TaskRecord> {
+        crate::runtime::locked(&self.store)
+            .unwrap()
+            .past_tasks()
+            .unwrap()
+    }
+
     /// (kind, headline) of each task, oldest first.
     pub(crate) fn my_task_snapshot_for_test(&self, cx: &App) -> Vec<(Kind, String)> {
         self.my_tasks.as_ref().map_or_else(Vec::new, |view| {

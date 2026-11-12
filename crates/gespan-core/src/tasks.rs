@@ -179,6 +179,16 @@ pub fn open_choice(rows: &[Row]) -> Option<OpenChoice> {
     })
 }
 
+/// What the user wrote to the Pilot after its choices card at `row`: the
+/// answer when they replied in the chat instead of picking on My tasks.
+pub fn choice_reply(rows: &[Row], row: usize) -> Option<String> {
+    rows.get(row + 1..)?
+        .iter()
+        .find(|r| r.first && r.role == "user")
+        .map(|r| r.text.trim().to_owned())
+        .filter(|text| !text.is_empty())
+}
+
 /// The step of a Flow run that waits for approval.
 pub fn waiting_visit(visits: &[FlowVisit]) -> Option<&FlowVisit> {
     visits
@@ -310,6 +320,9 @@ impl Filter {
 pub fn order<T>(items: &mut [T], since: impl Fn(&T) -> u64) {
     items.sort_by_key(since);
 }
+
+mod log;
+pub use log::{SavedDecision, Status, TaskRecord};
 
 #[cfg(test)]
 mod tests;

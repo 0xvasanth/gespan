@@ -4,6 +4,7 @@ mod gespan_import;
 mod in_flight;
 mod inbox_ask;
 mod managed_sessions;
+mod my_tasks;
 mod notes;
 mod pilots;
 mod provider_ids;
