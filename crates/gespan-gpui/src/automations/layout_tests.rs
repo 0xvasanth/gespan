@@ -2,6 +2,7 @@
 //! card, and the detail's summary cards and Instructions / Recent runs tabs.
 use super::*;
 use chrono::{Local, TimeZone};
+use gespan_core::review_policy::ReviewResults;
 use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 use std::{cell::RefCell, rc::Rc};
 
@@ -639,4 +640,201 @@ fn waking_a_pilot_with_no_pilots_cannot_be_saved(cx: &mut TestAppContext) {
         stored(&page, &automation.id).action,
         AutomationAction::Session
     );
+}
+
+/// A saved automation, as a review one when `results` is given.
+fn save_review(page: &Page, harness: &str, results: Option<ReviewResults>) -> Automation {
+    let mut draft = AutomationUpsert::new("/work/app".into(), harness.into(), "m".into());
+    draft.name = "Review".into();
+    draft.prompt = "Review the pull request.".into();
+    draft.triggers = Some(vec![AutomationTrigger::new("time", "daily")]);
+    draft.review_results = results;
+    draft.sync_triggers(now());
+    page.service.lock().unwrap().upsert(draft).unwrap()
+}
+
+fn menu_options(
+    window: &WindowHandle<Automations>,
+    visual: &VisualTestContext,
+) -> Vec<(String, String)> {
+    window
+        .read_with(visual, |view, _| {
+            view.choice.as_ref().unwrap().options.clone()
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn editor_offers_read_only_access(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Triage",
+        "/work/app",
+        AutomationTrigger::new("time", "daily"),
+    );
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", automation.id));
+    click(&mut visual, "automation-access");
+    let options = menu_options(&window, &visual);
+    assert_eq!(
+        options.first().cloned(),
+        Some(("read-only".into(), "Read-only".into()))
+    );
+    assert_eq!(options.len(), 5);
+
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Access, "read-only".into(), cx);
+            view.save(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(stored(&page, &automation.id).runtime_mode, "read-only");
+    // The control names it.
+    assert_eq!(super::editor::access_label("read-only"), "Read-only");
+}
+
+#[gpui::test]
+fn results_row_only_for_review_automations(cx: &mut TestAppContext) {
+    let page = page();
+    let plain = save_review(&page, "codex", None);
+    let review = save_review(&page, "codex", Some(ReviewResults::Gespan));
+    let (window, mut visual) = open(&page, "/work/app", cx);
+
+    click(&mut visual, &format!("automation-card-{}", plain.id));
+    assert!(visual.drawn("automation-results").is_none());
+
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    assert!(visual.drawn("automation-results").is_some());
+    click(&mut visual, "automation-results");
+    let labels: Vec<_> = menu_options(&window, &visual)
+        .into_iter()
+        .map(|(_, label)| label)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "keeps the review in Gespan",
+            "drafts a review for you to approve",
+            "posts the review on the PR"
+        ]
+    );
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Results, "draft".into(), cx);
+            view.save(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(
+        stored(&page, &review.id).review_results,
+        Some(ReviewResults::Draft)
+    );
+    assert_eq!(stored(&page, &plain.id).review_results, None);
+}
+
+#[gpui::test]
+fn results_row_respects_harness(cx: &mut TestAppContext) {
+    let page = page();
+    let review = save_review(&page, "pi", Some(ReviewResults::Gespan));
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    click(&mut visual, "automation-results");
+    assert_eq!(
+        menu_options(&window, &visual),
+        [(
+            "gespan".to_string(),
+            "keeps the review in Gespan".to_string()
+        )]
+    );
+    // A forced choice the harness can't deliver is ignored.
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Results, "post".into(), cx)
+        })
+        .unwrap();
+    let results = window
+        .read_with(&visual, |view, _| {
+            view.editor.as_ref().unwrap().draft.review_results
+        })
+        .unwrap();
+    assert_eq!(results, Some(ReviewResults::Gespan));
+}
+
+#[gpui::test]
+fn changing_to_a_harness_that_cannot_deliver_results_falls_back_to_gespan(cx: &mut TestAppContext) {
+    let page = page();
+    let review = save_review(&page, "codex", Some(ReviewResults::Post));
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    let results = |visual: &VisualTestContext| {
+        window
+            .read_with(visual, |view, _| {
+                view.editor.as_ref().unwrap().draft.review_results
+            })
+            .unwrap()
+    };
+    // Another harness that can post keeps it.
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.editor
+                .as_mut()
+                .unwrap()
+                .set_model(Kind::Claude, Some("sonnet".into()), cx)
+        })
+        .unwrap();
+    assert_eq!(results(&visual), Some(ReviewResults::Post));
+    // Pi can only keep the review in Gespan.
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.editor
+                .as_mut()
+                .unwrap()
+                .set_model(Kind::Pi, Some("m".into()), cx)
+        })
+        .unwrap();
+    assert_eq!(results(&visual), Some(ReviewResults::Gespan));
+}
+
+#[gpui::test]
+fn a_review_automation_cannot_choose_to_wake_a_pilot(cx: &mut TestAppContext) {
+    let page = page();
+    let plain = save_review(&page, "codex", None);
+    let review = save_review(&page, "codex", Some(ReviewResults::Gespan));
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.set_pilots(vec![("pilot-1".into(), "Shroom".into())], cx)
+        })
+        .unwrap();
+
+    click(&mut visual, &format!("automation-card-{}", plain.id));
+    click(&mut visual, "automation-action");
+    assert_eq!(menu_options(&window, &visual).len(), 2);
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.choice = None;
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    click(&mut visual, "automation-action");
+    assert_eq!(
+        menu_options(&window, &visual),
+        [("session".to_string(), "Start a session".to_string())]
+    );
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::Action, "pilot".into(), cx)
+        })
+        .unwrap();
+    let action = window
+        .read_with(&visual, |view, _| {
+            view.editor.as_ref().unwrap().draft.action.clone()
+        })
+        .unwrap();
+    assert_eq!(action, AutomationAction::Session);
 }

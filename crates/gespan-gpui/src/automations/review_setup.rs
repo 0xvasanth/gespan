@@ -25,7 +25,7 @@ const WHICH: [(WhichPrs, &str, &str); 3] = [
         "is opened, drafts too",
     ),
 ];
-const RESULTS: [(ReviewResults, &str, &str); 3] = [
+pub(super) const RESULTS: [(ReviewResults, &str, &str); 3] = [
     (
         ReviewResults::Gespan,
         "gespan",
@@ -145,7 +145,14 @@ fn which_label(which: WhichPrs) -> &'static str {
         .map_or("", |(.., label)| label)
 }
 
-fn results_label(results: ReviewResults) -> &'static str {
+pub(super) fn results_from_id(id: &str) -> Option<ReviewResults> {
+    RESULTS
+        .iter()
+        .find(|(_, value, _)| *value == id)
+        .map(|(results, ..)| *results)
+}
+
+pub(super) fn results_label(results: ReviewResults) -> &'static str {
     RESULTS
         .iter()
         .find(|(value, ..)| *value == results)

@@ -68,8 +68,17 @@ pub(super) fn workspace_label(mode: &str) -> &'static str {
     }
 }
 /// The access mode's label, also shown on the Agent card.
+/// What a run can do. A review automation can't wake a Pilot.
+fn action_options(review: bool) -> Vec<(String, String)> {
+    if review {
+        options(&[("session", "Start a session")])
+    } else {
+        options(&[("session", "Start a session"), ("pilot", "Wake a Pilot")])
+    }
+}
 pub(super) fn access_label(mode: &str) -> &'static str {
     match mode {
+        "read-only" => "Read-only",
         "supervised" => "Supervised",
         "auto-accept-edits" => "Auto-accept edits",
         "full-access" => "Full access",
@@ -130,6 +139,31 @@ fn settings_row(label: &'static str, hint: &'static str, control: impl IntoEleme
                 ),
         )
         .child(control)
+}
+impl Editor {
+    /// Switch the agent and model; a review's Results that the new agent
+    /// can't deliver fall back to keeping the review in Gespan.
+    pub(super) fn set_model(&mut self, kind: Kind, model: Option<String>, cx: &mut App) {
+        let current = gespan_core::store::native_model(&self.draft.model, &self.draft.harness);
+        let picked = model
+            .as_deref()
+            .and_then(|model| gespan_core::store::native_model(model, kind.id()));
+        if Kind::from_id(&self.draft.harness) == kind && current == picked {
+            return;
+        }
+        self.draft.harness = kind.id().into();
+        self.draft.model = model.unwrap_or_default();
+        if self
+            .draft
+            .review_results
+            .is_some_and(|r| !review_setup::results_for(&self.draft.harness).contains(&r))
+        {
+            self.draft.review_results = Some(gespan_core::review_policy::ReviewResults::Gespan);
+        }
+        self.completion
+            .update(cx, |completion, cx| completion.set_provider(kind.id(), cx));
+        self.dirty = true;
+    }
 }
 impl Automations {
     fn select_control(
@@ -211,6 +245,8 @@ impl Automations {
         match field {
             // The session settings stay in the draft while a Pilot is chosen,
             // so switching back shows them as they were.
+            // A review automation can't wake a Pilot; core rejects it.
+            Choice::Action if editor.draft.review_results.is_some() => {}
             Choice::Action => {
                 editor.draft.action = if value == "pilot" {
                     AutomationAction::Pilot {
@@ -301,6 +337,14 @@ impl Automations {
             }
             // Handled above: the review sheet has no editor.
             Choice::SetupRepo | Choice::SetupWhich | Choice::SetupResults => {}
+            Choice::Results => {
+                if let Some(results) = review_setup::results_from_id(&value)
+                    && review_setup::results_for(&editor.draft.harness).contains(&results)
+                    && editor.draft.review_results.is_some()
+                {
+                    editor.draft.review_results = Some(results);
+                }
+            }
         }
         editor.dirty = true;
         self.choice = None;
@@ -882,6 +926,7 @@ impl Automations {
                     access.into(),
                     Choice::Access,
                     options(&[
+                        ("read-only", "Read-only"),
                         ("supervised", "Supervised"),
                         ("auto-accept-edits", "Auto-accept edits"),
                         ("auto", "Auto"),
@@ -889,6 +934,7 @@ impl Automations {
                     ]),
                     cx,
                 )
+                .debug_selector(|| "automation-access".into())
                 .h(px(26.))
                 .px(px(6.))
                 .text_size(px(11.)),
@@ -973,7 +1019,7 @@ impl Automations {
             }
             .into(),
             Choice::Action,
-            options(&[("session", "Start a session"), ("pilot", "Wake a Pilot")]),
+            action_options(draft.review_results.is_some()),
             cx,
         );
         let pilot_row = pilot.map(|id| {
@@ -1016,6 +1062,25 @@ impl Automations {
                 )
                 .children(pilot_row),
         );
+        let results_row = draft.review_results.map(|current| {
+            let allowed = review_setup::results_for(&draft.harness);
+            settings_row(
+                "Results",
+                "What happens with the review",
+                self.select_control(
+                    "automation-results",
+                    review_setup::results_label(current).into(),
+                    Choice::Results,
+                    review_setup::RESULTS
+                        .iter()
+                        .filter(|(results, ..)| allowed.contains(results))
+                        .map(|(_, id, label)| (id.to_string(), label.to_string()))
+                        .collect(),
+                    cx,
+                )
+                .debug_selector(|| "automation-results".into()),
+            )
+        });
         let session = div().mt(px(32.)).child(section("Session")).child(
             div()
                 .debug_selector(|| "automation-session-settings".into())
@@ -1046,8 +1111,9 @@ impl Automations {
                             cx,
                         ),
                     )
-                    .border_b_0(),
-                ),
+                    .when(results_row.is_none(), |d| d.border_b_0()),
+                )
+                .children(results_row.map(|row| row.border_b_0())),
         );
         let grace_options = options(&[
             ("0", "Do not catch up"),
