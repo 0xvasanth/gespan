@@ -49,8 +49,6 @@ pub(crate) struct DecisionFlag {
 }
 
 /// What the gespan kind runs on every open (`orm::Kind::constraints`):
-/// raw SQL, since an FTS5 virtual table and its triggers are beyond what
-/// Toasty can model.
 /// keyword search over the log, as an external-content FTS5 index on
 /// `task_decisions` kept in step by triggers. Every statement is idempotent.
 /// The last one indexes rows the triggers never saw (rows older builds left,
@@ -58,6 +56,9 @@ pub(crate) struct DecisionFlag {
 /// index and the table hold different numbers of rows.
 /// The `vec0` table for search by meaning is `vector::CONSTRAINTS`, run
 /// right after these.
+///
+/// These are raw SQL: an FTS5 virtual table and its triggers are beyond what
+/// Toasty can model.
 pub(crate) const CONSTRAINTS: &[&str] = &[
     "CREATE VIRTUAL TABLE IF NOT EXISTS task_decisions_fts USING fts5(
        title, statement, why, content='task_decisions', content_rowid='id'
@@ -1033,25 +1034,37 @@ impl DecisionStore {
         let Some(m) = match_expr(query) else {
             return Ok(Vec::new());
         };
-        // FTS5's MATCH and bm25 on a virtual table, which Toasty cannot
-        // model: raw SQL for the matching ids and their ranks. Every match is
-        // read, because the visibility filter below must run before the
-        // limit, as it did when this was one joined query.
-        let hits: Vec<(i64, f64)> = self
-            .sql()
-            .query(
-                "SELECT rowid, bm25(task_decisions_fts) FROM task_decisions_fts \
-                 WHERE task_decisions_fts MATCH ?1",
-                args![m],
-            )?
-            .iter()
-            .map(|r| Ok((r.get(0)?, r.get(1)?)))
-            .collect::<Result<_, String>>()?;
-        Ok(self
-            .ranked(&hits, visible_filter(&scope.to_string()), limit)?
-            .into_iter()
-            .map(|(e, _)| e)
-            .collect())
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let scope = scope.to_string();
+        // The best `pool` matches in the final order (bm25, then newest
+        // first), so they are always a prefix of it. Matches in other scopes
+        // or hidden ones take places in the pool: when the filter leaves
+        // fewer than `limit`, ask again for a wider one, until the pool
+        // holds every match.
+        let mut pool = limit.saturating_mul(2).max(64);
+        loop {
+            // FTS5's MATCH and bm25 on a virtual table, which Toasty cannot
+            // model: raw SQL for the matching ids and their ranks.
+            let hits: Vec<(i64, f64)> = self
+                .sql()
+                .query(
+                    "SELECT rowid, bm25(task_decisions_fts) FROM task_decisions_fts \
+                     WHERE task_decisions_fts MATCH ?1 \
+                     ORDER BY bm25(task_decisions_fts), rowid DESC LIMIT ?2",
+                    args![m.clone(), i64::try_from(pool).unwrap_or(i64::MAX)],
+                )?
+                .iter()
+                .map(|r| Ok((r.get(0)?, r.get(1)?)))
+                .collect::<Result<_, String>>()?;
+            let read_all = hits.len() < pool;
+            let shown = self.ranked(&hits, visible_filter(&scope), limit)?;
+            if shown.len() >= limit || read_all {
+                return Ok(shown.into_iter().map(|(e, _)| e).collect());
+            }
+            pool = pool.saturating_mul(8);
+        }
     }
 
     /// The entries of `hits` (ids with a rank, lower is better) that match

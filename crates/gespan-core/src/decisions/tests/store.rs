@@ -537,3 +537,61 @@ fn a_pending_entry_needs_a_non_empty_user_source_to_be_visible() {
     );
     assert!(![none, empty, other].iter().any(|id| found.contains(id)));
 }
+
+#[test]
+fn keyword_search_widens_its_pool_past_better_matches_it_cannot_show() {
+    let dir = TempDir::new().unwrap();
+    let log = DecisionStore::open(&dir.path().join("gespan.db"), config()).unwrap();
+    let scope = Scope::Repo("github.com/o/r".into());
+    // 70 active entries in another repo and 10 hidden pending ones here,
+    // all matching "tabs" better (short, repeated) than the entries this
+    // scope can see: more than the first pool of 64 holds.
+    for i in 0..70 {
+        let other = Scope::Repo("github.com/o/other".into());
+        let e = log
+            .propose(proposal(other, &format!("O{i}"), "tabs tabs"), 1)
+            .unwrap();
+        log.approve(e.id, None, false, &[], 2).unwrap();
+    }
+    for i in 0..10 {
+        log.propose(proposal(scope.clone(), &format!("H{i}"), "tabs tabs"), 1)
+            .unwrap();
+    }
+    // Four visible entries with the same text, so bm25 ties them and the
+    // newest come first; plus one that ranks above them (more "tabs").
+    let long = "tabs then many other words about indentation and the editor setup";
+    let mut tied = Vec::new();
+    for i in 0..4 {
+        let e = log
+            .propose(proposal(scope.clone(), &format!("V{i}"), long), 1)
+            .unwrap();
+        log.approve(e.id, None, false, &[], 2).unwrap();
+        tied.push(e.id);
+    }
+    let best = log
+        .propose(
+            proposal(
+                scope.clone(),
+                "Best",
+                "tabs tabs then many other words about indentation and the editor",
+            ),
+            1,
+        )
+        .unwrap();
+    log.approve(best.id, None, false, &[], 2).unwrap();
+
+    let found: Vec<i64> = log
+        .search(&scope, "tabs", 3)
+        .unwrap()
+        .iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(found, [best.id, tied[3], tied[2]]);
+    let all: Vec<i64> = log
+        .search(&scope, "tabs", 10)
+        .unwrap()
+        .iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(all, [best.id, tied[3], tied[2], tied[1], tied[0]]);
+}
