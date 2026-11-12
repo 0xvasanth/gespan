@@ -193,7 +193,8 @@ impl Inbox {
             .flex()
             .flex_col()
             .border_l_1()
-            .border_color(content(0.07))
+            .border_color(crate::glass::edge())
+            .bg(crate::glass::fill())
             .when(overlay, |d| {
                 d.absolute().top_0().left_0().size_full().bg(shell_fill())
             })
