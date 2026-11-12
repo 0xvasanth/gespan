@@ -1,6 +1,6 @@
 //! The speech model, custom words and the shortcut.
 use crate::{
-    conversation::dictation::{DICTATE_COMMAND, model_spec, speech},
+    conversation::dictation::{model_spec, speech},
     input::{self, Input},
     settings::{
         Section, SettingsView,
@@ -276,7 +276,7 @@ impl SettingsView {
             .flex_col()
             .child(self.group(
                 Some("dictation-model"),
-                false,
+                true,
                 "Speech model",
                 Some("Downloaded once to this device, and recognition runs here too.".into()),
                 None,
@@ -312,59 +312,8 @@ impl SettingsView {
                 )
                 .into_any_element()
         });
-        let shortcut = crate::settings::command_shortcut(&self.prefs, DICTATE_COMMAND)
-            .unwrap_or_else(|| "Off".into());
-        let shortcut_row = self.row_parts(
-            Some("dictation-shortcut"),
-            true,
-            div()
-                .flex()
-                .items_center()
-                .gap(px(14.))
-                .child(
-                    div()
-                        .debug_selector(|| "dictation-mic-tile".into())
-                        .size(px(44.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(12.))
-                        .bg(accent_color().opacity(0.14))
-                        .border_1()
-                        .border_color(accent_color().opacity(0.3))
-                        .child(icon("mic-01", 20.).text_color(accent_color())),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .child("Shortcut")
-                        .child(self.description("In the composer, tap to start and tap again to stop, or hold to talk and release to stop. Change it under Keybindings.")),
-                ),
-            None,
-            vec![
-                div()
-                    .debug_selector(|| "dictation-shortcut-keys".into())
-                    .rounded(px(5.))
-                    .border_1()
-                    .border_color(crate::glass::edge())
-                    .bg(content(0.07))
-                    .px_2()
-                    .py(px(2.))
-                    .text_size(px(12.))
-                    .text_color(content(0.7))
-                    .child(shortcut)
-                    .into_any_element(),
-            ],
-            false,
-        );
-        // The shortcut first: it's how dictation starts.
+        // Keybindings owns the shortcut; this page starts with the model.
         vec![
-            crate::glass::card()
-                .overflow_hidden()
-                .child(shortcut_row)
-                .into_any_element(),
             model_group,
             self.group(
                 Some("dictation-words"),

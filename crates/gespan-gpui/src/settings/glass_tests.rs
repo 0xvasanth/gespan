@@ -517,14 +517,19 @@ fn the_keybinding_filter_narrows_areas_and_a_chip_jumps_to_one(cx: &mut TestAppC
 }
 
 #[gpui::test]
-fn dictation_leads_with_its_shortcut(cx: &mut TestAppContext) {
+fn dictation_starts_with_the_speech_model_and_has_no_shortcut_card(cx: &mut TestAppContext) {
     let (_, mut visual) = window(Section::Dictation, Preferences::default(), cx);
     let visual = &mut visual;
-    let shortcut = visual
-        .debug_bounds("settings-row-dictation-shortcut")
-        .unwrap();
+    // The shortcut lives on Keybindings now.
+    assert!(
+        visual
+            .debug_bounds("settings-row-dictation-shortcut")
+            .is_none()
+    );
+    assert!(visual.debug_bounds("dictation-shortcut-keys").is_none());
+    let header = visual.debug_bounds("settings-page-header").unwrap();
     let model = visual.debug_bounds("dictation-model-group").unwrap();
-    assert!(shortcut.bottom() <= model.top(), "Shortcut comes first");
+    assert!(header.bottom() <= model.top());
 }
 
 #[gpui::test]
@@ -753,5 +758,86 @@ fn diagnostics_kind_chips_hug_their_text_and_a_panic_is_red(cx: &mut TestAppCont
     assert!(
         visual.debug_bounds("settings-counters-today").is_some(),
         "3 today"
+    );
+}
+
+#[test]
+fn the_settings_rail_tints_each_page_as_designed() {
+    let dark = |s: Section| s.tint().map(|(d, _)| d);
+    assert_eq!(dark(Section::Appearance), Some(0xf9a8d4));
+    assert_eq!(dark(Section::Services), Some(0xa5b4fc));
+    assert_eq!(dark(Section::Devices), Some(0x5eead4));
+    assert_eq!(dark(Section::Chat), Some(0xc0affc));
+    assert_eq!(dark(Section::Providers), Some(0xd97757));
+    assert_eq!(dark(Section::Browser), Some(0x7dd3fc));
+    assert_eq!(dark(Section::Skills), Some(0xe8c547));
+    assert_eq!(dark(Section::Inbox), Some(0xa5b4fc));
+    assert_eq!(dark(Section::Worktrees), Some(0x6ee7b7));
+    // The rest stay grey, as in the design.
+    for quiet in [
+        Section::General,
+        Section::Keybindings,
+        Section::Dictation,
+        Section::Diagnostics,
+        Section::Mcp,
+        Section::Archive,
+    ] {
+        assert_eq!(quiet.tint(), None, "{quiet:?}");
+    }
+}
+
+#[test]
+fn a_gradient_backdrop_paints_only_behind_a_see_through_window() {
+    use super::backdrop_colors;
+    let mut p = Preferences {
+        backdrop: "gradient".into(),
+        backdrop_gradient: "dusk".into(),
+        ..Default::default()
+    };
+    assert_eq!(backdrop_colors(&p, true), Some((0xf2a6ba, 0x8f64f6)));
+    // An opaque window (light theme, Transparent window off) keeps its look.
+    assert_eq!(backdrop_colors(&p, false), None);
+    p.backdrop_gradient = "gone".into();
+    assert_eq!(
+        backdrop_colors(&p, true),
+        Some((0x8f64f6, 0x459bf7)),
+        "falls back to Aurora"
+    );
+    p.backdrop = "desktop".into();
+    assert_eq!(backdrop_colors(&p, true), None);
+}
+
+#[gpui::test]
+fn picking_a_backdrop_gradient_saves_it_and_desktop_switches_back(cx: &mut TestAppContext) {
+    let prefs = Preferences {
+        theme: "dark".into(),
+        inset_glass: true,
+        ..Default::default()
+    };
+    let (window, mut visual) = window(Section::Appearance, prefs, cx);
+    let visual = &mut visual;
+    click(visual, "settings-backdrop-dune");
+    let saved = super::glass_tests::prefs(window, visual);
+    assert_eq!(
+        (saved.backdrop.as_str(), saved.backdrop_gradient.as_str()),
+        ("gradient", "dune")
+    );
+    click(visual, "settings-backdrop-desktop");
+    let saved = super::glass_tests::prefs(window, visual);
+    assert_eq!(saved.backdrop, "desktop");
+    assert_eq!(
+        saved.backdrop_gradient, "dune",
+        "the gradient is remembered"
+    );
+    // Restore defaults puts the desktop back.
+    window
+        .update(visual, |view, _, cx| {
+            view.update(cx, |p| p.backdrop = "gradient".into());
+            view.restore_defaults(cx)
+        })
+        .unwrap();
+    assert_eq!(
+        super::glass_tests::prefs(window, visual).backdrop,
+        "desktop"
     );
 }

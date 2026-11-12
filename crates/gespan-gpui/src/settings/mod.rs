@@ -26,7 +26,9 @@ pub(crate) mod widgets;
 pub(crate) use keymap::apply as apply_keybindings;
 pub(crate) use model::Section;
 pub(crate) use pages::{ACCENTS, command_shortcut, shortcut_label, swatch};
-pub(crate) use preferences::{ModelChoice, Preferences, UI_SCALE_PERCENTS, apply_last_controls_to};
+pub(crate) use preferences::{
+    BACKDROPS, ModelChoice, Preferences, UI_SCALE_PERCENTS, apply_last_controls_to, backdrop_colors,
+};
 
 use crate::{
     input::{self, Input},
@@ -1096,7 +1098,16 @@ pub(crate) fn nav(
     select: impl Fn(Section, &mut Window, &mut App) + Clone + 'static,
     back: impl Fn(&mut Window, &mut App) + 'static,
 ) -> AnyElement {
-    let row = |id: SharedString, label: &'static str, path: &'static str, active: bool| {
+    let row = |id: SharedString,
+               label: &'static str,
+               path: &'static str,
+               tint: Option<(u32, u32)>,
+               active: bool| {
+        // Each page's glyph in its own tint; the rest a quiet grey.
+        let glyph: gpui::Hsla = match tint {
+            Some((dark, light)) => gpui::rgb(if is_light() { light } else { dark }).into(),
+            None => content(0.62),
+        };
         div()
             .id(id.clone())
             .debug_selector(move || id.to_string())
@@ -1126,8 +1137,7 @@ pub(crate) fn nav(
                     .path(path)
                     .size(px(16.))
                     .flex_shrink_0()
-                    .opacity(0.8)
-                    .text_color(if active { content(1.) } else { content(0.62) }),
+                    .text_color(glyph),
             )
             .child(
                 div()
@@ -1227,6 +1237,7 @@ pub(crate) fn nav(
                                 format!("settings-nav-{}", item.id()).into(),
                                 item.label(),
                                 item.icon(),
+                                item.tint(),
                                 item == section,
                             )
                             .on_click(move |_, window, cx| select(item, window, cx))

@@ -1095,3 +1095,27 @@ mod real_keys {
             .unwrap();
     }
 }
+
+#[gpui::test]
+fn a_gradient_backdrop_is_painted_behind_the_shell(cx: &mut TestAppContext) {
+    let (window, _, _) = crate::shell::tests::window(cx);
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let visual = &mut visual;
+    let set = |visual: &mut VisualTestContext, backdrop: &str| {
+        window
+            .update(visual, |shell, w, cx| {
+                let mut p = shell.workspace.preferences.clone();
+                p.theme = "dark".into();
+                p.inset_glass = true;
+                p.backdrop = backdrop.into();
+                shell.set_preferences(p, w, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        visual.debug_bounds("shell-backdrop").is_some()
+    };
+    assert!(!set(visual, "desktop"), "Desktop leaves the native glass");
+    assert!(set(visual, "gradient"));
+    assert!(!set(visual, "desktop"));
+}
