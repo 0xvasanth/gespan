@@ -390,8 +390,8 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(
-            query(">run action", cx),
-            ["Run action: dev", "Run action: lint"],
+            query(">run script", cx),
+            ["Run script: dev", "Run script: lint"],
             "blocked actions stay out"
         );
         // Each row shows the command a pick runs.
@@ -413,7 +413,7 @@ mod tests {
         assert!(details[0].ends_with("run dev"), "{details:?}");
         // An ordinary command query still finds its command.
         assert!(query(">terminal", cx).contains(&"Toggle terminal".to_string()));
-        query(">run action", cx);
+        query(">run script", cx);
         window
             .update(cx, |shell, _, cx| {
                 assert!(shell.terminals.get(&project).is_none_or(Vec::is_empty));
@@ -462,7 +462,7 @@ mod tests {
                 let picker = shell.quick_open.as_ref().unwrap().picker.clone();
                 picker.update(cx, |p, cx| {
                     p.search
-                        .update(cx, |i, cx| i.set_text(">run action".into(), cx))
+                        .update(cx, |i, cx| i.set_text(">run script".into(), cx))
                 });
             })
             .unwrap();
@@ -475,10 +475,10 @@ mod tests {
             .unwrap();
         let at = |label: &str| labels.iter().position(|l| l == label).unwrap();
         assert_eq!(
-            details[at("Run action: Serve")],
+            details[at("Run script: Serve")],
             "bun run dev \u{b7} +env A_PORT,B_TOKEN"
         );
-        assert_eq!(details[at("Run action: Plain")], "echo plain");
+        assert_eq!(details[at("Run script: Plain")], "echo plain");
         assert!(!details.iter().any(|d| d.contains("s3cret")));
     }
 

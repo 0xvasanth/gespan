@@ -285,7 +285,7 @@ impl Shell {
     pub(super) fn run_action(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.workspace.project.clone();
         if project.starts_with("remote://") {
-            self.error = Some("Actions are not available on remote projects.".into());
+            self.error = Some("Scripts are not available on remote projects.".into());
             cx.notify();
             return;
         }
@@ -461,7 +461,7 @@ impl Shell {
             .collect();
         if !edit.is_empty() {
             items.push(
-                MenuAction::new("edit", "Edit action")
+                MenuAction::new("edit", "Edit script")
                     .icon("pencil-edit-02")
                     .submenu(edit)
                     .into(),
@@ -487,7 +487,7 @@ impl Shell {
                     .into(),
             );
         }
-        items.push(MenuAction::new("add", "Add action").icon("add-01").into());
+        items.push(MenuAction::new("add", "Add script").icon("add-01").into());
         items
     }
     pub(super) fn run_actions_menu(
@@ -624,16 +624,16 @@ impl Shell {
                 .on_click(cx.listener(|this, _, window, cx| this.run_footer_action(window, cx))),
             // Nothing trusted to run: the button opens the menu.
             None => segment("footer-action-open")
-                .aria_label("Actions")
+                .aria_label("Scripts")
                 .aria_expanded(menu_open)
                 .px(pad)
                 .gap(px(6.))
                 .child(icon("play", 12.).text_color(content(0.55)))
-                .child("Actions")
+                .child("Scripts")
                 .on_click(cx.listener(|this, _, window, cx| this.run_footer_action(window, cx))),
         };
         let chevron = segment("footer-action-menu")
-            .aria_label("Actions")
+            .aria_label("Scripts")
             .aria_expanded(menu_open)
             .relative()
             .px(px(3.))
@@ -646,7 +646,7 @@ impl Shell {
                 .id("footer-actions")
                 .group("footer-actions")
                 .role(Role::Group)
-                .aria_label("Actions")
+                .aria_label("Scripts")
                 .h(px(20.))
                 .p(px(2.))
                 .gap(px(1.))
@@ -701,7 +701,7 @@ impl Shell {
                 }),
             None => None,
         };
-        let name = cx.new(|cx| input::Input::field("Action name", "Test", content(0.3), cx));
+        let name = cx.new(|cx| input::Input::field("Script name", "Test", content(0.3), cx));
         let command = cx.new(input::Input::action_command);
         if let Some((_, (label, line, _, _))) = &existing {
             name.update(cx, |i, cx| i.set_text(label.clone(), cx));
@@ -803,7 +803,7 @@ impl Shell {
         let name = dialog.name.read(cx).content.trim().to_owned();
         let command = dialog.command.read(cx).content.trim().to_owned();
         if name.is_empty() || command.is_empty() {
-            dialog.error = Some("Give the action a name and a command.".into());
+            dialog.error = Some("Give the script a name and a command.".into());
             cx.notify();
             return;
         }
@@ -987,7 +987,7 @@ impl Shell {
                         }
                     }))
             }));
-        let title = if editing { "Edit action" } else { "Add action" };
+        let title = if editing { "Edit script" } else { "Add script" };
         // Why the file needs a hand edit stays while typing.
         let error = dialog
             .error
@@ -1048,7 +1048,7 @@ impl Shell {
                 .cursor_pointer()
                 .on_click(cx.listener(|this, _, window, cx| this.open_tasks_json(window, cx)))
         } else {
-            crate::modal::primary_button("action-save", if editing { "Save" } else { "Add action" })
+            crate::modal::primary_button("action-save", if editing { "Save" } else { "Add script" })
                 .debug_selector(|| "action-save".into())
                 .w_full()
                 .cursor_pointer()
@@ -1149,7 +1149,7 @@ impl Shell {
                                             d.child(
                                                 crate::modal::danger_ghost_button(
                                                     "action-delete",
-                                                    "Delete action",
+                                                    "Delete script",
                                                 )
                                                 .debug_selector(|| "action-delete".into())
                                                 .w_full()
@@ -1287,8 +1287,8 @@ mod tests {
                 });
                 assert_eq!(deploy.unwrap().icon, Some("rocket"));
                 // The rest of the menu stays: edit personal ones, add one.
-                assert!(rows.iter().any(|r| r == "Edit action"));
-                assert_eq!(rows.last().unwrap(), "Add action");
+                assert!(rows.iter().any(|r| r == "Edit script"));
+                assert_eq!(rows.last().unwrap(), "Add script");
 
                 // Expanding shows the section's rows under its header.
                 shell.toggle_action_section("Makefile");
@@ -1719,7 +1719,7 @@ mod tests {
                 let dialog = shell.action_dialog.as_ref().unwrap();
                 assert_eq!(
                     dialog.error.as_ref().map(|e| e.to_string()),
-                    Some("An action named \u{201c}Deploy\u{201d} already exists.".into())
+                    Some("A script named \u{201c}Deploy\u{201d} already exists.".into())
                 );
                 assert!(dialog.hand_edit.is_none());
                 assert!(shell.action_notice.is_none());
@@ -1861,7 +1861,7 @@ mod tests {
                 checkout(shell, active, root, cx);
                 shell.refresh_actions(cx);
                 let menu = shell.actions_menu();
-                let edit = submenu(&menu, "Edit action");
+                let edit = submenu(&menu, "Edit script");
                 assert!(
                     edit.contains(&("edit:gespan:Ship".into(), "Ship".into())),
                     "{edit:?}"
@@ -1967,7 +1967,7 @@ mod tests {
                 assert!(dialog.hand_edit.is_none());
                 assert_eq!(
                     dialog.error.as_ref().map(|e| e.to_string()),
-                    Some("An action named \u{201c}Ship\u{201d} already exists.".into())
+                    Some("A script named \u{201c}Ship\u{201d} already exists.".into())
                 );
                 type_action(shell, "New", "echo new", cx);
                 shell.save_action(window, cx);
@@ -2045,7 +2045,7 @@ mod tests {
             .update(cx, |shell, window, cx| {
                 shell.save_action(window, cx);
                 let dialog = shell.action_dialog.as_ref().expect("the dialog stays open");
-                let message = "This action uses arguments, per-OS commands or workspace \
+                let message = "This script uses arguments, per-OS commands or workspace \
                                variables; edit it in tasks.json";
                 assert_eq!(
                     dialog.error.as_ref().map(|e| e.to_string()),
@@ -2132,7 +2132,7 @@ mod tests {
             .update(cx, |shell, window, cx| {
                 checkout(shell, active, root, cx);
                 shell.refresh_actions(cx);
-                let edit = submenu(&shell.actions_menu(), "Edit action");
+                let edit = submenu(&shell.actions_menu(), "Edit script");
                 assert_eq!(edit, [("edit:gespan:Pick".into(), "Pick".into())]);
                 shell.run_actions_menu("edit:gespan:Pick", window, cx);
                 assert!(shell.action_dialog.is_none());

@@ -171,7 +171,7 @@ Add an MCP server once and share it with every session. Servers need your approv
 <td width="33%" valign="top">
 <img src="docs/assets/features/editor.svg" width="40" height="40" alt="" />
 <h4>Editor, terminal and actions</h4>
-Edit files, preview Markdown and split terminals next to your sessions. <a href="docs/actions.md">Project actions</a> run your test, build and dev-server commands from the footer.
+Edit files, preview Markdown and split terminals next to your sessions. <a href="docs/actions.md">Project scripts</a> run your test, build and dev-server commands from the footer.
 </td>
 <td width="33%" valign="top">
 <img src="docs/assets/features/inbox.svg" width="40" height="40" alt="" />
@@ -257,7 +257,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | :-- | :-- |
 | [Provider setup](docs/providers.md) | Install and log in to each supported agent |
 | [Board](docs/board.md) | Cards, columns and tracker tickets, and starting sessions from them |
-| [Project actions](docs/actions.md) | Test, build and dev-server commands for the footer, the palette and agents |
+| [Project scripts](docs/actions.md) | Test, build and dev-server commands for the footer, the palette and agents |
 | [Linux installation](docs/install.md) | System dependencies and `.deb` / `.rpm` / AppImage packages |
 | [Agent access with `/operator`](docs/agent-access.md) | Let agents open sessions and manage worktrees and notes |
 | [Remote sessions](docs/remote-access.md) | Run agents on another machine over SSH *(experimental)* |

@@ -83,13 +83,13 @@ impl SettingsView {
         workspace.push(self.row(
             Some("action-opens-terminal"),
             false,
-            "Show terminal for actions",
+            "Show terminal for scripts",
             Some(
-                "Open the terminal when an action runs. Off, actions run in the background.".into(),
+                "Open the terminal when a script runs. Off, scripts run in the background.".into(),
             ),
             vec![self.toggle(
                 "action-opens-terminal",
-                "Show terminal for actions",
+                "Show terminal for scripts",
                 p.action_opens_terminal,
                 false,
                 cx,

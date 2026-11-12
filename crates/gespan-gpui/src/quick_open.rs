@@ -208,7 +208,7 @@ impl QuickOpen {
                 .actions
                 .iter()
                 .filter_map(|(id, label, command)| {
-                    let label = format!("Run action: {label}");
+                    let label = format!("Run script: {label}");
                     composer::score(query.trim(), &label).map(|score| {
                         (
                             score,

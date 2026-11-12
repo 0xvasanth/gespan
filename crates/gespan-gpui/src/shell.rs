@@ -5862,7 +5862,7 @@ impl Shell {
                 ("".into(), Vec::new(), 160., MenuStyle::Explorer)
             }
             MenuTarget::Actions => (
-                "Actions".into(),
+                "Scripts".into(),
                 self.actions_menu(),
                 200.,
                 MenuStyle::Explorer,
