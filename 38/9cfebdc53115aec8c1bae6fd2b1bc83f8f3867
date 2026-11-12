@@ -1,0 +1,20 @@
+crates/gespan-gpui/src/settings/pages/worktrees.rs
+  s_c589f1ba8a8fa6::t_c063f4969a8c91 576,579-582
+  s_c589f1ba8a8fa6::t_e9bda9f5f1a05d 53-54,365-374,376
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "389cfebdc53115aec8c1bae6fd2b1bc83f8f3867",
+  "prompts": {},
+  "sessions": {
+    "s_c589f1ba8a8fa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39f78400-f644-4002-b3b7-119922fa07b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
