@@ -118,6 +118,10 @@ pub struct Automation {
     pub updated_at: i64,
 }
 
+/// Why saving an automation into another project is refused.
+pub const PROJECT_FROZEN: &str =
+    "An automation's project can't change. Duplicate it to run in another project.";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomationUpsert {
@@ -810,17 +814,23 @@ impl Service {
         let triggers = Some(normalize_triggers(&automation));
         let conn = self.lock_conn()?;
         let previous = get(conn, &automation.id)?;
+        // An automation belongs to one project for its whole life, so an event
+        // always maps to the one automation set up for it there. Running it
+        // somewhere else is a new automation (the editor's Duplicate).
+        if previous.as_ref().is_some_and(|previous| {
+            crate::files::path_key(&previous.cwd) != crate::files::path_key(&automation.cwd)
+        }) {
+            return Err(PROJECT_FROZEN.into());
+        }
         let created_at = previous
             .as_ref()
             .map(|value| value.created_at)
             .unwrap_or(now);
-        // Turning an automation on, or changing its project or what its
-        // events are, starts from now: items that already exist are backlog.
+        // Turning an automation on, or changing what its events are, starts
+        // from now: items that already exist are backlog.
         let events_since = match &previous {
             Some(previous)
                 if (previous.enabled || !automation.enabled)
-                    && crate::files::path_key(&previous.cwd)
-                        == crate::files::path_key(&automation.cwd)
                     && event_signature(&previous.triggers())
                         == event_signature(triggers.as_deref().unwrap_or_default()) =>
             {
@@ -1246,7 +1256,114 @@ pub const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 
+/// What a trigger property holds, which decides the control that edits it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerPropertyKind {
+    /// One repository, as `owner/name`: the project's own unless changed.
+    Repository,
+    /// One person by handle, or "anyone".
+    Person,
+}
+
+/// A setting a kind of trigger has beyond its event: the editor builds a
+/// labelled field for each, so a new trigger kind only declares its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TriggerProperty {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub hint: &'static str,
+    pub placeholder: &'static str,
+    pub kind: TriggerPropertyKind,
+}
+
+const REPOSITORY: TriggerProperty = TriggerProperty {
+    key: "repository",
+    label: "Repository",
+    hint: "Only events from this repository start a run",
+    placeholder: "owner/name",
+    kind: TriggerPropertyKind::Repository,
+};
+const ACTOR: TriggerProperty = TriggerProperty {
+    key: "actor",
+    label: "By",
+    hint: "Who has to do it, or anyone",
+    placeholder: "Anyone",
+    kind: TriggerPropertyKind::Person,
+};
+
+/// The properties of a `kind` of trigger, in the order the editor shows them.
+/// Forges carry repositories; trackers only say who acted; a schedule has
+/// none beyond its time.
+pub fn trigger_properties(kind: &str) -> &'static [TriggerProperty] {
+    match kind {
+        "github" | "gitlab" | "azuredevops" => &[REPOSITORY, ACTOR],
+        "linear" | "jira" => &[ACTOR],
+        _ => &[],
+    }
+}
+
+/// Why `value` can't be saved for `property`, if it can't.
+pub fn trigger_property_error(property: &TriggerProperty, value: &str) -> Option<&'static str> {
+    let value = value.trim();
+    match property.kind {
+        TriggerPropertyKind::Repository if value.is_empty() => None,
+        TriggerPropertyKind::Repository
+            if value.contains(',') || value.chars().any(char::is_whitespace) =>
+        {
+            Some("One repository per trigger, like owner/name")
+        }
+        TriggerPropertyKind::Repository
+            if !value.contains('/') || value.starts_with('/') || value.ends_with('/') =>
+        {
+            Some("Write the repository as owner/name")
+        }
+        TriggerPropertyKind::Person if value.chars().any(char::is_whitespace) => {
+            Some("One handle, without spaces")
+        }
+        _ => None,
+    }
+}
+
 impl AutomationTrigger {
+    /// The value of the property `key`, as its field shows it.
+    pub fn property(&self, key: &str) -> String {
+        match key {
+            // Older saves may list several, or keep one in `repo`.
+            "repository" => self
+                .repos
+                .iter()
+                .chain(std::iter::once(&self.repo))
+                .map(|repo| repo.trim())
+                .filter(|repo| !repo.is_empty())
+                .collect::<Vec<_>>()
+                .join(", "),
+            "actor" if self.actor.eq_ignore_ascii_case("anyone") => String::new(),
+            "actor" => self.actor.clone(),
+            _ => String::new(),
+        }
+    }
+    /// Sets the property `key` from its field's text.
+    pub fn set_property(&mut self, key: &str, value: &str) {
+        let value = value.trim();
+        match key {
+            "repository" => {
+                self.repo.clear();
+                self.repos = if value.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![value.to_string()]
+                };
+            }
+            "actor" => {
+                self.actor = if value.is_empty() {
+                    default_actor()
+                } else {
+                    value.to_string()
+                };
+            }
+            _ => {}
+        }
+    }
     pub fn new(kind: &str, event: &str) -> Self {
         Self {
             id: new_id(),
@@ -1471,6 +1588,26 @@ impl AutomationUpsert {
             enabled: automation.enabled,
             next_run_at: automation.next_run_at,
         }
+    }
+    /// A new automation like this one that runs in `cwd`: its own id and
+    /// trigger ids, so nothing it claims or runs is shared with the original,
+    /// and no repository, which belonged to the old project.
+    pub fn duplicate_into(&self, cwd: &str) -> Self {
+        let mut copy = self.clone();
+        copy.id = new_id();
+        copy.cwd = cwd.to_string();
+        // A worktree or folder of the old project means nothing in the new one.
+        copy.worktree_cwd.clear();
+        if copy.workspace_mode == "existing" {
+            copy.workspace_mode = "worktree".into();
+        }
+        copy.session_folder_id.clear();
+        for trigger in copy.triggers.iter_mut().flatten() {
+            trigger.id = new_id();
+            // Events come from the new project's own repository, not this one's.
+            trigger.set_property("repository", "");
+        }
+        copy
     }
     pub fn sync_triggers(&mut self, now: i64) {
         let triggers = self.triggers.get_or_insert_with(Vec::new);
@@ -3111,7 +3248,92 @@ mod tests {
     }
 
     #[test]
-    fn moving_an_automation_to_another_project_treats_that_projects_items_as_backlog() {
+    fn each_trigger_kind_declares_its_own_properties() {
+        let keys = |kind| {
+            trigger_properties(kind)
+                .iter()
+                .map(|p| p.key)
+                .collect::<Vec<_>>()
+        };
+        for forge in ["github", "gitlab", "azuredevops"] {
+            assert_eq!(keys(forge), ["repository", "actor"], "{forge}");
+        }
+        for tracker in ["linear", "jira"] {
+            assert_eq!(keys(tracker), ["actor"], "{tracker}");
+        }
+        assert!(keys("time").is_empty());
+        assert!(keys("unknown").is_empty());
+    }
+
+    #[test]
+    fn a_repository_property_holds_one_repository() {
+        let mut trigger = AutomationTrigger::new("github", "pull_request_opened");
+        assert_eq!(trigger.property("repository"), "");
+        trigger.set_property("repository", "  acme/app ");
+        assert_eq!(
+            (trigger.repos.clone(), trigger.repo.clone()),
+            (vec!["acme/app".to_string()], String::new())
+        );
+        assert_eq!(trigger.property("repository"), "acme/app");
+
+        // An older save's list and single `repo` both show, so nothing is
+        // hidden; writing the field replaces them with the one repository.
+        let mut older = AutomationTrigger {
+            repos: vec!["acme/web".into()],
+            repo: "acme/app".into(),
+            ..AutomationTrigger::new("github", "issue_opened")
+        };
+        assert_eq!(older.property("repository"), "acme/web, acme/app");
+        older.set_property("repository", "acme/app");
+        assert_eq!(
+            (older.repos.clone(), older.repo.clone()),
+            (vec!["acme/app".to_string()], String::new())
+        );
+        older.set_property("repository", "");
+        assert!(older.repos.is_empty() && older.repo.is_empty());
+
+        let repository = trigger_properties("github")[0];
+        for (value, error) in [
+            ("", None),
+            ("acme/app", None),
+            ("group/sub/app", None),
+            (
+                "acme/web, acme/app",
+                Some("One repository per trigger, like owner/name"),
+            ),
+            (
+                "acme/web acme/app",
+                Some("One repository per trigger, like owner/name"),
+            ),
+            ("acme", Some("Write the repository as owner/name")),
+            ("acme/", Some("Write the repository as owner/name")),
+        ] {
+            assert_eq!(
+                trigger_property_error(&repository, value),
+                error,
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_actor_property_reads_empty_for_anyone() {
+        let mut trigger = AutomationTrigger::new("linear", "issue_created");
+        assert_eq!(trigger.property("actor"), "");
+        trigger.set_property("actor", "octocat");
+        assert_eq!(trigger.actor, "octocat");
+        trigger.set_property("actor", " ");
+        assert_eq!(trigger.actor, "anyone");
+        let actor = trigger_properties("linear")[0];
+        assert_eq!(
+            trigger_property_error(&actor, "two words"),
+            Some("One handle, without spaces")
+        );
+        assert_eq!(trigger_property_error(&actor, "@octocat"), None);
+    }
+
+    #[test]
+    fn an_automation_cannot_move_to_another_project() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
         let automation = on_event(
@@ -3119,23 +3341,67 @@ mod tests {
             "/repo",
             AutomationTrigger::new("github", "issue_opened"),
         );
-        let since = automation.events_since.unwrap();
-        let mut existing = github_issue(1, since + 1);
-        existing.project_path = "/other".into();
-        std::thread::sleep(std::time::Duration::from_millis(5));
         let mut draft = AutomationUpsert::from_automation(&automation);
         draft.cwd = "/other".into();
-        let moved = service.upsert(draft).unwrap();
-        assert!(moved.events_since.unwrap() > since);
-        assert!(claim_inbox_events(&mut service, &[existing], now_millis())
-            .unwrap()
-            .is_empty());
-        // The same folder written differently is not a move.
-        let mut draft = AutomationUpsert::from_automation(&moved);
-        draft.cwd = "/other/".into();
+        draft.name = "Moved".into();
+        assert_eq!(service.upsert(draft).unwrap_err(), PROJECT_FROZEN);
+        let kept = service.list().unwrap();
+        assert_eq!(kept.len(), 1);
         assert_eq!(
-            service.upsert(draft).unwrap().events_since,
-            moved.events_since
+            (kept[0].cwd.as_str(), kept[0].name.as_str()),
+            ("/repo", automation.name.as_str())
+        );
+
+        // The same folder written differently is not a move, and keeps its
+        // event watermark.
+        let mut draft = AutomationUpsert::from_automation(&automation);
+        draft.cwd = "/repo/".into();
+        let saved = service.upsert(draft).unwrap();
+        assert_eq!(saved.events_since, automation.events_since);
+
+        // Its duplicate is a new automation, free to start in another project.
+        let mut original = AutomationUpsert::from_automation(&saved);
+        original.triggers.as_mut().unwrap()[0].set_property("repository", "acme/app");
+        original.workspace_mode = "existing".into();
+        original.worktree_cwd = "/repo/.worktrees/fix".into();
+        original.session_folder_id = "folder-1".into();
+        let copy = original.duplicate_into("/other");
+        assert_ne!(copy.id, original.id);
+        let ids = |draft: &AutomationUpsert| {
+            draft
+                .triggers
+                .iter()
+                .flatten()
+                .map(|t| t.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&copy).len(), ids(&original).len());
+        assert!(ids(&copy).iter().all(|id| !ids(&original).contains(id)));
+        assert_eq!(
+            copy.triggers.as_ref().unwrap()[0].property("repository"),
+            "",
+            "the old project's repository is not carried over"
+        );
+        assert_eq!(
+            (
+                copy.workspace_mode.as_str(),
+                copy.worktree_cwd.as_str(),
+                copy.session_folder_id.as_str()
+            ),
+            ("worktree", "", "")
+        );
+        let copy = service.upsert(copy).unwrap();
+        assert_eq!(copy.cwd, "/other");
+        assert_eq!(service.list().unwrap().len(), 2);
+        assert_eq!(
+            service
+                .list()
+                .unwrap()
+                .iter()
+                .find(|a| a.id == automation.id)
+                .unwrap()
+                .cwd,
+            "/repo/"
         );
     }
 

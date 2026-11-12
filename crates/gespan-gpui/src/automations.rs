@@ -10,7 +10,7 @@ use crate::{
 use gespan_core::{
     automations::{
         self, Automation, AutomationAction, AutomationRun, AutomationTrigger, AutomationUpsert,
-        DueAutomationRun, Service,
+        DueAutomationRun, Service, TriggerProperty,
     },
     provider::Kind,
     session_groups::Folder,
@@ -21,7 +21,8 @@ use gpui::{
 };
 use serde::Deserialize;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -95,8 +96,16 @@ struct Template {
 struct TriggerFields {
     id: String,
     time: Entity<Input>,
-    repos: Entity<Input>,
-    actor: Entity<Input>,
+    /// One field per property the trigger's kind declares, in its order.
+    properties: Vec<(TriggerProperty, Entity<Input>)>,
+}
+impl TriggerFields {
+    fn property(&self, key: &str) -> Option<&Entity<Input>> {
+        self.properties
+            .iter()
+            .find(|(property, _)| property.key == key)
+            .map(|(_, input)| input)
+    }
 }
 struct Editor {
     draft: AutomationUpsert,
@@ -175,6 +184,16 @@ pub(crate) struct Automations {
     project_picker: Option<Entity<ProjectPicker>>,
     picker_subscription: Option<Subscription>,
     project_anchor: AnchorSlot,
+    /// The editor's project control, a Tab stop that the picker hands focus
+    /// back to.
+    project_focus: FocusHandle,
+    /// The editor's project's repositories per forge, for prefilling.
+    repositories: HashMap<String, Vec<String>>,
+    repositories_cwd: String,
+    /// Triggers whose Repository was prefilled (or had one already).
+    prefilled: HashSet<String>,
+    /// Inputs whose next change is a prefill, not an edit.
+    quiet: HashSet<gpui::EntityId>,
     model_anchor: AnchorSlot,
     trigger_anchor: AnchorSlot,
     trigger_menu: Option<Entity<trigger_menu::TriggerMenu>>,
@@ -237,6 +256,11 @@ impl Automations {
             project_picker: None,
             picker_subscription: None,
             project_anchor: AnchorSlot::default(),
+            project_focus: cx.focus_handle().tab_stop(true),
+            repositories: HashMap::new(),
+            repositories_cwd: String::new(),
+            prefilled: HashSet::new(),
+            quiet: HashSet::new(),
             model_anchor: AnchorSlot::default(),
             trigger_anchor: AnchorSlot::default(),
             trigger_menu: None,
@@ -262,6 +286,18 @@ impl Automations {
         self.appearances = appearances;
         cx.notify();
     }
+    #[cfg(test)]
+    pub(crate) fn editing(&self) -> bool {
+        self.editor.is_some() && !self.gallery
+    }
+    #[cfg(test)]
+    pub(crate) fn project_picker_open(&self) -> bool {
+        self.project_picker.is_some()
+    }
+    /// Whether keyboard focus is in this page, a picker it opened included.
+    pub(crate) fn holds_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
     pub(crate) fn set_pilots(&mut self, pilots: Vec<(String, String)>, cx: &mut Context<Self>) {
         if self.pilots != pilots {
             self.pilots = pilots;
@@ -286,6 +322,23 @@ impl Automations {
         self.appearances
             .get(path)
             .map_or_else(|| project_name(path), |appearance| appearance.label(path))
+    }
+    /// Above the project picker of a saved automation: it stays where it is,
+    /// and picking makes a copy.
+    fn duplicate_hint(&self) -> Option<String> {
+        let editor = self.editor.as_ref().filter(|e| e.saved)?;
+        Some(format!(
+            "This automation stays in {}. Pick a project to duplicate it into.",
+            self.project_label(&editor.draft.cwd)
+        ))
+    }
+    /// What the editor's project control says to a screen reader: the
+    /// project this automation runs in, or that none is chosen yet.
+    pub(super) fn project_control_label(&self) -> String {
+        match self.editor.as_ref().map(|e| e.draft.cwd.as_str()) {
+            Some(cwd) if !cwd.is_empty() => format!("Project: {}", self.project_label(cwd)),
+            _ => "Project: none chosen".into(),
+        }
     }
     fn project_mark(&self, path: &str, side: f32) -> AnyElement {
         crate::project_settings::project_icon(
@@ -537,26 +590,27 @@ impl Automations {
                     input
                 })
             };
-            let time = field("Trigger time", "09:00", trigger.time, cx);
-            let repos = field(
-                "Trigger repositories",
-                "Any repository",
-                trigger
-                    .repos
-                    .iter()
-                    .chain(std::iter::once(&trigger.repo))
-                    .filter(|s| !s.is_empty())
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                cx,
-            );
-            let actor = field("Trigger actor", "Anyone", trigger.actor, cx);
-            for input in [&time, &repos, &actor] {
+            let time = field("Trigger time", "09:00", trigger.time.clone(), cx);
+            let properties = automations::trigger_properties(&trigger.kind)
+                .iter()
+                .map(|property| {
+                    let input = field(
+                        property.label,
+                        property.placeholder,
+                        trigger.property(property.key),
+                        cx,
+                    );
+                    (*property, input)
+                })
+                .collect::<Vec<_>>();
+            for input in std::iter::once(&time).chain(properties.iter().map(|(_, input)| input)) {
                 editor._subscriptions.push(cx.subscribe(
                     input,
-                    |this, _, _: &input::Changed, cx| {
-                        if let Some(e) = &mut this.editor {
+                    |this, input, _: &input::Changed, cx| {
+                        // A prefilled Repository is not the user's edit.
+                        if !this.quiet.remove(&input.entity_id())
+                            && let Some(e) = &mut this.editor
+                        {
                             e.dirty = true;
                         }
                         cx.notify();
@@ -566,9 +620,113 @@ impl Automations {
             editor.fields.push(TriggerFields {
                 id: trigger.id,
                 time,
-                repos,
-                actor,
+                properties,
             });
+        }
+        self.load_repositories(cx);
+    }
+    /// The first problem with a trigger property, as (trigger id, key, why).
+    pub(super) fn property_error(&self, cx: &App) -> Option<(String, &'static str, &'static str)> {
+        let editor = self.editor.as_ref()?;
+        editor.fields.iter().find_map(|fields| {
+            fields.properties.iter().find_map(|(property, input)| {
+                automations::trigger_property_error(property, &input.read(cx).content)
+                    .map(|why| (fields.id.clone(), property.key, why))
+            })
+        })
+    }
+    /// Looks up the editor's project's repositories for each forge its
+    /// triggers use, to prefill their Repository.
+    fn load_repositories(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let cwd = editor.draft.cwd.clone();
+        if self.repositories_cwd != cwd {
+            self.repositories_cwd = cwd.clone();
+            self.repositories.clear();
+        }
+        let Some(data_dir) = self
+            .database
+            .as_ref()
+            .and_then(|database| locked(database).ok()?.data_dir().map(PathBuf::from))
+        else {
+            self.prefill_repositories(cx);
+            return;
+        };
+        let mut wanted: Vec<String> = editor
+            .draft
+            .triggers
+            .iter()
+            .flatten()
+            .filter(|trigger| {
+                automations::trigger_properties(&trigger.kind)
+                    .iter()
+                    .any(|p| p.kind == automations::TriggerPropertyKind::Repository)
+            })
+            .map(|trigger| trigger.kind.clone())
+            .filter(|kind| !self.repositories.contains_key(kind))
+            .collect();
+        wanted.sort();
+        wanted.dedup();
+        for provider in wanted {
+            // Asked once per project and forge; a failure leaves it empty.
+            self.repositories.insert(provider.clone(), Vec::new());
+            let (data_dir, project, expected) =
+                (data_dir.clone(), PathBuf::from(&cwd), cwd.clone());
+            let work = cx.background_executor().spawn(async move {
+                gespan_core::inbox::project_repositories(&data_dir, &provider, &project)
+                    .map(|repos| (provider, repos))
+            });
+            cx.spawn(async move |this, cx| {
+                let result = work.await;
+                let _ = this.update(cx, |this, cx| {
+                    if let Ok((provider, repos)) = result
+                        && this.repositories_cwd == expected
+                    {
+                        this.repositories.insert(provider, repos);
+                        this.prefill_repositories(cx);
+                    }
+                });
+            })
+            .detach();
+        }
+        self.prefill_repositories(cx);
+    }
+    /// Fills each empty Repository with the project's own repository, once
+    /// per trigger, so clearing it afterwards sticks. A saved automation with
+    /// none already matched this repository's events, so filling it in does
+    /// not count as an unsaved change.
+    pub(super) fn prefill_repositories(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        let mut filled = false;
+        for trigger in editor.draft.triggers.iter().flatten() {
+            if self.prefilled.contains(&trigger.id) {
+                continue;
+            }
+            let Some(repository) = self.repositories.get(&trigger.kind).and_then(|r| r.first())
+            else {
+                continue;
+            };
+            let Some(input) = editor
+                .fields
+                .iter()
+                .find(|f| f.id == trigger.id)
+                .and_then(|f| f.property("repository"))
+            else {
+                continue;
+            };
+            self.prefilled.insert(trigger.id.clone());
+            if input.read(cx).content.trim().is_empty() {
+                self.quiet.insert(input.entity_id());
+                input.update(cx, |input, cx| input.set_text(repository.clone(), cx));
+                filled = true;
+            }
+        }
+        if filled {
+            cx.notify();
         }
     }
     fn collected(&self, cx: &App) -> Option<AutomationUpsert> {
@@ -579,17 +737,9 @@ impl Automations {
         for trigger in draft.triggers.get_or_insert_with(Vec::new) {
             if let Some(fields) = editor.fields.iter().find(|f| f.id == trigger.id) {
                 trigger.time = fields.time.read(cx).content.trim().to_string();
-                trigger.repo.clear();
-                trigger.repos = fields
-                    .repos
-                    .read(cx)
-                    .content
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect();
-                trigger.actor = fields.actor.read(cx).content.trim().to_string();
+                for (property, input) in &fields.properties {
+                    trigger.set_property(property.key, &input.read(cx).content);
+                }
             }
         }
         draft.sync_triggers(gespan_core::time::now_ms() as i64);
@@ -864,10 +1014,13 @@ impl Automations {
         self.trigger_menu = None;
         cx.notify();
     }
+    /// Opens the project picker. A new automation picks its project; a saved
+    /// one keeps its project for good, so picking duplicates it there.
     fn choose_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = &self.editor else {
             return;
         };
+        let duplicate = editor.saved;
         let picker = cx.new(|cx| {
             ProjectPicker::new(&self.projects, &editor.draft.cwd, cx)
                 .appearance(self.appearances.clone())
@@ -875,9 +1028,12 @@ impl Automations {
         self.picker_subscription = Some(cx.subscribe_in(
             &picker,
             window,
-            |this, _, picked: &ProjectPicked, window, cx| {
+            move |this, _, picked: &ProjectPicked, window, cx| {
                 this.project_picker = None;
                 match picked {
+                    ProjectPicked::Project(path) if duplicate => {
+                        this.duplicate_into(path, cx);
+                    }
                     ProjectPicked::Project(path) => {
                         if let Some(editor) = &mut this.editor {
                             editor.draft.cwd = path.clone();
@@ -893,7 +1049,7 @@ impl Automations {
                     ProjectPicked::New => this.browse_project(cx),
                     ProjectPicked::Remote => {}
                 }
-                window.focus(&this.focus, cx);
+                window.focus(&this.project_focus, cx);
                 cx.notify();
             },
         ));
@@ -901,6 +1057,21 @@ impl Automations {
         self.project_picker = Some(picker);
         self.choice = None;
         self.trigger_menu = None;
+        cx.notify();
+    }
+    /// Opens a new, unsaved copy of the automation being edited, set to run
+    /// in `cwd`. The original stays as it is, in its own project.
+    pub(super) fn duplicate_into(&mut self, cwd: &str, cx: &mut Context<Self>) {
+        let Some(draft) = self.collected(cx) else {
+            return;
+        };
+        let copy = draft.duplicate_into(cwd);
+        self.selected = None;
+        self.runs.clear();
+        self.set_editor(copy, false, cx);
+        if let Some(editor) = &mut self.editor {
+            editor.dirty = true;
+        }
         cx.notify();
     }
     fn browse_project(&mut self, cx: &mut Context<Self>) {
@@ -919,6 +1090,10 @@ impl Automations {
                     let path = path.to_string_lossy().to_string();
                     if !this.projects.contains(&path) {
                         this.projects.push(path.clone());
+                    }
+                    if this.editor.as_ref().is_some_and(|e| e.saved) {
+                        this.duplicate_into(&path, cx);
+                        return;
                     }
                     if let Some(e) = &mut this.editor {
                         e.draft.cwd = path;
@@ -1045,7 +1220,7 @@ impl Render for Automations {
             .flex()
             .flex_col()
             .text_color(content(1.))
-            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     // Let the trigger menu close its active submenu first.
                     if this.trigger_menu.is_some() {
@@ -1059,6 +1234,9 @@ impl Render for Automations {
                         || this.models.is_some()
                         || this.project_picker.is_some()
                     {
+                        if this.project_picker.is_some() {
+                            window.focus(&this.project_focus, cx);
+                        }
                         this.choice = None;
                         this.trigger_menu = None;
                         this.models = None;
@@ -1174,6 +1352,21 @@ impl Render for Automations {
                         this.project_picker = None;
                         cx.notify();
                     });
+                })
+                .when_some(self.duplicate_hint(), |d, hint| {
+                    d.child(
+                        div()
+                            .id("automation-duplicate-hint")
+                            .debug_selector(|| "automation-duplicate-hint".into())
+                            .role(Role::Note)
+                            .px(px(12.))
+                            .py(px(10.))
+                            .border_b_1()
+                            .border_color(content(0.07))
+                            .text_size(px(12.))
+                            .text_color(content(0.6))
+                            .child(hint),
+                    )
                 })
                 .child(picker.clone()),
             );

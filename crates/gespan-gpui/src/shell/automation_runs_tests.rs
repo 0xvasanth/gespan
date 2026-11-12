@@ -5,7 +5,7 @@ use gespan_core::automations::{
     AutomationRun, AutomationTrigger, AutomationUpsert, DueAutomationRun, Service,
 };
 use gespan_core::store::Store;
-use gpui::{TestAppContext, WindowHandle};
+use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 use std::path::{Path, PathBuf};
 
 const HOUR: i64 = 3_600_000;
@@ -1812,4 +1812,52 @@ fn github_comments_and_failed_checks_each_launch_their_own_run(cx: &mut TestAppC
     );
     assert_eq!(sessions(&window, &on_comment, cx), 1);
     assert_eq!(sessions(&window, &on_check, cx), 1);
+}
+
+#[gpui::test]
+fn escape_in_automations_closes_its_innermost_layer_first(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    window
+        .update(cx, |shell, window, cx| shell.open_automations(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.refresh().unwrap();
+    let click = |visual: &mut VisualTestContext, selector: &'static str| {
+        visual.refresh().unwrap();
+        let bounds = visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is not drawn"));
+        visual.simulate_click(bounds.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    };
+    let state = |visual: &mut VisualTestContext| {
+        window
+            .update(visual, |shell, _, cx| {
+                let view = shell.automations.clone().unwrap();
+                let view = view.read(cx);
+                (
+                    shell.active_app_view == Some(app_views::AppView::Automations),
+                    view.editing(),
+                    view.project_picker_open(),
+                )
+            })
+            .unwrap()
+    };
+    click(&mut visual, "automation-scratch");
+    click(&mut visual, "automation-project");
+    assert_eq!(state(&mut visual), (true, true, true));
+
+    // The picker first, then the editor, then the page itself.
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_eq!(state(&mut visual), (true, true, false));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert_eq!(state(&mut visual), (true, false, false));
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!state(&mut visual).0, "the last Escape closes Automations");
 }

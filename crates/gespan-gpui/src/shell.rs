@@ -9322,6 +9322,12 @@ impl Render for Shell {
                         .inbox
                         .as_ref()
                         .is_some_and(|inbox| inbox.read(cx).holds_focus(window, cx)),
+                    // Its pickers, menus and editor close one at a time, and
+                    // it closes itself once nothing else is open.
+                    Some(app_views::AppView::Automations) => this
+                        .automations
+                        .as_ref()
+                        .is_some_and(|view| view.read(cx).holds_focus(window, cx)),
                     _ => false,
                 };
                 if layered {

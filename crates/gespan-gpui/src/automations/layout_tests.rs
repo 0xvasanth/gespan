@@ -338,11 +338,15 @@ fn summary_cards_describe_project_trigger_and_agent(cx: &mut TestAppContext) {
             editor.draft.runtime_mode = "supervised".into();
             editor.draft.model_settings.clear();
             let fields = &editor.fields[0];
-            fields.repos.update(cx, |input, cx| {
-                input.set_text("langfuse/langfuse".into(), cx)
-            });
             fields
-                .actor
+                .property("repository")
+                .unwrap()
+                .update(cx, |input, cx| {
+                    input.set_text("langfuse/langfuse".into(), cx)
+                });
+            fields
+                .property("actor")
+                .unwrap()
                 .update(cx, |input, cx| input.set_text("octocat".into(), cx));
         })
         .unwrap();
@@ -983,5 +987,579 @@ fn an_ignored_choice_does_not_dirty_the_draft(cx: &mut TestAppContext) {
                 .review_results)
             .unwrap(),
         None
+    );
+}
+
+// --- The project an automation runs in.
+
+/// A window that knows both `/work/app` and `/work/other`, showing the saved
+/// `automation`, or a new automation in `/work/app` when there is none.
+fn open_with_projects(
+    page: &Page,
+    automation: Option<&Automation>,
+    cx: &mut TestAppContext,
+) -> (WindowHandle<Automations>, VisualTestContext) {
+    // The picker's search field steps and picks with the app's input keys.
+    cx.update(crate::input::bind);
+    let service = page.service.clone();
+    let window = cx.add_window(|_, cx| {
+        Automations::new(
+            service,
+            "/work/app".into(),
+            vec!["/work/app".into(), "/work/other".into()],
+            cx,
+        )
+    });
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    visual.run_until_parked();
+    match automation {
+        Some(automation) => click(&mut visual, &format!("automation-card-{}", automation.id)),
+        None => {
+            window
+                .update(&mut visual, |view, _, cx| {
+                    let mut draft =
+                        AutomationUpsert::new("/work/app".into(), "codex".into(), "gpt-5.5".into());
+                    draft.name = "Check the build".into();
+                    draft.prompt = "Check the build: do the work".into();
+                    view.set_editor(draft, false, cx);
+                    let editor = view.editor.as_ref().unwrap();
+                    let (name, prompt) = (editor.name.clone(), editor.prompt.clone());
+                    name.update(cx, |i, cx| i.set_text("Check the build".into(), cx));
+                    prompt.update(cx, |i, cx| {
+                        i.set_text("Check the build: do the work".into(), cx)
+                    });
+                })
+                .unwrap();
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+        }
+    }
+    (window, visual)
+}
+
+fn project_focused(window: WindowHandle<Automations>, visual: &mut VisualTestContext) -> bool {
+    window
+        .update(visual, |view, window, _| {
+            view.project_focus.is_focused(window)
+        })
+        .unwrap()
+}
+
+fn picker_open(window: WindowHandle<Automations>, visual: &VisualTestContext) -> bool {
+    window
+        .read_with(visual, |view, _| view.project_picker.is_some())
+        .unwrap()
+}
+
+#[gpui::test]
+fn project_control_is_fully_visible_at_narrow_and_wide_widths(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Check the build",
+        "/work/a-project-with-a-rather-long-folder-name",
+        AutomationTrigger::new("time", "daily"),
+    );
+    let (_window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", automation.id));
+    // 560 is the page in the narrowest window (820 less the 260 sidebar).
+    for width in [560., 900., 1440.] {
+        visual.simulate_resize(gpui::size(px(width), px(800.)));
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let control = visual
+            .drawn("automation-project")
+            .unwrap_or_else(|| panic!("the project control is drawn at {width}px"));
+        // Wide enough to read a name, and nothing of it past the window edge.
+        assert!(
+            control.size.width >= px(160.),
+            "{width}px: the project control is squeezed to {:?}",
+            control.size.width
+        );
+        assert!(
+            control.size.height >= px(26.),
+            "{width}px: {:?}",
+            control.size
+        );
+        assert!(
+            control.right() <= px(width),
+            "{width}px: the control runs off the window at {:?}",
+            control.right()
+        );
+        let name = visual
+            .drawn("automation-project-name")
+            .unwrap_or_else(|| panic!("the project name is drawn at {width}px"));
+        assert!(
+            name.size.width >= px(48.),
+            "{width}px: the project name is clipped to {:?}",
+            name.size.width
+        );
+    }
+}
+
+fn cwd(window: WindowHandle<Automations>, visual: &VisualTestContext) -> String {
+    window
+        .read_with(visual, |view, _| {
+            view.editor.as_ref().unwrap().draft.cwd.clone()
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn project_control_opens_the_picker_with_mouse_and_keyboard(cx: &mut TestAppContext) {
+    let page = page();
+    let (window, mut visual) = open_with_projects(&page, None, cx);
+
+    // The mouse opens it, under the control, and Escape gives focus back.
+    let control = visual.drawn("automation-project").unwrap();
+    click(&mut visual, "automation-project");
+    assert!(picker_open(window, &visual));
+    let picker = visual.drawn("project-picker").expect("the picker is drawn");
+    assert!(
+        picker.top() > control.center().y,
+        "the picker opens below the control: {picker:?} vs {control:?}"
+    );
+    assert!(
+        visual.drawn("automation-duplicate-hint").is_none(),
+        "a new automation picks its project, it does not duplicate"
+    );
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!picker_open(window, &visual));
+    assert!(
+        project_focused(window, &mut visual),
+        "focus returns to the project control"
+    );
+
+    // The "Runs in project" card of a new automation opens the same picker.
+    click(&mut visual, "automation-summary-project");
+    assert!(
+        picker_open(window, &visual),
+        "the project card opens the picker"
+    );
+    visual.simulate_keystrokes("escape");
+    visual.run_until_parked();
+    assert!(!picker_open(window, &visual));
+
+    // Tab reaches the control from the page, and Enter, Space or Down open it.
+    for key in ["enter", "space", "down"] {
+        window
+            .update(&mut visual, |view, window, cx| {
+                window.focus(&view.focus, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let mut presses = 0;
+        while !project_focused(window, &mut visual) {
+            presses += 1;
+            assert!(presses <= 30, "Tab never reaches the project control");
+            // Tab is the app's FocusNext, bound by the shell around this page.
+            visual.update(|window, cx| window.focus_next(cx));
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+        }
+        visual.simulate_keystrokes(key);
+        visual.run_until_parked();
+        assert!(picker_open(window, &visual), "{key} opens the picker");
+        visual.simulate_keystrokes("escape");
+        visual.run_until_parked();
+        assert!(!picker_open(window, &visual));
+    }
+}
+
+#[gpui::test]
+fn a_new_automation_saves_the_project_picked_for_it(cx: &mut TestAppContext) {
+    let page = page();
+    let (window, mut visual) = open_with_projects(&page, None, cx);
+
+    // By keyboard: open, step down to the other project, pick it.
+    window
+        .update(&mut visual, |view, window, cx| {
+            window.focus(&view.project_focus, cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    visual.simulate_keystrokes("enter");
+    visual.run_until_parked();
+    assert!(picker_open(window, &visual));
+    visual.simulate_keystrokes("down enter");
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(!picker_open(window, &visual));
+    assert_eq!(cwd(window, &visual), "/work/other");
+    assert_eq!(
+        window
+            .read_with(&visual, |view, _| view.project_control_label())
+            .unwrap(),
+        "Project: other"
+    );
+    assert!(project_focused(window, &mut visual));
+
+    // By mouse: back to the first project, which is what is created.
+    click(&mut visual, "automation-project");
+    click(&mut visual, "project-picker-project-1");
+    assert_eq!(cwd(window, &visual), "/work/app");
+    window
+        .update(&mut visual, |view, _, cx| view.save(cx))
+        .unwrap();
+    visual.run_until_parked();
+    let saved = page.service.lock().unwrap().list().unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].cwd, "/work/app");
+}
+
+#[gpui::test]
+fn a_saved_automation_keeps_its_project_and_duplicates_into_another(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Check the build",
+        "/work/app",
+        AutomationTrigger::new("time", "daily"),
+    );
+    let (window, mut visual) = open_with_projects(&page, Some(&automation), cx);
+
+    // Its card goes to the settings, not to a project picker.
+    click(&mut visual, "automation-summary-project");
+    assert!(!picker_open(window, &visual));
+
+    // The control still opens the picker, which says it duplicates.
+    click(&mut visual, "automation-project");
+    assert!(picker_open(window, &visual));
+    assert!(visual.drawn("automation-duplicate-hint").is_some());
+    // /work/app is listed first as the current project, /work/other second.
+    click(&mut visual, "project-picker-project-1");
+    assert!(!picker_open(window, &visual));
+
+    // A new, unsaved copy in the other project is open; the original is as it was.
+    let (selected, saved, dirty, draft_id) = window
+        .read_with(&visual, |view, _| {
+            let editor = view.editor.as_ref().unwrap();
+            (
+                view.selected.clone(),
+                editor.saved,
+                editor.dirty,
+                editor.draft.id.clone(),
+            )
+        })
+        .unwrap();
+    assert_eq!(selected, None);
+    assert!(!saved && dirty, "the copy is new and unsaved");
+    assert_ne!(draft_id, automation.id);
+    assert_eq!(cwd(window, &visual), "/work/other");
+    assert_eq!(stored(&page, &automation.id).cwd, "/work/app");
+
+    window
+        .update(&mut visual, |view, _, cx| view.save(cx))
+        .unwrap();
+    visual.run_until_parked();
+    let mut all = page
+        .service
+        .lock()
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.name, a.cwd))
+        .collect::<Vec<_>>();
+    all.sort();
+    assert_eq!(
+        all,
+        [
+            ("Check the build".to_string(), "/work/app".to_string()),
+            ("Check the build".to_string(), "/work/other".to_string()),
+        ]
+    );
+    assert_eq!(stored(&page, &automation.id).cwd, "/work/app");
+}
+
+#[gpui::test]
+fn saving_a_saved_automation_into_another_project_is_refused(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Check the build",
+        "/work/app",
+        AutomationTrigger::new("time", "daily"),
+    );
+    let (window, mut visual) = open_with_projects(&page, Some(&automation), cx);
+    // Whatever path gets there, the service keeps the project fixed.
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.editor.as_mut().unwrap().draft.cwd = "/work/other".into();
+            view.save(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(
+        window
+            .read_with(&visual, |view, _| view.error.clone())
+            .unwrap()
+            .as_deref(),
+        Some(gespan_core::automations::PROJECT_FROZEN)
+    );
+    assert_eq!(stored(&page, &automation.id).cwd, "/work/app");
+}
+
+// --- Trigger properties: each kind of trigger declares its own settings.
+
+fn property_text(
+    window: WindowHandle<Automations>,
+    visual: &VisualTestContext,
+    trigger: usize,
+    key: &str,
+) -> Option<String> {
+    window
+        .read_with(visual, |view, cx| {
+            view.editor.as_ref().unwrap().fields[trigger]
+                .property(key)
+                .map(|input| input.read(cx).content.to_string())
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn each_trigger_shows_the_properties_its_kind_declares(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = {
+        let mut draft = AutomationUpsert::new("/work/app".into(), "codex".into(), "gpt-5.5".into());
+        draft.name = "Review".into();
+        draft.prompt = "Review it".into();
+        let mut github = AutomationTrigger::new("github", "pull_request_review_requested");
+        github.repos = vec!["acme/app".into()];
+        github.actor = "octocat".into();
+        draft.triggers = Some(vec![
+            github,
+            AutomationTrigger::new("linear", "issue_created"),
+            AutomationTrigger::new("time", "daily"),
+        ]);
+        draft.sync_triggers(now());
+        page.service.lock().unwrap().upsert(draft).unwrap()
+    };
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", automation.id));
+    let order = window
+        .read_with(&visual, |view, _| {
+            view.editor
+                .as_ref()
+                .unwrap()
+                .draft
+                .triggers
+                .iter()
+                .flatten()
+                .map(|t| t.kind.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    let at = |kind: &str| order.iter().position(|k| k == kind).unwrap();
+    let (github, linear, time) = (at("github"), at("linear"), at("time"));
+
+    // GitHub: a labelled Repository and By, each holding what was saved.
+    for key in ["repository", "actor"] {
+        assert!(
+            visual.drawn(&format!("trigger-{github}-{key}")).is_some(),
+            "GitHub's {key} is drawn"
+        );
+    }
+    assert_eq!(
+        property_text(window, &visual, github, "repository").as_deref(),
+        Some("acme/app")
+    );
+    assert_eq!(
+        property_text(window, &visual, github, "actor").as_deref(),
+        Some("octocat")
+    );
+    // The Repository row is a real row: label and field side by side, readable.
+    let row = visual
+        .drawn(&format!("trigger-{github}-repository"))
+        .unwrap();
+    assert!(row.size.height >= px(40.), "{row:?}");
+
+    // Linear only says who; a schedule has no extra settings.
+    assert!(visual.drawn(&format!("trigger-{linear}-actor")).is_some());
+    assert!(
+        visual
+            .drawn(&format!("trigger-{linear}-repository"))
+            .is_none()
+    );
+    assert_eq!(
+        property_text(window, &visual, linear, "actor").as_deref(),
+        Some("")
+    );
+    assert!(
+        visual
+            .drawn(&format!("trigger-properties-{time}"))
+            .is_none()
+    );
+}
+
+#[gpui::test]
+fn a_new_forge_trigger_is_prefilled_with_the_projects_repository(cx: &mut TestAppContext) {
+    let page = page();
+    let (window, mut visual) = open_with_projects(&page, None, cx);
+    // As the forge reports it for the project: its own repository, then a
+    // fork's parent.
+    let add_github = |visual: &mut VisualTestContext| {
+        window
+            .update(visual, |view, _, cx| {
+                view.repositories.insert(
+                    "github".into(),
+                    vec!["acme/app".into(), "upstream/app".into()],
+                );
+                view.repositories_cwd = "/work/app".into();
+                let editor = view.editor.as_mut().unwrap();
+                editor
+                    .draft
+                    .triggers
+                    .get_or_insert_with(Vec::new)
+                    .push(AutomationTrigger::new("github", "pull_request_opened"));
+                view.rebuild_trigger_fields(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    };
+    add_github(&mut visual);
+    assert_eq!(
+        property_text(window, &visual, 0, "repository").as_deref(),
+        Some("acme/app")
+    );
+
+    // Clearing it sticks: it is not filled in again.
+    window
+        .update(&mut visual, |view, _, cx| {
+            let input = view.editor.as_ref().unwrap().fields[0]
+                .property("repository")
+                .unwrap()
+                .clone();
+            input.update(cx, |input, cx| input.set_text(String::new(), cx));
+            view.prefill_repositories(cx);
+        })
+        .unwrap();
+    assert_eq!(
+        property_text(window, &visual, 0, "repository").as_deref(),
+        Some("")
+    );
+    window
+        .update(&mut visual, |view, _, cx| {
+            let input = view.editor.as_ref().unwrap().fields[0]
+                .property("repository")
+                .unwrap()
+                .clone();
+            input.update(cx, |input, cx| input.set_text("acme/app".into(), cx));
+        })
+        .unwrap();
+
+    window
+        .update(&mut visual, |view, _, cx| view.save(cx))
+        .unwrap();
+    visual.run_until_parked();
+    let saved = page.service.lock().unwrap().list().unwrap();
+    assert_eq!(
+        saved.len(),
+        1,
+        "{:?}",
+        window.read_with(&visual, |v, _| v.error.clone())
+    );
+    let trigger = &saved[0].triggers()[0];
+    assert_eq!(
+        (trigger.repos.clone(), trigger.repo.clone()),
+        (vec!["acme/app".to_string()], String::new())
+    );
+}
+
+#[gpui::test]
+fn a_saved_trigger_without_a_repository_shows_the_projects_without_becoming_unsaved(
+    cx: &mut TestAppContext,
+) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Review",
+        "/work/app",
+        AutomationTrigger::new("github", "pull_request_opened"),
+    );
+    let (window, mut visual) = open_with_projects(&page, Some(&automation), cx);
+    assert_eq!(
+        property_text(window, &visual, 0, "repository").as_deref(),
+        Some("")
+    );
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.repositories
+                .insert("github".into(), vec!["acme/app".into()]);
+            view.prefill_repositories(cx);
+        })
+        .unwrap();
+    assert_eq!(
+        property_text(window, &visual, 0, "repository").as_deref(),
+        Some("acme/app")
+    );
+    assert!(
+        !window
+            .read_with(&visual, |view, _| view.editor.as_ref().unwrap().dirty)
+            .unwrap(),
+        "showing the repository it already matched is not an edit"
+    );
+}
+
+#[gpui::test]
+fn a_trigger_listens_to_one_repository(cx: &mut TestAppContext) {
+    let page = page();
+    let automation = save(
+        &page,
+        "Review",
+        "/work/app",
+        AutomationTrigger::new("github", "pull_request_opened"),
+    );
+    let (window, mut visual) = open_with_projects(&page, Some(&automation), cx);
+    let set = |visual: &mut VisualTestContext, text: &str| {
+        let text = text.to_string();
+        window
+            .update(visual, |view, _, cx| {
+                let input = view.editor.as_ref().unwrap().fields[0]
+                    .property("repository")
+                    .unwrap()
+                    .clone();
+                input.update(cx, |input, cx| input.set_text(text, cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    };
+    let error = |visual: &VisualTestContext| {
+        window
+            .read_with(visual, |view, cx| {
+                view.property_error(cx).map(|(_, key, why)| (key, why))
+            })
+            .unwrap()
+    };
+
+    set(&mut visual, "acme/web, acme/app");
+    assert_eq!(
+        error(&visual),
+        Some(("repository", "One repository per trigger, like owner/name"))
+    );
+    assert!(
+        visual.drawn("trigger-0-repository").is_some(),
+        "the row with the problem is drawn"
+    );
+    set(&mut visual, "acme");
+    assert_eq!(
+        error(&visual),
+        Some(("repository", "Write the repository as owner/name"))
+    );
+
+    set(&mut visual, "acme/app");
+    assert_eq!(error(&visual), None);
+    window
+        .update(&mut visual, |view, _, cx| view.save(cx))
+        .unwrap();
+    visual.run_until_parked();
+    assert_eq!(
+        stored(&page, &automation.id).triggers()[0].repos,
+        vec!["acme/app".to_string()]
     );
 }

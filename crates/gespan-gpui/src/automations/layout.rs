@@ -342,6 +342,10 @@ impl Automations {
             .gap(px(12.))
             .children(cards.into_iter().map(|card| {
                 let section = card.section;
+                // A new automation's project is picked in the header, so its
+                // card opens the picker; a saved one's project is fixed.
+                let project =
+                    card.key == "project" && self.editor.as_ref().is_some_and(|e| !e.saved);
                 let selector = format!("automation-summary-{}", card.key);
                 div()
                     .id(SharedString::from(selector.clone()))
@@ -384,7 +388,13 @@ impl Automations {
                                     .child(card.secondary),
                             ),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.jump_to(section, cx)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if project {
+                            this.choose_project(window, cx);
+                        } else {
+                            this.jump_to(section, cx);
+                        }
+                    }))
             }))
             .into_any_element()
     }
