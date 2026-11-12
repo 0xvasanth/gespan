@@ -305,12 +305,14 @@ impl Accounts {
                     })),
                 );
             }
+            // Indented under the agent's name, past its tile.
             let row = div()
                 .min_h_12()
                 .border_t_1()
                 .border_color(crate::glass::hairline())
-                .px_4()
-                .py_2()
+                .pl(px(60.))
+                .pr_4()
+                .py(px(10.))
                 .flex()
                 .items_center()
                 .gap_3()
@@ -325,28 +327,35 @@ impl Accounts {
                                 .gap(px(6.))
                                 .child(
                                     div()
-                                        .text_size(px(12.))
+                                        .text_size(px(13.))
+                                        .font_weight(FontWeight::MEDIUM)
                                         .truncate()
                                         .child(account.label.clone()),
                                 )
-                                .children(org.map(|org| {
-                                    div()
-                                        .px_1()
-                                        .rounded_sm()
-                                        .bg(content(0.07))
-                                        .text_size(px(9.))
-                                        .text_color(content(0.5))
-                                        .child(org)
-                                })),
+                                .child(status_pill(&status)),
                         )
                         .child(
                             div()
                                 .mt(px(2.))
                                 .flex()
                                 .items_center()
-                                .gap(px(10.))
-                                .text_size(px(10.))
-                                .child(status_label(&status).flex_shrink_0())
+                                .gap(px(6.))
+                                .text_size(px(11.5))
+                                .when(status.tone == Tone::Unknown, |d| {
+                                    // The pill says usage is unavailable; why goes here.
+                                    d.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_color(content(0.55))
+                                            .child(format!("{} ·", status.label)),
+                                    )
+                                })
+                                .children(org.map(|org| {
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_color(content(0.55))
+                                        .child(format!("{org} ·"))
+                                }))
                                 .child(
                                     div()
                                         .id(SharedString::from(format!(
@@ -366,7 +375,7 @@ impl Accounts {
                                                 })
                                             },
                                         )
-                                        .text_color(content(0.3))
+                                        .text_color(content(0.55))
                                         .relative()
                                         .truncate()
                                         .child(masked_text(subtitle, masked))
@@ -387,18 +396,30 @@ impl Accounts {
             rows.push(self.editor_row(cx));
         }
         let add = accounts::supports_profiles(kind).then(|| {
-            secondary_button(
-                SharedString::from(format!("add-account-{}", kind.id())),
-                "Add account",
-                false,
-                self.working,
-            )
-            .child(icon("plus", 14.))
-            .child("Add account")
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.start_edit(kind, None, Surface::Settings, window, cx)
-            }))
-            .into_any_element()
+            // A plain link under the accounts, as the design draws it.
+            div()
+                .id(SharedString::from(format!("add-account-{}", kind.id())))
+                .role(Role::Button)
+                .aria_label("Add account")
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .px(px(6.))
+                .py(px(2.))
+                .rounded(px(6.))
+                .text_size(px(12.5))
+                .text_color(content(0.62))
+                .when(self.working, |d| d.opacity(0.4))
+                .when(!self.working, |d| {
+                    d.cursor_pointer()
+                        .hover(|s| s.text_color(content(1.)).bg(content(0.06)))
+                })
+                .child(icon("plus", 13.).text_color(content(0.62)))
+                .child("Add account")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.start_edit(kind, None, Surface::Settings, window, cx)
+                }))
+                .into_any_element()
         });
         (rows, add)
     }
@@ -769,6 +790,21 @@ fn accent(alpha: f32) -> gpui::Hsla {
 }
 
 /// AccountStatusLabel: "● Ready" or "● Exhausted back in 31m".
+/// Settings' account status: a pill. Usage that couldn't be read says so,
+/// and the reason goes beside the account's details.
+pub(crate) fn status_pill(status: &Status) -> Div {
+    use crate::glass::Tone as Pill;
+    let (label, tone) = match status.tone {
+        Tone::Ready => (status.label.clone(), Pill::Ok),
+        Tone::Low => (status.label.clone(), Pill::Waiting),
+        Tone::Exhausted => (status.label.clone(), Pill::Bad),
+        Tone::SignedOut => (status.label.clone(), Pill::Waiting),
+        Tone::Checking => (status.label.clone(), Pill::Muted),
+        Tone::Unknown => ("Usage unavailable".into(), Pill::Bad),
+    };
+    crate::glass::status(label, tone)
+}
+
 pub(crate) fn status_label(status: &Status) -> Div {
     let tinted = |hex: u32, alpha: f32| {
         let mut color: gpui::Hsla = gpui::rgb(hex).into();

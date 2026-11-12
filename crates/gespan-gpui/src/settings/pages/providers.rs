@@ -78,6 +78,7 @@ impl SettingsView {
         );
         let binaries = self.discovery.binaries.clone();
         let mut clis = Vec::new();
+        let mut missing: Vec<AnyElement> = Vec::new();
         for (index, kind) in Kind::ALL.into_iter().enumerate() {
             let installed = binaries
                 .iter()
@@ -260,6 +261,12 @@ impl SettingsView {
                 }
                 _ => (Vec::new(), None),
             };
+            // Once the check is done, a CLI that isn't there joins the
+            // compact Not installed grid instead of a full card.
+            if installed.is_none() && !self.discovery_loading {
+                missing.push(missing_card(kind, accounts));
+                continue;
+            }
             clis.push(self.agent_card(
                 index,
                 kind,
@@ -297,6 +304,38 @@ impl SettingsView {
             Vec::new(),
         )];
         page.extend(clis);
+        if !missing.is_empty() {
+            let count = missing.len();
+            page.push(
+                div()
+                    .debug_selector(|| "settings-agents-missing".into())
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .px(px(4.))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("Not installed"),
+                            )
+                            .child(crate::glass::count(count, false))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(content(0.62))
+                                    .child("Install a CLI, then Refresh. Restart Gespan if it is already installed."),
+                            ),
+                    )
+                    .child(div().grid().grid_cols(2).gap(px(8.)).children(missing))
+                    .into_any_element(),
+            );
+        }
         page.push(self.group(None, false, "Usage and privacy", None, None, usage));
         page.push(self.group(None, false, "Advanced", None, None, advanced));
         page
@@ -407,7 +446,8 @@ impl SettingsView {
             .when_some(add, |d, add| {
                 d.child(
                     div()
-                        .px_4()
+                        .pl(px(54.))
+                        .pr_4()
                         .py(px(8.))
                         .border_t_1()
                         .border_color(crate::glass::hairline())
@@ -417,4 +457,83 @@ impl SettingsView {
             })
             .into_any_element()
     }
+}
+
+/// The command a CLI's hint names, between backticks, if any.
+pub(in crate::settings) fn install_command(hint: &str) -> Option<&str> {
+    let start = hint.find('`')? + 1;
+    let len = hint[start..].find('`')?;
+    Some(&hint[start..start + len]).filter(|c| !c.is_empty())
+}
+
+/// A CLI that isn't installed: its mark and name, a Not installed pill,
+/// and how to install it, as a command when the hint gives one.
+fn missing_card(kind: Kind, accounts: Vec<AnyElement>) -> AnyElement {
+    let id = kind.id();
+    let hint = kind.unavailable_hint();
+    let how = match install_command(&hint) {
+        Some(command) => div()
+            .debug_selector(move || format!("settings-agent-install-{id}"))
+            .h(px(28.))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .rounded(px(7.))
+            .bg(if is_light() { white(0.7) } else { black(0.3) })
+            .border_1()
+            .border_color(crate::glass::edge())
+            .font_family(crate::fonts::monospace())
+            .text_size(px(11.5))
+            .child(div().truncate().child(command.to_owned())),
+        None => div()
+            .text_size(px(11.5))
+            .line_height(px(16.))
+            .text_color(content(0.62))
+            .child(hint.clone()),
+    };
+    crate::glass::card()
+        .debug_selector(move || format!("settings-agent-missing-{id}"))
+        .overflow_hidden()
+        .child(
+            div()
+                .p(px(14.))
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .size(px(26.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(7.))
+                                .bg(content(0.07))
+                                .border_1()
+                                .border_color(crate::glass::edge())
+                                .child(provider_icon(id, 14.)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(13.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .child(kind.label()),
+                        )
+                        .child(crate::glass::status(
+                            "Not installed",
+                            crate::glass::Tone::Muted,
+                        )),
+                )
+                .child(how),
+        )
+        .children(accounts)
+        .into_any_element()
 }

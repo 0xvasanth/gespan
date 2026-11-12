@@ -388,14 +388,35 @@ fn providers_draw_one_card_per_agent_and_hide_controls_an_absent_cli_cannot_use(
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    assert!(visual.debug_bounds("settings-agents-missing").is_some());
     for kind in Kind::ALL {
         let id = kind.id();
-        assert!(
+        let installed = kind == Kind::Codex;
+        // An installed CLI has a full card; the rest a compact one in the
+        // Not installed grid, with the command to install it where known.
+        assert_eq!(
             visual
                 .debug_bounds(format!("settings-agent-{id}").leak())
                 .is_some(),
-            "{id} has its card"
+            installed,
+            "{id} full card"
         );
+        assert_eq!(
+            visual
+                .debug_bounds(format!("settings-agent-missing-{id}").leak())
+                .is_some(),
+            !installed,
+            "{id} in the Not installed grid"
+        );
+        if !installed {
+            assert_eq!(
+                visual
+                    .debug_bounds(format!("settings-agent-install-{id}").leak())
+                    .is_some(),
+                super::pages::install_command(&kind.unavailable_hint()).is_some(),
+                "{id} install command"
+            );
+        }
         let select = visual
             .debug_bounds(format!("settings-select-{id}").leak())
             .is_some();
@@ -618,4 +639,21 @@ fn the_mcp_registry_lists_results_as_cards_even_while_providers_load(cx: &mut Te
             .debug_bounds("settings-row-catalog-managed")
             .is_some()
     );
+}
+
+#[test]
+fn an_install_hint_yields_its_command() {
+    use super::pages::install_command;
+    assert_eq!(
+        install_command(
+            "Grok Build CLI not found (`curl -fsSL https://x.ai/cli/install.sh | bash`). Install it."
+        ),
+        Some("curl -fsSL https://x.ai/cli/install.sh | bash")
+    );
+    assert_eq!(
+        install_command("Antigravity ACP server not found. Install it."),
+        None
+    );
+    assert_eq!(install_command("broken `unterminated"), None);
+    assert_eq!(install_command("empty ``"), None);
 }

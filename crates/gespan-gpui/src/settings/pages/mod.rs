@@ -35,6 +35,8 @@ pub(super) use keybindings::{BINDINGS, by_area, key_caps};
 pub(crate) use keybindings::{command_shortcut, shortcut_label};
 pub(super) use mobile::MobileState;
 #[cfg(test)]
+pub(super) use providers::install_command;
+#[cfg(test)]
 pub(super) use skills::skill_bucket;
 pub(super) use worktrees::WorktreeScripts;
 
