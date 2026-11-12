@@ -8,8 +8,9 @@
 //! each one starts a run once.
 use super::{Checks, Comment, Item, Occurrence, Service};
 use crate::automations::{
-    Watch, CHECK_FAILED_EVENT, GITHUB_COMMENT_EVENT, GITLAB_COMMENT_EVENT, ISSUE_ASSIGNED_EVENT,
-    MERGED_EVENT, REVIEW_REQUESTED_EVENT,
+    is_review_command, Watch, CHECK_FAILED_EVENT, GITHUB_COMMENT_EVENT,
+    GITHUB_REVIEW_COMMAND_EVENT, GITLAB_COMMENT_EVENT, GITLAB_REVIEW_COMMAND_EVENT,
+    ISSUE_ASSIGNED_EVENT, MERGED_EVENT, REVIEW_REQUESTED_EVENT,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -99,12 +100,17 @@ pub fn watch_events(
         {
             continue;
         }
-        let event = match item.provider.as_str() {
-            "github" => GITHUB_COMMENT_EVENT,
-            "gitlab" => GITLAB_COMMENT_EVENT,
+        let (comment, command) = match item.provider.as_str() {
+            "github" => (GITHUB_COMMENT_EVENT, GITHUB_REVIEW_COMMAND_EVENT),
+            "gitlab" => (GITLAB_COMMENT_EVENT, GITLAB_REVIEW_COMMAND_EVENT),
             _ => continue,
         };
-        let Some(since) = watched(&item.provider, event, item) else {
+        // Comments are read once for both: a review command is a comment.
+        let Some(since) = [comment, command]
+            .into_iter()
+            .filter_map(|event| watched(&item.provider, event, item))
+            .min()
+        else {
             continue;
         };
         let updated = item.updated_ms();
@@ -244,11 +250,13 @@ fn same_account(author: &str, me: &str) -> bool {
 
 /// The comments on pull or merge request `pr` as event items, oldest first,
 /// replies after the comment they answer. `me` is the connected account.
+/// A comment whose first line is `/gespan review` raises the review command
+/// event instead of the comment event: it is addressed to Gespan.
 pub fn comment_items(pr: &Item, comments: &[Comment], me: &str) -> Vec<Item> {
-    let event = if pr.provider == "gitlab" {
-        GITLAB_COMMENT_EVENT
+    let (comment_event, command_event) = if pr.provider == "gitlab" {
+        (GITLAB_COMMENT_EVENT, GITLAB_REVIEW_COMMAND_EVENT)
     } else {
-        GITHUB_COMMENT_EVENT
+        (GITHUB_COMMENT_EVENT, GITHUB_REVIEW_COMMAND_EVENT)
     };
     let mut flat = Vec::new();
     for comment in comments {
@@ -269,6 +277,11 @@ pub fn comment_items(pr: &Item, comments: &[Comment], me: &str) -> Vec<Item> {
             if body.is_empty() {
                 return None;
             }
+            let event = if is_review_command(&body) {
+                command_event
+            } else {
+                comment_event
+            };
             if !comment.path.trim().is_empty() {
                 let line = comment
                     .line
@@ -745,6 +758,86 @@ mod tests {
                     "2026-11-11T09:02:00Z",
                     "https://deploy.example/1"
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_review_command_comment_raises_the_command_event_on_both_forges() {
+        for (provider, comment_event, command_event) in [
+            ("github", GITHUB_COMMENT_EVENT, GITHUB_REVIEW_COMMAND_EVENT),
+            ("gitlab", GITLAB_COMMENT_EVENT, GITLAB_REVIEW_COMMAND_EVENT),
+        ] {
+            let mut inline = said("c4", "review_comment", "alice", "/gespan review");
+            inline.path = "src/a.rs".into();
+            inline.line = Some(3);
+            let comments = [
+                said("c1", "comment", "alice", "/gespan review"),
+                said(
+                    "c2",
+                    "comment",
+                    "alice",
+                    "\n  /GESPAN Review focus on auth\nthanks",
+                ),
+                said("c3", "comment", "alice", "Please /gespan review this"),
+                said("c5", "comment", "alice", "/gespan reviewer"),
+                said("c6", "comment", "alice", "/gespan"),
+                said("c7", "comment", "alice", "/review"),
+                inline,
+            ];
+            let items = comment_items(&pr(provider, 7, ""), &comments, "");
+            let events: Vec<(&str, &str)> = items
+                .iter()
+                .map(|i| {
+                    let o = i.occurrence.as_ref().unwrap();
+                    (o.id.as_str(), o.event.as_str())
+                })
+                .collect();
+            assert_eq!(
+                events,
+                [
+                    ("c1", command_event),
+                    ("c2", command_event),
+                    ("c3", comment_event),
+                    ("c5", comment_event),
+                    ("c6", comment_event),
+                    ("c7", comment_event),
+                    ("c4", command_event),
+                ],
+                "{provider}"
+            );
+            // The asker's note stays in the body as data.
+            assert!(items[1]
+                .occurrence
+                .as_ref()
+                .unwrap()
+                .body
+                .contains("focus on auth"));
+        }
+    }
+
+    #[test]
+    fn comments_are_read_when_only_the_review_command_is_watched() {
+        let since = crate::inbox::timestamp_ms("2026-11-11T09:00:00Z");
+        let watches = [
+            watch("github", GITHUB_REVIEW_COMMAND_EVENT, since),
+            watch("gitlab", GITLAB_REVIEW_COMMAND_EVENT, since),
+        ];
+        let listed = vec![
+            pr("github", 1, "2026-11-11T10:00:00Z"),
+            pr("gitlab", 3, "2026-11-11T10:00:00Z"),
+        ];
+        let mut fake = Fake::default();
+        fake.comments
+            .insert(1, Ok(vec![said("a", "comment", "alice", "/gespan review")]));
+        fake.comments
+            .insert(3, Ok(vec![said("b", "comment", "alice", "/gespan review")]));
+        let out = watch_events(&watches, &listed, &HashMap::new(), &mut fake);
+        assert_eq!(
+            out.items.iter().map(Item::key).collect::<Vec<_>>(),
+            [
+                "github:acme/app:pr:1:pull_request_review_command:a",
+                "gitlab:acme/app:pr:3:merge_request_review_command:b"
             ]
         );
     }

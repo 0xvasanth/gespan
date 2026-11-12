@@ -127,7 +127,12 @@ impl Shell {
 
     /// Keeps an answer given on My tasks to a request with no chat of its
     /// own to keep it: a Pilot choice or a Flow step.
-    fn keep_my_task_answer(&mut self, key: &str, answer: String, value: serde_json::Value) {
+    pub(super) fn keep_my_task_answer(
+        &mut self,
+        key: &str,
+        answer: String,
+        value: serde_json::Value,
+    ) {
         let Some(record) = self.my_task_records.remove(key) else {
             return;
         };
@@ -243,6 +248,44 @@ impl Shell {
                 });
             }
         }
+        for saved in &self.automation_state.review_drafts {
+            if self
+                .automation_state
+                .deciding_drafts
+                .contains(&saved.run_id)
+            {
+                continue;
+            }
+            let draft = &saved.draft;
+            let (noun, sign, forge) = match draft.forge {
+                gespan_core::review_policy::Forge::GitHub => ("pull request", "#", "GitHub"),
+                gespan_core::review_policy::Forge::GitLab => ("merge request", "!", "GitLab"),
+            };
+            let reference = format!("{}{sign}{}", draft.repo, draft.number);
+            found.push(TaskItem {
+                key: format!("draft-review:{}", saved.run_id),
+                kind: Kind::DraftReview,
+                project: saved.cwd.clone(),
+                headline: format!("Submit the review on {reference}, or keep it as a draft?"),
+                who: format!("Draft review on {forge}"),
+                source_label: if saved.title.trim().is_empty() {
+                    reference
+                } else {
+                    format!("{} \u{b7} {noun}", saved.title.trim())
+                },
+                source: Source::DraftReview {
+                    run: saved.run_id.clone(),
+                    url: draft.url.clone(),
+                },
+                body: Body::DraftReview {
+                    body: draft.body.clone(),
+                    comments: draft.inline.clone(),
+                    outside: draft.outside,
+                },
+                since_ms: u64::try_from(saved.created_at).unwrap_or(now),
+                history: History::default(),
+            });
+        }
         // A run write in progress holds the store; this tick keeps the last
         // list rather than wait for it on the UI thread.
         let store = self
@@ -335,7 +378,15 @@ impl Shell {
                     pilots.update(cx, |pilots, cx| pilots.choose(pilot, text, cx));
                 }
             }
+            my_tasks::Event::DraftDecide { run, submit } => {
+                self.decide_review_draft(run, *submit, cx);
+            }
             my_tasks::Event::Open(source) => match source {
+                Source::DraftReview { url, .. } => {
+                    if url.starts_with("https://") {
+                        cx.open_url(url);
+                    }
+                }
                 Source::Session(id) => self.open(*id, window, cx),
                 Source::FlowRun(_) => self.open_flows(window, cx),
                 Source::Pilot { pilot, .. } => {

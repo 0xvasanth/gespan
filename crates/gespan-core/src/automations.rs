@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use chrono::{Datelike, Local, TimeZone, Timelike};
 use std::path::Path;
 
+pub mod review_drafts;
 pub mod review_setup;
 
 fn now_millis() -> i64 {
@@ -289,6 +290,16 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
            event_key TEXT NOT NULL,
            created_at INTEGER NOT NULL,
            PRIMARY KEY (automation_id, event_key)
+         );
+         CREATE TABLE IF NOT EXISTS review_drafts (
+           run_id TEXT PRIMARY KEY,
+           automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+           cwd TEXT NOT NULL,
+           title TEXT NOT NULL,
+           draft_json TEXT NOT NULL,
+           status TEXT NOT NULL,
+           created_at INTEGER NOT NULL,
+           updated_at INTEGER NOT NULL
          );",
     )?;
 
@@ -1460,6 +1471,9 @@ pub fn event_label(kind: &str, event: &str) -> String {
         (_, "merge_request_opened") => "Merge request opened",
         (_, GITLAB_COMMENT_EVENT) => "Merge request comment",
         (_, GITHUB_COMMENT_EVENT) => "Pull request comment",
+        (_, GITHUB_REVIEW_COMMAND_EVENT | GITLAB_REVIEW_COMMAND_EVENT) => {
+            "Comment asks for a review"
+        }
         (_, "issue_created") => "Issue created",
         (_, "pull_request_appeared") => "Pull request appeared",
         (_, "work_item_appeared") => "Work item appeared",
@@ -1668,6 +1682,37 @@ impl Service {
 pub const GITHUB_COMMENT_EVENT: &str = "pull_request_comment";
 /// A new comment on a GitLab merge request.
 pub const GITLAB_COMMENT_EVENT: &str = "merge_request_comment";
+/// A comment on a GitHub pull request asking Gespan to review it.
+pub const GITHUB_REVIEW_COMMAND_EVENT: &str = "pull_request_review_command";
+/// A comment on a GitLab merge request asking Gespan to review it.
+pub const GITLAB_REVIEW_COMMAND_EVENT: &str = "merge_request_review_command";
+/// What a comment's first line starts with to ask for a review.
+pub const REVIEW_COMMAND: &str = "/gespan review";
+
+/// Whether `body` asks Gespan for a review: its first non-blank line starts
+/// with the words `/gespan review`, in any case. Anything after them on that
+/// line, or below it, is the asker's note.
+pub fn is_review_command(body: &str) -> bool {
+    let Some(first) = body.lines().find(|line| !line.trim().is_empty()) else {
+        return false;
+    };
+    let mut words = first.split_whitespace();
+    words
+        .next()
+        .is_some_and(|w| w.eq_ignore_ascii_case("/gespan"))
+        && words
+            .next()
+            .is_some_and(|w| w.eq_ignore_ascii_case("review"))
+}
+
+/// The review command events.
+pub fn is_review_command_event(event: &str) -> bool {
+    matches!(
+        event,
+        GITHUB_REVIEW_COMMAND_EVENT | GITLAB_REVIEW_COMMAND_EVENT
+    )
+}
+
 /// A check failing on a GitHub pull request's latest commit.
 pub const CHECK_FAILED_EVENT: &str = "check_failed";
 /// A GitHub pull request awaiting the connected account's review.
@@ -1679,9 +1724,11 @@ pub const ISSUE_ASSIGNED_EVENT: &str = "issue_assigned";
 
 /// The events found by asking the provider about listed items, rather than
 /// from the Inbox list itself, each with the provider that raises it.
-pub const WATCHED_EVENTS: [(&str, &str); 6] = [
+pub const WATCHED_EVENTS: [(&str, &str); 8] = [
     ("github", GITHUB_COMMENT_EVENT),
     ("gitlab", GITLAB_COMMENT_EVENT),
+    ("github", GITHUB_REVIEW_COMMAND_EVENT),
+    ("gitlab", GITLAB_REVIEW_COMMAND_EVENT),
     ("github", CHECK_FAILED_EVENT),
     ("github", REVIEW_REQUESTED_EVENT),
     ("github", MERGED_EVENT),
@@ -1729,6 +1776,9 @@ fn event_task(event: &str, provider: &str, kind: &str) -> String {
     match event {
         GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT => {
             format!("Respond to this comment on a {provider} {kind}:")
+        }
+        GITHUB_REVIEW_COMMAND_EVENT | GITLAB_REVIEW_COMMAND_EVENT => {
+            format!("Review this {provider} {kind}. A comment asked for it:")
         }
         CHECK_FAILED_EVENT => format!("A check failed on this {provider} {kind}:"),
         REVIEW_REQUESTED_EVENT => format!("Review this {provider} {kind}:"),
@@ -1865,11 +1915,17 @@ pub fn claim_inbox_events_retry(
                 // A comment from someone without write access, too, runs only
                 // a trigger that names them: anyone can comment in public.
                 let named_here = named && by_actor;
-                if (named && !by_actor)
-                    || item.occurrence.as_ref().is_some_and(|occurrence| {
+                // A review command runs a reviewer, so it always needs write
+                // access, even from a named author. The account's own command
+                // counts: the reviewer never posts one.
+                let refused = |occurrence: &crate::inbox::Occurrence| {
+                    if is_review_command_event(event) {
+                        !occurrence.trusted
+                    } else {
                         !named_here && (occurrence.mine || !occurrence.trusted)
-                    })
-                {
+                    }
+                };
+                if (named && !by_actor) || item.occurrence.as_ref().is_some_and(refused) {
                     return false;
                 }
                 let repos: Vec<_> = trigger
@@ -1929,7 +1985,9 @@ pub fn claim_inbox_events_retry(
             let mut external = format!("{reference} {title}");
             if let Some(occurrence) = &item.occurrence {
                 let author = occurrence.author.trim();
-                if matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT) {
+                if matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT)
+                    || is_review_command_event(event)
+                {
                     external.push_str(&if author.is_empty() {
                         "\nComment:\n".to_string()
                     } else {
@@ -4346,6 +4404,105 @@ mod tests {
         assert!(claim_inbox_events(&mut service, &[odd], now)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn a_review_command_runs_only_for_authors_with_write_access() {
+        for (provider, event) in [
+            ("github", GITHUB_REVIEW_COMMAND_EVENT),
+            ("gitlab", GITLAB_REVIEW_COMMAND_EVENT),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+            let review = on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new(provider, event),
+            );
+            // Naming an author does not let a reader through either.
+            let mut named = AutomationTrigger::new(provider, event);
+            named.actor = "mallory".into();
+            let named = on_event(&mut service, "/repo", named);
+            let comments = on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new(
+                    provider,
+                    if provider == "gitlab" {
+                        GITLAB_COMMENT_EVENT
+                    } else {
+                        GITHUB_COMMENT_EVENT
+                    },
+                ),
+            );
+            let now = now_millis();
+            let mut reader = said("1", "mallory", "/gespan review", now);
+            reader.permission = "read".into();
+            let mut unknown = said("2", "mallory", "/gespan review", now);
+            unknown.permission = String::new();
+            let untrusted = crate::inbox::events::comment_items(
+                &listed_pr(provider, 7),
+                &[reader, unknown],
+                "gespan-bot",
+            );
+            assert!(
+                claim_inbox_events(&mut service, &untrusted, now)
+                    .unwrap()
+                    .is_empty(),
+                "{provider}: {named:?}"
+            );
+            // A writer's command, and the account's own, start the review
+            // and nothing else.
+            let writer = comment(provider, 7, "3", "alice", "/gespan review", now);
+            let own = comment(provider, 7, "4", "gespan-bot", "/gespan review", now);
+            assert!(own.occurrence.as_ref().unwrap().mine);
+            let runs = claim_inbox_events(&mut service, &[writer, own], now).unwrap();
+            let ran: Vec<_> = runs.iter().map(|r| r.run.automation_id.clone()).collect();
+            assert_eq!(ran, [review.id.clone(), review.id.clone()], "{comments:?}");
+            assert_eq!(
+                keys(&runs),
+                [
+                    format!("{provider}:{event}:acme/app:7:3"),
+                    format!("{provider}:{event}:acme/app:7:4")
+                ]
+            );
+            // The key names the request the review may write to.
+            let target =
+                crate::review_policy::ReviewTarget::from_event_key(&keys(&runs)[0]).unwrap();
+            assert_eq!(
+                (target.forge.id(), target.repo.as_str(), target.number),
+                (provider, "acme/app", 7)
+            );
+            let prompt = runs[0].run.prompt.as_deref().unwrap();
+            assert!(prompt.contains("A comment asked for it:"), "{prompt}");
+            assert!(prompt.contains("Comment by @alice:"), "{prompt}");
+            // Claimed once.
+            let again = comment(provider, 7, "3", "alice", "/gespan review", now);
+            assert!(claim_inbox_events(&mut service, &[again], now)
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn is_review_command_reads_only_the_first_line() {
+        for yes in [
+            "/gespan review",
+            " /Gespan REVIEW now",
+            "\n\n/gespan review\nplease",
+        ] {
+            assert!(is_review_command(yes), "{yes:?}");
+        }
+        for no in [
+            "",
+            "/gespan",
+            "/gespan reviews",
+            "hi\n/gespan review",
+            "`/gespan review`",
+            "/review",
+        ] {
+            assert!(!is_review_command(no), "{no:?}");
+        }
     }
 
     #[test]

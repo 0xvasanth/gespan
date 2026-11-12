@@ -30,7 +30,15 @@ const CARD_MAX_HEIGHT: f32 = 0.62;
 pub(crate) enum Source {
     Session(i64),
     FlowRun(String),
-    Pilot { pilot: String, session: i64 },
+    Pilot {
+        pilot: String,
+        session: i64,
+    },
+    /// A draft review on a pull or merge request, by the run that left it.
+    DraftReview {
+        run: String,
+        url: String,
+    },
 }
 
 /// What the card shows and answers.
@@ -46,6 +54,12 @@ pub(crate) enum Body {
     },
     Choice {
         options: Vec<String>,
+    },
+    /// The draft's text and its inline comments, read before deciding.
+    DraftReview {
+        body: String,
+        comments: Vec<gespan_core::review_draft::ShownComment>,
+        outside: usize,
     },
 }
 
@@ -83,6 +97,11 @@ pub(crate) enum Event {
         key: String,
         pilot: String,
         text: String,
+    },
+    /// Submit the draft review left by run `run`, or keep it as a draft.
+    DraftDecide {
+        run: String,
+        submit: bool,
     },
     Open(Source),
     LoadEarlier(String),

@@ -16,6 +16,9 @@ pub enum WhichPrs {
     ReviewRequested,
     Opened,
     OpenedAndDrafts,
+    /// Someone who can push comments `/gespan review` on the pull request
+    /// (GitHub) or merge request (GitLab).
+    CommentCommand,
 }
 
 #[derive(Clone, Debug)]
@@ -34,8 +37,9 @@ pub fn review_draft(input: &ReviewSetupInput) -> AutomationUpsert {
         WhichPrs::ReviewRequested => &["pull_request_review_requested"],
         WhichPrs::Opened => &["pull_request_opened"],
         WhichPrs::OpenedAndDrafts => &["pull_request_opened", "draft_opened"],
+        WhichPrs::CommentCommand => &[super::GITHUB_REVIEW_COMMAND_EVENT],
     };
-    let triggers = events
+    let mut triggers: Vec<AutomationTrigger> = events
         .iter()
         .map(|event| {
             let mut trigger = AutomationTrigger::new("github", event);
@@ -43,6 +47,14 @@ pub fn review_draft(input: &ReviewSetupInput) -> AutomationUpsert {
             trigger
         })
         .collect();
+    // The command works on the project's GitLab merge requests too. The
+    // chosen repository is a GitHub one, so GitLab watches any project here.
+    if input.which == WhichPrs::CommentCommand {
+        triggers.push(AutomationTrigger::new(
+            "gitlab",
+            super::GITLAB_REVIEW_COMMAND_EVENT,
+        ));
+    }
     let mut draft = AutomationUpsert::new(
         input.cwd.clone(),
         input.harness.clone(),
@@ -92,11 +104,13 @@ mod tests {
             WhichPrs::ReviewRequested,
             WhichPrs::Opened,
             WhichPrs::OpenedAndDrafts,
+            WhichPrs::CommentCommand,
         ] {
             for results in [
                 ReviewResults::Gespan,
                 ReviewResults::Draft,
                 ReviewResults::Post,
+                ReviewResults::Pending,
             ] {
                 for repo in [Some("acme/app"), None] {
                     let draft = review_draft(&input(which, results, repo));
@@ -112,17 +126,30 @@ mod tests {
                         .prompt
                         .starts_with("Review this pull request. You didn't write this code"));
                     assert!(!draft.prompt.contains("newly opened"));
-                    let expected: &[&str] = match which {
-                        WhichPrs::ReviewRequested => &["pull_request_review_requested"],
-                        WhichPrs::Opened => &["pull_request_opened"],
-                        WhichPrs::OpenedAndDrafts => &["pull_request_opened", "draft_opened"],
+                    let expected: &[(&str, &str)] = match which {
+                        WhichPrs::ReviewRequested => &[("github", "pull_request_review_requested")],
+                        WhichPrs::Opened => &[("github", "pull_request_opened")],
+                        WhichPrs::OpenedAndDrafts => &[
+                            ("github", "pull_request_opened"),
+                            ("github", "draft_opened"),
+                        ],
+                        WhichPrs::CommentCommand => &[
+                            ("github", "pull_request_review_command"),
+                            ("gitlab", "merge_request_review_command"),
+                        ],
                     };
                     let triggers = draft.triggers.unwrap();
-                    let events: Vec<&str> = triggers.iter().map(|t| t.event.as_str()).collect();
+                    let events: Vec<(&str, &str)> = triggers
+                        .iter()
+                        .map(|t| (t.kind.as_str(), t.event.as_str()))
+                        .collect();
                     assert_eq!(events, expected);
                     for trigger in &triggers {
-                        assert_eq!(trigger.kind, "github");
-                        let want: Vec<String> = repo.iter().map(|r| r.to_string()).collect();
+                        // The chosen repository is a GitHub one.
+                        let want: Vec<String> = match trigger.kind.as_str() {
+                            "github" => repo.iter().map(|r| r.to_string()).collect(),
+                            _ => Vec::new(),
+                        };
                         assert_eq!(trigger.repos, want);
                     }
                 }

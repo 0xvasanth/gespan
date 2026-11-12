@@ -2655,6 +2655,7 @@ cat >/dev/null"#,
             p.request.settings.review = review.then(|| ReviewPolicy {
                 results,
                 target: Some(ReviewTarget {
+                    forge: crate::review_policy::Forge::GitHub,
                     repo: "acme/app".into(),
                     number: 7,
                 }),
@@ -2713,6 +2714,7 @@ cat >/dev/null"#,
         p.request.settings.review = Some(ReviewPolicy {
             results,
             target: Some(ReviewTarget {
+                forge: crate::review_policy::Forge::GitHub,
                 repo: "acme/app".into(),
                 number: 7,
             }),

@@ -123,6 +123,68 @@ impl MyTasks {
                     );
                 }
             }
+            Body::DraftReview {
+                body: text,
+                comments,
+                outside,
+            } => {
+                let Source::DraftReview { run, .. } = &task.source else {
+                    return div().into_any_element();
+                };
+                let line = |id: String, text: String, strong: bool| {
+                    div()
+                        .debug_selector(move || id.clone())
+                        .text_size(px(13.))
+                        .line_height(px(20.))
+                        .text_color(content(if strong { 0.85 } else { 0.7 }))
+                        .child(text)
+                        .into_any_element()
+                };
+                if !text.trim().is_empty() {
+                    body.push(line("my-tasks-draft-body".into(), text.clone(), true));
+                }
+                for (ix, comment) in comments.iter().enumerate() {
+                    let side = match comment.side {
+                        gespan_core::review_draft::diff_map::Side::Old => " (old)",
+                        gespan_core::review_draft::diff_map::Side::New => "",
+                    };
+                    body.push(line(
+                        format!("my-tasks-draft-comment-{ix}"),
+                        format!(
+                            "{}:{}{side} \u{2014} {}",
+                            comment.path, comment.line, comment.body
+                        ),
+                        false,
+                    ));
+                }
+                if *outside > 0 {
+                    body.push(line(
+                        "my-tasks-draft-outside".into(),
+                        format!(
+                            "{outside} finding{} on lines outside the diff {} in the summary.",
+                            if *outside == 1 { "" } else { "s" },
+                            if *outside == 1 { "is" } else { "are" }
+                        ),
+                        false,
+                    ));
+                }
+                for (id, label, submit) in [
+                    ("my-tasks-draft-submit", "Submit review", true),
+                    ("my-tasks-draft-keep", "Keep as draft", false),
+                ] {
+                    let run = run.clone();
+                    buttons.push(
+                        answer(id, id.into(), label, submit)
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                cx.emit(Event::DraftDecide {
+                                    run: run.clone(),
+                                    submit,
+                                })
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
             Body::Choice { options } => {
                 let Source::Pilot { pilot, .. } = &task.source else {
                     return div().into_any_element();

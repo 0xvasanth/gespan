@@ -721,7 +721,8 @@ fn results_row_only_for_review_automations(cx: &mut TestAppContext) {
         [
             "keeps the review in Gespan",
             "drafts a review for you to approve",
-            "posts the review on the PR"
+            "posts the review on the PR",
+            "leaves a draft review on the PR for you to submit"
         ]
     );
     window
@@ -747,10 +748,16 @@ fn results_row_respects_harness(cx: &mut TestAppContext) {
     click(&mut visual, "automation-results");
     assert_eq!(
         menu_options(&window, &visual),
-        [(
-            "gespan".to_string(),
-            "keeps the review in Gespan".to_string()
-        )]
+        [
+            (
+                "gespan".to_string(),
+                "keeps the review in Gespan".to_string()
+            ),
+            (
+                "pending".to_string(),
+                "leaves a draft review on the PR for you to submit".to_string()
+            )
+        ]
     );
     // A forced choice the harness can't deliver is ignored.
     window

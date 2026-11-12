@@ -168,6 +168,7 @@ impl MyTasks {
             Source::Session(_) => "Open session",
             Source::FlowRun(_) => "Open run",
             Source::Pilot { .. } => "Open chat",
+            Source::DraftReview { .. } => "Open draft",
         };
         let source = task.source.clone();
         let waited = super::list::waited_long(self.now_ms.saturating_sub(task.since_ms));

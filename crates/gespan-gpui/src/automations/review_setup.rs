@@ -12,7 +12,7 @@ const GITHUB_CLI_URL: &str = "https://cli.github.com";
 const ANY_REPO: &str = "any repo in this project";
 const CHOOSE_REPO: &str = "Choose a repository…";
 
-const WHICH: [(WhichPrs, &str, &str); 3] = [
+const WHICH: [(WhichPrs, &str, &str); 4] = [
     (
         WhichPrs::ReviewRequested,
         "review-requested",
@@ -24,6 +24,11 @@ const WHICH: [(WhichPrs, &str, &str); 3] = [
         "opened-and-drafts",
         "is opened, drafts too",
     ),
+    (
+        WhichPrs::CommentCommand,
+        "comment-command",
+        "gets a \u{201c}/gespan review\u{201d} comment from someone who can push",
+    ),
 ];
 /// Shown beneath Results whenever it is Post, in the sheet and the editor.
 pub(super) const POST_WARNING: &str = "Posted reviews skip your approval. A pull request can try to make the agent quote local files in its review.";
@@ -33,7 +38,7 @@ pub(super) fn post_warning(results: ReviewResults) -> Option<&'static str> {
     (results == ReviewResults::Post).then_some(POST_WARNING)
 }
 
-pub(super) const RESULTS: [(ReviewResults, &str, &str); 3] = [
+pub(super) const RESULTS: [(ReviewResults, &str, &str); 4] = [
     (
         ReviewResults::Gespan,
         "gespan",
@@ -45,6 +50,11 @@ pub(super) const RESULTS: [(ReviewResults, &str, &str); 3] = [
         "drafts a review for you to approve",
     ),
     (ReviewResults::Post, "post", "posts the review on the PR"),
+    (
+        ReviewResults::Pending,
+        "pending",
+        "leaves a draft review on the PR for you to submit",
+    ),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

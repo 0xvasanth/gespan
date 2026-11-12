@@ -72,9 +72,24 @@ fn every_kind_of_item(at: i64) -> Vec<Item> {
                 ..Default::default()
             }],
         };
+        let command = Comment {
+            id: "502".into(),
+            body: "/gespan review".into(),
+            ..said.clone()
+        };
         let mut found =
             events::comment_items(&on("gitlab", "pr", 90), std::slice::from_ref(&said), "");
         found.extend(events::comment_items(&on("github", "pr", 91), &[said], ""));
+        found.extend(events::comment_items(
+            &on("gitlab", "pr", 96),
+            std::slice::from_ref(&command),
+            "",
+        ));
+        found.extend(events::comment_items(
+            &on("github", "pr", 97),
+            &[command],
+            "",
+        ));
         found.extend(events::check_failed_items(
             &on("github", "pr", 92),
             &failing,

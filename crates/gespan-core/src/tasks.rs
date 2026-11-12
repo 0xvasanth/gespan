@@ -247,14 +247,18 @@ pub enum Kind {
     Approval,
     FlowApproval,
     PilotChoice,
+    /// A draft review Gespan left on a pull or merge request: submit it or
+    /// keep it as a draft.
+    DraftReview,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 4] = [
+    pub const ALL: [Kind; 5] = [
         Kind::Question,
         Kind::Approval,
         Kind::FlowApproval,
         Kind::PilotChoice,
+        Kind::DraftReview,
     ];
     /// The filter menu's name for this kind.
     pub fn label(self) -> &'static str {
@@ -263,6 +267,7 @@ impl Kind {
             Self::Approval => "Tool approvals",
             Self::FlowApproval => "Flow approvals",
             Self::PilotChoice => "Pilot choices",
+            Self::DraftReview => "Draft reviews",
         }
     }
 }

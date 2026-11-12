@@ -55,6 +55,9 @@ mod rails;
 mod remote_projects;
 mod remote_sessions;
 mod report;
+mod review_drafts;
+#[cfg(test)]
+mod review_drafts_tests;
 mod search;
 mod session_filters;
 mod session_folders;
@@ -785,6 +788,8 @@ pub(crate) struct Shell {
     my_tasks_events: Option<Subscription>,
     /// Tasks answered from the page whose source has not caught up yet.
     my_task_sent: HashSet<String>,
+    /// Leaves and submits draft reviews; `None` uses the real forges.
+    draft_forge: Option<review_drafts::DraftForge>,
     /// The last Flow approvals read, for a tick whose store is busy.
     my_task_flows: Vec<crate::my_tasks::TaskItem>,
     active_app_view: Option<app_views::AppView>,
@@ -1217,6 +1222,7 @@ impl Shell {
             my_task_turns: HashMap::new(),
             my_tasks_events: None,
             my_task_sent: HashSet::new(),
+            draft_forge: None,
             my_task_flows: Vec::new(),
             active_app_view: None,
             app_view_events: Vec::new(),
