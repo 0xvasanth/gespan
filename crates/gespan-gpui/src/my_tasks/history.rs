@@ -1,6 +1,7 @@
 //! "What led here": the task's recent turns, read-only, oldest at the top so
 //! the newest sits just above the card.
 use super::*;
+use crate::glass;
 use gespan_core::tasks::Entry;
 use gpui::{AnyElement, FontWeight, SharedString, px};
 
@@ -85,9 +86,12 @@ impl MyTasks {
             )
             .child(
                 div()
+                    .w_full()
+                    .max_w(px(728.))
+                    .mx_auto()
                     .px(px(24.))
-                    .pt(px(20.))
-                    .pb(px(16.))
+                    .pt(px(28.))
+                    .pb(px(24.))
                     .flex()
                     .flex_col()
                     .gap(px(18.))
@@ -99,15 +103,17 @@ impl MyTasks {
                                     .id("my-tasks-load-earlier")
                                     .debug_selector(|| "my-tasks-load-earlier".into())
                                     .cursor_pointer()
-                                    .h(px(28.))
-                                    .px(px(12.))
-                                    .rounded(px(6.))
-                                    .bg(content(0.06))
+                                    .h(px(26.))
+                                    .px(px(11.))
+                                    .rounded_full()
+                                    .bg(glass::fill())
+                                    .border_1()
+                                    .border_color(glass::edge())
                                     .flex()
                                     .items_center()
                                     .text_size(px(12.))
                                     .text_color(content(0.75))
-                                    .hover(|s| s.bg(content(0.1)))
+                                    .hover(|s| s.bg(glass::hover_fill()))
                                     .child(format!("Load {more} earlier"))
                                     .on_click(cx.listener(move |_, _, _, cx| {
                                         cx.emit(Event::LoadEarlier(key.clone()))
@@ -140,13 +146,18 @@ impl MyTasks {
                 let selector = format!("my-tasks-tools-{turn}-{}", summaries.len());
                 div()
                     .debug_selector(move || selector.clone())
-                    .px(px(4.))
+                    .h(px(26.))
+                    .px(px(11.))
+                    .rounded_full()
+                    .bg(glass::fill())
+                    .border_1()
+                    .border_color(glass::edge())
                     .flex()
                     .items_center()
                     .gap(px(8.))
                     .text_size(px(12.))
-                    .text_color(content(0.55))
-                    .child(icon("terminal", 12.))
+                    .text_color(content(0.62))
+                    .child(icon("check", 12.).text_color(diff_foreground(true)))
                     .child(
                         div()
                             .flex_shrink_0()
@@ -174,15 +185,21 @@ impl MyTasks {
                 };
                 div()
                     .id(SharedString::from(format!("my-tasks-entry-{turn}-{n}")))
-                    .p(px(10.))
-                    .rounded(px(10.))
+                    .rounded(px(14.))
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .when(mine, |d| d.ml(px(48.)).bg(content(0.06)))
-                    .when(!mine, |d| {
-                        d.mr(px(48.)).border_1().border_color(content(0.07))
+                    // Yours sit right on a tint; the agent's read as plain text.
+                    .when(mine, |d| {
+                        d.self_end()
+                            .max_w(px(520.))
+                            .px(px(14.))
+                            .py(px(10.))
+                            .bg(user_bubble_fill())
+                            .border_1()
+                            .border_color(glass::edge())
                     })
+                    .when(!mine, |d| d.mr(px(48.)).py(px(4.)))
                     .child(
                         div()
                             .flex()
@@ -200,7 +217,7 @@ impl MyTasks {
                         div()
                             .text_size(px(13.))
                             .line_height(px(20.))
-                            .text_color(content(0.85))
+                            .text_color(content(if mine { 0.95 } else { 0.82 }))
                             .child(text.clone()),
                     )
                     .into_any_element()
