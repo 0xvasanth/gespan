@@ -361,8 +361,20 @@ fn window_open_popup_becomes_an_agent_tab() {
         "the popup is not an agent tab: {:?}",
         browser.host.policy().read().tabs_for("s1")
     );
-    let listed = browser.ok("browser_tabs", json!({ "action": "list" }));
-    let text = text_of(&listed);
+    // The popup is a lease from the moment Chrome reports it, but it is
+    // `attaching` with no URL until its session is set up and its first
+    // navigation commits; `tabs.list` reports exactly that. Wait until the
+    // agent's listing shows it open on `/popped`.
+    let popped = pages.url("/popped");
+    let mut text = String::new();
+    let listed = eventually(Duration::from_secs(10), || {
+        let listed = browser.ok("browser_tabs", json!({ "action": "list" }));
+        text = text_of(&listed);
+        listed_tabs(&text).iter().any(|t| {
+            t["opened_by"] == json!(tab) && t["state"] == "open" && t["url"] == json!(popped)
+        })
+    });
+    assert!(listed, "the popup is not listed open on {popped}: {text}");
     for tab in browser.host.policy().read().tabs_for("s1") {
         assert!(
             text.contains(&tab.tab.0),
@@ -370,7 +382,16 @@ fn window_open_popup_becomes_an_agent_tab() {
             tab.tab.0
         );
     }
-    assert!(text.contains("/popped"), "{text}");
+}
+
+/// The `tabs` a `browser_tabs` `list` result carries in its JSON envelope,
+/// the line after the summary.
+fn listed_tabs(text: &str) -> Vec<Value> {
+    let envelope = text.split_once('\n').map_or("", |(_, json)| json);
+    serde_json::from_str::<Value>(envelope)
+        .ok()
+        .and_then(|v| v["data"]["tabs"].as_array().cloned())
+        .unwrap_or_default()
 }
 
 /// A 30,000 px page comes back as a full-page PNG scaled to fit
