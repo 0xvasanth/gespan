@@ -661,6 +661,11 @@ fn an_install_hint_yields_its_command() {
     );
     assert_eq!(install_command("broken `unterminated"), None);
     assert_eq!(install_command("empty ``"), None);
+    // Guidance in backticks stays prose.
+    assert_eq!(
+        install_command("Hermes not found (`Install from example.com, then run hermes model`)."),
+        None
+    );
 }
 
 #[gpui::test]

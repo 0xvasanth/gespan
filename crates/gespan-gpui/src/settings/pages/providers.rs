@@ -463,7 +463,9 @@ impl SettingsView {
 pub(in crate::settings) fn install_command(hint: &str) -> Option<&str> {
     let start = hint.find('`')? + 1;
     let len = hint[start..].find('`')?;
-    Some(&hint[start..start + len]).filter(|c| !c.is_empty())
+    // A sentence in backticks ("Install from …") is guidance, not a command.
+    Some(&hint[start..start + len])
+        .filter(|c| !c.is_empty() && !c.starts_with(|ch: char| ch.is_uppercase()))
 }
 
 /// A CLI that isn't installed: its mark and name, a Not installed pill,
