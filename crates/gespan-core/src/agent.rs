@@ -113,6 +113,9 @@ pub struct Settings {
     /// What this turn's agent may reach through the tool endpoint.
     #[serde(skip)]
     pub mount: Option<crate::tool_servers::Mount>,
+    /// The review policy this turn runs under, when it is a review.
+    #[serde(skip)]
+    pub review: Option<crate::review_policy::ReviewPolicy>,
     /// Accounts for an orchestration planning turn's model catalog.
     #[serde(skip)]
     pub orchestration_profiles: Vec<(crate::provider::Kind, crate::accounts::Profile)>,
@@ -172,6 +175,17 @@ pub struct Settings {
     pub handoff: Option<Handoff>,
     pub pending_provider_switch: Option<ProviderSwitch>,
     pub turns: std::collections::HashMap<usize, TurnInfo>,
+}
+impl Settings {
+    /// The access mode a launch should act on. A pull request review always
+    /// runs as read-only, so no CLI flag or session mode can skip a permission request.
+    pub fn effective_access(&self) -> AccessMode {
+        if self.review.is_some() {
+            AccessMode::ReadOnly
+        } else {
+            self.access
+        }
+    }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]

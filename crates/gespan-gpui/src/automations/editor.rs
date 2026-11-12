@@ -1,5 +1,90 @@
 use super::*;
+use crate::glass;
 use chrono::{Local, TimeZone};
+
+/// One labelled row for a trigger property: its name and what it does on the
+/// left, its field on the right, and why its value can't be saved, if so.
+fn trigger_property_row(
+    trigger: usize,
+    row: usize,
+    property: &TriggerProperty,
+    input: &Entity<Input>,
+    cx: &App,
+) -> AnyElement {
+    let error = automations::trigger_property_error(property, &input.read(cx).content);
+    let selector = format!("trigger-{trigger}-{}", property.key);
+    div()
+        .debug_selector(move || selector)
+        .when(row > 0, |d| d.border_t_1().border_color(content(0.08)))
+        .px(px(12.))
+        .py(px(8.))
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .gap_x(px(16.))
+        .gap_y(px(6.))
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(140.))
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(content(0.8))
+                        .child(property.label),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(content(0.45))
+                        .child(property.hint),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(160.))
+                .max_w(px(280.))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .h(px(28.))
+                        .px(px(8.))
+                        .rounded(px(6.))
+                        .bg(content(0.08))
+                        .border_1()
+                        .border_color(if error.is_some() {
+                            gpui::Hsla::from(rgb(0xf87171))
+                        } else {
+                            content(0.12)
+                        })
+                        .flex()
+                        .items_center()
+                        .text_size(px(12.))
+                        .child(input.clone()),
+                )
+                .when_some(error, |d, error| {
+                    d.child(
+                        div()
+                            .id(SharedString::from(format!(
+                                "trigger-{trigger}-{}-error",
+                                property.key
+                            )))
+                            .role(Role::Alert)
+                            .aria_label(error)
+                            .text_size(px(11.))
+                            .text_color(rgb(0xfca5a5))
+                            .child(error),
+                    )
+                }),
+        )
+        .into_any_element()
+}
 
 pub(super) fn toggle(id: impl Into<gpui::ElementId>, on: bool) -> gpui::Stateful<gpui::Div> {
     div()
@@ -40,6 +125,7 @@ pub(super) fn events(kind: &str) -> Vec<(String, String)> {
             ("pull_request_opened", "Pull request opened"),
             ("issue_opened", "Issue opened"),
             ("pull_request_comment", "Pull request comment"),
+            ("pull_request_review_command", "Comment asks for a review"),
             ("pull_request_review_requested", "Review requested"),
             ("check_failed", "Check failed"),
             ("pull_request_merged", "Pull request merged"),
@@ -48,6 +134,7 @@ pub(super) fn events(kind: &str) -> Vec<(String, String)> {
         "gitlab" => &[
             ("merge_request_opened", "Merge request opened"),
             ("merge_request_comment", "Merge request comment"),
+            ("merge_request_review_command", "Comment asks for a review"),
             ("issue_opened", "Issue opened"),
         ],
         "linear" => &[("issue_created", "Issue created")],
@@ -67,14 +154,37 @@ pub(super) fn workspace_label(mode: &str) -> &'static str {
         _ => "Current",
     }
 }
+/// What a run can do. A review automation can't wake a Pilot.
+fn action_options(review: bool) -> Vec<(String, String)> {
+    if review {
+        options(&[("session", "Start a session")])
+    } else {
+        options(&[("session", "Start a session"), ("pilot", "Wake a Pilot")])
+    }
+}
 /// The access mode's label, also shown on the Agent card.
 pub(super) fn access_label(mode: &str) -> &'static str {
     match mode {
+        "read-only" => "Read-only",
         "supervised" => "Supervised",
         "auto-accept-edits" => "Auto-accept edits",
         "full-access" => "Full access",
         _ => "Auto",
     }
+}
+/// The access mode a run gets: a review always runs read-only, whatever mode
+/// a legacy automation stored.
+pub(super) fn effective_mode(draft: &AutomationUpsert) -> &str {
+    if draft.review_results.is_some() {
+        "read-only"
+    } else {
+        &draft.runtime_mode
+    }
+}
+/// Why the access chip is locked, shown as its tooltip.
+pub(super) fn access_hint(draft: &AutomationUpsert) -> Option<&'static str> {
+    (draft.harness != "fx" && draft.review_results.is_some())
+        .then_some("Reviews always run read-only")
 }
 pub(super) fn is_effort(id: &str) -> bool {
     matches!(
@@ -91,12 +201,11 @@ pub(super) fn saved_effort(draft: &AutomationUpsert) -> Option<String> {
         .map(|value| effort_name(value))
 }
 fn section(label: &'static str) -> gpui::Div {
-    div()
-        .px(px(4.))
-        .text_size(px(12.))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(content(0.5))
-        .child(label)
+    glass::eyebrow(label).px(px(4.))
+}
+/// The glass card a settings section's rows sit in.
+fn panel() -> gpui::Div {
+    glass::card().overflow_hidden()
 }
 fn settings_row(label: &'static str, hint: &'static str, control: impl IntoElement) -> gpui::Div {
     div()
@@ -104,7 +213,7 @@ fn settings_row(label: &'static str, hint: &'static str, control: impl IntoEleme
         .px(px(16.))
         .py(px(10.))
         .border_b_1()
-        .border_color(content(0.07))
+        .border_color(glass::hairline())
         .flex()
         .items_center()
         .justify_between()
@@ -131,7 +240,123 @@ fn settings_row(label: &'static str, hint: &'static str, control: impl IntoEleme
         )
         .child(control)
 }
+impl Editor {
+    /// Switch the agent and model; a review's Results that the new agent
+    /// can't deliver fall back to keeping the review in Gespan.
+    pub(super) fn set_model(&mut self, kind: Kind, model: Option<String>, cx: &mut App) {
+        let current = gespan_core::store::native_model(&self.draft.model, &self.draft.harness);
+        let picked = model
+            .as_deref()
+            .and_then(|model| gespan_core::store::native_model(model, kind.id()));
+        if Kind::from_id(&self.draft.harness) == kind && current == picked {
+            return;
+        }
+        self.draft.harness = kind.id().into();
+        self.draft.model = model.unwrap_or_default();
+        if self
+            .draft
+            .review_results
+            .is_some_and(|r| !review_setup::results_for(&self.draft.harness).contains(&r))
+        {
+            self.draft.review_results = Some(gespan_core::review_policy::ReviewResults::Gespan);
+        }
+        self.completion
+            .update(cx, |completion, cx| completion.set_provider(kind.id(), cx));
+        self.dirty = true;
+    }
+}
 impl Automations {
+    /// The project this automation runs in, under its name: a labelled field
+    /// that opens the project picker on click, Enter, Space or Down, and a
+    /// Tab stop of its own. Once saved it shows a lock, and picking a project
+    /// duplicates the automation there instead of moving it. It keeps room for the name, and its row wraps it
+    /// onto a line of its own when the editor is narrow.
+    fn render_project_control(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let cwd = self
+            .editor
+            .as_ref()
+            .map(|e| e.draft.cwd.clone())
+            .unwrap_or_default();
+        let open = self.project_picker.is_some();
+        // A saved automation keeps its project; the control then duplicates.
+        let frozen = self.editor.as_ref().is_some_and(|e| e.saved);
+        let name: SharedString = if cwd.is_empty() {
+            "Choose project".into()
+        } else {
+            self.project_label(&cwd).into()
+        };
+        div()
+            .id("automation-project")
+            .debug_selector(|| "automation-project".into())
+            .role(Role::Button)
+            .aria_label(self.project_control_label())
+            .aria_description(if frozen {
+                format!(
+                    "{cwd}. Fixed for this automation. Opens a picker to duplicate it into another project"
+                )
+            } else if cwd.is_empty() {
+                "Choose the project this automation runs in".to_string()
+            } else {
+                format!("{cwd}. Choose the project this automation runs in")
+            })
+            .aria_expanded(open)
+            .track_focus(&self.project_focus)
+            .tab_index(0)
+            .relative()
+            .flex_shrink(1.)
+            .min_w(px(168.))
+            .max_w(px(360.))
+            .h(px(28.))
+            .px(px(8.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(content(if open { 0.3 } else { 0.12 }))
+            .bg(content(if open { 0.1 } else { 0.06 }))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(12.))
+            .cursor_pointer()
+            .hover(|s| s.bg(content(0.1)).border_color(content(0.2)))
+            // A clear ring, so Tab visibly lands here.
+            .focus_visible(|s| s.border_color(accent_color()).bg(content(0.1)))
+            .child(self.project_anchor.probe())
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_color(content(0.5))
+                    .child("Project"),
+            )
+            .child(div().flex_shrink_0().child(self.project_mark(&cwd, 14.)))
+            .child(
+                div()
+                    .debug_selector(|| "automation-project-name".into())
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(content(if cwd.is_empty() { 0.6 } else { 0.95 }))
+                    .child(name),
+            )
+            .child(
+                icon(if frozen { "lock" } else { "chevron-down" }, 12.)
+                    .flex_shrink_0()
+                    .text_color(content(0.55)),
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.choose_project(window, cx)))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                // Like the app's other menu triggers: Enter, Space or Down.
+                // Opening moves focus to the picker, so the key-up click GPUI
+                // would synthesize for Enter and Space never fires as well.
+                if matches!(event.keystroke.key.as_str(), "enter" | "space" | "down")
+                    && !event.keystroke.modifiers.modified()
+                {
+                    this.choose_project(window, cx);
+                    window.prevent_default();
+                    cx.stop_propagation();
+                }
+            }))
+    }
     fn select_control(
         &self,
         id: impl Into<gpui::ElementId>,
@@ -197,9 +422,26 @@ impl Automations {
             }))
     }
     pub(super) fn apply_choice(&mut self, field: Choice, value: String, cx: &mut Context<Self>) {
+        if matches!(
+            field,
+            Choice::SetupRepo | Choice::SetupWhich | Choice::SetupResults
+        ) {
+            self.apply_setup_choice(field, value);
+            cx.notify();
+            return;
+        }
         let Some(editor) = &mut self.editor else {
             return;
         };
+        let review = editor.draft.review_results.is_some();
+        // A review can't wake a Pilot (core refuses it) and always runs
+        // read-only, and Results is only a review's. These change nothing.
+        if (review && matches!(field, Choice::Access))
+            || (review && matches!(field, Choice::Action) && value == "pilot")
+            || (!review && matches!(field, Choice::Results))
+        {
+            return;
+        }
         match field {
             // The session settings stay in the draft while a Pilot is chosen,
             // so switching back shows them as they were.
@@ -289,6 +531,15 @@ impl Automations {
                     .and_then(|ts| ts.iter_mut().find(|t| t.id == id))
                 {
                     trigger.day_of_week = value.parse().unwrap_or(1);
+                }
+            }
+            // Handled above: the review sheet has no editor.
+            Choice::SetupRepo | Choice::SetupWhich | Choice::SetupResults => {}
+            Choice::Results => {
+                if let Some(results) = review_setup::results_from_id(&value)
+                    && review_setup::results_for(&editor.draft.harness).contains(&results)
+                {
+                    editor.draft.review_results = Some(results);
                 }
             }
         }
@@ -459,28 +710,19 @@ impl Automations {
                         )),
                 );
         } else {
-            sentence = sentence
-                .child(self.select_control(
+            sentence = sentence.child(
+                self.select_control(
                     ("trigger-event", index),
                     automations::event_label(&trigger.kind, &trigger.event),
                     Choice::TriggerEvent(id.clone()),
                     events(&trigger.kind),
                     cx,
-                ))
-                .child("by");
-            if let Some(fields) = fields {
-                sentence = sentence.child(
-                    div()
-                        .w(px(80.))
-                        .h(px(28.))
-                        .rounded(px(6.))
-                        .bg(content(0.1))
-                        .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .child(fields.actor.clone()),
-                );
-            }
+                )
+                .aria_label(format!(
+                    "Event: {}",
+                    automations::event_label(&trigger.kind, &trigger.event)
+                )),
+            );
         }
         let row = div()
             .group("automation-trigger")
@@ -521,20 +763,31 @@ impl Automations {
                     })),
             );
         let mut result = div().child(row);
-        if trigger.kind != "time"
-            && let Some(fields) = fields
+        if let Some(fields) = fields
+            && !fields.properties.is_empty()
         {
             result = result.child(
                 div()
-                    .pl(px(24.))
-                    .pb(px(8.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .text_size(px(11.))
-                    .text_color(content(0.4))
-                    .child("Repositories")
-                    .child(div().flex_1().max_w(px(340.)).child(fields.repos.clone())),
+                    .id(("trigger-properties", index))
+                    .debug_selector({
+                        let selector = format!("trigger-properties-{index}");
+                        move || selector
+                    })
+                    .role(Role::Group)
+                    .aria_label(format!(
+                        "{} settings",
+                        automations::event_label(&trigger.kind, &trigger.event)
+                    ))
+                    .ml(px(24.))
+                    .mb(px(8.))
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(content(0.08))
+                    .children(fields.properties.iter().enumerate().map(
+                        |(row, (property, input))| {
+                            trigger_property_row(index, row, property, input, cx)
+                        },
+                    )),
             );
         }
         result.into_any_element()
@@ -544,11 +797,12 @@ impl Automations {
         let draft = &editor.draft;
         let valid = !editor.name.read(cx).content.trim().is_empty()
             && !editor.prompt.read(cx).content.trim().is_empty()
-            && !draft.cwd.trim().is_empty();
+            && !draft.cwd.trim().is_empty()
+            && self.property_error(cx).is_none();
         let mut actions = div().flex_shrink_0().flex().items_center().gap(px(8.));
         if !editor.saved || editor.dirty {
             actions = actions.child(
-                button(
+                ghost_button(
                     "automation-reset",
                     if editor.saved && editor.dirty {
                         "Reset"
@@ -581,7 +835,7 @@ impl Automations {
         }
         let disabled = !valid || self.saving || (editor.saved && !editor.dirty);
         actions = actions.child(
-            button(
+            primary_button(
                 "automation-save",
                 if self.saving {
                     "Saving…"
@@ -591,10 +845,6 @@ impl Automations {
                     "Create"
                 },
             )
-            .h(px(26.))
-            .bg(content(1.))
-            .text_color(shell_fill())
-            .font_weight(gpui::FontWeight::MEDIUM)
             .when(disabled, |d| d.opacity(0.4))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if !disabled {
@@ -605,17 +855,18 @@ impl Automations {
         let header = div()
             .flex_shrink_0()
             .border_b_1()
-            .border_color(content(0.07))
+            .border_color(glass::hairline())
             .child(
                 div()
                     .w_full()
                     .max_w(px(1024.))
                     .mx_auto()
-                    .px(px(32.))
-                    .pt(px(20.))
+                    .px(px(36.))
+                    .pt(px(26.))
+                    .pb(px(14.))
                     .flex()
                     .flex_col()
-                    .gap(px(10.))
+                    .gap(px(12.))
                     .child(
                         div()
                             .flex()
@@ -632,6 +883,7 @@ impl Automations {
                                         div()
                                             .flex_1()
                                             .min_w_0()
+                                            .text_size(px(20.))
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .child(editor.name.clone()),
                                     ),
@@ -641,8 +893,8 @@ impl Automations {
                     .child(
                         div()
                             .min_w_0()
-                            .overflow_hidden()
                             .flex()
+                            .flex_wrap()
                             .items_center()
                             .gap(px(8.))
                             .text_size(px(12.))
@@ -658,37 +910,7 @@ impl Automations {
                             ))
                             .child(if draft.enabled { "Active" } else { "Inactive" })
                             .child(div().ml(px(8.)).h(px(12.)).w(px(1.)).bg(content(0.15)))
-                            .child(
-                                div()
-                                    .id("automation-project")
-                                    .relative()
-                                    .min_w_0()
-                                    .role(Role::Button)
-                                    .aria_label("Choose automation project")
-                                    .px(px(8.))
-                                    .h(px(26.))
-                                    .rounded(px(6.))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .text_size(px(12.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(content(0.9))
-                                    .hover(|s| s.bg(content(0.05)))
-                                    .child(self.project_anchor.probe())
-                                    .child(self.project_mark(&draft.cwd, 14.))
-                                    .child(div().min_w_0().truncate().child(
-                                        if draft.cwd.is_empty() {
-                                            "Choose project".into()
-                                        } else {
-                                            self.project_label(&draft.cwd)
-                                        },
-                                    ))
-                                    .child(icon("chevron-down", 12.).text_color(content(0.45)))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.choose_project(window, cx)
-                                    })),
-                            )
+                            .child(self.render_project_control(cx))
                             .when(editor.saved, |d| {
                                 d.child(
                                     icon_button(
@@ -703,46 +925,37 @@ impl Automations {
                             }),
                     )
                     .child(div().pt(px(6.)).child(self.render_summary_cards(cx)))
-                    .child(if editor.saved {
-                        div().h(px(36.)).flex().gap(px(16.)).children(
-                            [("Instructions", false), ("Recent runs", true)].map(
-                                |(label, history)| {
-                                    let id = if history {
-                                        "automation-history-tab"
-                                    } else {
-                                        "automation-settings-tab"
-                                    };
-                                    div()
-                                        .id(id)
-                                        .debug_selector(move || id.into())
-                                        .role(Role::Tab)
-                                        .aria_label(label)
-                                        .h_full()
-                                        .flex()
-                                        .items_center()
-                                        .border_b_2()
-                                        .border_color(if self.history == history {
-                                            content(0.8)
-                                        } else {
-                                            content(0.)
-                                        })
-                                        .text_size(px(12.))
-                                        .text_color(content(if self.history == history {
-                                            0.9
-                                        } else {
-                                            0.5
-                                        }))
-                                        .child(label)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.history = history;
-                                            this.choice = None;
-                                            cx.notify();
-                                        }))
-                                },
+                    .when(editor.saved, |d| {
+                        d.child(
+                            div().flex().child(
+                                glass::segmented()
+                                    .id("automation-tabs")
+                                    .role(Role::TabList)
+                                    .aria_label("Automation")
+                                    .children(
+                                        [("Instructions", false), ("Recent runs", true)].map(
+                                            |(label, history)| {
+                                                let id = if history {
+                                                    "automation-history-tab"
+                                                } else {
+                                                    "automation-settings-tab"
+                                                };
+                                                let selected = self.history == history;
+                                                glass::segment(id, label, selected)
+                                                    .debug_selector(move || id.into())
+                                                    .role(Role::Tab)
+                                                    .aria_label(label)
+                                                    .aria_selected(selected)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.history = history;
+                                                        this.choice = None;
+                                                        cx.notify();
+                                                    }))
+                                            },
+                                        ),
+                                    ),
                             ),
                         )
-                    } else {
-                        div().h(px(20.))
                     }),
             );
         let panel = if self.history && editor.saved {
@@ -764,11 +977,8 @@ impl Automations {
         let draft = &editor.draft;
         let triggers = draft.triggers.clone().unwrap_or_default();
         let triggers_section = div().child(section("Triggers")).child(
-            div()
+            panel()
                 .mt(px(12.))
-                .rounded(px(6.))
-                .border_1()
-                .border_color(content(0.1))
                 .when(!triggers.is_empty(), |d| {
                     d.child(
                         div().px(px(12.)).py(px(6.)).children(
@@ -778,7 +988,7 @@ impl Automations {
                                 .map(|(i, t)| self.render_trigger(t, i, cx)),
                         ),
                     )
-                    .child(div().h(px(1.)).bg(content(0.08)))
+                    .child(div().h(px(1.)).bg(glass::hairline()))
                 })
                 .child(
                     div()
@@ -793,7 +1003,7 @@ impl Automations {
                         .gap(px(8.))
                         .text_size(px(13.))
                         .text_color(content(0.55))
-                        .hover(|s| s.bg(content(0.04)).text_color(content(1.)))
+                        .hover(|s| s.bg(glass::hover_fill()).text_color(content(1.)))
                         .child(self.trigger_anchor.probe())
                         .child(icon("plus", 14.))
                         .child("Add Trigger")
@@ -865,13 +1075,37 @@ impl Automations {
                 .text_size(px(11.)),
             );
         }
-        if draft.harness != "fx" {
+        if let Some(hint) = access_hint(draft) {
+            // Launch forces a review read-only, so there is nothing to choose.
+            controls = controls.child(
+                div()
+                    .id("automation-access")
+                    .role(Role::Button)
+                    .aria_label("Read-only. Reviews always run read-only")
+                    .debug_selector(|| "automation-access".into())
+                    .h(px(26.))
+                    .px(px(6.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .rounded(px(6.))
+                    .bg(content(0.06))
+                    .text_size(px(11.))
+                    .text_color(content(0.6))
+                    .child(icon("lock", 14.))
+                    .child("Read-only")
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| crate::conversation::HintTooltip(hint)).into()
+                    }),
+            );
+        } else if draft.harness != "fx" {
             controls = controls.child(
                 self.select_control(
                     "automation-access",
                     access.into(),
                     Choice::Access,
                     options(&[
+                        ("read-only", "Read-only"),
                         ("supervised", "Supervised"),
                         ("auto-accept-edits", "Auto-accept edits"),
                         ("auto", "Auto"),
@@ -879,6 +1113,7 @@ impl Automations {
                     ]),
                     cx,
                 )
+                .debug_selector(|| "automation-access".into())
                 .h(px(26.))
                 .px(px(6.))
                 .text_size(px(11.)),
@@ -887,13 +1122,9 @@ impl Automations {
         let instructions = div()
             .child(section("Instructions"))
             .child(
-                div()
+                glass::card()
                     .relative()
                     .mt(px(12.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(content(0.1))
-                    .bg(content(0.03))
                     .child(editor.completion.read(cx).composer_probe())
                     .child(
                         div()
@@ -963,7 +1194,7 @@ impl Automations {
             }
             .into(),
             Choice::Action,
-            options(&[("session", "Start a session"), ("pilot", "Wake a Pilot")]),
+            action_options(draft.review_results.is_some()),
             cx,
         );
         let pilot_row = pilot.map(|id| {
@@ -990,12 +1221,8 @@ impl Automations {
             .border_b_0()
         });
         let does = div().child(section("Do")).child(
-            div()
+            panel()
                 .mt(px(12.))
-                .rounded(px(6.))
-                .overflow_hidden()
-                .border_1()
-                .border_color(content(0.1))
                 .child(
                     settings_row(
                         "Do",
@@ -1006,14 +1233,49 @@ impl Automations {
                 )
                 .children(pilot_row),
         );
-        let session = div().mt(px(32.)).child(section("Session")).child(
+        let results_row = draft.review_results.map(|current| {
+            let allowed = review_setup::results_for(&draft.harness);
+            let warning = review_setup::post_warning(current).map(|text| {
+                div()
+                    .id("automation-results-post-warning")
+                    .debug_selector(|| "automation-results-post-warning".into())
+                    .role(Role::Note)
+                    .px(px(16.))
+                    .pb(px(10.))
+                    .text_size(px(11.))
+                    .line_height(px(16.))
+                    .text_color(content(0.6))
+                    .child(text)
+            });
+            let row = settings_row(
+                "Results",
+                "What happens with the review",
+                self.select_control(
+                    "automation-results",
+                    review_setup::results_label(current).into(),
+                    Choice::Results,
+                    review_setup::RESULTS
+                        .iter()
+                        .filter(|(results, ..)| allowed.contains(results))
+                        .map(|(_, id, label)| (id.to_string(), label.to_string()))
+                        .collect(),
+                    cx,
+                )
+                .debug_selector(|| "automation-results".into()),
+            );
+            // The warning sits beneath the choice, inside the same row.
             div()
+                .flex()
+                .flex_col()
+                .border_b_1()
+                .border_color(glass::hairline())
+                .child(row.border_b_0())
+                .children(warning)
+        });
+        let session = div().mt(px(32.)).child(section("Session")).child(
+            panel()
                 .debug_selector(|| "automation-session-settings".into())
                 .mt(px(12.))
-                .rounded(px(6.))
-                .overflow_hidden()
-                .border_1()
-                .border_color(content(0.1))
                 .child(settings_row(
                     "Working copy",
                     "This repo, or a fresh worktree",
@@ -1036,8 +1298,9 @@ impl Automations {
                             cx,
                         ),
                     )
-                    .border_b_0(),
-                ),
+                    .when(results_row.is_none(), |d| d.border_b_0()),
+                )
+                .children(results_row.map(|row| row.border_b_0())),
         );
         let grace_options = options(&[
             ("0", "Do not catch up"),
@@ -1051,10 +1314,7 @@ impl Automations {
             .find(|(id, _)| *id == draft.missed_run_grace_minutes.to_string())
             .map(|(_, label)| label.clone())
             .unwrap_or_else(|| format!("{} minutes", draft.missed_run_grace_minutes));
-        let advanced = div()
-            .rounded(px(6.))
-            .border_1()
-            .border_color(content(0.1))
+        let advanced = panel()
             .child(
                 div()
                     .id("automation-advanced")
@@ -1117,7 +1377,7 @@ impl Automations {
                 .w_full()
                 .max_w(px(1024.))
                 .mx_auto()
-                .px(px(32.))
+                .px(px(36.))
                 .child(section)
         };
         div()
@@ -1140,12 +1400,7 @@ impl Automations {
             .into_any_element()
     }
     fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut table = div()
-            .mt(px(12.))
-            .rounded(px(6.))
-            .overflow_hidden()
-            .border_1()
-            .border_color(content(0.1));
+        let mut table = panel().mt(px(12.));
         if self.runs.is_empty() {
             table = table.child(
                 div()
@@ -1226,7 +1481,7 @@ impl Automations {
                         .h(px(44.))
                         .px(px(16.))
                         .border_t_1()
-                        .border_color(content(0.08))
+                        .border_color(glass::hairline())
                         .flex()
                         .items_center()
                         .gap(px(16.))

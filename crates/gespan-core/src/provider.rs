@@ -1,6 +1,7 @@
 //! Native provider transports, ported from Gespan's TS adapters.
 //! Blocking work belongs to a worker; never call `run` from a render/input handler.
 use crate::agent::{AccessMode, Approval, Control, Decision, Settings, TurnMetrics};
+use crate::review_policy::{self, Verdict};
 use crate::tool::{ToolCall, ToolState};
 use crate::{process, transcript::snapshot_remainder};
 use serde_json::{json, Value};
@@ -36,7 +37,7 @@ mod follow_up;
 mod hold;
 pub use hold::HoldPoint;
 use lifecycle::Interrupt;
-mod claude;
+pub(crate) mod claude;
 mod codex;
 mod error;
 #[cfg(all(test, unix))]
@@ -529,6 +530,44 @@ impl Protocol {
             severity: None,
         }
     }
+    /// The review policy's answer for this permission request, or `None` when
+    /// no policy applies. Claude's Bash tool and every Codex approval request
+    /// are covered; a Codex request that is not a command (a file change, extra
+    /// permissions) is always denied, since a review never edits anything.
+    fn review_verdict(&self, kind: &str, request: &Value) -> Option<Verdict> {
+        let policy = self.request.settings.review.as_ref()?;
+        if kind == "claude" && request["tool_name"] == "Bash" {
+            let command = request["input"]["command"].as_str()?;
+            return Some(review_policy::verdict(policy, command));
+        }
+        if self.request.kind.family() == Family::Codex && kind != "codex-mcp" {
+            let command = match &request["command"] {
+                Value::String(command) => Some(command.clone()),
+                Value::Array(argv) => argv
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(|argv| shlex::try_join(argv).ok()),
+                _ => None,
+            };
+            let is_command = kind == "execCommandApproval" || kind.contains("ommandExecution");
+            // A command asking for more than the sandbox gives is never routine.
+            let extra =
+                ["additionalPermissions", "permissions"]
+                    .iter()
+                    .any(|key| match &request[*key] {
+                        Value::Null => false,
+                        Value::Object(o) => !o.is_empty(),
+                        Value::Array(a) => !a.is_empty(),
+                        _ => true,
+                    });
+            return Some(match command {
+                Some(command) if is_command && !extra => review_policy::verdict(policy, &command),
+                _ => Verdict::Deny,
+            });
+        }
+        None
+    }
     fn approval(
         &mut self,
         wire: Value,
@@ -570,16 +609,39 @@ impl Protocol {
                 .and_then(|p| serde_json::to_string_pretty(p).ok())
                 .unwrap_or_else(|| "The agent is requesting permission to continue.".into());
         }
-        let read_only = self.request.settings.access == AccessMode::ReadOnly;
+        let access = self.request.settings.effective_access();
+        let read_only = access == AccessMode::ReadOnly;
         let read_only_query = read_only
             && kind == "claude"
             && request["tool_name"] == "Bash"
             && request["input"]["command"]
                 .as_str()
                 .is_some_and(claude::read_only::allowed);
+        let review = self.review_verdict(kind, &request);
         self.approvals
             .insert(id.clone(), (wire, kind.into(), request));
-        if read_only_query {
+        match review {
+            Some(Verdict::Allow) => {
+                return self.respond(
+                    Control {
+                        id,
+                        decision: Decision::Allow,
+                    },
+                    stdin,
+                );
+            }
+            Some(Verdict::Deny) => {
+                return self.respond(
+                    Control {
+                        id,
+                        decision: Decision::Deny,
+                    },
+                    stdin,
+                );
+            }
+            _ => {}
+        }
+        if read_only_query && review.is_none() {
             return self.respond(
                 Control {
                     id,
@@ -588,7 +650,7 @@ impl Protocol {
                 stdin,
             );
         }
-        if self.request.settings.plan || read_only {
+        if self.request.settings.plan || (read_only && review != Some(Verdict::Ask)) {
             return self.respond(
                 Control {
                     id,
@@ -599,16 +661,15 @@ impl Protocol {
         }
         let file_change = kind.contains("fileChange") || kind == "applyPatchApproval";
         let permissions = kind.contains("permissions");
-        if self.request.settings.access == AccessMode::FullAccess
-            || (self.request.kind == Kind::Codex
-                && self.request.settings.access == AccessMode::AutoAcceptEdits
-                && file_change)
-            || (self.request.kind == Kind::Codex
-                && permissions
-                && matches!(
-                    self.request.settings.access,
-                    AccessMode::Auto | AccessMode::AutoAcceptEdits
-                ))
+        let ask = review == Some(Verdict::Ask);
+        if !ask
+            && (access == AccessMode::FullAccess
+                || (self.request.kind == Kind::Codex
+                    && access == AccessMode::AutoAcceptEdits
+                    && file_change)
+                || (self.request.kind == Kind::Codex
+                    && permissions
+                    && matches!(access, AccessMode::Auto | AccessMode::AutoAcceptEdits)))
         {
             return self.respond(
                 Control {
@@ -622,7 +683,7 @@ impl Protocol {
             id,
             title,
             detail,
-            can_remember: self.request.kind != Kind::Codex && !file_change,
+            can_remember: self.request.kind != Kind::Codex && !file_change && !ask,
             tool,
         }));
         Ok(())
@@ -670,7 +731,12 @@ impl Protocol {
         let allow = matches!(control.decision, Decision::Allow | Decision::Session);
         let session = matches!(control.decision, Decision::Session);
         if kind == "acp" {
-            return acp::respond(stdin, wire, &request, control.decision);
+            // A review's post is approved once, never for the session.
+            let decision = match control.decision {
+                Decision::Session if self.request.settings.review.is_some() => Decision::Allow,
+                other => other,
+            };
+            return acp::respond(stdin, wire, &request, decision);
         }
         if kind == "codex-mcp" {
             return write_json(
@@ -685,12 +751,16 @@ impl Protocol {
             );
         }
         if kind == "claude" {
+            let policy_denied = self.review_verdict(&kind, &request) == Some(Verdict::Deny);
             let mut response = if allow {
                 json!({"behavior":"allow","updatedInput":request["input"]})
+            } else if policy_denied {
+                json!({"behavior":"deny","message":"Not allowed for a pull request review"})
             } else {
                 json!({"behavior":"deny","message":"Denied by the user"})
             };
-            if session && allow {
+            // A review never installs a CLI-side rule: every post must come back here.
+            if session && allow && self.request.settings.review.is_none() {
                 if let Some(suggestions) = request.get("permission_suggestions") {
                     response["updatedPermissions"] = suggestions.clone();
                 }
@@ -700,8 +770,10 @@ impl Protocol {
                 json!({"type":"control_response","response":{"subtype":"success","request_id":wire,"response":response}}),
             )
         } else {
+            // A review's post is approved once, never for the session.
+            let session = session && self.request.settings.review.is_none();
             let result = if kind.contains("permissions") {
-                json!({"permissions": if allow { request["permissions"].clone() } else { json!({}) }, "scope":if self.request.settings.access == AccessMode::FullAccess { "session" } else { "turn" }})
+                json!({"permissions": if allow { request["permissions"].clone() } else { json!({}) }, "scope":if self.request.settings.effective_access() == AccessMode::FullAccess { "session" } else { "turn" }})
             } else if kind == "execCommandApproval" || kind == "applyPatchApproval" {
                 json!({"decision":if !allow { "denied" } else if session { "approved_for_session" } else { "approved" }})
             } else {
@@ -1745,6 +1817,353 @@ cat >/dev/null"#,
             }
         }
     }
+    fn codex_review_protocol(results: crate::review_policy::ReviewResults) -> Protocol {
+        let mut p = review_protocol(results, AccessMode::ReadOnly);
+        p.request.kind = Kind::Codex;
+        p
+    }
+    fn codex_request(p: &mut Protocol, method: &str, params: Value) -> (Vec<Event>, Value) {
+        let mut out = Vec::new();
+        let events = p
+            .frame(json!({"id":9,"method":method,"params":params}), &mut out)
+            .unwrap();
+        let response = String::from_utf8_lossy(&out)
+            .lines()
+            .next()
+            .map_or(Value::Null, |l| serde_json::from_str(l).unwrap());
+        (events, response)
+    }
+    fn codex_starts(p: &mut Protocol) -> Vec<Value> {
+        let mut out = Vec::new();
+        p.frame(json!({"id":1,"result":{}}), &mut out).unwrap();
+        p.frame(json!({"id":2,"result":{"thread":{"id":"t"}}}), &mut out)
+            .unwrap();
+        String::from_utf8_lossy(&out)
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .filter(|m| m["method"] == "thread/start" || m["method"] == "turn/start")
+            .collect()
+    }
+    #[test]
+    fn codex_review_runs_ask_gespan_with_network() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let starts = codex_starts(&mut p);
+        assert_eq!(starts.len(), 2);
+        for m in &starts {
+            assert_eq!(m["params"]["approvalPolicy"], "untrusted", "{m}");
+            assert_eq!(m["params"]["sandboxPolicy"]["type"], "readOnly", "{m}");
+            assert_eq!(m["params"]["sandboxPolicy"]["networkAccess"], true, "{m}");
+        }
+        assert_eq!(starts[0]["params"]["sandbox"], "read-only");
+        // Without a review: exactly today's.
+        let mut plain = protocol(Kind::Codex);
+        plain.request.settings.access = AccessMode::ReadOnly;
+        for m in codex_starts(&mut plain) {
+            assert_eq!(m["params"]["approvalPolicy"], "never");
+            assert!(m["params"]["sandboxPolicy"].get("networkAccess").is_none());
+        }
+    }
+    #[test]
+    fn codex_review_policy_decides_commands_in_both_wire_shapes() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","diff","7","-R","acme/app"]}),
+        );
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(r["result"]["decision"], "approved");
+        let (_, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"gh pr view 7 -R acme/app"}),
+        );
+        assert_eq!(r["result"]["decision"], "accept");
+        // A read that omits the target repo is not the triggering PR.
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","diff","7"]}),
+        );
+        assert_eq!(r["result"]["decision"], "denied");
+        let (_, r) = codex_request(&mut p, "execCommandApproval", json!({"command":["rm","x"]}));
+        assert_eq!(r["result"]["decision"], "denied");
+        let (_, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"rm x"}),
+        );
+        assert_eq!(r["result"]["decision"], "decline");
+        assert!(p.approvals.is_empty());
+    }
+    #[test]
+    fn codex_review_draft_post_asks_the_user_and_never_remembers() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","review","7","-R","acme/app","--comment","-b","x"]}),
+        );
+        assert_eq!(r, Value::Null);
+        let [Event::Approval(a)] = events.as_slice() else {
+            panic!("{events:?}")
+        };
+        assert!(!a.can_remember);
+        assert!(
+            a.detail.contains("gh pr review 7 -R acme/app"),
+            "{}",
+            a.detail
+        );
+        // "Allow for this session" must still be a one-off approval.
+        let mut out = Vec::new();
+        p.respond(
+            Control {
+                id: "9".into(),
+                decision: Decision::Session,
+            },
+            &mut out,
+        )
+        .unwrap();
+        let r: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(r["result"]["decision"], "approved");
+        // Post is allowed outright.
+        let mut p = codex_review_protocol(ReviewResults::Post);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","review","7","-R","acme/app","--comment","-b","x"]}),
+        );
+        assert!(events.is_empty());
+        assert_eq!(r["result"]["decision"], "approved");
+    }
+    #[test]
+    fn codex_review_denies_file_changes_and_permission_requests() {
+        use crate::review_policy::ReviewResults;
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let mut p = codex_review_protocol(results);
+            for (method, key, denied) in [
+                ("applyPatchApproval", "decision", "denied"),
+                ("item/fileChange/requestApproval", "decision", "decline"),
+                ("item/permissions/requestApproval", "scope", "turn"),
+            ] {
+                let (events, r) = codex_request(
+                    &mut p,
+                    method,
+                    json!({"permissions":{"network":true},"reason":"edit"}),
+                );
+                assert!(events.is_empty(), "{method}: {events:?}");
+                if key == "decision" {
+                    assert_eq!(r["result"][key], denied, "{method}");
+                } else {
+                    assert_eq!(r["result"]["permissions"], json!({}), "{method}");
+                }
+            }
+        }
+    }
+    #[test]
+    fn codex_review_unwraps_the_shell_launcher_in_both_wire_shapes() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Draft);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/bin/zsh","-lc","gh pr diff 7 -R acme/app"]}),
+        );
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(r["result"]["decision"], "approved");
+        let (events, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"/bin/zsh -lc 'gh pr diff 7 -R acme/app'"}),
+        );
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(r["result"]["decision"], "accept");
+        // A wrapped post still follows Results (Draft asks).
+        let (events, _) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/bin/zsh","-lc","gh pr review 7 -R acme/app --comment -b x"]}),
+        );
+        assert!(
+            matches!(events.as_slice(), [Event::Approval(_)]),
+            "{events:?}"
+        );
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/bin/zsh","-lc","gh pr diff 7 -R acme/app; rm x"]}),
+        );
+        assert_eq!(r["result"]["decision"], "denied");
+    }
+    #[test]
+    fn codex_review_denies_a_launcher_that_is_not_a_known_shell() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Post);
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/abs/checkout/tools/zsh","-lc","gh pr diff 7 -R acme/app"]}),
+        );
+        assert_eq!(r["result"]["decision"], "denied");
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/usr/bin/bash","-c","gh pr diff 7 -R acme/app"]}),
+        );
+        assert_eq!(r["result"]["decision"], "approved");
+    }
+    #[test]
+    fn codex_review_access_ignores_the_access_mode() {
+        use crate::review_policy::ReviewResults;
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::Auto,
+            AccessMode::FullAccess,
+        ] {
+            for plan in [false, true] {
+                let mut p = codex_review_protocol(ReviewResults::Draft);
+                p.request.settings.access = access;
+                p.request.settings.plan = plan;
+                let starts = codex_starts(&mut p);
+                assert_eq!(starts.len(), 2, "{access:?}");
+                for m in &starts {
+                    let params = &m["params"];
+                    assert_eq!(params["approvalPolicy"], "untrusted", "{access:?} {m}");
+                    assert_eq!(params["approvalsReviewer"], "user", "{access:?} {m}");
+                    assert_eq!(
+                        params["sandboxPolicy"]["type"], "readOnly",
+                        "{access:?} {m}"
+                    );
+                    assert_eq!(params["sandboxPolicy"]["networkAccess"], true, "{access:?}");
+                }
+                assert_eq!(starts[0]["params"]["sandbox"], "read-only", "{access:?}");
+            }
+        }
+    }
+    #[test]
+    fn codex_review_denies_a_command_that_asks_for_extra_permissions() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Post);
+        for extra in [
+            json!({"additionalPermissions":{"network":{"enabled":true}}}),
+            json!({"permissions":{"fileSystem":{"write":["/"]}}}),
+        ] {
+            let mut params = json!({"command":"gh pr diff 7 -R acme/app"});
+            params
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let (events, r) =
+                codex_request(&mut p, "item/commandExecution/requestApproval", params);
+            assert!(events.is_empty(), "{events:?}");
+            assert_eq!(r["result"]["decision"], "decline", "{extra}");
+        }
+        // Empty or null extras do not make a plain read suspicious.
+        let (_, r) = codex_request(
+            &mut p,
+            "item/commandExecution/requestApproval",
+            json!({"command":"gh pr diff 7 -R acme/app","additionalPermissions":null}),
+        );
+        assert_eq!(r["result"]["decision"], "accept");
+    }
+    #[test]
+    fn codex_review_declines_mcp_elicitations_without_asking() {
+        use crate::review_policy::ReviewResults;
+        let elicitation = json!({"id":5,"method":"mcpServer/elicitation/request","params":{
+            "mode":"form","message":"Run it?","requestedSchema":{"type":"object","properties":{}}}});
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::FullAccess,
+        ] {
+            let mut p = codex_review_protocol(ReviewResults::Post);
+            p.request.settings.access = access;
+            let mut out = Vec::new();
+            let events = p.frame(elicitation.clone(), &mut out).unwrap();
+            assert!(events.is_empty(), "{access:?}: {events:?}");
+            let reply: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(reply["id"], 5);
+            assert_eq!(reply["result"]["action"], "decline", "{access:?}");
+            assert!(p.approvals.is_empty());
+        }
+        // Without a review the user is still asked.
+        let mut plain = protocol(Kind::Codex);
+        plain.request.settings.access = AccessMode::ReadOnly;
+        let mut out = Vec::new();
+        let events = plain.frame(elicitation, &mut out).unwrap();
+        assert!(
+            matches!(events.as_slice(), [Event::Approval(_)]),
+            "{events:?}"
+        );
+        assert!(out.is_empty());
+    }
+    /// Every reply and event a run gives to a fixed set of requests.
+    fn transcript(p: &mut Protocol, frames: &[Value]) -> Vec<String> {
+        frames
+            .iter()
+            .map(|frame| {
+                let mut out = Vec::new();
+                let events = p.frame(frame.clone(), &mut out).unwrap();
+                format!("{events:?} => {}", String::from_utf8_lossy(&out))
+            })
+            .collect()
+    }
+    #[test]
+    fn a_review_answers_the_same_whatever_the_access_chip_says() {
+        use crate::review_policy::ReviewResults;
+        let claude = |tool: &str, input: Value| json!({"type":"control_request","request_id":format!("r-{tool}-{input}"),"request":{"subtype":"can_use_tool","tool_name":tool,"input":input}});
+        let claude_frames = [
+            claude("Bash", json!({"command":"git status"})),
+            claude("Bash", json!({"command":REVIEW_POST})),
+            claude("Bash", json!({"command":"gh pr merge 7 -R acme/app"})),
+            claude("Bash", json!({"command":"rm -rf src"})),
+            claude("Write", json!({"file_path":"x","content":"y"})),
+            claude("Edit", json!({"file_path":"x"})),
+            claude("mcp__github__create_review", json!({})),
+        ];
+        let codex_frames = [
+            json!({"id":11,"method":"item/commandExecution/requestApproval","params":{"command":"gh pr view 7 -R acme/app"}}),
+            json!({"id":12,"method":"item/commandExecution/requestApproval","params":{"command":REVIEW_POST}}),
+            json!({"id":13,"method":"item/commandExecution/requestApproval","params":{"command":"rm -rf src"}}),
+            json!({"id":14,"method":"item/fileChange/requestApproval","params":{"reason":"edit"}}),
+            json!({"id":15,"method":"applyPatchApproval","params":{"reason":"edit"}}),
+            json!({"id":16,"method":"item/permissions/requestApproval","params":{"permissions":{"network":true}}}),
+            json!({"id":17,"method":"mcpServer/elicitation/request","params":{"mode":"form","message":"Run it?","requestedSchema":{"type":"object","properties":{}}}}),
+        ];
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let reference_claude = transcript(
+                &mut review_protocol(results, AccessMode::ReadOnly),
+                &claude_frames,
+            );
+            let mut codex = codex_review_protocol(results);
+            codex.request.settings.access = AccessMode::ReadOnly;
+            let reference_codex = transcript(&mut codex, &codex_frames);
+            for access in [
+                AccessMode::Supervised,
+                AccessMode::AutoAcceptEdits,
+                AccessMode::Auto,
+                AccessMode::FullAccess,
+            ] {
+                assert_eq!(
+                    transcript(&mut review_protocol(results, access), &claude_frames),
+                    reference_claude,
+                    "claude {results:?} {access:?}"
+                );
+                let mut codex = codex_review_protocol(results);
+                codex.request.settings.access = access;
+                assert_eq!(
+                    transcript(&mut codex, &codex_frames),
+                    reference_codex,
+                    "codex {results:?} {access:?}"
+                );
+            }
+        }
+    }
     fn replay(kind: Kind, raw: &str) -> Vec<Event> {
         let mut protocol = protocol(kind);
         raw.lines()
@@ -2097,6 +2516,92 @@ cat >/dev/null"#,
             "a Bash pattern approves any arguments: {args:?}"
         );
     }
+    fn claude_argv(request: &Request) -> Vec<String> {
+        let mut command = Command::new("claude");
+        claude::configure(&mut command, request, None).unwrap();
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+    fn flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        args.iter()
+            .position(|arg| arg == flag)
+            .map(|at| args[at + 1].as_str())
+    }
+    #[test]
+    fn claude_review_launch_overrides_user_rules_and_runs_in_default_mode() {
+        use crate::review_policy::ReviewResults;
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::FullAccess,
+        ] {
+            let p = review_protocol(ReviewResults::Draft, access);
+            let args = claude_argv(&p.request);
+            // Default, not plan: plan tells the model not to post. Every Bash
+            // call still reaches the prompt tool through the ask rule.
+            assert_eq!(
+                flag(&args, "--permission-mode"),
+                Some("default"),
+                "{access:?}"
+            );
+            assert_eq!(flag(&args, "--tools"), Some("Read,Glob,Grep,Bash"));
+            assert_eq!(flag(&args, "--allowedTools"), Some("Read,Glob,Grep"));
+            assert!(!args
+                .iter()
+                .any(|a| a == "--allow-dangerously-skip-permissions"));
+            assert_eq!(args.iter().filter(|a| *a == "--settings").count(), 1);
+            let settings: Value = serde_json::from_str(flag(&args, "--settings").unwrap()).unwrap();
+            // MCP calls reach the prompt tool too, and no user or project MCP
+            // server is loaded at all.
+            assert_eq!(settings["permissions"]["ask"], json!(["Bash", "mcp__*"]));
+            assert_eq!(
+                args.iter().filter(|a| *a == "--strict-mcp-config").count(),
+                1,
+                "{args:?}"
+            );
+            assert_eq!(flag(&args, "--mcp-config"), None);
+            assert_eq!(
+                settings["permissions"]["deny"],
+                json!(["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"])
+            );
+            assert_eq!(settings["disableAllHooks"], true);
+            assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], false);
+            // The repo under review supplies no settings.
+            assert!(
+                args.iter().any(|a| a == "--setting-sources=user"),
+                "{args:?}"
+            );
+            assert!(!args.iter().any(|a| a.contains("project")), "{args:?}");
+        }
+        // A review with any access chip launches exactly like ReadOnly.
+        let read_only =
+            claude_argv(&review_protocol(ReviewResults::Post, AccessMode::ReadOnly).request);
+        let full =
+            claude_argv(&review_protocol(ReviewResults::Post, AccessMode::FullAccess).request);
+        assert_eq!(read_only, full);
+    }
+    #[test]
+    fn claude_non_review_launch_is_unchanged() {
+        let mut request = protocol(Kind::Claude).request;
+        request.settings.access = AccessMode::ReadOnly;
+        let args = claude_argv(&request);
+        assert_eq!(flag(&args, "--permission-mode"), Some("plan"));
+        let settings: Value = serde_json::from_str(flag(&args, "--settings").unwrap()).unwrap();
+        assert_eq!(settings, json!({}));
+        assert!(args
+            .iter()
+            .any(|a| a == "--setting-sources=user,project,local"));
+        assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
+        request.settings.access = AccessMode::FullAccess;
+        let args = claude_argv(&request);
+        assert_eq!(flag(&args, "--permission-mode"), Some("bypassPermissions"));
+        assert!(args
+            .iter()
+            .any(|a| a == "--allow-dangerously-skip-permissions"));
+        assert_eq!(flag(&args, "--tools"), None);
+    }
     fn claude_bash(p: &mut Protocol, command: &str) -> (Vec<Event>, Value) {
         let mut out = Vec::new();
         let events = p
@@ -2140,6 +2645,155 @@ cat >/dev/null"#,
             p.approvals.is_empty(),
             "every answered request is forgotten"
         );
+    }
+    #[test]
+    fn claude_review_policy_decides_bash() {
+        use crate::review_policy::{ReviewPolicy, ReviewResults, ReviewTarget};
+        let with = |results, review: bool| {
+            let mut p = protocol(Kind::Claude);
+            p.request.settings.access = AccessMode::ReadOnly;
+            p.request.settings.review = review.then(|| ReviewPolicy {
+                results,
+                target: Some(ReviewTarget {
+                    forge: crate::review_policy::Forge::GitHub,
+                    repo: "acme/app".into(),
+                    number: 7,
+                }),
+            });
+            p
+        };
+        let read = "gh pr diff 7 -R acme/app";
+        let post = "gh pr review 7 -R acme/app --comment -b \"x\"";
+        let merge = "gh pr merge 7 -R acme/app";
+        for results in [
+            ReviewResults::Gespan,
+            ReviewResults::Draft,
+            ReviewResults::Post,
+        ] {
+            let mut p = with(results, true);
+            let (events, response) = claude_bash(&mut p, read);
+            assert!(events.is_empty(), "{results:?}: {events:?}");
+            assert_eq!(response["behavior"], "allow", "{results:?}");
+            let (events, response) = claude_bash(&mut p, merge);
+            assert!(events.is_empty(), "{results:?}: {events:?}");
+            assert_eq!(response["behavior"], "deny", "{results:?}");
+        }
+        let mut p = with(ReviewResults::Draft, true);
+        let (events, response) = claude_bash(&mut p, post);
+        assert_eq!(response, Value::Null, "draft waits for the user");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, Event::Approval(_)))
+                .count(),
+            1
+        );
+        let mut p = with(ReviewResults::Post, true);
+        let (events, response) = claude_bash(&mut p, post);
+        assert!(events.is_empty());
+        assert_eq!(response["behavior"], "allow");
+        let mut p = with(ReviewResults::Gespan, true);
+        let (events, response) = claude_bash(&mut p, post);
+        assert!(events.is_empty());
+        assert_eq!(response["behavior"], "deny");
+        let mut p = with(ReviewResults::Gespan, false);
+        let (events, response) = claude_bash(&mut p, read);
+        assert!(events.is_empty());
+        assert_eq!(
+            response["behavior"], "deny",
+            "no policy: read-only denies gh"
+        );
+    }
+    fn review_protocol(
+        results: crate::review_policy::ReviewResults,
+        access: AccessMode,
+    ) -> Protocol {
+        use crate::review_policy::{ReviewPolicy, ReviewTarget};
+        let mut p = protocol(Kind::Claude);
+        p.request.settings.access = access;
+        p.request.settings.review = Some(ReviewPolicy {
+            results,
+            target: Some(ReviewTarget {
+                forge: crate::review_policy::Forge::GitHub,
+                repo: "acme/app".into(),
+                number: 7,
+            }),
+        });
+        p
+    }
+    const REVIEW_POST: &str = "gh pr review 7 -R acme/app --comment -b \"x\"";
+    #[test]
+    fn claude_review_policy_ask_is_not_rememberable_and_session_installs_no_rule() {
+        use crate::review_policy::ReviewResults;
+        let mut p = review_protocol(ReviewResults::Draft, AccessMode::Supervised);
+        let mut out = Vec::new();
+        let events = p
+            .frame(json!({"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":REVIEW_POST},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"gh pr review:*"}]}]}}), &mut out)
+            .unwrap();
+        let approvals: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Approval(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(approvals.len(), 1);
+        assert!(!approvals[0].can_remember);
+        assert!(
+            approvals[0]
+                .detail
+                .contains("gh pr review 7 -R acme/app --comment"),
+            "{}",
+            approvals[0].detail
+        );
+        let id = approvals[0].id.clone();
+        let mut out = Vec::new();
+        p.respond(
+            Control {
+                id,
+                decision: Decision::Session,
+            },
+            &mut out,
+        )
+        .unwrap();
+        let response =
+            serde_json::from_slice::<Value>(&out).unwrap()["response"]["response"].clone();
+        assert_eq!(response["behavior"], "allow");
+        assert!(response.get("updatedPermissions").is_none(), "{response}");
+    }
+    #[test]
+    fn claude_review_policy_ask_reaches_the_user_even_in_full_access() {
+        use crate::review_policy::ReviewResults;
+        let mut p = review_protocol(ReviewResults::Draft, AccessMode::FullAccess);
+        let (events, response) = claude_bash(&mut p, REVIEW_POST);
+        assert_eq!(response, Value::Null);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, Event::Approval(_)))
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn claude_review_policy_deny_says_it_is_policy_and_other_tools_are_denied() {
+        use crate::review_policy::ReviewResults;
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let mut p = review_protocol(results, AccessMode::ReadOnly);
+            let (_, response) = claude_bash(&mut p, "gh pr merge 7 -R acme/app");
+            assert_eq!(response["behavior"], "deny");
+            assert_eq!(response["message"], "Not allowed for a pull request review");
+            for tool in ["Write", "mcp__github__create_review"] {
+                let mut out = Vec::new();
+                let events = p
+                    .frame(json!({"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":tool,"input":{}}}), &mut out)
+                    .unwrap();
+                assert!(events.is_empty(), "{tool}: {events:?}");
+                let response =
+                    serde_json::from_slice::<Value>(&out).unwrap()["response"]["response"].clone();
+                assert_eq!(response["behavior"], "deny", "{tool} under {results:?}");
+            }
+        }
     }
     #[test]
     fn safe_bash_still_asks_outside_read_only() {

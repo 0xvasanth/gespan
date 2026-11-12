@@ -725,7 +725,26 @@ fn github_call<T: DeserializeOwned, L: Serialize>(
     convert(local()?)
 }
 
-fn github_repositories(project: &Path) -> Result<Vec<String>, String> {
+/// The repositories `provider` reports for `project`, its own first: what an
+/// automation's Repository is prefilled with. GitHub adds a fork's parent.
+pub fn project_repositories(
+    data_dir: &Path,
+    provider: &str,
+    project: &Path,
+) -> Result<Vec<String>, String> {
+    let project_text = project.to_string_lossy().into_owned();
+    match provider {
+        "github" => github_repositories(project),
+        "gitlab" => gitlab::gitlab_repo(data_dir.to_path_buf(), project_text).map(|r| vec![r]),
+        "azuredevops" => {
+            azure_devops::azure_devops_repo(data_dir.to_path_buf(), project_text).map(|r| vec![r])
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// The GitHub repositories a project's checkout points at, local or remote.
+pub fn github_repositories(project: &Path) -> Result<Vec<String>, String> {
     github_call(project, "git_github_repositories", json!({}), || {
         github::git_github_repositories_for(project)
     })
@@ -1401,7 +1420,7 @@ fn gh_root(cwd: &Path) -> PathBuf {
             .unwrap_or_else(std::env::temp_dir)
     }
 }
-pub(super) fn run_gh(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
+pub(crate) fn run_gh(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
     run_command("gh", root, args, allow_empty)
 }
 fn run_command(

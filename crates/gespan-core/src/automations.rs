@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use chrono::{Datelike, Local, TimeZone, Timelike};
 use std::path::Path;
 
+pub mod review_drafts;
+pub mod review_setup;
+
 fn now_millis() -> i64 {
     crate::time::now_ms().min(i64::MAX as u64) as i64
 }
@@ -80,6 +83,9 @@ pub struct Automation {
     pub session_folder_id: String,
     pub reuse_session: bool,
     pub runtime_mode: String,
+    /// Set on automations made by the review setup; where the review goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_results: Option<crate::review_policy::ReviewResults>,
     /// With the Pilot action the session settings above are kept but unused.
     #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
     pub action: AutomationAction,
@@ -113,6 +119,10 @@ pub struct Automation {
     pub updated_at: i64,
 }
 
+/// Why saving an automation into another project is refused.
+pub const PROJECT_FROZEN: &str =
+    "An automation's project can't change. Duplicate it to run in another project.";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomationUpsert {
@@ -132,6 +142,9 @@ pub struct AutomationUpsert {
     #[serde(default)]
     pub reuse_session: bool,
     pub runtime_mode: String,
+    /// Set on automations made by the review setup; where the review goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_results: Option<crate::review_policy::ReviewResults>,
     #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
     pub action: AutomationAction,
     #[serde(default = "default_trigger_kind")]
@@ -277,6 +290,16 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
            event_key TEXT NOT NULL,
            created_at INTEGER NOT NULL,
            PRIMARY KEY (automation_id, event_key)
+         );
+         CREATE TABLE IF NOT EXISTS review_drafts (
+           run_id TEXT PRIMARY KEY,
+           automation_id TEXT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+           cwd TEXT NOT NULL,
+           title TEXT NOT NULL,
+           draft_json TEXT NOT NULL,
+           status TEXT NOT NULL,
+           created_at INTEGER NOT NULL,
+           updated_at INTEGER NOT NULL
          );",
     )?;
 
@@ -311,6 +334,8 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+pub const REVIEW_PILOT_ERROR: &str = "A pull request review automation can't wake a Pilot.";
+
 fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
     validate_id(&input.id, "automation")?;
     if input.name.trim().is_empty() || input.name.len() > MAX_NAME {
@@ -339,7 +364,7 @@ fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
     }
     if !matches!(
         input.runtime_mode.as_str(),
-        "supervised" | "auto-accept-edits" | "auto" | "full-access"
+        "supervised" | "auto-accept-edits" | "auto" | "full-access" | "read-only"
     ) {
         return Err("Invalid automation run mode.".into());
     }
@@ -347,6 +372,12 @@ fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
         if pilot_id.len() > MAX_PILOT_ID || validate_id(pilot_id, "Pilot").is_err() {
             return Err("Choose a Pilot for this automation.".into());
         }
+    }
+    if input.enabled
+        && input.review_results.is_some()
+        && matches!(input.action, AutomationAction::Pilot { .. })
+    {
+        return Err(REVIEW_PILOT_ERROR.into());
     }
     if !matches!(
         input.trigger_kind.as_str(),
@@ -794,17 +825,23 @@ impl Service {
         let triggers = Some(normalize_triggers(&automation));
         let conn = self.lock_conn()?;
         let previous = get(conn, &automation.id)?;
+        // An automation belongs to one project for its whole life, so an event
+        // always maps to the one automation set up for it there. Running it
+        // somewhere else is a new automation (the editor's Duplicate).
+        if previous.as_ref().is_some_and(|previous| {
+            crate::files::path_key(&previous.cwd) != crate::files::path_key(&automation.cwd)
+        }) {
+            return Err(PROJECT_FROZEN.into());
+        }
         let created_at = previous
             .as_ref()
             .map(|value| value.created_at)
             .unwrap_or(now);
-        // Turning an automation on, or changing its project or what its
-        // events are, starts from now: items that already exist are backlog.
+        // Turning an automation on, or changing what its events are, starts
+        // from now: items that already exist are backlog.
         let events_since = match &previous {
             Some(previous)
                 if (previous.enabled || !automation.enabled)
-                    && crate::files::path_key(&previous.cwd)
-                        == crate::files::path_key(&automation.cwd)
                     && event_signature(&previous.triggers())
                         == event_signature(triggers.as_deref().unwrap_or_default()) =>
             {
@@ -830,6 +867,7 @@ impl Service {
             session_folder_id: automation.session_folder_id.trim().to_string(),
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode,
+            review_results: automation.review_results,
             action: automation.action,
             trigger_kind: automation.trigger_kind,
             trigger_event: automation.trigger_event.trim().to_string(),
@@ -1229,7 +1267,114 @@ pub const WEEKDAYS: [&str; 7] = [
     "Saturday",
 ];
 
+/// What a trigger property holds, which decides the control that edits it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TriggerPropertyKind {
+    /// One repository, as `owner/name`: the project's own unless changed.
+    Repository,
+    /// One person by handle, or "anyone".
+    Person,
+}
+
+/// A setting a kind of trigger has beyond its event: the editor builds a
+/// labelled field for each, so a new trigger kind only declares its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TriggerProperty {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub hint: &'static str,
+    pub placeholder: &'static str,
+    pub kind: TriggerPropertyKind,
+}
+
+const REPOSITORY: TriggerProperty = TriggerProperty {
+    key: "repository",
+    label: "Repository",
+    hint: "Only events from this repository start a run",
+    placeholder: "owner/name",
+    kind: TriggerPropertyKind::Repository,
+};
+const ACTOR: TriggerProperty = TriggerProperty {
+    key: "actor",
+    label: "By",
+    hint: "Who has to do it, or anyone",
+    placeholder: "Anyone",
+    kind: TriggerPropertyKind::Person,
+};
+
+/// The properties of a `kind` of trigger, in the order the editor shows them.
+/// Forges carry repositories; trackers only say who acted; a schedule has
+/// none beyond its time.
+pub fn trigger_properties(kind: &str) -> &'static [TriggerProperty] {
+    match kind {
+        "github" | "gitlab" | "azuredevops" => &[REPOSITORY, ACTOR],
+        "linear" | "jira" => &[ACTOR],
+        _ => &[],
+    }
+}
+
+/// Why `value` can't be saved for `property`, if it can't.
+pub fn trigger_property_error(property: &TriggerProperty, value: &str) -> Option<&'static str> {
+    let value = value.trim();
+    match property.kind {
+        TriggerPropertyKind::Repository if value.is_empty() => None,
+        TriggerPropertyKind::Repository
+            if value.contains(',') || value.chars().any(char::is_whitespace) =>
+        {
+            Some("One repository per trigger, like owner/name")
+        }
+        TriggerPropertyKind::Repository
+            if !value.contains('/') || value.starts_with('/') || value.ends_with('/') =>
+        {
+            Some("Write the repository as owner/name")
+        }
+        TriggerPropertyKind::Person if value.chars().any(char::is_whitespace) => {
+            Some("One handle, without spaces")
+        }
+        _ => None,
+    }
+}
+
 impl AutomationTrigger {
+    /// The value of the property `key`, as its field shows it.
+    pub fn property(&self, key: &str) -> String {
+        match key {
+            // Older saves may list several, or keep one in `repo`.
+            "repository" => self
+                .repos
+                .iter()
+                .chain(std::iter::once(&self.repo))
+                .map(|repo| repo.trim())
+                .filter(|repo| !repo.is_empty())
+                .collect::<Vec<_>>()
+                .join(", "),
+            "actor" if self.actor.eq_ignore_ascii_case("anyone") => String::new(),
+            "actor" => self.actor.clone(),
+            _ => String::new(),
+        }
+    }
+    /// Sets the property `key` from its field's text.
+    pub fn set_property(&mut self, key: &str, value: &str) {
+        let value = value.trim();
+        match key {
+            "repository" => {
+                self.repo.clear();
+                self.repos = if value.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![value.to_string()]
+                };
+            }
+            "actor" => {
+                self.actor = if value.is_empty() {
+                    default_actor()
+                } else {
+                    value.to_string()
+                };
+            }
+            _ => {}
+        }
+    }
     pub fn new(kind: &str, event: &str) -> Self {
         Self {
             id: new_id(),
@@ -1326,6 +1471,9 @@ pub fn event_label(kind: &str, event: &str) -> String {
         (_, "merge_request_opened") => "Merge request opened",
         (_, GITLAB_COMMENT_EVENT) => "Merge request comment",
         (_, GITHUB_COMMENT_EVENT) => "Pull request comment",
+        (_, GITHUB_REVIEW_COMMAND_EVENT | GITLAB_REVIEW_COMMAND_EVENT) => {
+            "Comment asks for a review"
+        }
         (_, "issue_created") => "Issue created",
         (_, "pull_request_appeared") => "Pull request appeared",
         (_, "work_item_appeared") => "Work item appeared",
@@ -1413,6 +1561,7 @@ impl AutomationUpsert {
             session_folder_id: String::new(),
             reuse_session: false,
             runtime_mode: "auto".into(),
+            review_results: None,
             action: AutomationAction::Session,
             trigger_kind: "time".into(),
             trigger_event: String::new(),
@@ -1440,6 +1589,7 @@ impl AutomationUpsert {
             session_folder_id: automation.session_folder_id.clone(),
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode.clone(),
+            review_results: automation.review_results,
             action: automation.action.clone(),
             trigger_kind: automation.trigger_kind.clone(),
             trigger_event: automation.trigger_event.clone(),
@@ -1452,6 +1602,26 @@ impl AutomationUpsert {
             enabled: automation.enabled,
             next_run_at: automation.next_run_at,
         }
+    }
+    /// A new automation like this one that runs in `cwd`: its own id and
+    /// trigger ids, so nothing it claims or runs is shared with the original,
+    /// and no repository, which belonged to the old project.
+    pub fn duplicate_into(&self, cwd: &str) -> Self {
+        let mut copy = self.clone();
+        copy.id = new_id();
+        copy.cwd = cwd.to_string();
+        // A worktree or folder of the old project means nothing in the new one.
+        copy.worktree_cwd.clear();
+        if copy.workspace_mode == "existing" {
+            copy.workspace_mode = "worktree".into();
+        }
+        copy.session_folder_id.clear();
+        for trigger in copy.triggers.iter_mut().flatten() {
+            trigger.id = new_id();
+            // Events come from the new project's own repository, not this one's.
+            trigger.set_property("repository", "");
+        }
+        copy
     }
     pub fn sync_triggers(&mut self, now: i64) {
         let triggers = self.triggers.get_or_insert_with(Vec::new);
@@ -1512,6 +1682,37 @@ impl Service {
 pub const GITHUB_COMMENT_EVENT: &str = "pull_request_comment";
 /// A new comment on a GitLab merge request.
 pub const GITLAB_COMMENT_EVENT: &str = "merge_request_comment";
+/// A comment on a GitHub pull request asking Gespan to review it.
+pub const GITHUB_REVIEW_COMMAND_EVENT: &str = "pull_request_review_command";
+/// A comment on a GitLab merge request asking Gespan to review it.
+pub const GITLAB_REVIEW_COMMAND_EVENT: &str = "merge_request_review_command";
+/// What a comment's first line starts with to ask for a review.
+pub const REVIEW_COMMAND: &str = "/gespan review";
+
+/// Whether `body` asks Gespan for a review: its first non-blank line starts
+/// with the words `/gespan review`, in any case. Anything after them on that
+/// line, or below it, is the asker's note.
+pub fn is_review_command(body: &str) -> bool {
+    let Some(first) = body.lines().find(|line| !line.trim().is_empty()) else {
+        return false;
+    };
+    let mut words = first.split_whitespace();
+    words
+        .next()
+        .is_some_and(|w| w.eq_ignore_ascii_case("/gespan"))
+        && words
+            .next()
+            .is_some_and(|w| w.eq_ignore_ascii_case("review"))
+}
+
+/// The review command events.
+pub fn is_review_command_event(event: &str) -> bool {
+    matches!(
+        event,
+        GITHUB_REVIEW_COMMAND_EVENT | GITLAB_REVIEW_COMMAND_EVENT
+    )
+}
+
 /// A check failing on a GitHub pull request's latest commit.
 pub const CHECK_FAILED_EVENT: &str = "check_failed";
 /// A GitHub pull request awaiting the connected account's review.
@@ -1523,9 +1724,11 @@ pub const ISSUE_ASSIGNED_EVENT: &str = "issue_assigned";
 
 /// The events found by asking the provider about listed items, rather than
 /// from the Inbox list itself, each with the provider that raises it.
-pub const WATCHED_EVENTS: [(&str, &str); 6] = [
+pub const WATCHED_EVENTS: [(&str, &str); 8] = [
     ("github", GITHUB_COMMENT_EVENT),
     ("gitlab", GITLAB_COMMENT_EVENT),
+    ("github", GITHUB_REVIEW_COMMAND_EVENT),
+    ("gitlab", GITLAB_REVIEW_COMMAND_EVENT),
     ("github", CHECK_FAILED_EVENT),
     ("github", REVIEW_REQUESTED_EVENT),
     ("github", MERGED_EVENT),
@@ -1573,6 +1776,9 @@ fn event_task(event: &str, provider: &str, kind: &str) -> String {
     match event {
         GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT => {
             format!("Respond to this comment on a {provider} {kind}:")
+        }
+        GITHUB_REVIEW_COMMAND_EVENT | GITLAB_REVIEW_COMMAND_EVENT => {
+            format!("Review this {provider} {kind}. A comment asked for it:")
         }
         CHECK_FAILED_EVENT => format!("A check failed on this {provider} {kind}:"),
         REVIEW_REQUESTED_EVENT => format!("Review this {provider} {kind}:"),
@@ -1709,11 +1915,17 @@ pub fn claim_inbox_events_retry(
                 // A comment from someone without write access, too, runs only
                 // a trigger that names them: anyone can comment in public.
                 let named_here = named && by_actor;
-                if (named && !by_actor)
-                    || item.occurrence.as_ref().is_some_and(|occurrence| {
+                // A review command runs a reviewer, so it always needs write
+                // access, even from a named author. The account's own command
+                // counts: the reviewer never posts one.
+                let refused = |occurrence: &crate::inbox::Occurrence| {
+                    if is_review_command_event(event) {
+                        !occurrence.trusted
+                    } else {
                         !named_here && (occurrence.mine || !occurrence.trusted)
-                    })
-                {
+                    }
+                };
+                if (named && !by_actor) || item.occurrence.as_ref().is_some_and(refused) {
                     return false;
                 }
                 let repos: Vec<_> = trigger
@@ -1773,7 +1985,9 @@ pub fn claim_inbox_events_retry(
             let mut external = format!("{reference} {title}");
             if let Some(occurrence) = &item.occurrence {
                 let author = occurrence.author.trim();
-                if matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT) {
+                if matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT)
+                    || is_review_command_event(event)
+                {
                     external.push_str(&if author.is_empty() {
                         "\nComment:\n".to_string()
                     } else {
@@ -3092,7 +3306,92 @@ mod tests {
     }
 
     #[test]
-    fn moving_an_automation_to_another_project_treats_that_projects_items_as_backlog() {
+    fn each_trigger_kind_declares_its_own_properties() {
+        let keys = |kind| {
+            trigger_properties(kind)
+                .iter()
+                .map(|p| p.key)
+                .collect::<Vec<_>>()
+        };
+        for forge in ["github", "gitlab", "azuredevops"] {
+            assert_eq!(keys(forge), ["repository", "actor"], "{forge}");
+        }
+        for tracker in ["linear", "jira"] {
+            assert_eq!(keys(tracker), ["actor"], "{tracker}");
+        }
+        assert!(keys("time").is_empty());
+        assert!(keys("unknown").is_empty());
+    }
+
+    #[test]
+    fn a_repository_property_holds_one_repository() {
+        let mut trigger = AutomationTrigger::new("github", "pull_request_opened");
+        assert_eq!(trigger.property("repository"), "");
+        trigger.set_property("repository", "  acme/app ");
+        assert_eq!(
+            (trigger.repos.clone(), trigger.repo.clone()),
+            (vec!["acme/app".to_string()], String::new())
+        );
+        assert_eq!(trigger.property("repository"), "acme/app");
+
+        // An older save's list and single `repo` both show, so nothing is
+        // hidden; writing the field replaces them with the one repository.
+        let mut older = AutomationTrigger {
+            repos: vec!["acme/web".into()],
+            repo: "acme/app".into(),
+            ..AutomationTrigger::new("github", "issue_opened")
+        };
+        assert_eq!(older.property("repository"), "acme/web, acme/app");
+        older.set_property("repository", "acme/app");
+        assert_eq!(
+            (older.repos.clone(), older.repo.clone()),
+            (vec!["acme/app".to_string()], String::new())
+        );
+        older.set_property("repository", "");
+        assert!(older.repos.is_empty() && older.repo.is_empty());
+
+        let repository = trigger_properties("github")[0];
+        for (value, error) in [
+            ("", None),
+            ("acme/app", None),
+            ("group/sub/app", None),
+            (
+                "acme/web, acme/app",
+                Some("One repository per trigger, like owner/name"),
+            ),
+            (
+                "acme/web acme/app",
+                Some("One repository per trigger, like owner/name"),
+            ),
+            ("acme", Some("Write the repository as owner/name")),
+            ("acme/", Some("Write the repository as owner/name")),
+        ] {
+            assert_eq!(
+                trigger_property_error(&repository, value),
+                error,
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_actor_property_reads_empty_for_anyone() {
+        let mut trigger = AutomationTrigger::new("linear", "issue_created");
+        assert_eq!(trigger.property("actor"), "");
+        trigger.set_property("actor", "octocat");
+        assert_eq!(trigger.actor, "octocat");
+        trigger.set_property("actor", " ");
+        assert_eq!(trigger.actor, "anyone");
+        let actor = trigger_properties("linear")[0];
+        assert_eq!(
+            trigger_property_error(&actor, "two words"),
+            Some("One handle, without spaces")
+        );
+        assert_eq!(trigger_property_error(&actor, "@octocat"), None);
+    }
+
+    #[test]
+    fn an_automation_cannot_move_to_another_project() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
         let automation = on_event(
@@ -3100,23 +3399,67 @@ mod tests {
             "/repo",
             AutomationTrigger::new("github", "issue_opened"),
         );
-        let since = automation.events_since.unwrap();
-        let mut existing = github_issue(1, since + 1);
-        existing.project_path = "/other".into();
-        std::thread::sleep(std::time::Duration::from_millis(5));
         let mut draft = AutomationUpsert::from_automation(&automation);
         draft.cwd = "/other".into();
-        let moved = service.upsert(draft).unwrap();
-        assert!(moved.events_since.unwrap() > since);
-        assert!(claim_inbox_events(&mut service, &[existing], now_millis())
-            .unwrap()
-            .is_empty());
-        // The same folder written differently is not a move.
-        let mut draft = AutomationUpsert::from_automation(&moved);
-        draft.cwd = "/other/".into();
+        draft.name = "Moved".into();
+        assert_eq!(service.upsert(draft).unwrap_err(), PROJECT_FROZEN);
+        let kept = service.list().unwrap();
+        assert_eq!(kept.len(), 1);
         assert_eq!(
-            service.upsert(draft).unwrap().events_since,
-            moved.events_since
+            (kept[0].cwd.as_str(), kept[0].name.as_str()),
+            ("/repo", automation.name.as_str())
+        );
+
+        // The same folder written differently is not a move, and keeps its
+        // event watermark.
+        let mut draft = AutomationUpsert::from_automation(&automation);
+        draft.cwd = "/repo/".into();
+        let saved = service.upsert(draft).unwrap();
+        assert_eq!(saved.events_since, automation.events_since);
+
+        // Its duplicate is a new automation, free to start in another project.
+        let mut original = AutomationUpsert::from_automation(&saved);
+        original.triggers.as_mut().unwrap()[0].set_property("repository", "acme/app");
+        original.workspace_mode = "existing".into();
+        original.worktree_cwd = "/repo/.worktrees/fix".into();
+        original.session_folder_id = "folder-1".into();
+        let copy = original.duplicate_into("/other");
+        assert_ne!(copy.id, original.id);
+        let ids = |draft: &AutomationUpsert| {
+            draft
+                .triggers
+                .iter()
+                .flatten()
+                .map(|t| t.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&copy).len(), ids(&original).len());
+        assert!(ids(&copy).iter().all(|id| !ids(&original).contains(id)));
+        assert_eq!(
+            copy.triggers.as_ref().unwrap()[0].property("repository"),
+            "",
+            "the old project's repository is not carried over"
+        );
+        assert_eq!(
+            (
+                copy.workspace_mode.as_str(),
+                copy.worktree_cwd.as_str(),
+                copy.session_folder_id.as_str()
+            ),
+            ("worktree", "", "")
+        );
+        let copy = service.upsert(copy).unwrap();
+        assert_eq!(copy.cwd, "/other");
+        assert_eq!(service.list().unwrap().len(), 2);
+        assert_eq!(
+            service
+                .list()
+                .unwrap()
+                .iter()
+                .find(|a| a.id == automation.id)
+                .unwrap()
+                .cwd,
+            "/repo/"
         );
     }
 
@@ -3653,6 +3996,48 @@ mod tests {
     }
 
     #[test]
+    fn a_review_automation_cannot_wake_a_pilot() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let mut draft = waking("pilot-1");
+        draft.review_results = Some(crate::review_policy::ReviewResults::Post);
+        assert_eq!(
+            service.upsert(draft).unwrap_err(),
+            "A pull request review automation can't wake a Pilot."
+        );
+        // Either half alone is fine.
+        let mut review = waking("pilot-1");
+        review.action = AutomationAction::Session;
+        review.review_results = Some(crate::review_policy::ReviewResults::Draft);
+        assert!(service.upsert(review).is_ok());
+        assert!(service.upsert(waking("pilot-1")).is_ok());
+    }
+
+    #[test]
+    fn a_legacy_review_pilot_automation_can_be_disabled_and_deleted_but_not_enabled() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        // A row saved before upsert refused this combination.
+        let mut saved = save(&mut service, vec![]);
+        saved.action = AutomationAction::Pilot {
+            pilot_id: "pilot-1".into(),
+        };
+        saved.review_results = Some(crate::review_policy::ReviewResults::Post);
+        saved.enabled = true;
+        write_automation(&service.conn, &saved).unwrap();
+        let id = saved.id.clone();
+
+        assert!(!service.set_enabled(&id, false).unwrap().enabled);
+        assert_eq!(
+            service.set_enabled(&id, true).unwrap_err(),
+            "A pull request review automation can't wake a Pilot."
+        );
+        assert!(!stored(&service, &id).enabled);
+        service.delete(&id).unwrap();
+        assert!(get(&service.conn, &id).unwrap().is_none());
+    }
+
+    #[test]
     fn an_automation_saved_before_actions_starts_a_session_and_round_trips_unchanged() {
         let directory = tempfile::tempdir().unwrap();
         let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
@@ -3736,6 +4121,23 @@ mod tests {
         assert_eq!(
             service.upsert(homeless).unwrap_err(),
             "Choose a project for this automation."
+        );
+    }
+
+    #[test]
+    fn read_only_is_a_valid_run_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let mut draft = waking("pilot-1");
+        draft.runtime_mode = "read-only".into();
+        assert_eq!(
+            service.upsert(draft.clone()).unwrap().runtime_mode,
+            "read-only"
+        );
+        draft.runtime_mode = "readonly".into();
+        assert_eq!(
+            service.upsert(draft).unwrap_err(),
+            "Invalid automation run mode."
         );
     }
 
@@ -4002,6 +4404,105 @@ mod tests {
         assert!(claim_inbox_events(&mut service, &[odd], now)
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn a_review_command_runs_only_for_authors_with_write_access() {
+        for (provider, event) in [
+            ("github", GITHUB_REVIEW_COMMAND_EVENT),
+            ("gitlab", GITLAB_REVIEW_COMMAND_EVENT),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+            let review = on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new(provider, event),
+            );
+            // Naming an author does not let a reader through either.
+            let mut named = AutomationTrigger::new(provider, event);
+            named.actor = "mallory".into();
+            let named = on_event(&mut service, "/repo", named);
+            let comments = on_event(
+                &mut service,
+                "/repo",
+                AutomationTrigger::new(
+                    provider,
+                    if provider == "gitlab" {
+                        GITLAB_COMMENT_EVENT
+                    } else {
+                        GITHUB_COMMENT_EVENT
+                    },
+                ),
+            );
+            let now = now_millis();
+            let mut reader = said("1", "mallory", "/gespan review", now);
+            reader.permission = "read".into();
+            let mut unknown = said("2", "mallory", "/gespan review", now);
+            unknown.permission = String::new();
+            let untrusted = crate::inbox::events::comment_items(
+                &listed_pr(provider, 7),
+                &[reader, unknown],
+                "gespan-bot",
+            );
+            assert!(
+                claim_inbox_events(&mut service, &untrusted, now)
+                    .unwrap()
+                    .is_empty(),
+                "{provider}: {named:?}"
+            );
+            // A writer's command, and the account's own, start the review
+            // and nothing else.
+            let writer = comment(provider, 7, "3", "alice", "/gespan review", now);
+            let own = comment(provider, 7, "4", "gespan-bot", "/gespan review", now);
+            assert!(own.occurrence.as_ref().unwrap().mine);
+            let runs = claim_inbox_events(&mut service, &[writer, own], now).unwrap();
+            let ran: Vec<_> = runs.iter().map(|r| r.run.automation_id.clone()).collect();
+            assert_eq!(ran, [review.id.clone(), review.id.clone()], "{comments:?}");
+            assert_eq!(
+                keys(&runs),
+                [
+                    format!("{provider}:{event}:acme/app:7:3"),
+                    format!("{provider}:{event}:acme/app:7:4")
+                ]
+            );
+            // The key names the request the review may write to.
+            let target =
+                crate::review_policy::ReviewTarget::from_event_key(&keys(&runs)[0]).unwrap();
+            assert_eq!(
+                (target.forge.id(), target.repo.as_str(), target.number),
+                (provider, "acme/app", 7)
+            );
+            let prompt = runs[0].run.prompt.as_deref().unwrap();
+            assert!(prompt.contains("A comment asked for it:"), "{prompt}");
+            assert!(prompt.contains("Comment by @alice:"), "{prompt}");
+            // Claimed once.
+            let again = comment(provider, 7, "3", "alice", "/gespan review", now);
+            assert!(claim_inbox_events(&mut service, &[again], now)
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn is_review_command_reads_only_the_first_line() {
+        for yes in [
+            "/gespan review",
+            " /Gespan REVIEW now",
+            "\n\n/gespan review\nplease",
+        ] {
+            assert!(is_review_command(yes), "{yes:?}");
+        }
+        for no in [
+            "",
+            "/gespan",
+            "/gespan reviews",
+            "hi\n/gespan review",
+            "`/gespan review`",
+            "/review",
+        ] {
+            assert!(!is_review_command(no), "{no:?}");
+        }
     }
 
     #[test]

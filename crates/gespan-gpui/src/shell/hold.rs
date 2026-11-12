@@ -209,6 +209,10 @@ impl Shell {
                             this.hold_press_confirmed(cx);
                         }
                         cx.notify();
+                        // The Agents panel's Hold all lives in the cached sidebar.
+                        if this.agents_open {
+                            this.repaint_sidebar(cx);
+                        }
                         let press = &this.hold.press;
                         let next = if press.pressing() || press.progress(now) > 0. {
                             Some(PRESS_FRAME)

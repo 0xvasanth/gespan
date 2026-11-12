@@ -1,5 +1,5 @@
 mod accounts;
-mod approval_card;
+pub(crate) mod approval_card;
 mod approvals;
 mod attachment_drop;
 mod background_tasks;
@@ -247,6 +247,8 @@ pub(crate) struct Conversation {
     status: String,
     loaded: bool,
     history_unloaded: bool,
+    /// A turn's update skipped rows this view never got; reload once it ends.
+    history_out_of_sync: bool,
     history_actions: std::collections::VecDeque<history::HistoryAction>,
     pending_search: Option<(usize, String)>,
     /// A background row clicked before the session finished loading.
@@ -471,6 +473,91 @@ impl Conversation {
     }
     pub(crate) fn needs_approval(&self) -> bool {
         !self.approvals.is_empty() || !self.questions.is_empty()
+    }
+    /// Shows a provider question and routes its answer back to the provider.
+    pub(crate) fn add_question(
+        &mut self,
+        request: gespan_core::agent::Question,
+        cx: &mut Context<Self>,
+    ) {
+        let card = cx.new(|cx| crate::questions::QuestionCard::new(request, cx));
+        let events = cx.subscribe(
+            &card,
+            |this, card, reply: &crate::questions::Answered, cx| {
+                if this
+                    .questions
+                    .front()
+                    .is_none_or(|(card, _)| card.read(cx).id() != reply.id)
+                {
+                    return;
+                }
+                let before = this.needs_approval();
+                let decision = reply
+                    .answers
+                    .clone()
+                    .map_or(Decision::Deny, Decision::Answer);
+                if this.controls.as_ref().is_none_or(|controls| {
+                    controls
+                        .send(Control {
+                            id: reply.id.clone(),
+                            decision,
+                        })
+                        .is_err()
+                }) {
+                    this.status = "The provider is no longer waiting for this answer".into();
+                    cx.notify();
+                    return;
+                }
+                let record = {
+                    let question = card.read(cx);
+                    this.task_record(
+                        crate::my_tasks::record::question_key(this.summary.id, &reply.id),
+                        gespan_core::tasks::Kind::Question,
+                        question.headline().to_owned(),
+                        crate::my_tasks::record::question_request(question.request()),
+                    )
+                    .answered(
+                        crate::my_tasks::record::question_answer(
+                            question.request(),
+                            reply.answers.as_deref(),
+                        ),
+                        serde_json::json!(reply.answers),
+                        gespan_core::time::now_ms(),
+                    )
+                };
+                this.keep_task_answer(record);
+                if let Some((card, _)) = this.questions.pop_front() {
+                    this.question_overlay.release(card, cx);
+                }
+                this.status = if !this.approvals.is_empty() {
+                    "Waiting for approval"
+                } else if !this.questions.is_empty() {
+                    "Waiting for your answer"
+                } else {
+                    "Working…"
+                }
+                .into();
+                if before != this.needs_approval() {
+                    cx.emit(SessionChanged);
+                }
+                cx.notify();
+            },
+        );
+        let keep_open = cx.subscribe(
+            &card,
+            |this, _, request: &crate::questions::KeptOpen, cx| {
+                if let Some(controls) = &this.controls {
+                    let _ = controls.send(Control {
+                        id: request.id.clone(),
+                        decision: Decision::KeepOpen,
+                    });
+                }
+                cx.emit(SessionChanged);
+                cx.notify();
+            },
+        );
+        self.questions.push_back((card, vec![events, keep_open]));
+        self.status = "Waiting for your answer".into();
     }
     #[cfg(test)]
     pub(crate) fn set_approvals_for_test(&mut self, approvals: Vec<Approval>) {
@@ -792,6 +879,7 @@ impl Conversation {
             status: "Loading conversation…".into(),
             loaded: false,
             history_unloaded: false,
+            history_out_of_sync: false,
             history_actions: Default::default(),
             pending_search: None,
             pending_tool: None,
@@ -1628,12 +1716,14 @@ impl Conversation {
                                 || update.delivered.is_some()
                                 || !update.follow_up_delivered.is_empty()
                                 || !update.follow_up_errors.is_empty());
-                        this.transcript.update(cx, |v, cx| {
-                            v.patch(update.start, update.rows, cx);
+                        let applied = this.transcript.update(cx, |v, cx| {
+                            let applied = v.patch(update.start, update.rows, cx);
                             if stopping {
                                 v.stop_streaming(cx);
                             }
+                            applied
                         });
+                        this.history_out_of_sync |= !applied;
                         if let Some(id) = update.provider_turn_id {
                             this.transcript
                                 .update(cx, |view, _| view.record_provider_turn(id));
@@ -1753,69 +1843,7 @@ impl Conversation {
                             this.questions.retain(|(card, _)| card.read(cx).id() != id);
                         }
                         for request in update.questions.into_iter().filter(|_| !stopping) {
-                            let card =
-                                cx.new(|cx| crate::questions::QuestionCard::new(request, cx));
-                            let events = cx.subscribe(
-                                &card,
-                                |this, _, reply: &crate::questions::Answered, cx| {
-                                    if this
-                                        .questions
-                                        .front()
-                                        .is_none_or(|(card, _)| card.read(cx).id() != reply.id)
-                                    {
-                                        return;
-                                    }
-                                    let before = this.needs_approval();
-                                    let decision = reply
-                                        .answers
-                                        .clone()
-                                        .map_or(Decision::Deny, Decision::Answer);
-                                    if this.controls.as_ref().is_none_or(|controls| {
-                                        controls
-                                            .send(Control {
-                                                id: reply.id.clone(),
-                                                decision,
-                                            })
-                                            .is_err()
-                                    }) {
-                                        this.status =
-                                            "The provider is no longer waiting for this answer"
-                                                .into();
-                                        cx.notify();
-                                        return;
-                                    }
-                                    if let Some((card, _)) = this.questions.pop_front() {
-                                        this.question_overlay.release(card, cx);
-                                    }
-                                    this.status = if !this.approvals.is_empty() {
-                                        "Waiting for approval"
-                                    } else if !this.questions.is_empty() {
-                                        "Waiting for your answer"
-                                    } else {
-                                        "Working…"
-                                    }
-                                    .into();
-                                    if before != this.needs_approval() {
-                                        cx.emit(SessionChanged);
-                                    }
-                                    cx.notify();
-                                },
-                            );
-                            let keep_open = cx.subscribe(
-                                &card,
-                                |this, _, request: &crate::questions::KeptOpen, cx| {
-                                    if let Some(controls) = &this.controls {
-                                        let _ = controls.send(Control {
-                                            id: request.id.clone(),
-                                            decision: Decision::KeepOpen,
-                                        });
-                                    }
-                                    cx.emit(SessionChanged);
-                                    cx.notify();
-                                },
-                            );
-                            this.questions.push_back((card, vec![events, keep_open]));
-                            this.status = "Waiting for your answer".into();
+                            this.add_question(request, cx);
                         }
                         if !finished && !this.approvals.is_empty() {
                             this.status = "Waiting for approval".into();
@@ -1878,6 +1906,12 @@ impl Conversation {
                             this.questions.clear();
                             this.controls = None;
                             this.transcript.update(cx, |v, cx| v.streaming(false, cx));
+                            if std::mem::take(&mut this.history_out_of_sync) {
+                                // The store holds rows this view never got:
+                                // show what was saved rather than a broken turn.
+                                this.history_unloaded = true;
+                                this.reload_history(cx);
+                            }
                             let model_id = turn_model_id.clone();
                             this.transcript.update(cx, |view, _| {
                                 if let Some(turn) = view.active_turn()

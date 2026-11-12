@@ -1238,6 +1238,211 @@ mod tool_tests {
         );
     }
 
+    fn review_request(results: crate::review_policy::ReviewResults, access: AccessMode) -> Request {
+        let mut request = Request {
+            kind: Kind::OpenCode,
+            binary: "unused".into(),
+            cwd: "/tmp".into(),
+            prompt: String::new(),
+            provider_id: None,
+            model: None,
+            settings: crate::agent::Settings {
+                access,
+                ..Default::default()
+            },
+        };
+        request.settings.review = Some(crate::review_policy::ReviewPolicy {
+            results,
+            target: Some(crate::review_policy::ReviewTarget {
+                forge: crate::review_policy::Forge::GitHub,
+                repo: "acme/app".into(),
+                number: 7,
+            }),
+        });
+        request
+    }
+
+    /// A bash permission as opencode 1.19 sends it.
+    fn bash(command: &str) -> serde_json::Value {
+        serde_json::json!({"permission":"bash","patterns":[command],"always":[],"metadata":{"command":command},"tool":{"messageID":"m","callID":"c"}})
+    }
+
+    fn review_state(
+        results: crate::review_policy::ReviewResults,
+        access: AccessMode,
+    ) -> events::State {
+        events::State::new(review_request(results, access), "ses_a".into(), false)
+    }
+
+    /// Feeds one permission to a review run; returns the events and the reply sent.
+    fn review_permission(
+        state: &mut events::State,
+        permission: serde_json::Value,
+        interactive: bool,
+    ) -> (Vec<Event>, Option<String>) {
+        let (client, seen) = opencode_seen(204, false);
+        let mut permission = permission;
+        permission["id"] = "per_1".into();
+        let events = state
+            .frame(
+                &client,
+                serde_json::json!({"type":"permission.asked","properties":permission}),
+                interactive,
+            )
+            .unwrap();
+        let reply = seen
+            .recv_timeout(QUIET)
+            .ok()
+            .map(|(line, body)| format!("{line} {}", body["reply"]));
+        (events, reply)
+    }
+
+    #[test]
+    fn opencode_review_policy_decides_bash() {
+        use crate::review_policy::ReviewResults;
+        let post = "gh pr review 7 --repo acme/app --comment --body 'x'";
+        for access in [
+            AccessMode::FullAccess,
+            AccessMode::Supervised,
+            AccessMode::Auto,
+        ] {
+            let mut draft = review_state(ReviewResults::Draft, access);
+            let (events, reply) =
+                review_permission(&mut draft, bash("gh pr view 7 --repo acme/app"), true);
+            assert!(events.is_empty(), "{access:?}");
+            assert!(reply.unwrap().contains("\"once\""), "{access:?}");
+
+            let (events, reply) = review_permission(&mut draft, bash(post), true);
+            assert!(reply.is_none(), "an approval is asked, nothing replied");
+            match &events[..] {
+                [Event::Approval(a)] => {
+                    assert!(!a.can_remember);
+                    assert!(a.detail.contains("gh pr review 7"), "{}", a.detail);
+                }
+                other => panic!("{other:?}"),
+            }
+
+            let mut posting = review_state(ReviewResults::Post, access);
+            let (events, reply) = review_permission(&mut posting, bash(post), true);
+            assert!(events.is_empty());
+            assert!(reply.unwrap().contains("\"once\""));
+
+            let (events, reply) =
+                review_permission(&mut posting, bash("gh pr merge 7 --repo acme/app"), true);
+            assert!(events.is_empty());
+            assert!(reply.unwrap().contains("\"reject\""));
+        }
+    }
+
+    #[test]
+    fn opencode_review_policy_rejects_what_it_cannot_judge() {
+        use crate::review_policy::ReviewResults;
+        use serde_json::json;
+        let post = "gh pr review 7 --repo acme/app --comment --body 'x'";
+        let rejected = |permission: serde_json::Value, interactive: bool| {
+            let mut state = review_state(ReviewResults::Post, AccessMode::FullAccess);
+            let (events, reply) = review_permission(&mut state, permission, interactive);
+            assert!(
+                events.is_empty() && state.approvals.is_empty(),
+                "{events:?}"
+            );
+            assert!(reply.unwrap().contains("\"reject\""));
+        };
+        for kind in [
+            "edit",
+            "write",
+            "patch",
+            "webfetch",
+            "websearch",
+            "task",
+            "other",
+        ] {
+            rejected(json!({"permission":kind,"pattern":"*"}), true);
+        }
+        // No command, or one that changes what runs beside it.
+        rejected(json!({"permission":"bash"}), true);
+        rejected(
+            json!({"permission":"bash","metadata":{"command":"  "}}),
+            true,
+        );
+        // patterns alone are never judged.
+        rejected(json!({"permission":"bash","patterns":[post]}), true);
+        rejected(json!({"permission":"bash","pattern":post}), true);
+        rejected(
+            json!({"permission":"bash","metadata":{"command":["gh","pr","view"]}}),
+            true,
+        );
+        let mut env = bash(post);
+        env["env"] = json!({"GH_HOST":"evil"});
+        rejected(env, true);
+        let mut args = bash(post);
+        args["metadata"]["args"] = json!(["--x"]);
+        rejected(args, true);
+        // Harmless-looking patterns over a command that does more.
+        let mut redirected = bash("gh pr view 7 --repo acme/app > x");
+        redirected["patterns"] = json!(["gh pr view 7 --repo acme/app"]);
+        let mut state = review_state(ReviewResults::Post, AccessMode::FullAccess);
+        let (events, reply) = review_permission(&mut state, redirected, true);
+        assert!(events.is_empty());
+        assert!(reply.unwrap().contains("\"reject\""));
+        let mut unrelated = bash(post);
+        unrelated["patterns"] = json!(["gh pr view 7", "rm -rf /"]);
+        rejected(unrelated, true);
+        let mut consistent = bash("gh pr view 7 --repo acme/app");
+        consistent["always"] = json!(["gh pr view *"]);
+        let (_, reply) = review_permission(&mut state, consistent, true);
+        assert!(reply.unwrap().contains("\"once\""));
+        // Nobody to ask under Draft.
+        let mut draft = review_state(ReviewResults::Draft, AccessMode::FullAccess);
+        let (events, reply) = review_permission(&mut draft, bash(post), false);
+        assert!(events.is_empty());
+        assert!(reply.unwrap().contains("\"reject\""));
+        // Reads pass.
+        let mut state = review_state(ReviewResults::Post, AccessMode::FullAccess);
+        for read in ["read", "grep", "glob", "search", "find"] {
+            let (_, reply) =
+                review_permission(&mut state, json!({"permission":read,"pattern":"*"}), true);
+            assert!(reply.unwrap().contains("\"once\""), "{read}");
+        }
+    }
+
+    #[test]
+    fn opencode_review_policy_ignores_the_access_mode_and_never_remembers() {
+        use crate::review_policy::ReviewResults;
+        let (v2, _) = opencode_seen(204, true);
+        let rows = v2.permissions(&review_request(ReviewResults::Post, AccessMode::FullAccess))
+            ["permissions"]
+            .clone();
+        let rows = rows.as_array().unwrap();
+        assert_eq!(rows[0]["resource"], "*");
+        assert_eq!(rows[0]["effect"], "ask", "{rows:?}");
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r["action"] == "edit" && r["effect"] == "allow"),
+            "{rows:?}"
+        );
+        // Approving an asked command replies once, even for a "session" decision.
+        let mut draft = review_state(ReviewResults::Draft, AccessMode::FullAccess);
+        let post = "gh pr review 7 --repo acme/app --comment --body 'x'";
+        let (events, _) = review_permission(&mut draft, bash(post), true);
+        let Event::Approval(a) = &events[0] else {
+            panic!()
+        };
+        let (client, seen) = opencode_seen(204, false);
+        draft
+            .respond(
+                &client,
+                Control {
+                    id: a.id.clone(),
+                    decision: Decision::Session,
+                },
+            )
+            .unwrap();
+        let (_, body) = seen.recv_timeout(POSTED).unwrap();
+        assert_eq!(body["reply"], "once");
+    }
+
     #[test]
     fn a_v2_session_sees_only_its_own_gespan_server() {
         let request = |access, mounted: bool| Request {

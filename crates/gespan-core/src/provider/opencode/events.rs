@@ -1,6 +1,7 @@
 //! OpenCode v1 snapshots and v2 durable events share one native transcript.
 use super::*;
 use crate::agent::{Question, QuestionItem, QuestionOption};
+use crate::review_policy::{self, ReviewPolicy, Verdict};
 use crate::tool::tasks::{AgentRun, AgentStep, Panel};
 use std::collections::HashSet;
 
@@ -440,10 +441,39 @@ impl State {
                         .as_str()
                         .or_else(|| permission["action"].as_str())
                         .unwrap_or("tool");
+                    if let Some(policy) = self.protocol.request.settings.review.clone() {
+                        let verdict = review_verdict(&policy, action, permission);
+                        match verdict {
+                            Ok((Verdict::Allow, _)) => client.permission(&session, id, true)?,
+                            Ok((Verdict::Ask, command)) if interactive => {
+                                let ui = format!("opencode-permission-{id}");
+                                self.approvals.insert(
+                                    ui.clone(),
+                                    Pending {
+                                        session: session.clone(),
+                                        wire: id.into(),
+                                        form: None,
+                                    },
+                                );
+                                events.push(Event::Approval(Approval {
+                                    id: ui,
+                                    title: action.into(),
+                                    detail: command.unwrap_or_else(|| permission.to_string()),
+                                    can_remember: false,
+                                    tool: None,
+                                }));
+                            }
+                            // Nobody to ask, no command to judge, or not allowed: reject.
+                            _ => client.permission(&session, id, false)?,
+                        }
+                        return Ok(events);
+                    }
                     let planning = self.protocol.request.settings.plan
-                        || self.protocol.request.settings.access == AccessMode::ReadOnly;
+                        || self.protocol.request.settings.effective_access()
+                            == AccessMode::ReadOnly;
                     if planning
-                        || self.protocol.request.settings.access == AccessMode::FullAccess
+                        || self.protocol.request.settings.effective_access()
+                            == AccessMode::FullAccess
                         || !interactive
                     {
                         let action = action.to_lowercase();
@@ -457,7 +487,8 @@ impl State {
                             !writing && reading
                         } else {
                             interactive
-                                && self.protocol.request.settings.access == AccessMode::FullAccess
+                                && self.protocol.request.settings.effective_access()
+                                    == AccessMode::FullAccess
                         };
                         client.permission(&session, id, allow)?;
                     } else {
@@ -919,4 +950,57 @@ pub(super) fn error_message(value: &Value) -> String {
         .or_else(|| value["error"]["message"].as_str())
         .unwrap_or("OpenCode session failed.")
         .into()
+}
+
+/// The command an opencode permission asks to run: the literal
+/// `metadata.command` and nothing else. `patterns` are parsed sub-texts of it,
+/// so any that is not contained in it makes the request inconsistent.
+pub(super) fn permission_command(permission: &Value) -> Option<String> {
+    let command = permission["metadata"]["command"].as_str()?;
+    if command.trim().is_empty() {
+        return None;
+    }
+    for field in ["pattern", "patterns"] {
+        let listed: Vec<&Value> = match &permission[field] {
+            Value::Null => continue,
+            Value::Array(items) => items.iter().collect(),
+            single => vec![single],
+        };
+        if listed
+            .iter()
+            .any(|entry| !entry.as_str().is_some_and(|text| command.contains(text)))
+        {
+            return None;
+        }
+    }
+    Some(command.to_owned())
+}
+
+/// What a pull request review does with a permission request. `Ask` carries
+/// the command the user is shown. Anything unclear is a rejection.
+fn review_verdict(
+    policy: &ReviewPolicy,
+    action: &str,
+    permission: &Value,
+) -> Result<(Verdict, Option<String>), ()> {
+    let action = action.to_lowercase();
+    // Reads are not scoped by path: they cannot leave the machine except
+    // through a command that is judged here, so a read alone does no harm.
+    if ["read", "grep", "glob", "search", "find"].contains(&action.as_str()) {
+        return Ok((Verdict::Allow, None));
+    }
+    if !["bash", "command", "shell"].contains(&action.as_str()) {
+        return Err(());
+    }
+    // Anything beside the command that changes what runs cannot be judged.
+    let changes_run = |value: &Value| {
+        ["env", "args", "arguments"]
+            .iter()
+            .any(|key| !value[*key].is_null())
+    };
+    if changes_run(permission) || changes_run(&permission["metadata"]) {
+        return Err(());
+    }
+    let command = permission_command(permission).ok_or(())?;
+    Ok((review_policy::verdict(policy, &command), Some(command)))
 }

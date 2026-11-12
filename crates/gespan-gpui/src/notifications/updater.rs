@@ -318,6 +318,10 @@ pub(crate) fn action(entity: &Entity<Updater>, cx: &App) -> Action {
         Phase::Disabled | Phase::Idle | Phase::Current => Action::Check,
     }
 }
+/// Whether the last check found this build is the newest.
+pub(crate) fn is_current(entity: &Entity<Updater>, cx: &App) -> bool {
+    entity.read(cx).phase == Phase::Current
+}
 /// A line for Settings' About description: the last check's outcome, if any.
 pub(crate) fn status(entity: &Entity<Updater>, cx: &App) -> Option<String> {
     let state = entity.read(cx);

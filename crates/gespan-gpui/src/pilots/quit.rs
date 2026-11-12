@@ -28,6 +28,19 @@ impl Pilots {
             .collect()
     }
 
+    /// Each Pilot chat that is open, running or not, with its Pilot's id and
+    /// name, in roster order: the sidebar's Agents panel lists them.
+    pub(crate) fn open_chats(&self) -> Vec<(String, String, Entity<Conversation>)> {
+        self.roster
+            .pilots
+            .iter()
+            .filter_map(|pilot| {
+                let view = self.chats.get(&pilot.id)?;
+                Some((pilot.id.clone(), pilot.label(), view.clone()))
+            })
+            .collect()
+    }
+
     /// Whether `session` is a Pilot's chat, as opposed to a habit run or a
     /// Flow review it started.
     pub(crate) fn is_pilot_chat(&self, session: i64) -> bool {

@@ -854,6 +854,7 @@ impl Shell {
             )
             .children(
                 [
+                    ("My tasks", "circle-alert"),
                     ("Inbox", "inbox"),
                     ("Runs", "clock"),
                     ("Automations", "zap"),
@@ -873,6 +874,11 @@ impl Shell {
                 })
                 .map(|(label, glyph)| {
                     let selected = self.app_view_label() == Some(label);
+                    let waiting = if label == "My tasks" {
+                        self.my_task_count(cx)
+                    } else {
+                        0
+                    };
                     let unread = label == "Inbox"
                         && self
                             .inbox
@@ -882,7 +888,13 @@ impl Shell {
                         .id(label)
                         .debug_selector(move || format!("sidebar-navigation-{label}"))
                         .role(Role::Button)
-                        .aria_label(if unread { "Inbox, new items" } else { label })
+                        .aria_label(if unread {
+                            SharedString::from("Inbox, new items")
+                        } else if waiting > 0 {
+                            SharedString::from(format!("My tasks, {waiting} waiting"))
+                        } else {
+                            SharedString::from(label)
+                        })
                         .aria_selected(selected)
                         .cursor_pointer()
                         .group("rail-action")
@@ -906,6 +918,25 @@ impl Shell {
                         .when_some(
                             match label {
                                 "Settings" => Some(format!("{MOD},").into_any_element()),
+                                "My tasks" if waiting > 0 => Some(
+                                    div()
+                                        .debug_selector(|| {
+                                            "sidebar-navigation-count-My tasks".into()
+                                        })
+                                        .flex_shrink_0()
+                                        .min_w(px(18.))
+                                        .h(px(16.))
+                                        .px(px(5.))
+                                        .rounded_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .bg(gpui::rgb(0xffb900))
+                                        .text_color(black(0.9))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(waiting.to_string())
+                                        .into_any_element(),
+                                ),
                                 "Inbox" if unread => Some(
                                     div()
                                         .flex_shrink_0()
@@ -953,6 +984,7 @@ impl Shell {
                             "Settings" => {
                                 this.open_settings(crate::settings::Section::General, window, cx)
                             }
+                            "My tasks" => this.open_my_tasks(window, cx),
                             "Inbox" => this.open_inbox(window, cx),
                             "Runs" => this.show_runs(window, cx),
                             "Notes" => this.open_notes(window, cx),
@@ -1042,7 +1074,7 @@ impl Shell {
                     && !self.session_metadata(id, cx).summary.has_messages
             })
     }
-    fn notify_navigation(&self, cx: &mut Context<Self>) {
+    pub(super) fn notify_navigation(&self, cx: &mut Context<Self>) {
         self.sidebar_frame.update(cx, |_, cx| cx.notify());
     }
     pub(super) fn sidebar_filter_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1624,25 +1656,35 @@ mod tests {
             .unwrap();
         visual.simulate_resize(gpui::size(px(1200.), px(2600.)));
         visual.run_until_parked();
+        // Appearance lists the sections in the order they appear in the
+        // sidebar, then the compact-view switch on its own row.
         let ids = [
-            "sidebar-notes",
-            "sidebar-board",
-            "sidebar-automations",
             "sidebar-inbox",
+            "sidebar-automations",
             "sidebar-pilots",
+            "sidebar-board",
+            "sidebar-notes",
             "sidebar-activity",
             "compact-session-cards",
         ];
-        let tops: Vec<_> = ids
+        // The sidebar sections are chips that wrap across rows, so each one
+        // comes after the last in reading order: on a later row, or further
+        // right on the same row.
+        let origins: Vec<_> = ids
             .iter()
             .map(|id| {
                 visual
                     .debug_bounds(Box::leak(format!("settings-toggle-{id}").into_boxed_str()))
                     .unwrap_or_else(|| panic!("{id} has a switch"))
-                    .top()
+                    .origin
             })
             .collect();
-        assert!(tops.windows(2).all(|w| w[0] < w[1]), "{tops:?}");
+        assert!(
+            origins
+                .windows(2)
+                .all(|w| w[0].y < w[1].y || (w[0].y == w[1].y && w[0].x < w[1].x)),
+            "{origins:?}"
+        );
         assert!(
             visual
                 .debug_bounds("settings-toggle-sidebar-search")
@@ -1729,9 +1771,9 @@ mod tests {
                 })
                 .unwrap();
             visual.run_until_parked();
-            assert!(visual.debug_bounds("sidebar-activity-card").is_some());
+            assert!(visual.debug_bounds("agents-footer").is_some());
             flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("sidebar-activity-card").is_none());
+            assert!(visual.debug_bounds("agents-footer").is_none());
             window
                 .update(visual, |shell, _, cx| {
                     assert!(!shell.workspace.preferences.working_agents);
@@ -1744,7 +1786,7 @@ mod tests {
                 })
                 .unwrap();
             flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("sidebar-activity-card").is_some());
+            assert!(visual.debug_bounds("agents-footer").is_some());
             window
                 .update(visual, |shell, _, _| {
                     let saved = shell.latest_state.lock().unwrap().clone();
@@ -1760,7 +1802,7 @@ mod tests {
             })
             .unwrap();
         visual.run_until_parked();
-        assert!(visual.debug_bounds("sidebar-activity-card").is_none());
+        assert!(visual.debug_bounds("agents-footer").is_none());
     }
 
     #[gpui::test]

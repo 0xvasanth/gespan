@@ -42,12 +42,15 @@ pub mod remote;
 pub mod resources;
 pub mod response;
 pub mod resume_outside;
+pub mod review_draft;
+pub mod review_policy;
 pub mod scm;
 pub mod session_filters;
 pub mod session_groups;
 pub mod session_import;
 pub mod session_title;
 pub mod store;
+pub mod tasks;
 #[cfg(all(test, unix))]
 pub(crate) mod test_exec;
 pub mod ticket_bridge;

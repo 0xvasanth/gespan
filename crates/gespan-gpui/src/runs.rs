@@ -1,12 +1,16 @@
 //! Runs: every automation run across all projects, newest first, grouped by
 //! day. A run is listed the moment it is claimed (`pending`, shown as
 //! Queued), and runs whose automation is gone stay listed.
-use crate::{modal, theme::*};
+use crate::{
+    glass,
+    input::{self, Input},
+    theme::*,
+};
 use chrono::{Local, TimeZone};
 use gespan_core::automations::{self, Automation, AutomationRun, Service};
 use gpui::{
-    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, Hsla, Role, SharedString, Task,
-    Window, div, prelude::*, px,
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Role, SharedString,
+    Subscription, Task, Window, div, prelude::*, px,
 };
 use std::{
     collections::HashMap,
@@ -57,12 +61,72 @@ pub(crate) struct RunRow {
     pub status: &'static str,
     pub error: Option<String>,
     pub session: Option<String>,
+    /// How long a finished run took, such as `6m 02s`.
+    pub duration: Option<String>,
 }
 
 impl RunRow {
     pub(crate) fn can_open(&self) -> bool {
         self.session.is_some()
     }
+
+    /// Whether the search text appears, ignoring case, in what the row
+    /// shows: its trigger, item, automation, project or error.
+    fn matches(&self, query: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+        let project = self.project.as_deref().map(crate::workspace::project_name);
+        [
+            Some(self.trigger.as_str()),
+            self.item.as_deref(),
+            Some(self.automation.as_str()),
+            project.as_deref(),
+            self.error.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|text| text.to_lowercase().contains(&query))
+    }
+}
+
+/// How long a run took from start to finish: `45s`, `6m 02s`, `1h 03m`.
+/// Runs that never started or have not finished have none.
+pub(crate) fn duration(run: &AutomationRun) -> Option<String> {
+    let ms = run.completed_at? - run.started_at?;
+    if ms < 0 {
+        return None;
+    }
+    let secs = ms / 1000;
+    Some(match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m {:02}s", secs / 60, secs % 60),
+        _ => format!("{}h {:02}m", secs / 3600, secs % 3600 / 60),
+    })
+}
+
+/// The heading over one day's card: `1 run` or `N runs`.
+pub(crate) fn run_count(count: usize) -> String {
+    if count == 1 {
+        "1 run".to_string()
+    } else {
+        format!("{count} runs")
+    }
+}
+
+/// Rows grouped under their day label, keeping their order. Rows arrive
+/// newest first, so each day appears once.
+pub(crate) fn group_by_day(rows: Vec<RunRow>, today_start: i64) -> Vec<(String, Vec<RunRow>)> {
+    let mut days: Vec<(String, Vec<RunRow>)> = Vec::new();
+    for row in rows {
+        let label = day_label(row.created_at, today_start);
+        match days.last_mut() {
+            Some((day, rows)) if *day == label => rows.push(row),
+            _ => days.push((label, vec![row])),
+        }
+    }
+    days
 }
 
 /// The chip a run's recorded status shows.
@@ -139,19 +203,6 @@ fn trigger_label(run: &AutomationRun) -> String {
     }
 }
 
-/// A chip's ink and fill, from the theme's existing colours.
-fn chip_colors(status: &str) -> (Hsla, Hsla) {
-    let ink = match status {
-        "Succeeded" => diff_foreground(true),
-        "Failed" => diff_foreground(false),
-        "Queued" | "Running" => accent_color(),
-        _ => return (content(0.55), content(0.08)),
-    };
-    let mut fill = ink;
-    fill.a = 0.12;
-    (ink, fill)
-}
-
 struct Owner {
     name: String,
     cwd: String,
@@ -167,6 +218,9 @@ pub(crate) struct Runs {
     focus: FocusHandle,
     generation: u64,
     ticker: Option<Task<()>>,
+    search: Entity<Input>,
+    query: String,
+    _search_changed: Subscription,
 }
 
 impl EventEmitter<Event> for Runs {}
@@ -179,6 +233,11 @@ impl Focusable for Runs {
 
 impl Runs {
     pub(crate) fn new(service: Arc<Mutex<Service>>, cx: &mut Context<Self>) -> Self {
+        let search = cx.new(|cx| Input::field("Search runs", "Search runs", content(0.35), cx));
+        let search_changed = cx.subscribe(&search, |this, search, _: &input::Changed, cx| {
+            let query = search.read(cx).content.to_string();
+            this.set_query(query, cx);
+        });
         let mut runs = Self {
             service,
             runs: Vec::new(),
@@ -189,6 +248,9 @@ impl Runs {
             focus: cx.focus_handle(),
             generation: 0,
             ticker: None,
+            search,
+            query: String::new(),
+            _search_changed: search_changed,
         };
         runs.refresh(cx);
         runs
@@ -286,6 +348,14 @@ impl Runs {
         &self.filter
     }
 
+    /// Narrows the list to runs whose words contain `query`.
+    pub(crate) fn set_query(&mut self, query: String, cx: &mut Context<Self>) {
+        if self.query != query {
+            self.query = query;
+            cx.notify();
+        }
+    }
+
     /// The view came on screen: reload now and every 30 seconds after.
     pub(crate) fn shown(&mut self, cx: &mut Context<Self>) {
         self.refresh(cx);
@@ -369,8 +439,10 @@ impl Runs {
                     status: status_chip(run),
                     error: run.error.clone().filter(|error| !error.trim().is_empty()),
                     session: run.session_id.clone(),
+                    duration: duration(run),
                 })
             })
+            .filter(|row| row.matches(&self.query))
             .collect()
     }
 
@@ -386,58 +458,32 @@ impl Runs {
         }
     }
 
-    fn pill(id: &'static str, text: String) -> AnyElement {
-        div()
-            .debug_selector(move || id.into())
-            .relative()
-            .h(px(24.))
-            .px(px(10.))
-            .flex()
-            .items_center()
-            .rounded_full()
-            .border_1()
-            .border_color(content(modal::BORDER))
-            .child(modal::surface(11.))
-            .child(
-                div()
-                    .relative()
-                    .text_size(px(12.))
-                    .text_color(content(0.75))
-                    .child(text),
-            )
-            .into_any_element()
-    }
-
+    /// A filter option: one segment of the project or status control. A
+    /// status segment leads with its tone's dot; `aria` names it in full
+    /// where the word alone would be vague.
+    #[allow(clippy::too_many_arguments)]
     fn chip(
         &self,
         id: String,
         label: String,
+        aria: String,
+        dot: Option<glass::Tone>,
         selected: bool,
         filter: RunsFilter,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selector = id.clone();
-        div()
-            .id(SharedString::from(id))
-            .debug_selector(move || selector.clone())
-            .role(Role::Button)
-            .aria_label(label.clone())
-            .aria_selected(selected)
-            .cursor_pointer()
-            .h(px(26.))
-            .px(px(10.))
-            .flex()
-            .items_center()
-            .rounded_full()
-            .border_1()
-            .border_color(content(if selected { 0.2 } else { modal::BORDER }))
-            .text_size(px(12.))
-            .text_color(content(if selected { 1. } else { 0.6 }))
-            .when(selected, |d| d.bg(content(0.1)))
-            .hover(|s| s.bg(content(0.08)).text_color(content(1.)))
-            .child(label)
-            .on_click(cx.listener(move |this, _, _, cx| this.set_filter(filter.clone(), cx)))
-            .into_any_element()
+        let id = SharedString::from(id);
+        match dot {
+            Some(tone) => glass::dot_segment(id, label, selected, tone),
+            None => glass::segment(id, label, selected),
+        }
+        .debug_selector(move || selector.clone())
+        .role(Role::Button)
+        .aria_label(aria)
+        .aria_selected(selected)
+        .on_click(cx.listener(move |this, _, _, cx| this.set_filter(filter.clone(), cx)))
+        .into_any_element()
     }
 
     /// What the automation chip names: the automation's own name, the one
@@ -452,11 +498,16 @@ impl Runs {
         })
     }
 
+    /// One glass toolbar: the project control, the status control, the
+    /// search field and, when the page was opened from an automation, the
+    /// chip that clears it.
     fn filters(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = self.filter.clone();
         let mut projects = vec![self.chip(
             "runs-filter-project-all".into(),
             "All projects".into(),
+            "All projects".into(),
+            None,
             current.project.is_none(),
             RunsFilter {
                 project: None,
@@ -466,9 +517,12 @@ impl Runs {
         )];
         for (index, project) in self.projects().into_iter().enumerate() {
             let selected = current.project.as_ref() == Some(&project);
+            let name = crate::workspace::project_name(&project);
             projects.push(self.chip(
                 format!("runs-filter-project-{index}"),
-                crate::workspace::project_name(&project),
+                name.clone(),
+                name,
+                None,
                 selected,
                 RunsFilter {
                     project: Some(project),
@@ -478,18 +532,24 @@ impl Runs {
             ));
         }
         let statuses = [
-            (None, "All statuses"),
-            (Some("running"), "Running"),
-            (Some("succeeded"), "Succeeded"),
-            (Some("failed"), "Failed"),
-            (Some("cancelled"), "Cancelled"),
-            (Some("skipped"), "Skipped"),
+            (None, "All", None),
+            (Some("running"), "Running", Some(glass::Tone::Running)),
+            (Some("succeeded"), "Succeeded", Some(glass::Tone::Ok)),
+            (Some("failed"), "Failed", Some(glass::Tone::Bad)),
+            (Some("cancelled"), "Cancelled", None),
+            (Some("skipped"), "Skipped", None),
         ]
         .into_iter()
-        .map(|(status, label)| {
+        .map(|(status, label, dot)| {
             self.chip(
                 format!("runs-filter-status-{}", status.unwrap_or("all")),
                 label.into(),
+                if status.is_none() {
+                    "All statuses".into()
+                } else {
+                    label.into()
+                },
+                dot,
                 current.status == status,
                 RunsFilter {
                     status,
@@ -502,31 +562,50 @@ impl Runs {
         // A filter set from an automation's page shows what it keeps and the
         // way back to every automation.
         let automation = self.automation_label().map(|name| {
-            self.chip(
+            glass::segmented().child(self.chip(
                 "runs-filter-automation".into(),
                 format!("{name}  \u{d7}"),
+                format!("Showing {name} only. Show every automation"),
+                None,
                 true,
                 RunsFilter {
                     automation: None,
                     ..current.clone()
                 },
                 cx,
-            )
+            ))
         });
-        div()
+        glass::card()
+            .rounded(px(12.))
+            .p(px(8.))
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(px(6.))
+            .gap(px(10.))
+            // One automation lives in one project, so while its chip shows
+            // the project control would change nothing.
+            .when(automation.is_none(), |d| {
+                d.child(glass::segmented().flex_wrap().children(projects))
+            })
             .children(automation)
-            .children(projects)
-            .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(content(0.1)))
-            .children(statuses)
+            .child(glass::segmented().flex_wrap().children(statuses))
+            .child(
+                glass::field()
+                    .debug_selector(|| "runs-search".into())
+                    .ml_auto()
+                    // Shrinks before it wraps under the status control.
+                    .flex_1()
+                    .min_w(px(160.))
+                    .max_w(px(220.))
+                    .child(icon("search", 14.).text_color(content(0.45)))
+                    .child(div().flex_1().min_w_0().child(self.search.clone())),
+            )
             .into_any_element()
     }
 
-    fn row(&self, row: RunRow, cx: &mut Context<Self>) -> AnyElement {
-        let (ink, fill) = chip_colors(row.status);
+    fn row(&self, row: RunRow, first: bool, last: bool, cx: &mut Context<Self>) -> AnyElement {
+        const GROUP: &str = "runs-row";
+        let tone = glass::Tone::of_status(row.status);
         let open = row.can_open();
         let run_id = row.id.clone();
         let open_id = format!("runs-open-{}", row.id);
@@ -534,16 +613,74 @@ impl Runs {
             Some(item) => format!("{} · {item}", row.trigger),
             None => row.trigger.clone(),
         };
-        let owner = match &row.project {
-            Some(project) => format!(
-                "{} · {}",
-                row.automation,
-                crate::workspace::project_name(project)
-            ),
-            None => row.automation.clone(),
+        let owner = [
+            Some(row.automation.clone()),
+            row.project.as_deref().map(crate::workspace::project_name),
+            row.duration.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+        // The trigger reads quieter than the item it fired for.
+        let title = div()
+            .min_w_0()
+            .flex()
+            .gap(px(4.))
+            .text_size(px(13.))
+            .line_height(px(18.))
+            .map(|d| match &row.item {
+                Some(item) => d
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(content(0.64))
+                            .child(format!("{} ·", row.trigger)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(content(1.))
+                            .child(item.clone()),
+                    ),
+                None => d.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(content(1.))
+                        .child(row.trigger.clone()),
+                ),
+            });
+        let button = if open {
+            glass::button(
+                SharedString::from(open_id.clone()),
+                "Open thread",
+                glass::Button::Glass,
+            )
+            .h(px(28.))
+            .px(px(11.))
+            .text_size(px(12.))
+            .child(icon("external-link", 12.).text_color(content(0.9)))
+            .aria_label("Open thread")
+        } else {
+            div()
+                .id(SharedString::from(open_id.clone()))
+                .h(px(28.))
+                .px(px(11.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .rounded(px(9.))
+                .text_size(px(12.))
+                .whitespace_nowrap()
+                .text_color(content(0.3))
+                .child("Open thread")
+                .aria_label("Open thread, unavailable: this run has no thread")
         };
         div()
             .id(SharedString::from(format!("runs-row-{}", row.id)))
+            .group(GROUP)
             .debug_selector({
                 let id = row.id.clone();
                 move || format!("runs-row-{id}")
@@ -551,19 +688,23 @@ impl Runs {
             .role(Role::ListItem)
             .aria_label(format!("{what}, {}", row.status))
             .px(px(16.))
-            .py(px(10.))
-            .border_t_1()
-            .border_color(content(0.06))
+            .py(px(11.))
+            .when(!first, |d| d.border_t_1().border_color(glass::hairline()))
+            // The card clips square, so the end rows round their own hover
+            // fill to the card's inner corner.
+            .when(first, |d| d.rounded_t(px(13.)))
+            .when(last, |d| d.rounded_b(px(13.)))
+            .hover(|s| s.bg(glass::hover_fill()))
             .flex()
-            .items_start()
-            .gap(px(16.))
+            .items_center()
+            .gap(px(14.))
             .child(
                 div()
-                    .w(px(44.))
+                    .w(px(52.))
                     .flex_shrink_0()
-                    .pt(px(1.))
+                    .font_family(crate::fonts::monospace())
                     .text_size(px(12.))
-                    .text_color(content(0.5))
+                    .text_color(content(0.64))
                     .child(clock(row.created_at)),
             )
             .child(
@@ -573,25 +714,19 @@ impl Runs {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(13.))
-                            .text_color(content(1.))
-                            .child(what),
-                    )
+                    .child(title)
                     .child(
                         div()
                             .truncate()
                             .text_size(px(12.))
-                            .text_color(content(0.5))
+                            .text_color(content(0.45))
                             .child(owner),
                     )
                     .when_some(row.error.clone(), |d, error| {
                         d.child(
                             div()
-                                .text_size(px(11.))
-                                .text_color(content(0.45))
+                                .text_size(px(12.))
+                                .text_color(glass::Tone::Bad.ink().opacity(0.85))
                                 .line_clamp(2)
                                 .text_ellipsis()
                                 .child(error),
@@ -600,115 +735,112 @@ impl Runs {
             )
             .child(
                 div()
+                    .w(px(120.))
                     .flex_shrink_0()
-                    .h(px(20.))
-                    .px(px(8.))
                     .flex()
-                    .items_center()
-                    .rounded_full()
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ink)
-                    .bg(fill)
-                    .child(row.status),
+                    .child(glass::status(row.status, tone)),
             )
             .child(
                 div()
-                    .id(SharedString::from(open_id.clone()))
-                    .debug_selector(move || open_id.clone())
-                    .role(Role::Button)
-                    .aria_label(if open {
-                        "Open thread"
-                    } else {
-                        "Open thread, unavailable: this run has no thread"
-                    })
+                    .w(px(110.))
                     .flex_shrink_0()
-                    .h(px(22.))
-                    .px(px(8.))
                     .flex()
-                    .items_center()
-                    .rounded(px(6.))
-                    .text_size(px(12.))
-                    .text_color(content(if open { 0.8 } else { 0.3 }))
-                    .when(open, |d| {
-                        d.cursor_pointer()
-                            .hover(|s| s.bg(content(0.08)).text_color(content(1.)))
-                    })
-                    .child("Open thread")
-                    .on_click(cx.listener(move |this, _, _, cx| this.open_thread(&run_id, cx))),
+                    .justify_end()
+                    // Shown on the row under the pointer, like the mock.
+                    .opacity(0.)
+                    .group_hover(GROUP, |s| s.opacity(1.))
+                    .child(
+                        button
+                            .debug_selector(move || open_id.clone())
+                            .role(Role::Button)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.open_thread(&run_id, cx)),
+                            ),
+                    ),
             )
             .into_any_element()
     }
 
+    /// The empty state's sentence and hint, or `None` when rows show.
+    pub(crate) fn empty_text(&self, rows_shown: bool) -> Option<(String, String)> {
+        if rows_shown {
+            return None;
+        }
+        Some(if self.loading {
+            ("Loading runs…".to_string(), String::new())
+        } else if let Some(error) = &self.error {
+            (format!("Could not load runs: {error}"), String::new())
+        } else if self.runs.is_empty() {
+            (
+                "No automation runs yet.".to_string(),
+                "Runs show here the moment an automation starts.".to_string(),
+            )
+        } else if !self.query.trim().is_empty() {
+            (
+                format!("No runs match \u{201c}{}\u{201d}.", self.query.trim()),
+                "Try another word, or clear the search.".to_string(),
+            )
+        } else {
+            (
+                "No runs match these filters.".to_string(),
+                "Choose All projects or All statuses to see more.".to_string(),
+            )
+        })
+    }
+
+    /// Runs grouped by day, one glass card per day under its label.
     fn panel(&self, rows: Vec<RunRow>, today_start: i64, cx: &mut Context<Self>) -> AnyElement {
-        let mut panel = div()
+        let column = div()
             .debug_selector(|| "runs-panel".into())
-            .relative()
             .w_full()
-            .rounded(px(10.))
-            .border_1()
-            .border_color(content(modal::BORDER))
-            .overflow_hidden()
-            .child(modal::surface(9.));
-        if rows.is_empty() {
-            let message = if self.loading {
-                "Loading runs…"
-            } else if let Some(error) = &self.error {
-                return panel
-                    .child(
-                        div()
-                            .relative()
-                            .px(px(16.))
-                            .py(px(48.))
-                            .text_center()
-                            .text_size(px(12.))
-                            .text_color(content(0.5))
-                            .child(format!("Could not load runs: {error}")),
-                    )
-                    .into_any_element();
-            } else if self.runs.is_empty() {
-                "No automation runs yet. Runs show here the moment an automation starts."
-            } else {
-                "No runs match these filters."
-            };
-            return panel
+            .flex()
+            .flex_col()
+            .gap(px(20.));
+        if let Some((title, hint)) = self.empty_text(!rows.is_empty()) {
+            return column
                 .child(
-                    div()
-                        .relative()
-                        .px(px(16.))
-                        .py(px(48.))
-                        .text_center()
-                        .text_size(px(12.))
-                        .text_color(content(0.45))
-                        .child(message),
+                    glass::card()
+                        .debug_selector(|| "runs-empty".into())
+                        .py(px(56.))
+                        .child(glass::empty_state("clock", title, hint)),
                 )
                 .into_any_element();
         }
-        let mut day: Option<String> = None;
-        for row in rows {
-            let label = day_label(row.created_at, today_start);
-            if day.as_ref() != Some(&label) {
-                panel = panel.child(
+        column
+            .children(group_by_day(rows, today_start).into_iter().enumerate().map(
+                |(index, (label, rows))| {
+                    let count = rows.len();
                     div()
-                        .relative()
-                        .h(px(30.))
-                        .px(px(16.))
                         .flex()
-                        .items_end()
-                        .pb(px(4.))
-                        .when(day.is_some(), |d| {
-                            d.border_t_1().border_color(content(0.06))
-                        })
-                        .text_size(px(12.))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(content(0.5))
-                        .child(label.clone()),
-                );
-                day = Some(label);
-            }
-            panel = panel.child(div().relative().child(self.row(row, cx)));
-        }
-        panel.into_any_element()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .px(px(4.))
+                                .flex()
+                                .items_baseline()
+                                .gap(px(10.))
+                                .child(glass::eyebrow(label).text_color(content(0.92)))
+                                .child(
+                                    div()
+                                        .text_size(px(12.))
+                                        .text_color(content(0.45))
+                                        .child(run_count(count)),
+                                ),
+                        )
+                        .child(
+                            glass::card()
+                                .debug_selector(move || format!("runs-day-{index}"))
+                                .overflow_hidden()
+                                .children(
+                                    rows.into_iter()
+                                        .enumerate()
+                                        .map(|(i, row)| self.row(row, i == 0, i + 1 == count, cx)),
+                                ),
+                        )
+                },
+            ))
+            .into_any_element()
     }
 }
 
@@ -727,36 +859,56 @@ impl Render for Runs {
             .child(
                 div()
                     .w_full()
-                    .max_w(px(1024.))
+                    .max_w(px(1040.))
                     .mx_auto()
-                    .px(px(32.))
-                    .pt(px(20.))
+                    .px(px(40.))
+                    .pt(px(26.))
                     .pb(px(40.))
                     .flex()
                     .flex_col()
-                    .gap(px(16.))
+                    .gap(px(18.))
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .gap(px(8.))
+                            .flex_wrap()
+                            .items_end()
+                            .gap(px(16.))
+                            .child(
+                                glass::page_header(
+                                    "Runs",
+                                    "Every automation run across your projects, newest first.",
+                                )
+                                .flex_1()
+                                .min_w(px(260.)),
+                            )
                             .child(
                                 div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(px(20.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Runs"),
-                            )
-                            .child(Self::pill(
-                                "runs-count-running",
-                                format!("{running} running"),
-                            ))
-                            .child(Self::pill("runs-count-today", format!("{today} today")))
-                            .child(Self::pill(
-                                "runs-count-failed",
-                                format!("{failed} failed today"),
-                            )),
+                                    .flex()
+                                    .gap(px(8.))
+                                    .child(glass::stat(
+                                        "runs-count-running",
+                                        running.to_string(),
+                                        "Running",
+                                        glass::Tone::Running.ink(),
+                                    ))
+                                    .child(glass::stat(
+                                        "runs-count-today",
+                                        today.to_string(),
+                                        "Today",
+                                        content(1.),
+                                    ))
+                                    .child(glass::stat(
+                                        "runs-count-failed",
+                                        failed.to_string(),
+                                        "Failed today",
+                                        // Green while nothing failed today.
+                                        if failed > 0 {
+                                            glass::Tone::Bad.ink()
+                                        } else {
+                                            glass::Tone::Ok.ink()
+                                        },
+                                    )),
+                            ),
                     )
                     // Rows from the last good load stay; the failure is said.
                     .when_some(
@@ -765,10 +917,9 @@ impl Render for Runs {
                             d.child(
                                 div()
                                     .debug_selector(|| "runs-refresh-error".into())
-                                    .mt(px(-8.))
                                     .truncate()
                                     .text_size(px(12.))
-                                    .text_color(content(0.45))
+                                    .text_color(glass::Tone::Bad.ink())
                                     .child(format!("Could not refresh runs: {error}")),
                             )
                         },

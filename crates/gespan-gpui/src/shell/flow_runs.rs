@@ -171,7 +171,9 @@ impl Shell {
         self.with_flow_host(cx, |host, driver| {
             host.resolve_approval(driver, run_id, approved, note)
         })
-        .ok_or_else(|| STILL_OPENING.into())
+        .ok_or_else(|| STILL_OPENING.to_owned())?;
+        self.keep_flow_answer(run_id, approved, note);
+        Ok(())
     }
 
     pub(crate) fn cancel_flow_run(
@@ -493,7 +495,11 @@ impl Shell {
             });
             let result = work.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok(()) => this.refresh_flows_view(cx),
+                Ok(()) => {
+                    this.refresh_flows_view(cx);
+                    // The run may have started or stopped waiting for approval.
+                    this.refresh_my_tasks(cx);
+                }
                 Err(error) => {
                     this.error = Some(format!("Could not save Flow run: {error}"));
                     cx.notify();

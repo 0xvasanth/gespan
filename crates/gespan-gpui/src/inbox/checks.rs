@@ -6,7 +6,7 @@ use super::{
     Event, Inbox, Tab,
     ui::{action, error, message},
 };
-use crate::{right_panel::spinner, runtime::locked, theme::*};
+use crate::{glass, right_panel::spinner, runtime::locked, theme::*};
 use gespan_core::inbox::{
     Check, Checks, Item, Service,
     ci_repair::{
@@ -436,7 +436,7 @@ impl Inbox {
             .min_h_0()
             .flex_1()
             .overflow_y_scroll()
-            .px(px(12.))
+            .px(px(28.))
             .py(px(20.));
         let Some(checks) = self.checks.clone() else {
             return root
@@ -489,27 +489,22 @@ impl Inbox {
                 div()
                     .child(
                         div()
-                            .mt(px(12.))
-                            .mb(px(6.))
-                            .px(px(8.))
+                            .mt(px(14.))
+                            .mb(px(8.))
+                            .px(px(4.))
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .text_size(px(12.))
-                            .text_color(content(0.55))
-                            .child(state_label(group.state))
-                            .child(
-                                div()
-                                    .text_size(px(10.))
-                                    .text_color(content(0.35))
-                                    .child(group.checks.len().to_string()),
-                            ),
+                            .child(glass::eyebrow(state_label(group.state)))
+                            .child(glass::count(group.checks.len(), false)),
                     )
-                    .children(group.checks.iter().map(|check| {
-                        let row = self.check_row(ix, check, &checks, &groups, &item, cx);
-                        ix += 1;
-                        row
-                    }))
+                    .child(glass::card().p(px(4.)).flex().flex_col().children(
+                        group.checks.iter().map(|check| {
+                            let row = self.check_row(ix, check, &checks, &groups, &item, cx);
+                            ix += 1;
+                            row
+                        }),
+                    ))
             }))
             .when(
                 filter == CheckFilter::Attention && counts.pass + counts.skipping > 0,
@@ -1112,18 +1107,17 @@ impl Inbox {
                                 format!("inbox-check-repair-mark-{ix}"),
                             ))
                             .child(repair.state.label()),
-                        None => div()
-                            .flex_shrink_0()
-                            .text_size(px(11.))
-                            .text_color(ink)
-                            .child(state_label(&check.state)),
+                        None => glass::status(state_label(&check.state), state_tone(&check.state))
+                            .h(px(20.)),
                     })
                     .when_some(duration, |d, text| {
                         d.child(
                             div()
                                 .flex_shrink_0()
-                                .text_size(px(10.))
-                                .text_color(content(0.4))
+                                .min_w(px(44.))
+                                .text_right()
+                                .text_size(px(11.5))
+                                .text_color(content(0.5))
                                 .child(text),
                         )
                     })
@@ -1331,6 +1325,15 @@ fn row_button(id: String, label: String, name: &'static str) -> Stateful<Div> {
         .hover(|s| s.bg(content(0.07)))
         .child(icon(name, 13.))
 }
+/// The pill tone a check's state shows in.
+pub(super) fn state_tone(state: &str) -> glass::Tone {
+    match state {
+        "pass" => glass::Tone::Ok,
+        "fail" => glass::Tone::Bad,
+        "pending" => glass::Tone::Running,
+        _ => glass::Tone::Muted,
+    }
+}
 fn check_mark(state: &str) -> (&'static str, Hsla) {
     match state {
         "pass" => ("check-circle", rgb(0x4ade80).into()),
@@ -1513,7 +1516,8 @@ mod tests {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds::new(
                         point(px(0.), px(0.)),
-                        size(px(1100.), px(800.)),
+                        // Tall enough for every row to sit above the ask bar.
+                        size(px(1100.), px(1000.)),
                     ))),
                     ..Default::default()
                 },

@@ -1,0 +1,79 @@
+[
+  {
+    "diff": "@@ -1,3 +1,3 @@\n keep\n--- old sql comment\n keep2\n+added\n",
+    "new_path": "docs/query.sql",
+    "old_path": "docs/query.sql",
+    "a_mode": "100644",
+    "b_mode": "100644",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": false,
+    "generated_file": false
+  },
+  {
+    "diff": "@@ -1,2 +1,2 @@\n x\n-y\n+Y\n",
+    "new_path": "docs/with space.md",
+    "old_path": "docs/with space.md",
+    "a_mode": "100644",
+    "b_mode": "100644",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": false,
+    "generated_file": false
+  },
+  {
+    "diff": "@@ -1,3 +1,4 @@\n a\n b\n-c\n\\ No newline at end of file\n+c\n+d\n\\ No newline at end of file\n",
+    "new_path": "notes.txt",
+    "old_path": "notes.txt",
+    "a_mode": "100644",
+    "b_mode": "100644",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": false,
+    "generated_file": false
+  },
+  {
+    "diff": "@@ -3,7 +3,7 @@ r 2\n r 3\n r 4\n r 5\n-r 6\n+r 6 renamed edit\n r 7\n r 8\n r 9\n",
+    "new_path": "src/after.rs",
+    "old_path": "src/before.rs",
+    "a_mode": "100644",
+    "b_mode": "100644",
+    "new_file": false,
+    "renamed_file": true,
+    "deleted_file": false,
+    "generated_file": false
+  },
+  {
+    "diff": "@@ -1,8 +1,9 @@\n line 1\n line 2\n-line 3\n+line 3 changed\n line 4\n line 5\n+inserted after 5\n line 6\n line 7\n line 8\n@@ -27,13 +28,12 @@ line 26\n line 27\n line 28\n line 29\n-line 30\n line 31\n line 32\n line 33\n line 34\n line 35\n-line 36\n+line 37 changed\n line 37\n line 38\n line 39\n",
+    "new_path": "src/lib.rs",
+    "old_path": "src/lib.rs",
+    "a_mode": "100644",
+    "b_mode": "100644",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": false,
+    "generated_file": false
+  },
+  {
+    "diff": "@@ -0,0 +1,3 @@\n+brand\n+new\n+file\n",
+    "new_path": "src/new.rs",
+    "old_path": "src/new.rs",
+    "a_mode": "0",
+    "b_mode": "100644",
+    "new_file": true,
+    "renamed_file": false,
+    "deleted_file": false,
+    "generated_file": false
+  },
+  {
+    "diff": "@@ -1,2 +0,0 @@\n-gone 1\n-gone 2\n",
+    "new_path": "src/old.rs",
+    "old_path": "src/old.rs",
+    "a_mode": "100644",
+    "b_mode": "0",
+    "new_file": false,
+    "renamed_file": false,
+    "deleted_file": true,
+    "generated_file": false
+  }
+]

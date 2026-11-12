@@ -1,6 +1,7 @@
 //! Native counterpart of AutomationsView: persisted list, example gallery,
 //! trigger editor and run history. All scheduling lives in gespan-core.
 use crate::{
+    glass,
     input::{self, Input},
     pickers::{ModelList, ModelPicked, ProjectPicked, ProjectPicker, cached_model_name},
     popover::{Anchor, AnchorSlot, popover},
@@ -10,7 +11,7 @@ use crate::{
 use gespan_core::{
     automations::{
         self, Automation, AutomationAction, AutomationRun, AutomationTrigger, AutomationUpsert,
-        DueAutomationRun, Service,
+        DueAutomationRun, Service, TriggerProperty,
     },
     provider::Kind,
     session_groups::Folder,
@@ -21,7 +22,8 @@ use gpui::{
 };
 use serde::Deserialize;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -32,6 +34,9 @@ mod gallery;
 mod layout;
 #[cfg(test)]
 mod layout_tests;
+mod review_setup;
+#[cfg(test)]
+mod review_setup_tests;
 mod trigger_menu;
 
 /// Event providers and schedules are separate from agent harness branding.
@@ -58,6 +63,11 @@ pub(crate) enum Event {
     Close,
     Launch(Box<DueAutomationRun>),
     OpenSession(String),
+    /// The review setup sheet's "Sign in": run `gh auth login` in a
+    /// terminal, then call `recheck_github` once it exits.
+    SignInGithub {
+        cwd: String,
+    },
 }
 
 /// "See all in Runs": open the Runs page filtered to this automation. Its
@@ -80,12 +90,23 @@ struct Template {
     prompt: String,
     trigger: serde_json::Value,
     trigger_label: String,
+    /// A quick setup the card opens instead of the editor: "review".
+    #[serde(default)]
+    setup: Option<String>,
 }
 struct TriggerFields {
     id: String,
     time: Entity<Input>,
-    repos: Entity<Input>,
-    actor: Entity<Input>,
+    /// One field per property the trigger's kind declares, in its order.
+    properties: Vec<(TriggerProperty, Entity<Input>)>,
+}
+impl TriggerFields {
+    fn property(&self, key: &str) -> Option<&Entity<Input>> {
+        self.properties
+            .iter()
+            .find(|(property, _)| property.key == key)
+            .map(|(_, input)| input)
+    }
 }
 struct Editor {
     draft: AutomationUpsert,
@@ -116,6 +137,12 @@ enum Choice {
     Minute(String),
     Weekday(String),
     ModelSetting(String),
+    /// The review setup sheet's sentence.
+    SetupRepo,
+    SetupWhich,
+    SetupResults,
+    /// What a review automation does with its review.
+    Results,
 }
 struct ChoiceMenu {
     field: Choice,
@@ -158,12 +185,26 @@ pub(crate) struct Automations {
     project_picker: Option<Entity<ProjectPicker>>,
     picker_subscription: Option<Subscription>,
     project_anchor: AnchorSlot,
+    /// The editor's project control, a Tab stop that the picker hands focus
+    /// back to.
+    project_focus: FocusHandle,
+    /// The editor's project's repositories per forge, for prefilling.
+    repositories: HashMap<String, Vec<String>>,
+    repositories_cwd: String,
+    /// Triggers whose Repository was prefilled (or had one already).
+    prefilled: HashSet<String>,
+    /// Inputs whose next change is a prefill, not an edit.
+    quiet: HashSet<gpui::EntityId>,
     model_anchor: AnchorSlot,
     trigger_anchor: AnchorSlot,
     trigger_menu: Option<Entity<trigger_menu::TriggerMenu>>,
     trigger_subscription: Option<Subscription>,
     trigger_connections: HashMap<String, bool>,
     request_generation: u64,
+    /// The two-click review setup, shown in place of the gallery.
+    review_setup: Option<review_setup::ReviewSetup>,
+    review_generation: u64,
+    github_probe: review_setup::GithubProbe,
 }
 impl EventEmitter<Event> for Automations {}
 impl EventEmitter<OpenRuns> for Automations {}
@@ -216,12 +257,20 @@ impl Automations {
             project_picker: None,
             picker_subscription: None,
             project_anchor: AnchorSlot::default(),
+            project_focus: cx.focus_handle().tab_stop(true),
+            repositories: HashMap::new(),
+            repositories_cwd: String::new(),
+            prefilled: HashSet::new(),
+            quiet: HashSet::new(),
             model_anchor: AnchorSlot::default(),
             trigger_anchor: AnchorSlot::default(),
             trigger_menu: None,
             trigger_subscription: None,
             trigger_connections: HashMap::new(),
             request_generation: 0,
+            review_setup: None,
+            review_generation: 0,
+            github_probe: review_setup::github_probe(),
         };
         this.refresh(cx);
         this
@@ -237,6 +286,18 @@ impl Automations {
     ) {
         self.appearances = appearances;
         cx.notify();
+    }
+    #[cfg(test)]
+    pub(crate) fn editing(&self) -> bool {
+        self.editor.is_some() && !self.gallery
+    }
+    #[cfg(test)]
+    pub(crate) fn project_picker_open(&self) -> bool {
+        self.project_picker.is_some()
+    }
+    /// Whether keyboard focus is in this page, a picker it opened included.
+    pub(crate) fn holds_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
     }
     pub(crate) fn set_pilots(&mut self, pilots: Vec<(String, String)>, cx: &mut Context<Self>) {
         if self.pilots != pilots {
@@ -263,6 +324,23 @@ impl Automations {
             .get(path)
             .map_or_else(|| project_name(path), |appearance| appearance.label(path))
     }
+    /// Above the project picker of a saved automation: it stays where it is,
+    /// and picking makes a copy.
+    fn duplicate_hint(&self) -> Option<String> {
+        let editor = self.editor.as_ref().filter(|e| e.saved)?;
+        Some(format!(
+            "This automation stays in {}. Pick a project to duplicate it into.",
+            self.project_label(&editor.draft.cwd)
+        ))
+    }
+    /// What the editor's project control says to a screen reader: the
+    /// project this automation runs in, or that none is chosen yet.
+    pub(super) fn project_control_label(&self) -> String {
+        match self.editor.as_ref().map(|e| e.draft.cwd.as_str()) {
+            Some(cwd) if !cwd.is_empty() => format!("Project: {}", self.project_label(cwd)),
+            _ => "Project: none chosen".into(),
+        }
+    }
     fn project_mark(&self, path: &str, side: f32) -> AnyElement {
         crate::project_settings::project_icon(
             &self.appearances.get(path).cloned().unwrap_or_default(),
@@ -276,6 +354,9 @@ impl Automations {
         projects: Vec<String>,
         cx: &mut Context<Self>,
     ) {
+        if self.cwd != cwd {
+            self.review_setup = None;
+        }
         self.cwd = cwd;
         self.projects = projects;
         self.load_folders(cx);
@@ -283,6 +364,7 @@ impl Automations {
     }
     fn show_gallery(&mut self, cx: &mut Context<Self>) {
         self.editor = None;
+        self.review_setup = None;
         self.selected = None;
         self.runs.clear();
         self.gallery = true;
@@ -460,6 +542,7 @@ impl Automations {
             }));
         }
         let last_pilot = draft.action.pilot_id().map(str::to_string);
+        self.review_setup = None;
         self.editor = Some(Editor {
             draft,
             last_pilot,
@@ -508,26 +591,27 @@ impl Automations {
                     input
                 })
             };
-            let time = field("Trigger time", "09:00", trigger.time, cx);
-            let repos = field(
-                "Trigger repositories",
-                "Any repository",
-                trigger
-                    .repos
-                    .iter()
-                    .chain(std::iter::once(&trigger.repo))
-                    .filter(|s| !s.is_empty())
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                cx,
-            );
-            let actor = field("Trigger actor", "Anyone", trigger.actor, cx);
-            for input in [&time, &repos, &actor] {
+            let time = field("Trigger time", "09:00", trigger.time.clone(), cx);
+            let properties = automations::trigger_properties(&trigger.kind)
+                .iter()
+                .map(|property| {
+                    let input = field(
+                        property.label,
+                        property.placeholder,
+                        trigger.property(property.key),
+                        cx,
+                    );
+                    (*property, input)
+                })
+                .collect::<Vec<_>>();
+            for input in std::iter::once(&time).chain(properties.iter().map(|(_, input)| input)) {
                 editor._subscriptions.push(cx.subscribe(
                     input,
-                    |this, _, _: &input::Changed, cx| {
-                        if let Some(e) = &mut this.editor {
+                    |this, input, _: &input::Changed, cx| {
+                        // A prefilled Repository is not the user's edit.
+                        if !this.quiet.remove(&input.entity_id())
+                            && let Some(e) = &mut this.editor
+                        {
                             e.dirty = true;
                         }
                         cx.notify();
@@ -537,9 +621,113 @@ impl Automations {
             editor.fields.push(TriggerFields {
                 id: trigger.id,
                 time,
-                repos,
-                actor,
+                properties,
             });
+        }
+        self.load_repositories(cx);
+    }
+    /// The first problem with a trigger property, as (trigger id, key, why).
+    pub(super) fn property_error(&self, cx: &App) -> Option<(String, &'static str, &'static str)> {
+        let editor = self.editor.as_ref()?;
+        editor.fields.iter().find_map(|fields| {
+            fields.properties.iter().find_map(|(property, input)| {
+                automations::trigger_property_error(property, &input.read(cx).content)
+                    .map(|why| (fields.id.clone(), property.key, why))
+            })
+        })
+    }
+    /// Looks up the editor's project's repositories for each forge its
+    /// triggers use, to prefill their Repository.
+    fn load_repositories(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let cwd = editor.draft.cwd.clone();
+        if self.repositories_cwd != cwd {
+            self.repositories_cwd = cwd.clone();
+            self.repositories.clear();
+        }
+        let Some(data_dir) = self
+            .database
+            .as_ref()
+            .and_then(|database| locked(database).ok()?.data_dir().map(PathBuf::from))
+        else {
+            self.prefill_repositories(cx);
+            return;
+        };
+        let mut wanted: Vec<String> = editor
+            .draft
+            .triggers
+            .iter()
+            .flatten()
+            .filter(|trigger| {
+                automations::trigger_properties(&trigger.kind)
+                    .iter()
+                    .any(|p| p.kind == automations::TriggerPropertyKind::Repository)
+            })
+            .map(|trigger| trigger.kind.clone())
+            .filter(|kind| !self.repositories.contains_key(kind))
+            .collect();
+        wanted.sort();
+        wanted.dedup();
+        for provider in wanted {
+            // Asked once per project and forge; a failure leaves it empty.
+            self.repositories.insert(provider.clone(), Vec::new());
+            let (data_dir, project, expected) =
+                (data_dir.clone(), PathBuf::from(&cwd), cwd.clone());
+            let work = cx.background_executor().spawn(async move {
+                gespan_core::inbox::project_repositories(&data_dir, &provider, &project)
+                    .map(|repos| (provider, repos))
+            });
+            cx.spawn(async move |this, cx| {
+                let result = work.await;
+                let _ = this.update(cx, |this, cx| {
+                    if let Ok((provider, repos)) = result
+                        && this.repositories_cwd == expected
+                    {
+                        this.repositories.insert(provider, repos);
+                        this.prefill_repositories(cx);
+                    }
+                });
+            })
+            .detach();
+        }
+        self.prefill_repositories(cx);
+    }
+    /// Fills each empty Repository with the project's own repository, once
+    /// per trigger, so clearing it afterwards sticks. A saved automation with
+    /// none already matched this repository's events, so filling it in does
+    /// not count as an unsaved change.
+    pub(super) fn prefill_repositories(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        let mut filled = false;
+        for trigger in editor.draft.triggers.iter().flatten() {
+            if self.prefilled.contains(&trigger.id) {
+                continue;
+            }
+            let Some(repository) = self.repositories.get(&trigger.kind).and_then(|r| r.first())
+            else {
+                continue;
+            };
+            let Some(input) = editor
+                .fields
+                .iter()
+                .find(|f| f.id == trigger.id)
+                .and_then(|f| f.property("repository"))
+            else {
+                continue;
+            };
+            self.prefilled.insert(trigger.id.clone());
+            if input.read(cx).content.trim().is_empty() {
+                self.quiet.insert(input.entity_id());
+                input.update(cx, |input, cx| input.set_text(repository.clone(), cx));
+                filled = true;
+            }
+        }
+        if filled {
+            cx.notify();
         }
     }
     fn collected(&self, cx: &App) -> Option<AutomationUpsert> {
@@ -550,29 +738,25 @@ impl Automations {
         for trigger in draft.triggers.get_or_insert_with(Vec::new) {
             if let Some(fields) = editor.fields.iter().find(|f| f.id == trigger.id) {
                 trigger.time = fields.time.read(cx).content.trim().to_string();
-                trigger.repo.clear();
-                trigger.repos = fields
-                    .repos
-                    .read(cx)
-                    .content
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect();
-                trigger.actor = fields.actor.read(cx).content.trim().to_string();
+                for (property, input) in &fields.properties {
+                    trigger.set_property(property.key, &input.read(cx).content);
+                }
             }
         }
         draft.sync_triggers(gespan_core::time::now_ms() as i64);
         Some(draft)
     }
     fn save(&mut self, cx: &mut Context<Self>) {
-        if self.saving {
-            return;
-        }
         let Some(draft) = self.collected(cx) else {
             return;
         };
+        self.upsert(draft, cx);
+    }
+    /// Saves `draft` and opens what was saved, selected in the list.
+    fn upsert(&mut self, draft: AutomationUpsert, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         self.saving = true;
         self.error = None;
         let service = self.service.clone();
@@ -782,18 +966,25 @@ impl Automations {
         .detach();
     }
     fn choose_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(editor) = &self.editor else {
-            return;
+        // The review sheet's Model phrase, else the editor's model.
+        let (harness, model, cwd) = match (&self.review_setup, &self.editor) {
+            (Some(setup), _) => (&setup.input.harness, &setup.input.model, &setup.input.cwd),
+            (None, Some(editor)) => (
+                &editor.draft.harness,
+                &editor.draft.model,
+                &editor.draft.cwd,
+            ),
+            (None, None) => return,
         };
-        let kind = Kind::from_id(&editor.draft.harness);
+        let kind = Kind::from_id(harness);
         let profile = crate::accounts::get(cx)
-            .map(|a| a.read(cx).selected(kind, &editor.draft.cwd))
+            .map(|a| a.read(cx).selected(kind, cwd))
             .unwrap_or_default();
         let picker = cx.new(|cx| {
             ModelList::new_for(
                 kind,
-                gespan_core::store::native_model(&editor.draft.model, &editor.draft.harness),
-                &editor.draft.cwd,
+                gespan_core::store::native_model(model, harness),
+                cwd,
                 profile,
                 cx,
             )
@@ -802,23 +993,15 @@ impl Automations {
             &picker,
             window,
             |this, _, picked: &ModelPicked, window, cx| {
+                if this.review_setup.is_some() {
+                    this.set_review_model(picked.0, picked.1.clone(), cx);
+                    this.models = None;
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                    return;
+                }
                 if let Some(editor) = &mut this.editor {
-                    let current = gespan_core::store::native_model(
-                        &editor.draft.model,
-                        &editor.draft.harness,
-                    );
-                    let picked_model = picked
-                        .1
-                        .as_deref()
-                        .and_then(|model| gespan_core::store::native_model(model, picked.0.id()));
-                    if Kind::from_id(&editor.draft.harness) != picked.0 || current != picked_model {
-                        editor.draft.harness = picked.0.id().into();
-                        editor.draft.model = picked.1.clone().unwrap_or_default();
-                        editor.completion.update(cx, |completion, cx| {
-                            completion.set_provider(picked.0.id(), cx)
-                        });
-                        editor.dirty = true;
-                    }
+                    editor.set_model(picked.0, picked.1.clone(), cx);
                 }
                 this.models = None;
                 this.load_controls(cx);
@@ -832,10 +1015,13 @@ impl Automations {
         self.trigger_menu = None;
         cx.notify();
     }
+    /// Opens the project picker. A new automation picks its project; a saved
+    /// one keeps its project for good, so picking duplicates it there.
     fn choose_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = &self.editor else {
             return;
         };
+        let duplicate = editor.saved;
         let picker = cx.new(|cx| {
             ProjectPicker::new(&self.projects, &editor.draft.cwd, cx)
                 .appearance(self.appearances.clone())
@@ -843,9 +1029,12 @@ impl Automations {
         self.picker_subscription = Some(cx.subscribe_in(
             &picker,
             window,
-            |this, _, picked: &ProjectPicked, window, cx| {
+            move |this, _, picked: &ProjectPicked, window, cx| {
                 this.project_picker = None;
                 match picked {
+                    ProjectPicked::Project(path) if duplicate => {
+                        this.duplicate_into(path, cx);
+                    }
                     ProjectPicked::Project(path) => {
                         if let Some(editor) = &mut this.editor {
                             editor.draft.cwd = path.clone();
@@ -861,7 +1050,7 @@ impl Automations {
                     ProjectPicked::New => this.browse_project(cx),
                     ProjectPicked::Remote => {}
                 }
-                window.focus(&this.focus, cx);
+                window.focus(&this.project_focus, cx);
                 cx.notify();
             },
         ));
@@ -869,6 +1058,21 @@ impl Automations {
         self.project_picker = Some(picker);
         self.choice = None;
         self.trigger_menu = None;
+        cx.notify();
+    }
+    /// Opens a new, unsaved copy of the automation being edited, set to run
+    /// in `cwd`. The original stays as it is, in its own project.
+    pub(super) fn duplicate_into(&mut self, cwd: &str, cx: &mut Context<Self>) {
+        let Some(draft) = self.collected(cx) else {
+            return;
+        };
+        let copy = draft.duplicate_into(cwd);
+        self.selected = None;
+        self.runs.clear();
+        self.set_editor(copy, false, cx);
+        if let Some(editor) = &mut self.editor {
+            editor.dirty = true;
+        }
         cx.notify();
     }
     fn browse_project(&mut self, cx: &mut Context<Self>) {
@@ -887,6 +1091,10 @@ impl Automations {
                     let path = path.to_string_lossy().to_string();
                     if !this.projects.contains(&path) {
                         this.projects.push(path.clone());
+                    }
+                    if this.editor.as_ref().is_some_and(|e| e.saved) {
+                        this.duplicate_into(&path, cx);
+                        return;
                     }
                     if let Some(e) = &mut this.editor {
                         e.draft.cwd = path;
@@ -911,27 +1119,26 @@ fn project_name(path: &str) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.into())
 }
+/// A glass plate button: the page's secondary actions.
 fn button(
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
 ) -> gpui::Stateful<gpui::Div> {
-    let label: SharedString = label.into();
-    div()
-        .id(id)
-        .role(Role::Button)
-        .px(px(12.))
-        .h(px(28.))
-        .rounded(px(6.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(6.))
-        .text_size(px(12.))
-        .text_color(content(0.8))
-        .border_1()
-        .border_color(content(0.15))
-        .hover(|s| s.bg(content(0.1)).border_color(content(0.3)))
-        .child(label)
+    glass::button(id, label, glass::Button::Glass).role(Role::Button)
+}
+/// The one main answer on a sheet: Create, Save, Turn on.
+fn primary_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    glass::button(id, label, glass::Button::Primary).role(Role::Button)
+}
+/// The quiet way out: Cancel, Reset.
+fn ghost_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    glass::button(id, label, glass::Button::Ghost).role(Role::Button)
 }
 impl Render for Automations {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -948,55 +1155,61 @@ impl Render for Automations {
             .collect();
         let list = self.render_list(&visible, &query, cx);
         let aside = div()
-            .w(px(320.))
+            .w(px(340.))
             .flex_shrink_0()
             .border_r_1()
-            .border_color(content(0.07))
+            .border_color(glass::hairline())
+            .bg(if is_light() {
+                content(0.03)
+            } else {
+                black(0.12)
+            })
             .flex()
             .flex_col()
             .child(
                 div()
-                    .px(px(16.))
-                    .pt(px(16.))
-                    .pb(px(10.))
+                    .px(px(18.))
+                    .pt(px(22.))
+                    .pb(px(14.))
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
+                    .gap(px(14.))
+                    .child(glass::page_header(
+                        "Automations",
+                        "Agents that start on their own, on a schedule or an event.",
+                    ))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
+                            .gap(px(8.))
                             .child(
-                                div()
-                                    .text_size(px(15.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Automations"),
+                                glass::field()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(icon("search", 14.).text_color(content(0.55)))
+                                    .child(div().flex_1().min_w_0().child(self.filter.clone())),
                             )
                             .child(
-                                icon_button("new-automation", "New automation", "plus").on_click(
-                                    cx.listener(|this, _, _, cx| {
+                                // Reversed so the plus leads the word.
+                                glass::button("new-automation", "New", glass::Button::Primary)
+                                    .debug_selector(|| "new-automation".into())
+                                    .role(Role::Button)
+                                    .aria_label("New automation")
+                                    .px(px(12.))
+                                    .gap(px(6.))
+                                    .flex_row_reverse()
+                                    .child(icon("plus", 13.).text_color(background_base()))
+                                    .on_click(cx.listener(|this, _, _, cx| {
                                         this.show_gallery(cx);
-                                    }),
-                                ),
+                                    })),
                             ),
-                    )
-                    .child(
-                        div()
-                            .h(px(32.))
-                            .px(px(10.))
-                            .rounded(px(8.))
-                            .border_1()
-                            .border_color(content(0.08))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(icon("search", 12.))
-                            .child(div().flex_1().min_w_0().child(self.filter.clone())),
                     ),
             )
             .child(list);
-        let main_content = if self.gallery || self.editor.is_none() {
+        let main_content = if self.review_setup.is_some() {
+            self.render_review_setup(cx)
+        } else if self.gallery || self.editor.is_none() {
             self.render_gallery(cx)
         } else {
             self.render_editor(cx)
@@ -1011,7 +1224,7 @@ impl Render for Automations {
             .flex()
             .flex_col()
             .text_color(content(1.))
-            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     // Let the trigger menu close its active submenu first.
                     if this.trigger_menu.is_some() {
@@ -1025,11 +1238,16 @@ impl Render for Automations {
                         || this.models.is_some()
                         || this.project_picker.is_some()
                     {
+                        if this.project_picker.is_some() {
+                            window.focus(&this.project_focus, cx);
+                        }
                         this.choice = None;
                         this.trigger_menu = None;
                         this.models = None;
                         this.project_picker = None;
-                    } else if this.editor.is_some() && !this.gallery {
+                    } else if this.review_setup.is_some()
+                        || (this.editor.is_some() && !this.gallery)
+                    {
                         this.show_gallery(cx);
                     } else {
                         cx.emit(Event::Close);
@@ -1138,6 +1356,21 @@ impl Render for Automations {
                         this.project_picker = None;
                         cx.notify();
                     });
+                })
+                .when_some(self.duplicate_hint(), |d, hint| {
+                    d.child(
+                        div()
+                            .id("automation-duplicate-hint")
+                            .debug_selector(|| "automation-duplicate-hint".into())
+                            .role(Role::Note)
+                            .px(px(12.))
+                            .py(px(10.))
+                            .border_b_1()
+                            .border_color(content(0.07))
+                            .text_size(px(12.))
+                            .text_color(content(0.6))
+                            .child(hint),
+                    )
                 })
                 .child(picker.clone()),
             );

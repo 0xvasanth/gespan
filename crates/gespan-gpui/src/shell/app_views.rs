@@ -13,6 +13,7 @@ impl Shell {
 
     pub(super) fn app_view_label(&self) -> Option<&'static str> {
         self.active_app_view.map(|view| match view {
+            AppView::MyTasks => "My tasks",
             AppView::Inbox => "Inbox",
             AppView::Notes => "Notes",
             AppView::Automations => "Automations",
@@ -224,6 +225,7 @@ impl Shell {
 
     pub(super) fn app_view_body(&self) -> Option<AnyElement> {
         match self.active_app_view? {
+            AppView::MyTasks => self.my_tasks.clone().map(IntoElement::into_any_element),
             AppView::Notes => self.notes.clone().map(IntoElement::into_any_element),
             AppView::Inbox => self.inbox.clone().map(IntoElement::into_any_element),
             AppView::Automations => self.automations.clone().map(IntoElement::into_any_element),
@@ -235,6 +237,7 @@ impl Shell {
 
     pub(super) fn focus_app_view(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let focus = match self.active_app_view {
+            Some(AppView::MyTasks) => self.my_tasks.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Notes) => self.notes.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Inbox) => self.inbox.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Automations) => {
@@ -609,6 +612,9 @@ impl Shell {
                             this.open(id, window, cx);
                         }
                     }
+                    automations::Event::SignInGithub { cwd } => {
+                        this.sign_in_github(cwd.clone(), window, cx)
+                    }
                 },
             ));
             self.app_view_events.push(cx.subscribe_in(
@@ -650,6 +656,44 @@ impl Shell {
             });
         }
         self.show_app_view(AppView::Automations, window, cx);
+    }
+
+    /// The review setup sheet's "Sign in": the Automations page covers the
+    /// terminal, so it closes, and `gh auth login` runs in a terminal tab.
+    /// Once the command exits (or its tab closes) the sheet checks again.
+    fn sign_in_github(&mut self, cwd: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_app_view(window, cx);
+        let terminal = self.open_command_terminal(
+            "Sign in to GitHub".into(),
+            "gh auth login --web --hostname github.com".into(),
+            window,
+            cx,
+        );
+        let Some(automations) = self.automations.as_ref().map(|view| view.downgrade()) else {
+            return;
+        };
+        let checked = std::rc::Rc::new(std::cell::Cell::new(false));
+        let recheck_once = move |cx: &mut App| {
+            if !checked.replace(true) {
+                let _ = automations.update(cx, |view, cx| {
+                    if view.review_cwd() == Some(cwd.as_str()) {
+                        view.recheck_github(cx);
+                    }
+                });
+            }
+        };
+        let on_exit = recheck_once.clone();
+        cx.subscribe(
+            &terminal,
+            move |_, terminal, _: &crate::terminal::TerminalEvent, cx| {
+                if terminal.read(cx).exited {
+                    on_exit(cx);
+                }
+            },
+        )
+        .detach();
+        cx.observe_release(&terminal, move |_, _, cx| recheck_once(cx))
+            .detach();
     }
 
     /// Opens Runs on `filter`. It reads the automation service, which the

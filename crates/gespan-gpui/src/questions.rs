@@ -135,6 +135,21 @@ impl QuestionCard {
             cx.notify();
         }
     }
+    /// What the question asks, for a list of tasks: its first prompt, else
+    /// its title.
+    pub(crate) fn headline(&self) -> &str {
+        self.request
+            .items
+            .first()
+            .map(|item| item.prompt.as_str())
+            .filter(|prompt| !prompt.trim().is_empty())
+            .unwrap_or(if self.request.title.is_empty() {
+                "Question"
+            } else {
+                &self.request.title
+            })
+    }
+
     pub(crate) fn notification_label(&self) -> &str {
         if !self.request.title.is_empty() {
             &self.request.title

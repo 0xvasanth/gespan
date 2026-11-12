@@ -33,6 +33,7 @@ pub(crate) enum Command {
     OpenLogs,
     CopyDiagnostics,
     ReportIssue,
+    RunSetup,
     Hold,
 }
 /// The palette offers Resume once everything is on hold.
@@ -73,6 +74,7 @@ const COMMANDS: &[(Command, &str, &str)] = &[
     (Command::OpenLogs, "Open logs folder", ""),
     (Command::CopyDiagnostics, "Copy diagnostics", ""),
     (Command::ReportIssue, "Report an issue", ""),
+    (Command::RunSetup, "Run setup again", ""),
     (Command::Hold, "Hold everything", "⌘⇧H"),
 ];
 pub(crate) enum Picked {

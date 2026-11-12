@@ -34,7 +34,7 @@ pub(super) fn configure(command: &mut Command, request: &Request, probe: bool) {
         } else {
             "--no-context-files"
         });
-    } else if request.settings.plan || request.settings.access == AccessMode::ReadOnly {
+    } else if request.settings.plan || request.settings.effective_access() == AccessMode::ReadOnly {
         command.args([
             "--tools",
             if request.kind == Kind::Omp {

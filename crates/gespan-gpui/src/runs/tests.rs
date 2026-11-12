@@ -474,3 +474,260 @@ fn the_automation_chip_is_not_deleted_while_the_first_load_is_in_flight(cx: &mut
         );
     });
 }
+
+#[test]
+fn duration_reads_seconds_minutes_or_hours_and_only_for_finished_runs() {
+    let mut finished = run("r", "a", "succeeded", 0);
+    let took = |run: &mut AutomationRun, ms: i64| {
+        run.started_at = Some(10_000);
+        run.completed_at = Some(10_000 + ms);
+        duration(run)
+    };
+    assert_eq!(took(&mut finished, 0).as_deref(), Some("0s"));
+    assert_eq!(took(&mut finished, 59_999).as_deref(), Some("59s"));
+    assert_eq!(took(&mut finished, 60_000).as_deref(), Some("1m 00s"));
+    assert_eq!(took(&mut finished, 362_000).as_deref(), Some("6m 02s"));
+    assert_eq!(took(&mut finished, 3_599_000).as_deref(), Some("59m 59s"));
+    assert_eq!(took(&mut finished, 3_780_000).as_deref(), Some("1h 03m"));
+    // A clock that went backwards says nothing rather than a negative time.
+    assert_eq!(took(&mut finished, -1_000), None);
+
+    // Queued and still-running runs have no duration yet.
+    let mut running = run("q", "a", "running", 0);
+    assert_eq!(duration(&running), None);
+    running.started_at = Some(10_000);
+    assert_eq!(duration(&running), None);
+}
+
+#[test]
+fn run_count_says_run_or_runs() {
+    assert_eq!(run_count(1), "1 run");
+    assert_eq!(run_count(2), "2 runs");
+    assert_eq!(run_count(12), "12 runs");
+}
+
+#[test]
+fn rows_group_into_one_day_each_in_newest_first_order() {
+    let today = local_day_start(chrono::Local::now().timestamp_millis());
+    let row = |id: &str, at: i64| RunRow {
+        id: id.into(),
+        created_at: at,
+        trigger: "Scheduled".into(),
+        item: None,
+        automation: "Triage".into(),
+        project: None,
+        status: "Succeeded",
+        error: None,
+        session: None,
+        duration: None,
+    };
+    let rows = vec![
+        row("late-today", today + 5 * HOUR),
+        row("early-today", today),
+        row("yesterday", today - HOUR),
+        row("older-a", today - 3 * 24 * HOUR + 12 * HOUR),
+        row("older-b", today - 3 * 24 * HOUR + 11 * HOUR),
+    ];
+    let days = group_by_day(rows, today);
+    let labels: Vec<&str> = days.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(labels[..2], ["Today", "Yesterday"]);
+    assert_eq!(labels.len(), 3, "each day shows once: {labels:?}");
+    let grouped: Vec<Vec<&str>> = days.iter().map(|(_, rows)| ids(rows)).collect();
+    assert_eq!(
+        grouped,
+        vec![
+            vec!["late-today", "early-today"],
+            vec!["yesterday"],
+            vec!["older-a", "older-b"],
+        ]
+    );
+    assert!(group_by_day(Vec::new(), today).is_empty());
+}
+
+#[gpui::test]
+fn each_day_draws_one_card_holding_its_own_rows(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    let today = local_day_start(now_ms());
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![
+                run("t1", "gone", "succeeded", today + 2 * HOUR),
+                run("t2", "gone", "failed", today + HOUR),
+                run("y1", "gone", "succeeded", today - HOUR),
+            ],
+            vec![],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    let today_card = cx.debug_bounds("runs-day-0").expect("today's card");
+    let yesterday_card = cx.debug_bounds("runs-day-1").expect("yesterday's card");
+    assert!(
+        cx.debug_bounds("runs-day-2").is_none(),
+        "two days, two cards"
+    );
+    assert!(
+        today_card.bottom() <= yesterday_card.top(),
+        "newest day on top"
+    );
+    let mut inside = |row: &'static str, card: gpui::Bounds<gpui::Pixels>| {
+        let row = cx.debug_bounds(row).expect("row drawn");
+        card.top() <= row.top() && row.bottom() <= card.bottom()
+    };
+    assert!(inside("runs-row-t1", today_card));
+    assert!(inside("runs-row-t2", today_card));
+    assert!(inside("runs-row-y1", yesterday_card));
+    assert!(!inside("runs-row-y1", today_card));
+    assert!(cx.debug_bounds("runs-empty").is_none());
+}
+
+#[gpui::test]
+fn empty_state_tells_no_runs_from_no_matches(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        // Nothing has ever run.
+        view.apply(vec![], vec![], cx);
+        let (title, hint) = view.empty_text(false).unwrap();
+        assert_eq!(title, "No automation runs yet.");
+        assert_eq!(hint, "Runs show here the moment an automation starts.");
+
+        // Runs exist but the status filter hides them all.
+        view.apply(vec![run("ok", "a", "succeeded", 1_000)], vec![], cx);
+        view.set_filter(
+            RunsFilter {
+                status: Some("failed"),
+                ..Default::default()
+            },
+            cx,
+        );
+        assert!(view.rows().is_empty());
+        let (title, hint) = view.empty_text(false).unwrap();
+        assert_eq!(title, "No runs match these filters.");
+        assert_eq!(hint, "Choose All projects or All statuses to see more.");
+
+        // A search that finds nothing names what was searched.
+        view.set_filter(RunsFilter::default(), cx);
+        view.set_query("  nightly ".into(), cx);
+        let (title, _) = view.empty_text(false).unwrap();
+        assert_eq!(title, "No runs match \u{201c}nightly\u{201d}.");
+
+        // Rows on screen mean no empty state at all.
+        assert_eq!(view.empty_text(true), None);
+    });
+}
+
+#[gpui::test]
+fn search_keeps_runs_whose_words_match_ignoring_case(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    let mut issue = run("issue", "fixer", "succeeded", 3_000);
+    issue.trigger = "event".into();
+    issue.event_title = Some("langfuse#20110 dataset evals lose the item".into());
+    let mut broken = run("broken", "notes", "failed", 2_000);
+    broken.error = Some("Codex exited with status 1".into());
+    let plain = run("plain", "notes", "succeeded", 1_000);
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![issue, broken, plain],
+            vec![
+                automation("fixer", "Auto-fix issues", &project("langfuse")),
+                automation("notes", "Release notes", &project("socket")),
+            ],
+            cx,
+        );
+        let found = |view: &mut Runs, query: &str, cx: &mut Context<Runs>| {
+            view.set_query(query.into(), cx);
+            view.rows()
+                .into_iter()
+                .map(|row| row.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found(view, "DATASET", cx), ["issue"]);
+        assert_eq!(found(view, "release", cx), ["broken", "plain"]);
+        // The project's folder name and a run's error are searched too.
+        assert_eq!(found(view, "langfuse", cx), ["issue"]);
+        assert_eq!(found(view, "exited", cx), ["broken"]);
+        assert!(found(view, "nothing like this", cx).is_empty());
+        // Blank search shows everything again.
+        assert_eq!(found(view, "   ", cx), ["issue", "broken", "plain"]);
+        // Search narrows within the status filter, never past it.
+        view.set_filter(
+            RunsFilter {
+                status: Some("succeeded"),
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(found(view, "release", cx), ["plain"]);
+    });
+}
+
+#[gpui::test]
+fn typing_in_the_search_field_filters_the_list(cx: &mut TestAppContext) {
+    let view = cx.new(|cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![
+                run("one", "a", "succeeded", 2_000),
+                run("two", "b", "succeeded", 1_000),
+            ],
+            vec![
+                automation("a", "Triage", &project("alpha")),
+                automation("b", "Release notes", &project("beta")),
+            ],
+            cx,
+        )
+    });
+    let search = view.read_with(cx, |view, _| view.search.clone());
+    search.update(cx, |input, cx| input.set_text("triage".into(), cx));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(ids(&view.rows()), vec!["one"]));
+    search.update(cx, |input, cx| input.set_text(String::new(), cx));
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert_eq!(ids(&view.rows()), vec!["one", "two"])
+    });
+}
+
+#[gpui::test]
+fn the_project_control_steps_aside_while_one_automation_is_shown(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| Runs::new(service(), cx));
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        view.apply(
+            vec![run("one", "a", "succeeded", 1_000)],
+            vec![automation("a", "Triage", &project("alpha"))],
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("runs-filter-project-all").is_some());
+    assert!(cx.debug_bounds("runs-filter-automation").is_none());
+
+    view.update(cx, |view, cx| {
+        view.set_filter(
+            RunsFilter {
+                automation: Some("a".into()),
+                ..Default::default()
+            },
+            cx,
+        )
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("runs-filter-automation").is_some());
+    assert!(cx.debug_bounds("runs-filter-project-all").is_none());
+    assert!(cx.debug_bounds("runs-filter-project-0").is_none());
+    // The status control and search stay.
+    assert!(cx.debug_bounds("runs-filter-status-all").is_some());
+    assert!(cx.debug_bounds("runs-search").is_some());
+
+    // Clearing the chip brings the project control back.
+    let clear = cx.debug_bounds("runs-filter-automation").unwrap();
+    cx.simulate_click(clear.center(), Default::default());
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert_eq!(view.filter().automation, None));
+    assert!(cx.debug_bounds("runs-filter-project-all").is_some());
+}

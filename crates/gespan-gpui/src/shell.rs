@@ -1,6 +1,9 @@
 mod accounts;
 pub(crate) mod action_runs;
 mod actions;
+mod agents_panel;
+#[cfg(test)]
+mod agents_panel_tests;
 mod app_commands;
 mod app_views;
 mod automation_runs;
@@ -26,10 +29,12 @@ mod import_sessions;
 mod in_flight;
 mod inbox_ask;
 mod layout;
-mod live_agents;
 mod menu_bar;
 mod mobile_host;
 mod multi_window;
+mod my_tasks;
+#[cfg(test)]
+mod my_tasks_tests;
 #[cfg(test)]
 mod new_worktree_chat_tests;
 mod notifications;
@@ -50,6 +55,9 @@ mod rails;
 mod remote_projects;
 mod remote_sessions;
 mod report;
+mod review_drafts;
+#[cfg(test)]
+mod review_drafts_tests;
 mod search;
 mod session_filters;
 mod session_folders;
@@ -690,11 +698,11 @@ pub(crate) struct Shell {
     tab_marks: HashMap<i64, Entity<SessionMark>>,
     /// The Machines section's agent marks, by machine id and terminal id.
     machine_marks: HashMap<(String, String), Entity<SessionMark>>,
-    /// The live agents card's spinners, apart from the sidebar rows' marks.
-    live_marks: HashMap<i64, Entity<SessionMark>>,
-    live_agents_expanded: bool,
-    /// Repaints the live agents card's elapsed times once a second.
-    live_tick: Option<gpui::Task<()>>,
+    /// The sidebar's Agents panel is open above its footer.
+    agents_open: bool,
+    /// Repaints the open Agents panel's running times once a second.
+    agents_tick: Option<gpui::Task<()>>,
+    agents_scroll: ScrollHandle,
     busy_sessions: HashSet<i64>,
     hold: hold::HoldCoordinator,
     /// Held per Settings → Keep screen awake; released on drop at quit.
@@ -770,6 +778,20 @@ pub(crate) struct Shell {
     flows: Option<Entity<crate::flows::FlowsView>>,
     board: Option<Entity<crate::board::BoardView>>,
     runs: Option<Entity<crate::runs::Runs>>,
+    my_tasks: Option<Entity<crate::my_tasks::MyTasks>>,
+    /// When each open task was first seen, by key, in milliseconds.
+    /// Each open task as kept in the database, with the time Gespan first
+    /// saw it waiting.
+    my_task_records: HashMap<String, gespan_core::tasks::TaskRecord>,
+    /// Turns of history each task shows, once the user loaded more.
+    my_task_turns: HashMap<String, usize>,
+    my_tasks_events: Option<Subscription>,
+    /// Tasks answered from the page whose source has not caught up yet.
+    my_task_sent: HashSet<String>,
+    /// Leaves and submits draft reviews; `None` uses the real forges.
+    draft_forge: Option<review_drafts::DraftForge>,
+    /// The last Flow approvals read, for a tick whose store is busy.
+    my_task_flows: Vec<crate::my_tasks::TaskItem>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -1135,9 +1157,9 @@ impl Shell {
             session_marks: HashMap::new(),
             tab_marks: HashMap::new(),
             machine_marks: HashMap::new(),
-            live_marks: HashMap::new(),
-            live_agents_expanded: false,
-            live_tick: None,
+            agents_open: false,
+            agents_tick: None,
+            agents_scroll: ScrollHandle::new(),
             busy_sessions: HashSet::new(),
             hold: Default::default(),
             keep_awake: gespan_keep_awake::KeepAwake::new(),
@@ -1195,6 +1217,13 @@ impl Shell {
             flows: None,
             board: None,
             runs: None,
+            my_tasks: None,
+            my_task_records: HashMap::new(),
+            my_task_turns: HashMap::new(),
+            my_tasks_events: None,
+            my_task_sent: HashSet::new(),
+            draft_forge: None,
+            my_task_flows: Vec::new(),
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
@@ -5585,7 +5614,6 @@ impl Shell {
                         .h(px(TITLE_BAR_HEIGHT)),
                 ),
             )
-            .children(self.waiting_button(cx))
             .child(if classic {
                 // The toggle holds the window's corner (classic_body); the
                 // strip keeps only the part an open panel leaves uncovered.
@@ -7139,7 +7167,7 @@ impl Shell {
             );
         }
         self.refresh_sidebar_structure(cx);
-        let live_agents = self.live_agents_preview(cx);
+        let agents = self.agents_footer(cx);
         div()
             .id("gespan-sidebar")
             .debug_selector(|| "sidebar-content".into())
@@ -7168,8 +7196,8 @@ impl Shell {
                         .flex()
                         .flex_col()
                         .child(self.virtual_sidebar(cx))
-                        .children(live_agents)
-                        .child(self.app_update_footer(cx)),
+                        .child(self.app_update_footer(cx))
+                        .children(agents),
                 ),
             )
             .child(self.project_spaces(cx))
@@ -8082,7 +8110,6 @@ impl Shell {
         (window.viewport_size().width.as_f32()
             - lead
             - trailing
-            - self.waiting_room()
             - (client_controls_width(window) - self.window_controls))
             .max(0.)
     }
@@ -9008,7 +9035,7 @@ impl Render for Shell {
                 view.set_expand_labels(expand, cx);
             });
         }
-        self.sync_notices(window, cx);
+        self.sync_notices(cx);
         div()
             .id("gespan-workspace")
             .relative()
@@ -9264,6 +9291,9 @@ impl Render for Shell {
                 if this.cancel_space_drag(cx) {
                     return;
                 }
+                if this.close_agents_panel(cx) {
+                    return;
+                }
                 if this.remote_project_picker.is_some() {
                     this.close_remote_project(window, cx);
                     return;
@@ -9303,6 +9333,12 @@ impl Render for Shell {
                         .inbox
                         .as_ref()
                         .is_some_and(|inbox| inbox.read(cx).holds_focus(window, cx)),
+                    // Its pickers, menus and editor close one at a time, and
+                    // it closes itself once nothing else is open.
+                    Some(app_views::AppView::Automations) => this
+                        .automations
+                        .as_ref()
+                        .is_some_and(|view| view.read(cx).holds_focus(window, cx)),
                     _ => false,
                 };
                 if layered {
