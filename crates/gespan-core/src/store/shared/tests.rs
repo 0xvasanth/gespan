@@ -275,7 +275,7 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
         .query_row("PRAGMA schema_version", [], |r| r.get(0))
         .unwrap();
     drop(store);
-    let original = std::fs::read(&path).unwrap();
+    let original = crate::orm::settled_bytes(&path);
     let store = Store::read_gespan(&path).unwrap();
     let sessions = store.sessions().unwrap();
     let ids: HashSet<_> = sessions
@@ -304,7 +304,8 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
             .unwrap(),
         schema_version
     );
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    drop(store);
+    assert_eq!(crate::orm::settled_bytes(&path), original);
     assert!(!path.with_file_name("gespan.db.gpui.json").exists());
 }
 

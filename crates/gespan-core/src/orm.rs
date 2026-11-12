@@ -157,3 +157,16 @@ pub(crate) fn schema(
     let app = toasty_core::schema::app::Schema::from_macro(models)?;
     toasty_core::schema::Builder::default().build(app, capability)
 }
+
+/// `path`'s bytes once every committed change is in the file. Toasty closes
+/// a dropped database's connection on its own task, so its last commits can
+/// still be in the WAL when a test reads the file; checkpointing first makes
+/// a byte comparison mean "the data changed", not "the WAL was folded in".
+#[cfg(test)]
+pub(crate) fn settled_bytes(path: &Path) -> Vec<u8> {
+    rusqlite::Connection::open(path)
+        .unwrap()
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+        .unwrap();
+    std::fs::read(path).unwrap()
+}
