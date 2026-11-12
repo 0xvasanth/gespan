@@ -74,7 +74,9 @@ pub struct TaskRecord {
 }
 
 impl TaskRecord {
-    /// A request still waiting.
+    /// A request still waiting. Each field is a different part of the
+    /// request, so they are named at the call rather than bundled.
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         key: impl Into<String>,
         kind: Kind,

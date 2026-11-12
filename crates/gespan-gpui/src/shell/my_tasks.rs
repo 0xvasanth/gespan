@@ -15,7 +15,13 @@ impl Shell {
         if let Some(view) = &self.my_tasks {
             return view.clone();
         }
-        let view = cx.new(MyTasks::new);
+        let store = self.store.clone();
+        let view = cx.new(|cx| {
+            let mut view = MyTasks::new(cx);
+            view.store = Some(store);
+            view.reload(cx);
+            view
+        });
         self.my_tasks = Some(view.clone());
         view
     }
