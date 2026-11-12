@@ -190,6 +190,21 @@ impl Section {
             Section::Worktrees => "git branch worktree working copy project create delete",
         }
     }
+    /// The rail icon's tint as the design draws it, (dark, light); grey
+    /// for the rest.
+    pub(crate) fn tint(self) -> Option<(u32, u32)> {
+        Some(match self {
+            Section::Appearance => (0xf9a8d4, 0xdb2777),
+            Section::Services | Section::Inbox => (0xa5b4fc, 0x4f46e5),
+            Section::Devices => (0x5eead4, 0x0d9488),
+            Section::Chat => (0xc0affc, 0x7c3aed),
+            Section::Providers => (0xd97757, 0xc2410c),
+            Section::Browser => (0x7dd3fc, 0x0284c7),
+            Section::Skills => (0xe8c547, 0xa16207),
+            Section::Worktrees => (0x6ee7b7, 0x059669),
+            _ => return None,
+        })
+    }
     pub(crate) fn icon(self) -> &'static str {
         match self {
             Section::General => "sliders",
@@ -282,7 +297,8 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     ),
     (
         "dictation-shortcut",
-        Section::Dictation,
+        // The shortcut is set on Keybindings; Dictation no longer shows it.
+        Section::Keybindings,
         "Shortcut",
         "voice push to talk hold tap microphone",
     ),
@@ -412,6 +428,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         Section::Appearance,
         "Blur radius",
         "glass translucent vibrancy backdrop",
+    ),
+    (
+        "backdrop",
+        Section::Appearance,
+        "Backdrop",
+        "gradient desktop wallpaper behind glass aurora dusk dune",
     ),
     (
         "main-pane-glass",

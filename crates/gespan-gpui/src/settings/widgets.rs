@@ -136,6 +136,48 @@ pub(super) fn note(text: impl Into<SharedString>) -> AnyElement {
         .into_any_element()
 }
 
+/// A glass button with its icon before the label, as the mocks draw
+/// "+ Add …" actions. [`crate::glass::button`] puts its label first.
+pub(in crate::settings) fn icon_button_labelled(
+    id: impl Into<ElementId>,
+    icon_path: &'static str,
+    label: &'static str,
+    kind: crate::glass::Button,
+) -> Stateful<Div> {
+    use crate::glass::Button;
+    let base = div()
+        .id(id)
+        .cursor_pointer()
+        .h(px(32.))
+        .px(px(14.))
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(7.))
+        .rounded(px(9.))
+        .text_size(px(13.))
+        .whitespace_nowrap();
+    let (ink, base) = match kind {
+        Button::Primary => (
+            background_base(),
+            base.bg(content(0.94))
+                .font_weight(FontWeight::SEMIBOLD)
+                .hover(|s| s.bg(content(1.))),
+        ),
+        Button::Glass => (
+            content(0.9),
+            base.bg(crate::glass::fill_strong())
+                .border_1()
+                .border_color(crate::glass::edge())
+                .hover(|s| s.bg(content(0.12))),
+        ),
+        Button::Ghost => (content(0.62), base.hover(|s| s.bg(content(0.08)))),
+    };
+    base.text_color(ink)
+        .child(icon(icon_path, 14.).text_color(ink))
+        .child(label)
+}
+
 /// Settings' secondary button on the glass pages: a glass plate, or red
 /// text when it destroys something. Same arguments as [`secondary_button`].
 pub(super) fn glass_secondary(

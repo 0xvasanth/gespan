@@ -971,6 +971,9 @@ impl SettingsView {
             rows.push(div().id("project-notification-accessible-3").role(Role::Status).px_4().py(px(14.)).text_size(px(12.)).text_color(content(0.45)).child("Open a project or connect an Inbox provider to configure its notifications.").into_any_element());
         }
         let (all, muted_count, custom_count) = counts;
+        self.inbox_filter.update(cx, |input, cx| {
+            input.set_placeholder(format!("Search {all} projects"), cx)
+        });
         let toolbar = (!projects.is_empty()).then(|| {
             let filter = crate::glass::segmented()
                 .id("inbox-show")

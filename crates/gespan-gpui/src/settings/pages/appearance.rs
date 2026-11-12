@@ -378,7 +378,12 @@ impl SettingsView {
                 false,
                 "Blur radius",
                 Some("Background blur behind the window.".into()),
-                vec![self.slider(SliderKind::Blur, p.sidebar_blur.to_string(), opaque, cx)],
+                vec![self.slider(
+                    SliderKind::Blur,
+                    format!("{} px", p.sidebar_blur),
+                    opaque,
+                    cx,
+                )],
             ));
         }
         translucency.push(
@@ -397,6 +402,7 @@ impl SettingsView {
                     )],
                 ),
         );
+        translucency.push(self.backdrop_row(opaque, cx));
         page.push(self.group(
             None,
             false,
@@ -408,7 +414,7 @@ impl SettingsView {
             } else if cfg!(target_os = "linux") && cx.compositor_name() == "X11" {
                 "How much of the desktop shows through Gespan. Requires compositing; configure background blur in your compositor.".into()
             } else {
-                "How much of the desktop shows through Gespan.".into()
+                "How much of the desktop shows through Gespan. Translucency is available in dark mode.".into()
             }),
             None,
             translucency,
@@ -417,6 +423,81 @@ impl SettingsView {
         page.push(self.chat_background_card(cx));
         page.push(self.diff_group(cx));
         page
+    }
+
+    /// Backdrop: the desktop behind the glass, or a soft gradient that
+    /// looks the same on every desktop. Only a see-through window has one.
+    fn backdrop_row(&mut self, opaque: bool, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.prefs.clone();
+        let gradient = p.backdrop == "gradient";
+        let swatches = div()
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .when(opaque, |d| d.opacity(0.4))
+            .child(self.segmented(
+                "backdrop",
+                "Backdrop",
+                &p.backdrop,
+                &[("desktop", "Desktop"), ("gradient", "Gradient")],
+                cx,
+                |this, v, cx| this.update(cx, |p| p.backdrop = v.into()),
+            ))
+            .children(crate::settings::BACKDROPS.map(|(id, name, a, b)| {
+                let on = gradient && p.backdrop_gradient == id;
+                ringed(
+                    div()
+                        .id(SharedString::from(format!("backdrop-{id}")))
+                        .debug_selector(move || format!("settings-backdrop-{id}"))
+                        .role(Role::RadioButton)
+                        .aria_label(format!("Gradient: {name}"))
+                        .aria_selected(on)
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| crate::conversation::HintTooltip(name)).into()
+                        }),
+                    on,
+                )
+                .size(px(22.))
+                .rounded_full()
+                .cursor_pointer()
+                .child(
+                    div()
+                        .size_full()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(content(0.15))
+                        .bg(linear_gradient(
+                            135.,
+                            linear_color_stop(rgb(a), 0.),
+                            linear_color_stop(rgb(b), 1.),
+                        )),
+                )
+                .when(!opaque, |d| {
+                    d.on_click(cx.listener(move |this, _, _, cx| {
+                        this.update(cx, |p| {
+                            p.backdrop = "gradient".into();
+                            p.backdrop_gradient = id.into();
+                        })
+                    }))
+                })
+            }))
+            .into_any_element();
+        self.row(
+            Some("backdrop"),
+            false,
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child("Backdrop")
+                .child(crate::glass::beta("New")),
+            Some(if opaque {
+                "A backdrop shows behind a see-through window, in dark mode with Transparent window on.".into()
+            } else {
+                "Show your desktop behind the glass, or a soft gradient that stays the same on every desktop.".into()
+            }),
+            vec![swatches],
+        )
     }
 
     /// A small window drawn from the current choices, with the line that
@@ -1064,6 +1145,7 @@ impl SettingsView {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::ChooseBackground)))
                     .into_any_element(),
                 glass::button("remove-chat-background", "Remove", Button::Ghost)
+                    .debug_selector(|| "settings-remove-chat-background".into())
                     .role(Role::Button)
                     .aria_label("Remove")
                     .h(px(30.))
@@ -1105,7 +1187,10 @@ impl SettingsView {
                     ],
                 ),
             ];
-        if let Some(path) = image.as_deref() {
+        // Every control shows, image or not: they set how a background
+        // looks once there is one.
+        {
+            let path = image.as_deref();
             let tiles = div()
                 .id("segmented-background-effect")
                 .debug_selector(|| "settings-segmented-background-effect".into())
@@ -1118,7 +1203,7 @@ impl SettingsView {
                     let on = p.chat_background_effect == option;
                     picture_option(
                         SharedString::from(format!("segmented-background-effect-{option}")),
-                        effect_tile(option, Some(path)),
+                        effect_tile(option, path),
                         label,
                         on,
                     )

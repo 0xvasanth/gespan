@@ -78,6 +78,7 @@ impl SettingsView {
         );
         let binaries = self.discovery.binaries.clone();
         let mut clis = Vec::new();
+        let mut missing: Vec<AnyElement> = Vec::new();
         for (index, kind) in Kind::ALL.into_iter().enumerate() {
             let installed = binaries
                 .iter()
@@ -130,38 +131,50 @@ impl SettingsView {
             };
             let mut controls: Vec<AnyElement> = Vec::new();
             let default_button = installed.is_some().then(|| {
-                glass_secondary(
-                    SharedString::from(format!("default-provider-{}", kind.id())),
-                    if selected {
-                        "Default"
-                    } else {
-                        "Use by default"
-                    },
-                    false,
-                    selected || selected_model.is_none() || installed.is_none(),
-                )
-                .child(if selected {
-                    "Default"
+                let id = SharedString::from(format!("default-provider-{}", kind.id()));
+                if selected {
+                    // The chosen agent's button reads as a state, tinted, not
+                    // a dimmed control.
+                    div()
+                        .id(id)
+                        .debug_selector(move || format!("settings-default-{}", kind.id()))
+                        .role(gpui::Role::Button)
+                        .aria_label("Default")
+                        .aria_selected(true)
+                        .h(px(28.))
+                        .px(px(11.))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(px(6.))
+                        .rounded(px(8.))
+                        .bg(accent_color().opacity(0.14))
+                        .border_1()
+                        .border_color(accent_color().opacity(0.4))
+                        .text_size(px(12.5))
+                        .text_color(accent_color())
+                        .child(icon("check", 13.).text_color(accent_color()))
+                        .child("Default")
+                        .into_any_element()
                 } else {
-                    "Use by default"
-                })
-                .when(
-                    !selected && selected_model.is_some() && installed.is_some(),
-                    |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            let scope = this.provider_scope.clone();
-                            this.update(cx, |p| {
-                                if scope == "global" {
-                                    p.use_by_default(kind);
-                                } else {
-                                    p.project_providers.entry(scope).or_default().provider =
-                                        Some(kind.id().into());
-                                }
-                            })
-                        }))
-                    },
-                )
-                .into_any_element()
+                    let enabled = selected_model.is_some();
+                    glass_secondary(id, "Use by default", false, !enabled)
+                        .child("Use by default")
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                let scope = this.provider_scope.clone();
+                                this.update(cx, |p| {
+                                    if scope == "global" {
+                                        p.use_by_default(kind);
+                                    } else {
+                                        p.project_providers.entry(scope).or_default().provider =
+                                            Some(kind.id().into());
+                                    }
+                                })
+                            }))
+                        })
+                        .into_any_element()
+                }
             });
             if let Some(model) = selected_model.as_ref().filter(|_| installed.is_some()) {
                 controls.push(
@@ -255,11 +268,21 @@ impl SettingsView {
                 })
                 .unwrap_or_else(|| kind.unavailable_hint());
             let (accounts, add) = match &center {
-                Some(center) if account_kinds.contains(&kind) => {
-                    center.update(cx, |center, cx| center.settings_accounts(kind, cx))
-                }
+                Some(center) if account_kinds.contains(&kind) => center.update(cx, |center, cx| {
+                    center.settings_accounts(
+                        kind,
+                        installed.is_none() && !self.discovery_loading,
+                        cx,
+                    )
+                }),
                 _ => (Vec::new(), None),
             };
+            // Once the check is done, a CLI that isn't there joins the
+            // compact Not installed grid instead of a full card.
+            if installed.is_none() && !self.discovery_loading {
+                missing.push(missing_card(kind, accounts));
+                continue;
+            }
             clis.push(self.agent_card(
                 index,
                 kind,
@@ -280,7 +303,8 @@ impl SettingsView {
         let advanced=vec![
             self.row(Some("idle-agents"),true,"Keep idle agents ready",Some("Keep up to this many idle agents running for faster follow-ups. Uses additional memory.".into()),vec![self.segmented("idle-agents","Keep idle agents ready",&p.idle_agents.to_string(),&[("0","None"),("1","1"),("2","2"),("3","3"),("5","5")],cx,|this,value,cx|if let Ok(value)=value.parse(){this.update(cx,|p|p.idle_agents=value)})]),
             self.row(Some("claude-hooks"),false,"Claude Code hooks",Some("Run your configured Claude Code hooks. Changes apply on the next turn.".into()),vec![self.toggle("claude-hooks","Claude Code hooks",p.claude_hooks,false,cx,|this,on,cx|this.update(cx,|p|p.claude_hooks=on))])];
-        let mut page = vec![self.glass_group(
+        // The header and its agent cards sit close together, as one section.
+        let header = self.glass_group(
             Some("agent-clis"),
             "Agent CLIs",
             Some("Choose available agents and default models for new conversations. Manage sign-ins and choose accounts for each project.".into()),
@@ -295,8 +319,49 @@ impl SettingsView {
             ),
             self.discovery_loading.then(|| note("Checking installed CLIs…")),
             Vec::new(),
-        )];
-        page.extend(clis);
+        );
+        let mut page = vec![
+            div()
+                .debug_selector(|| "settings-agents".into())
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(header)
+                .children(clis)
+                .into_any_element(),
+        ];
+        if !missing.is_empty() {
+            let count = missing.len();
+            page.push(
+                div()
+                    .debug_selector(|| "settings-agents-missing".into())
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .px(px(4.))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("Not installed"),
+                            )
+                            .child(crate::glass::count(count, false))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(content(0.62))
+                                    .child("Install a CLI, then Refresh. Restart Gespan if it is already installed."),
+                            ),
+                    )
+                    .child(div().grid().grid_cols(2).gap(px(8.)).children(missing))
+                    .into_any_element(),
+            );
+        }
         page.push(self.group(None, false, "Usage and privacy", None, None, usage));
         page.push(self.group(None, false, "Advanced", None, None, advanced));
         page
@@ -407,7 +472,8 @@ impl SettingsView {
             .when_some(add, |d, add| {
                 d.child(
                     div()
-                        .px_4()
+                        .pl(px(54.))
+                        .pr_4()
                         .py(px(8.))
                         .border_t_1()
                         .border_color(crate::glass::hairline())
@@ -417,4 +483,85 @@ impl SettingsView {
             })
             .into_any_element()
     }
+}
+
+/// The command a CLI's hint names, between backticks, if any.
+pub(in crate::settings) fn install_command(hint: &str) -> Option<&str> {
+    let start = hint.find('`')? + 1;
+    let len = hint[start..].find('`')?;
+    // A sentence in backticks ("Install from …") is guidance, not a command.
+    Some(&hint[start..start + len])
+        .filter(|c| !c.is_empty() && !c.starts_with(|ch: char| ch.is_uppercase()))
+}
+
+/// A CLI that isn't installed: its mark and name, a Not installed pill,
+/// and how to install it, as a command when the hint gives one.
+fn missing_card(kind: Kind, accounts: Vec<AnyElement>) -> AnyElement {
+    let id = kind.id();
+    let hint = kind.unavailable_hint();
+    let how = match install_command(&hint) {
+        Some(command) => div()
+            .debug_selector(move || format!("settings-agent-install-{id}"))
+            .h(px(28.))
+            .px(px(10.))
+            .flex()
+            .items_center()
+            .rounded(px(7.))
+            .bg(if is_light() { white(0.7) } else { black(0.3) })
+            .border_1()
+            .border_color(crate::glass::edge())
+            .font_family(crate::fonts::monospace())
+            .text_size(px(11.5))
+            .child(div().truncate().child(command.to_owned())),
+        None => div()
+            .text_size(px(11.5))
+            .line_height(px(16.))
+            .text_color(content(0.62))
+            .child(hint.clone()),
+    };
+    crate::glass::card()
+        .debug_selector(move || format!("settings-agent-missing-{id}"))
+        .overflow_hidden()
+        .child(
+            div()
+                .p(px(14.))
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .size(px(26.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(7.))
+                                .bg(content(0.07))
+                                .border_1()
+                                .border_color(crate::glass::edge())
+                                .child(provider_icon(id, 14.)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(13.))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .child(kind.label()),
+                        )
+                        .child(crate::glass::status(
+                            "Not installed",
+                            crate::glass::Tone::Muted,
+                        )),
+                )
+                .child(how),
+        )
+        .children(accounts)
+        .into_any_element()
 }

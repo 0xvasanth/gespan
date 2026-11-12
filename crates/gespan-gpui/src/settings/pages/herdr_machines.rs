@@ -604,6 +604,7 @@ impl SettingsView {
                 .debug_selector(|| "herdr-machines".into())
                 .relative()
                 .child(self.reveal_probe("herdr-machines"))
+                .px(px(4.))
                 .child(
                     div()
                         .text_size(px(13.))
@@ -612,35 +613,57 @@ impl SettingsView {
                 )
                 .into_any_element(),
         ];
+        // One card: each machine (or the empty line), then the field that
+        // adds one as its last row.
+        let mut card = crate::glass::card().overflow_hidden();
         if !views.is_empty() {
-            let mut list = div()
-                .rounded(px(14.))
-                .border_1()
-                .border_color(crate::glass::edge())
-                .bg(crate::glass::fill())
-                .overflow_hidden();
             for view in &views {
-                list = list.child(self.herdr_machine_row(view, cx));
+                card = card.child(self.herdr_machine_row(view, cx));
             }
-            page.push(list.into_any_element());
         } else if loaded && list_error.is_none() {
-            page.push(
+            card = card.child(
                 div()
                     .id("herdr-machines-empty")
                     .debug_selector(|| "herdr-machines-empty".into())
-                    .rounded(px(14.))
-                    .border_1()
-                    .border_color(crate::glass::edge())
-                    .bg(crate::glass::fill())
                     .px_5()
-                    .py_8()
+                    .py(px(22.))
                     .text_center()
                     .text_size(px(13.))
-                    .text_color(content(0.45))
-                    .child(EMPTY)
-                    .into_any_element(),
+                    .text_color(content(0.55))
+                    .child(EMPTY),
             );
         }
+        let input = self.herdr_target_field(cx);
+        let not_bundled = found == Some(false);
+        let add_disabled = self.herdr.adding || not_bundled || self.herdr_target(cx).is_empty();
+        card = card.child(
+            div()
+                .debug_selector(|| "herdr-add-row".into())
+                // Machine rows draw their own rule beneath them.
+                .when(views.is_empty() && loaded, |d| {
+                    d.border_t_1().border_color(crate::glass::hairline())
+                })
+                .px_4()
+                .py(px(12.))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    crate::glass::field()
+                        .min_w_0()
+                        .flex_1()
+                        .child(div().min_w_0().flex_1().child(input)),
+                )
+                .child(
+                    glass_secondary("herdr-add", "Add", false, add_disabled)
+                        .debug_selector(|| "herdr-add".into())
+                        .h(px(32.))
+                        .child(icon("plus", 14.))
+                        .child("Add")
+                        .on_click(cx.listener(|this, _, _, cx| this.add_herdr_machine(cx))),
+                ),
+        );
+        page.push(card.into_any_element());
         if let Some(error) = list_error {
             page.push(
                 div()
@@ -657,37 +680,6 @@ impl SettingsView {
                     .into_any_element(),
             );
         }
-        let input = self.herdr_target_field(cx);
-        let not_bundled = found == Some(false);
-        let add_disabled = self.herdr.adding || not_bundled || self.herdr_target(cx).is_empty();
-        page.push(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .h(px(36.))
-                        .min_w_0()
-                        .flex_1()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(content(0.15))
-                        .bg(content(0.03))
-                        .px_3()
-                        .flex()
-                        .items_center()
-                        .child(input),
-                )
-                .child(
-                    glass_secondary("herdr-add", "Add", false, add_disabled)
-                        .debug_selector(|| "herdr-add".into())
-                        .child(icon("plus", 16.))
-                        .child("Add")
-                        .on_click(cx.listener(|this, _, _, cx| this.add_herdr_machine(cx))),
-                )
-                .into_any_element(),
-        );
         if self.herdr.adding {
             page.push(
                 paragraph(format!("Preparing herdr {HERDR_VERSION}…"))

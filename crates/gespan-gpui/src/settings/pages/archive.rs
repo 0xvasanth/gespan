@@ -5,7 +5,7 @@ use crate::{
 use gpui::{AnyElement, Context, Role, SharedString, div, prelude::*, px};
 impl SettingsView {
     pub(super) fn archive_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let mut rows = vec![self.row(
+        let switch = self.row(
             Some("show-archived"),
             true,
             "Show archived in the sidebar",
@@ -18,7 +18,8 @@ impl SettingsView {
                 cx,
                 |this, on, cx| this.update(cx, |p| p.show_archived = on),
             )],
-        )];
+        );
+        let mut rows: Vec<AnyElement> = Vec::new();
         if self.ctx.cwd.is_empty() {
             rows.push(note("Open a project to see its archived conversations."));
         } else if self.ctx.archived.is_empty() {
@@ -37,10 +38,12 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .border_t_1()
-                    .border_color(crate::glass::hairline())
+                    .when(!rows.is_empty(), |d| {
+                        d.border_t_1().border_color(crate::glass::hairline())
+                    })
+                    .debug_selector(move || format!("settings-archived-row-{id}"))
+                    .h(px(43.))
                     .px_4()
-                    .py(px(10.))
                     .child(
                         div()
                             .size(px(18.))
@@ -179,9 +182,14 @@ impl SettingsView {
                 None,
                 projects,
             ),
-            self.group(
+            // The sidebar switch has its own card; the conversations follow
+            // in theirs.
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(self.glass_group(
                 None,
-                false,
                 SharedString::from(title),
                 None,
                 (!self.ctx.archived.is_empty()).then(|| {
@@ -196,8 +204,13 @@ impl SettingsView {
                         ))
                         .into_any_element()
                 }),
-                rows,
-            ),
+                None,
+                vec![switch],
+            ))
+                .when(!rows.is_empty(), |d| {
+                    d.child(crate::glass::card().overflow_hidden().children(rows))
+                })
+                .into_any_element(),
         ]
     }
 }

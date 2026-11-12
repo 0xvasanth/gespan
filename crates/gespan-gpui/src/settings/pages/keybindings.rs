@@ -555,22 +555,29 @@ impl SettingsView {
                     .flex_1()
                     .child(self.keybinding_filter.clone()),
             );
+        let picked = self.keybinding_area;
         let chips = div()
             .flex()
             .flex_wrap()
-            .gap(px(6.))
+            .gap(px(5.))
             .children(areas.iter().map(|(area, rows)| {
                 let area: &'static str = area;
                 crate::glass::chip(
                     gpui::SharedString::from(format!("keybinding-area-{area}")),
                     area,
-                    false,
+                    picked == Some(area),
                 )
+                .h(px(26.))
+                .px(px(9.))
                 .debug_selector(move || format!("settings-keybinding-jump-{area}"))
                 .role(Role::Button)
                 .aria_label(format!("Jump to {area}"))
+                .aria_selected(picked == Some(area))
                 .child(crate::glass::count(rows.len(), false))
-                .on_click(cx.listener(move |this, _, _, cx| this.reveal(Some(area.to_owned()), cx)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.keybinding_area = Some(area);
+                    this.reveal(Some(area.to_owned()), cx)
+                }))
             }));
         let mut page = vec![self.glass_group(
             None,

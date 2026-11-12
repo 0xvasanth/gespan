@@ -23,9 +23,9 @@ pub(super) use appearance::appearance_summary;
 pub(super) use appearance::parse_hex;
 pub(crate) use appearance::{ACCENTS, swatch};
 pub(super) use connections::ConnectionsState;
-#[cfg(test)]
-pub(super) use diagnostics::CounterRow;
 pub(super) use diagnostics::DiagnosticsState;
+#[cfg(test)]
+pub(super) use diagnostics::{CounterRow, kind_tone};
 pub(super) use dictation::DictationState;
 #[cfg(test)]
 pub(super) use general::version_pill;
@@ -34,6 +34,8 @@ pub(super) use herdr_machines::HerdrMachinesState;
 pub(super) use keybindings::{BINDINGS, by_area, key_caps};
 pub(crate) use keybindings::{command_shortcut, shortcut_label};
 pub(super) use mobile::MobileState;
+#[cfg(test)]
+pub(super) use providers::install_command;
 #[cfg(test)]
 pub(super) use skills::skill_bucket;
 pub(super) use worktrees::WorktreeScripts;

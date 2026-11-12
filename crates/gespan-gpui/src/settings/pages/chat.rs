@@ -6,43 +6,48 @@ use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 impl SettingsView {
     pub(super) fn chat_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let p = self.prefs.clone();
-        let transcript = vec![
-            self.row(
-                Some("transcript-layout"),
-                true,
-                "Transcript layout",
-                Some("Show prompts at full width or as right-aligned chat bubbles.".into()),
-                vec![self.transcript_layouts(&p.transcript_layout, cx)],
-            ),
-            self.row(
-                Some("anchor-prompts"),
-                false,
-                "Anchor prompts to top",
-                Some("Place new prompts at the top, with replies below.".into()),
-                vec![self.toggle(
-                    "anchor-prompts",
+        let transcript =
+            vec![
+                // The title sits at the top of the two pictures.
+                self.row_parts(
+                    Some("transcript-layout"),
+                    true,
+                    "Transcript layout",
+                    Some(self.description(
+                        "Show prompts at full width or as right-aligned chat bubbles.",
+                    )),
+                    vec![self.transcript_layouts(&p.transcript_layout, cx)],
+                    true,
+                ),
+                self.row(
+                    Some("anchor-prompts"),
+                    false,
                     "Anchor prompts to top",
-                    p.anchor_prompts,
+                    Some("Place new prompts at the top, with replies below.".into()),
+                    vec![self.toggle(
+                        "anchor-prompts",
+                        "Anchor prompts to top",
+                        p.anchor_prompts,
+                        false,
+                        cx,
+                        |this, on, cx| this.update(cx, |p| p.anchor_prompts = on),
+                    )],
+                ),
+                self.row(
+                    Some("paced-reveal"),
                     false,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.anchor_prompts = on),
-                )],
-            ),
-            self.row(
-                Some("paced-reveal"),
-                false,
-                "Smooth text reveal",
-                Some("Reveal incoming text gradually.".into()),
-                vec![self.toggle(
-                    "paced-reveal",
                     "Smooth text reveal",
-                    p.paced_reveal,
-                    false,
-                    cx,
-                    |this, on, cx| this.update(cx, |p| p.paced_reveal = on),
-                )],
-            ),
-        ];
+                    Some("Reveal incoming text gradually.".into()),
+                    vec![self.toggle(
+                        "paced-reveal",
+                        "Smooth text reveal",
+                        p.paced_reveal,
+                        false,
+                        cx,
+                        |this, on, cx| this.update(cx, |p| p.paced_reveal = on),
+                    )],
+                ),
+            ];
         let composer = vec![
             self.row(
                 Some("follow-up"),
@@ -210,7 +215,8 @@ impl SettingsView {
                 .rounded(px(3.))
                 .bg(content(alpha))
         };
-        let mine = || crate::theme::user_bubble_fill();
+        // Your prompt, in the accent, so the two layouts read apart.
+        let mine = || crate::theme::accent_color().opacity(0.55);
         div()
             .id("segmented-transcript-layout")
             .debug_selector(|| "settings-segmented-transcript-layout".into())
