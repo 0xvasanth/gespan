@@ -184,6 +184,63 @@ pub(crate) fn pane_cycle() -> Vec<Step> {
     ]
 }
 
+/// `GESPAN_BENCH_SOAK_ONLY` narrows the soak to one action group, to find
+/// which one a memory trend comes from. Unset, the soak rotates all three.
+fn soak_steps(iteration: usize) -> Vec<Step> {
+    use crate::shell::{CloseTab, SplitDown, SplitRight, ToggleRightPanel, ToggleTerminal};
+    match std::env::var("GESPAN_BENCH_SOAK_ONLY").as_deref() {
+        Ok("tabs") => tab_round(),
+        Ok("scroll") => scroll_round(20),
+        Ok("panes") => pane_cycle(),
+        Ok("splits") => vec![
+            act("split_right", SplitRight),
+            Step::Settle(ASYNC_SETTLE),
+            act("close_pane", CloseTab),
+            Step::Settle(ASYNC_SETTLE),
+        ],
+        Ok("splits_down") => vec![
+            act("split_right", SplitRight),
+            Step::Settle(ASYNC_SETTLE),
+            act("split_down", SplitDown),
+            Step::Settle(ASYNC_SETTLE),
+            act("close_pane", CloseTab),
+            act("close_pane", CloseTab),
+            Step::Settle(ASYNC_SETTLE),
+        ],
+        Ok("terminal") => vec![
+            act("terminal_open", ToggleTerminal),
+            Step::Settle(ASYNC_SETTLE),
+            act("terminal_close", ToggleTerminal),
+            Step::Settle(ASYNC_SETTLE),
+        ],
+        Ok("panel") => vec![
+            act("right_panel_open", ToggleRightPanel),
+            act("right_panel_close", ToggleRightPanel),
+            Step::Settle(ASYNC_SETTLE),
+        ],
+        Ok("idle") => vec![Step::Settle(Duration::from_secs(1))],
+        // More open tabs than chats kept loaded in the background, so tab
+        // switching unloads and reloads chat histories.
+        Ok("reload") => {
+            let mut steps = Vec::new();
+            if iteration == 1 {
+                for _ in 0..4 {
+                    steps.push(act("new_tab", crate::shell::NewCodex));
+                    steps.push(Step::Settle(ASYNC_SETTLE));
+                }
+            }
+            steps.extend(tab_round());
+            steps.extend(scroll_round(20));
+            steps
+        }
+        _ => match iteration % 3 {
+            0 => tab_round(),
+            1 => scroll_round(20),
+            _ => pane_cycle(),
+        },
+    }
+}
+
 fn emit(event: &str, mut fields: serde_json::Value) {
     fields["event"] = event.into();
     fields["wall_ms"] = (SystemTime::now()
@@ -293,11 +350,7 @@ impl Driver {
                 let mut iteration = 0usize;
                 while Instant::now() < deadline {
                     iteration += 1;
-                    let steps = match iteration % 3 {
-                        0 => tab_round(),
-                        1 => scroll_round(20),
-                        _ => pane_cycle(),
-                    };
+                    let steps = soak_steps(iteration);
                     self.phase("soak", &steps, cx).await;
                     if last_memory.elapsed() >= SOAK_MEMORY_EVERY {
                         last_memory = Instant::now();

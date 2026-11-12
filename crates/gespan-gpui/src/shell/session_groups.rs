@@ -1029,6 +1029,8 @@ impl Shell {
         }
         self.flow_session_closed(id, cx);
         self.sessions.remove(&id);
+        self.session_observations.remove(&id);
+        self.closed_panes.remove(&id);
         crate::windows::release(id, cx.entity_id(), cx);
         self.session_summaries.remove(&id);
         self.draft_sessions.remove(&id);

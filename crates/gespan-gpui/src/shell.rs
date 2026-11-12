@@ -702,6 +702,12 @@ pub(crate) struct Shell {
     remote_marks: HashMap<i64, (bool, bool)>,
     _remote_clock: gpui::Task<()>,
     sessions: HashMap<i64, Entity<Conversation>>,
+    /// Each live chat's subscriptions, dropped with the chat when it is released.
+    session_observations: HashMap<i64, Vec<Subscription>>,
+    /// Sessions whose split pane closed. Once off screen and blank, their
+    /// live chat is released and only the summary stays (see
+    /// `release_closed_panes`), so splitting and closing doesn't grow memory.
+    closed_panes: HashSet<i64>,
     /// Lightweight history index; only opened or previewed chats own GPUI entities.
     session_summaries: HashMap<i64, Session>,
     draft_sessions: HashSet<i64>,
@@ -1164,6 +1170,8 @@ impl Shell {
             remote_marks: HashMap::new(),
             _remote_clock: remote_clock,
             sessions: HashMap::new(),
+            session_observations: HashMap::new(),
+            closed_panes: HashSet::new(),
             session_summaries: HashMap::new(),
             draft_sessions: sidebar_metadata.drafts,
             history_recency: HashMap::new(),
@@ -1648,6 +1656,26 @@ impl Shell {
     }
     /// Keeps a chat, and answers its events, in this window.
     fn attach_session(&mut self, id: i64, view: Entity<Conversation>, cx: &mut Context<Self>) {
+        // Everything subscribed below belongs to this chat, so it is kept per
+        // session and dropped when the chat is released or forgotten.
+        let shared = std::mem::take(&mut self.observations);
+        self.attach_session_observers(id, &view, cx);
+        let own = std::mem::replace(&mut self.observations, shared);
+        self.session_observations.entry(id).or_default().extend(own);
+        self.sessions.insert(id, view);
+        self.orchestration_view_added(id, cx);
+        // Restored after a restart, a held session has no view state of its own.
+        if crate::hold::active(cx) {
+            self.refresh_session_mark(id, cx);
+        }
+    }
+    fn attach_session_observers(
+        &mut self,
+        id: i64,
+        view: &Entity<Conversation>,
+        cx: &mut Context<Self>,
+    ) {
+        let view = view.clone();
         self.observations
             .push(cx.subscribe(&view, move |this, _, _: &SessionChanged, cx| {
                 let Some(view) = this.sessions.get(&id) else {
@@ -1746,12 +1774,6 @@ impl Shell {
         self.observe_orchestration(&view, id, cx);
         self.observe_session_folders(&view, id, cx);
         self.observe_continue_outside(&view, id, cx);
-        self.sessions.insert(id, view);
-        self.orchestration_view_added(id, cx);
-        // Restored after a restart, a held session has no view state of its own.
-        if crate::hold::active(cx) {
-            self.refresh_session_mark(id, cx);
-        }
     }
     /// After this frame, tell each review pane whether it was drawn: one
     /// that was not (its thread is not on screen) stops its browser tab's
@@ -2990,6 +3012,10 @@ impl Shell {
                 let (t, done) = motion.slide.at(std::time::Instant::now());
                 if done {
                     self.pane_motion = None;
+                    // A closed pane waited for its slide out before release.
+                    if !self.closed_panes.is_empty() {
+                        cx.defer_in(window, |this, _, cx| this.update_chat_visibility(cx));
+                    }
                     None
                 } else {
                     window.request_animation_frame();
@@ -4109,6 +4135,7 @@ impl Shell {
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.leave_closed_dictation(cx);
+        self.closed_panes.insert(id);
         self.navigation_revision += 1;
         self.begin_pane_motion(before, cx);
         self.fit_sidebar(cx);
@@ -10142,6 +10169,116 @@ mod tests {
                 assert_eq!(shell.workspace.active, Some(b));
                 assert_eq!(shell.workspace.tabs, [c, b]);
                 assert_eq!(shell.workspace.project, "/work/gespan");
+            })
+            .unwrap();
+    }
+    /// Splits `a` with a new session and closes that pane again, as cmd-d
+    /// then cmd-w do. Returns the split's id and a weak handle to its chat.
+    fn split_and_close(
+        window: WindowHandle<Shell>,
+        a: i64,
+        input: Option<&str>,
+        cx: &mut TestAppContext,
+    ) -> (i64, gpui::WeakEntity<Conversation>) {
+        window
+            .update(cx, |shell, w, cx| {
+                shell.open(a, w, cx);
+                shell.split_session(SplitDir::Right, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let (split, chat) = window
+            .update(cx, |shell, w, cx| {
+                let split = shell.workspace.active.unwrap();
+                assert_ne!(split, a);
+                assert!(
+                    shell
+                        .workspace
+                        .layout(shell.workspace.tab_of(a).unwrap())
+                        .is_split()
+                );
+                let chat = shell.sessions[&split].clone();
+                if let Some(text) = input {
+                    chat.update(cx, |chat, cx| chat.set_draft_text(text.into(), cx));
+                }
+                shell.close_pane(split, w, cx);
+                // Still sliding out: the leaving pane keeps drawing its chat.
+                assert!(shell.sessions.contains_key(&split));
+                assert!(shell.workspace.tab_of(split).is_none());
+                (split, chat.downgrade())
+            })
+            .unwrap();
+        // The slide out ends; the next frame or visibility pass releases it.
+        window
+            .update(cx, |shell, _, cx| {
+                shell.pane_motion = None;
+                shell.update_chat_visibility(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        (split, chat)
+    }
+    #[gpui::test]
+    fn closing_a_blank_split_pane_releases_its_chat(cx: &mut TestAppContext) {
+        let (window, a, _) = window(cx);
+        let (live, subscriptions) = window
+            .update(cx, |shell, _, _| {
+                (shell.sessions.len(), shell.session_observations.len())
+            })
+            .unwrap();
+        let mut splits = Vec::new();
+        // Repeated split/close cycles, as the soak runs them, must not
+        // accumulate chats or their subscriptions.
+        for _ in 0..4 {
+            let (split, chat) = split_and_close(window, a, None, cx);
+            assert!(
+                chat.upgrade().is_none(),
+                "the closed split's Conversation is still alive"
+            );
+            window
+                .update(cx, |shell, _, _| {
+                    assert!(!shell.sessions.contains_key(&split));
+                    assert!(!shell.session_observations.contains_key(&split));
+                    assert!(shell.closed_panes.is_empty());
+                    // Only the live chat goes: the session stays in history.
+                    assert!(shell.session_summaries.contains_key(&split));
+                    assert_eq!(shell.sessions.len(), live);
+                    assert_eq!(shell.session_observations.len(), subscriptions);
+                    assert!(
+                        !shell
+                            .workspace
+                            .layout(shell.workspace.tab_of(a).unwrap())
+                            .is_split()
+                    );
+                })
+                .unwrap();
+            splits.push(split);
+        }
+        // A released session opens again as a working chat.
+        let first = splits[0];
+        window
+            .update(cx, |shell, w, cx| {
+                shell.open(first, w, cx);
+                assert_eq!(shell.workspace.active, Some(first));
+                assert!(shell.sessions.contains_key(&first));
+                assert!(shell.session_observations.contains_key(&first));
+                assert!(!shell.closed_panes.contains(&first));
+            })
+            .unwrap();
+    }
+    #[gpui::test]
+    fn closing_a_split_pane_with_unsent_text_keeps_its_chat(cx: &mut TestAppContext) {
+        let (window, a, _) = window(cx);
+        let (split, chat) = split_and_close(window, a, Some("half a thought"), cx);
+        let chat = chat
+            .upgrade()
+            .expect("a chat with unsent text was released");
+        window
+            .update(cx, |shell, _, cx| {
+                assert!(shell.sessions.contains_key(&split));
+                assert_eq!(chat.read(cx).draft_text(cx), "half a thought");
+                // Decided once: it is an ordinary chat from now on.
+                assert!(shell.closed_panes.is_empty());
             })
             .unwrap();
     }
