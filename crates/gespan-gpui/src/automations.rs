@@ -131,6 +131,8 @@ enum Choice {
     SetupRepo,
     SetupWhich,
     SetupResults,
+    /// What a review automation does with its review.
+    Results,
 }
 struct ChoiceMenu {
     field: Choice,
@@ -848,22 +850,7 @@ impl Automations {
                     return;
                 }
                 if let Some(editor) = &mut this.editor {
-                    let current = gespan_core::store::native_model(
-                        &editor.draft.model,
-                        &editor.draft.harness,
-                    );
-                    let picked_model = picked
-                        .1
-                        .as_deref()
-                        .and_then(|model| gespan_core::store::native_model(model, picked.0.id()));
-                    if Kind::from_id(&editor.draft.harness) != picked.0 || current != picked_model {
-                        editor.draft.harness = picked.0.id().into();
-                        editor.draft.model = picked.1.clone().unwrap_or_default();
-                        editor.completion.update(cx, |completion, cx| {
-                            completion.set_provider(picked.0.id(), cx)
-                        });
-                        editor.dirty = true;
-                    }
+                    editor.set_model(picked.0, picked.1.clone(), cx);
                 }
                 this.models = None;
                 this.load_controls(cx);
