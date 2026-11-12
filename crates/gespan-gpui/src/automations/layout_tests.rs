@@ -1391,65 +1391,6 @@ fn each_trigger_shows_the_properties_its_kind_declares(cx: &mut TestAppContext) 
     assert!(
         visual
             .drawn(&format!("trigger-properties-{time}"))
-
-#[gpui::test]
-fn card_shows_the_latest_result_as_a_status_pill(cx: &mut TestAppContext) {
-    let page = page();
-    let time = AutomationTrigger::new("time", "daily");
-    let failed = save(&page, "Failed", "/work/app", time.clone());
-    let passed = save(&page, "Passed", "/work/app", time.clone());
-    let never = save(&page, "Never", "/work/app", time);
-    {
-        let mut service = page.service.lock().unwrap();
-        for (automation, status) in [(&failed, "failed"), (&passed, "succeeded")] {
-            let run = service.run_now(&automation.id, now()).unwrap();
-            service
-                .update_run(&run.id, status, None, None, now())
-                .unwrap();
-        }
-    }
-    let (window, mut visual) = open(&page, "/work/app", cx);
-
-    // The pill reads the stored result in words.
-    let pills = window
-        .read_with(&visual, |view, _| {
-            [&failed.id, &passed.id, &never.id].map(|id| {
-                let automation = view.automations.iter().find(|a| &a.id == id).unwrap();
-                layout::last_run_pill(
-                    automation.last_run_status.as_deref(),
-                    automation.last_run_at,
-                    now(),
-                )
-            })
-        })
-        .unwrap();
-    assert_eq!(
-        pills[0],
-        Some(("Failed just now".into(), crate::glass::Tone::Bad))
-    );
-    assert_eq!(
-        pills[1],
-        Some(("Last run just now".into(), crate::glass::Tone::Ok))
-    );
-    assert_eq!(pills[2], None);
-
-    // Cards with a result draw the pill; one never run keeps the plain line.
-    for id in [&failed.id, &passed.id] {
-        assert!(
-            visual
-                .drawn(&format!("automation-last-run-pill-{id}"))
-                .is_some()
-        );
-        assert!(visual.drawn(&format!("automation-last-run-{id}")).is_none());
-    }
-    assert!(
-        visual
-            .drawn(&format!("automation-last-run-{}", never.id))
-            .is_some()
-    );
-    assert!(
-        visual
-            .drawn(&format!("automation-last-run-pill-{}", never.id))
             .is_none()
     );
 }
@@ -1620,7 +1561,72 @@ fn a_trigger_listens_to_one_repository(cx: &mut TestAppContext) {
     assert_eq!(
         stored(&page, &automation.id).triggers()[0].repos,
         vec!["acme/app".to_string()]
+    );
+}
 
+#[gpui::test]
+fn card_shows_the_latest_result_as_a_status_pill(cx: &mut TestAppContext) {
+    let page = page();
+    let time = AutomationTrigger::new("time", "daily");
+    let failed = save(&page, "Failed", "/work/app", time.clone());
+    let passed = save(&page, "Passed", "/work/app", time.clone());
+    let never = save(&page, "Never", "/work/app", time);
+    {
+        let mut service = page.service.lock().unwrap();
+        for (automation, status) in [(&failed, "failed"), (&passed, "succeeded")] {
+            let run = service.run_now(&automation.id, now()).unwrap();
+            service
+                .update_run(&run.id, status, None, None, now())
+                .unwrap();
+        }
+    }
+    let (window, mut visual) = open(&page, "/work/app", cx);
+
+    // The pill reads the stored result in words.
+    let pills = window
+        .read_with(&visual, |view, _| {
+            [&failed.id, &passed.id, &never.id].map(|id| {
+                let automation = view.automations.iter().find(|a| &a.id == id).unwrap();
+                layout::last_run_pill(
+                    automation.last_run_status.as_deref(),
+                    automation.last_run_at,
+                    now(),
+                )
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        pills[0],
+        Some(("Failed just now".into(), crate::glass::Tone::Bad))
+    );
+    assert_eq!(
+        pills[1],
+        Some(("Last run just now".into(), crate::glass::Tone::Ok))
+    );
+    assert_eq!(pills[2], None);
+
+    // Cards with a result draw the pill; one never run keeps the plain line.
+    for id in [&failed.id, &passed.id] {
+        assert!(
+            visual
+                .drawn(&format!("automation-last-run-pill-{id}"))
+                .is_some()
+        );
+        assert!(visual.drawn(&format!("automation-last-run-{id}")).is_none());
+    }
+    assert!(
+        visual
+            .drawn(&format!("automation-last-run-{}", never.id))
+            .is_some()
+    );
+    assert!(
+        visual
+            .drawn(&format!("automation-last-run-pill-{}", never.id))
+            .is_none()
+    );
+}
+
+#[gpui::test]
 fn new_button_leaves_the_open_automation_for_the_gallery(cx: &mut TestAppContext) {
     let page = page();
     let time = AutomationTrigger::new("time", "daily");
