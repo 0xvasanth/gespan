@@ -706,6 +706,35 @@ fn run_turn_using(
                 "You have Gespan app access for this project. {how} Supported actions: models.list {{}}, sessions.list {{}}, sessions.read {{sessionId}}, sessions.start {{prompt,harness?,model?,title?,draft?,reveal?}}, sessions.send/draft {{sessionId,prompt}}, sessions.stop {{sessionId}}, folders.list {{}}, folders.move {{sessionId,folderId?,newFolderName?}}, notes.list {{}}, notes.read {{id}}, notes.write {{id?,title,body}}, worktrees.list {{}}. Scope is this thread's project.{scope_note} Respect the user’s request and selected access policy.\n\n{prompt}"
             );
         }
+        // The decision log: its toolkit, and for a harness that reads no
+        // decision file, its block once per provider conversation and again
+        // after the log changes. A fresh conversation has not seen it.
+        let decision_toolkit = (!settings.text_only && !raw_native_command)
+            .then(|| {
+                decisions_toolkit(
+                    gespan_core::decisions::enabled(),
+                    summary.cwd.starts_with("remote://"),
+                    settings.orchestration_worker,
+                )
+            })
+            .flatten();
+        let decision_key = format!("decision-context:{}", summary.id);
+        let mut decision_hash = None;
+        if decision_toolkit.is_some() {
+            let already = match provider_id {
+                Some(_) => locked(&store)?.setting(&decision_key)?,
+                None => None,
+            };
+            let workspace = settings.worktree_cwd.as_deref().unwrap_or(&summary.cwd);
+            if let Some((block, hash)) = gespan_core::decisions::start_context(
+                kind,
+                std::path::Path::new(workspace),
+                already.as_deref(),
+            ) {
+                prompt = with_decision_context(&block, &prompt);
+                decision_hash = Some(hash);
+            }
+        }
         // Every foreground session receives an independent visual capability.
         // This happens after configuration was persisted, and Settings' env is
         // transport-only, so credentials never enter saved conversation settings.
@@ -835,6 +864,9 @@ fn run_turn_using(
             if held && tool_servers {
                 toolkits.insert(toolkit.to_owned());
             }
+        }
+        if let Some(toolkit) = decision_toolkit {
+            toolkits.insert(toolkit.to_owned());
         }
         // Exactly one of the two: both would list `actions_list` twice.
         if tool_servers
@@ -1287,6 +1319,12 @@ fn run_turn_using(
         });
         // The provider returned: the turn's browser actions end with it.
         drop(browser);
+        // Delivered only once the provider took the turn.
+        if result.is_ok()
+            && let Some(hash) = &decision_hash
+        {
+            locked(&store)?.save_setting(&decision_key, hash)?;
+        }
         if result.is_ok()
             && let Some(fingerprint) = &pilot_fingerprint
         {
@@ -1898,8 +1936,72 @@ fn actions_toolkit(read_only: bool, remote: bool, worker: bool) -> Option<&'stat
     Some(if read_only { ACTIONS_READ } else { ACTIONS })
 }
 
+/// The decision log toolkit a turn mounts: none while the log is off or for
+/// a remote project, read tools and flags for orchestration workers (their
+/// environment is cleared, so the settings flag tells them apart), and the
+/// whole toolkit otherwise.
+fn decisions_toolkit(enabled: bool, remote: bool, worker: bool) -> Option<&'static str> {
+    use gespan_core::tool_servers::{DECISIONS, DECISIONS_READ};
+    if !enabled || remote {
+        return None;
+    }
+    Some(if worker { DECISIONS_READ } else { DECISIONS })
+}
+
+/// `prompt` with the decision log's session-start block before it, in the
+/// `<gespan_context>` wrapper the Pilot prompt uses.
+fn with_decision_context(block: &str, prompt: &str) -> String {
+    format!("<gespan_context>\n{block}\n</gespan_context>\n\n{prompt}")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decision_log_off_mounts_nothing() {
+        use super::decisions_toolkit;
+        for (remote, worker) in [(false, false), (false, true), (true, false)] {
+            assert_eq!(decisions_toolkit(false, remote, worker), None);
+        }
+    }
+
+    #[test]
+    fn ordinary_session_mounts_decisions() {
+        use super::decisions_toolkit;
+        assert_eq!(
+            decisions_toolkit(true, false, false),
+            Some(gespan_core::tool_servers::DECISIONS)
+        );
+    }
+
+    #[test]
+    fn worker_mounts_decisions_read() {
+        use super::decisions_toolkit;
+        // Workers' environment is cleared, so this is the settings flag.
+        assert_eq!(
+            decisions_toolkit(true, false, true),
+            Some(gespan_core::tool_servers::DECISIONS_READ)
+        );
+    }
+
+    #[test]
+    fn remote_session_mounts_nothing() {
+        use super::decisions_toolkit;
+        assert_eq!(decisions_toolkit(true, true, false), None);
+        assert_eq!(decisions_toolkit(true, true, true), None);
+    }
+
+    #[test]
+    fn decision_context_goes_first_and_is_never_taken_for_the_users_words() {
+        use super::with_decision_context;
+        let prompt = "Refactor the store";
+        let sent = with_decision_context("Gespan decision log. Use tabs.", prompt);
+        assert_eq!(
+            sent,
+            "<gespan_context>\nGespan decision log. Use tabs.\n</gespan_context>\n\nRefactor the store"
+        );
+        assert_eq!(gespan_core::outside_turns::without_injected(&sent), prompt);
+    }
+
     #[test]
     fn a_worktree_turn_mounts_its_worktree_under_its_project() {
         use super::turn_mount;

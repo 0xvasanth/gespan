@@ -492,6 +492,7 @@ impl SettingsView {
                     | "show-remaining-usage"
                     | "mask-emails"
                     | "claude-hooks"
+                    | "decision-log"
                     | "pilot-menu-bar-icon"
                     | "show-archived"
                     | "sidebar-notes"

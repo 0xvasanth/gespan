@@ -22,6 +22,7 @@ mod composer_motion;
 mod composer_runner;
 mod context_meter;
 mod conversation;
+mod decision_log;
 #[cfg(debug_assertions)]
 mod dev_reload;
 mod diff_view;
@@ -470,6 +471,11 @@ fn main() {
     let tool_data = database.parent().unwrap_or(std::path::Path::new("."));
     gespan_core::process::orphans::reap(Some(gespan_core::tool_servers::running_record(tool_data)));
     gespan_core::tool_servers::configure(tool_data);
+    // The decision log's store opens whether or not the log is on; the
+    // preference (applied with the others) decides whether anything uses it.
+    if let Err(error) = gespan_core::decisions::init(tool_data) {
+        tracing::warn!(%error, "the decision log did not open");
+    }
     // Optional: without it the browser toolkit lists nothing and says so.
     if let Err(error) = gespan_core::browser::start(Some(tool_data)) {
         tracing::warn!(%error, "the browser module did not start");
@@ -600,6 +606,7 @@ fn main() {
     }
     let sidebar_metadata = db.session_sidebar_metadata(&projects);
     let db = Arc::new(Mutex::new(db));
+    decision_log::install(db.clone());
     let platform = gpui_platform::current_platform(false);
     let title_raster = particle_text::GlyphRaster(platform.text_system());
     let app = gpui::Application::with_platform(platform).with_assets(assets::Assets);

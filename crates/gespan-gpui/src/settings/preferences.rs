@@ -70,6 +70,9 @@ pub(crate) struct Preferences {
     /// `gespan_keep_awake::Mode` value, shared with desktop `gespan.keepAwake`.
     pub keep_awake: String,
     pub claude_hooks: bool,
+    /// Keep preferences and project decisions in Gespan and give them to
+    /// every agent. Off until the user turns it on.
+    pub decision_log: bool,
     pub binary_paths: HashMap<String, String>,
     pub disabled_skill_paths: Vec<String>,
     pub skill_source_paths: Vec<String>,
@@ -177,6 +180,7 @@ impl Default for Preferences {
             idle_agents: 3,
             keep_awake: "off".into(),
             claude_hooks: true,
+            decision_log: false,
             binary_paths: HashMap::new(),
             disabled_skill_paths: Vec::new(),
             skill_source_paths: Vec::new(),
@@ -626,5 +630,20 @@ mod worktree_default_tests {
         let read: Preferences = serde_json::from_str(&saved).unwrap();
         assert!(read.deletes_merged_branch("/a"));
         assert!(!read.deletes_worktree_sessions("/a"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Preferences;
+
+    #[test]
+    fn decision_log_is_opt_in() {
+        assert!(!Preferences::default().decision_log);
+        // Preferences saved before the setting existed keep it off.
+        let saved: Preferences = serde_json::from_str(r#"{"claude_hooks":false}"#).unwrap();
+        assert!(!saved.decision_log);
+        let on: Preferences = serde_json::from_str(r#"{"decision_log":true}"#).unwrap();
+        assert!(on.decision_log);
     }
 }
