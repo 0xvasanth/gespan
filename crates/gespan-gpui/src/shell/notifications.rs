@@ -365,7 +365,7 @@ impl Shell {
         }));
     }
 
-    fn notification_chats(&self, cx: &App) -> Vec<Entity<Conversation>> {
+    pub(super) fn notification_chats(&self, cx: &App) -> Vec<Entity<Conversation>> {
         let mut views: Vec<_> = self.sessions.values().cloned().collect();
         if let Some(pilots) = &self.pilots {
             views.extend(pilots.read(cx).all_notification_chats(cx));
@@ -435,6 +435,7 @@ impl Shell {
                 );
             }
         }
+        self.refresh_my_tasks(cx);
     }
 
     pub(super) fn notice_session_visible(&self, id: i64, cx: &App) -> bool {

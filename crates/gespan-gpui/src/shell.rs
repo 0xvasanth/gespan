@@ -772,6 +772,10 @@ pub(crate) struct Shell {
     board: Option<Entity<crate::board::BoardView>>,
     runs: Option<Entity<crate::runs::Runs>>,
     my_tasks: Option<Entity<crate::my_tasks::MyTasks>>,
+    /// When each open task was first seen, by key, in milliseconds.
+    my_task_seen: HashMap<String, u64>,
+    /// Turns of history each task shows, once the user loaded more.
+    my_task_turns: HashMap<String, usize>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -1198,6 +1202,8 @@ impl Shell {
             board: None,
             runs: None,
             my_tasks: None,
+            my_task_seen: HashMap::new(),
+            my_task_turns: HashMap::new(),
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),

@@ -94,3 +94,25 @@ impl Conversation {
         true
     }
 }
+
+impl Conversation {
+    /// The approvals waiting in this session, oldest first.
+    pub(crate) fn pending_approvals(&self) -> impl Iterator<Item = &gespan_core::agent::Approval> {
+        self.approvals.iter()
+    }
+
+    /// The question the session will take an answer for now: the front one.
+    pub(crate) fn front_question(&self) -> Option<Entity<crate::questions::QuestionCard>> {
+        self.questions.front().map(|(card, _)| card.clone())
+    }
+
+    /// The session's history rows, as saved.
+    pub(crate) fn history_rows<'a>(&self, cx: &'a gpui::App) -> &'a [gespan_core::transcript::Row] {
+        self.transcript.read(cx).source_rows()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drop_questions_for_test(&mut self) {
+        self.questions.clear();
+    }
+}

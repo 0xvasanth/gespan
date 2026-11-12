@@ -20,13 +20,13 @@ const FIELD_LINES: usize = 3;
 
 /// Everything the card shows for `approval`, with each shown string's hidden
 /// characters marked, so a `r\u{200B}m` can't read as `rm`.
-pub(super) struct Card {
+pub(crate) struct Card {
     view: ApprovalView,
     alerts: Vec<String>,
 }
 
 impl Card {
-    pub(super) fn new(approval: &Approval, cwd: Option<&str>) -> Self {
+    pub(crate) fn new(approval: &Approval, cwd: Option<&str>) -> Self {
         let home = gespan_core::accounts::home();
         let home = home.as_deref().and_then(|home| home.to_str());
         let mut view = approval_view(approval.tool.as_ref(), &approval.detail, cwd, home);
@@ -44,14 +44,14 @@ impl Card {
 
     /// The provider's question, except that an MCP tool is named by its own
     /// name rather than `mcp__server__tool`; the server has its own row.
-    pub(super) fn title(&self, approval: &Approval) -> String {
+    pub(crate) fn title(&self, approval: &Approval) -> String {
         match &self.view.mcp {
             Some(mcp) => format!("Allow {}?", mcp.tool),
             None => mark_hidden(&approval.title),
         }
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.view.summary.is_none()
             && self.view.mcp.is_none()
             && self.view.body == Body::None
@@ -61,7 +61,7 @@ impl Card {
     }
 
     /// Lines a collapsed card leaves out, or `None` when it shows everything.
-    pub(super) fn hidden_lines(&self) -> Option<usize> {
+    pub(crate) fn hidden_lines(&self) -> Option<usize> {
         let body = match &self.view.body {
             Body::Command(text) | Body::Text(text) => collapse(text, BODY_LINES, LINE_CHARS),
             _ => None,
@@ -95,7 +95,7 @@ impl Card {
         (hidden > 0).then_some(hidden)
     }
 
-    pub(super) fn render(&self, expanded: bool) -> AnyElement {
+    pub(crate) fn render(&self, expanded: bool) -> AnyElement {
         let view = &self.view;
         let hidden = self.hidden_lines();
         let collapsed = !expanded && hidden.is_some();
@@ -187,7 +187,7 @@ impl Card {
 
     /// Opens or closes the long content. It sits below the scrolling part,
     /// so an open card can always be closed again.
-    pub(super) fn toggle(
+    pub(crate) fn toggle(
         &self,
         expanded: bool,
         on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,

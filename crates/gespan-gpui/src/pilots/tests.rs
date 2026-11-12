@@ -6006,3 +6006,45 @@ fn a_queued_automation_run_is_named_by_its_automation() {
         assert_eq!(internal_header(other), "Completion update", "{other:?}");
     }
 }
+
+#[gpui::test]
+fn a_pilot_choices_card_is_a_task_until_the_user_replies(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let post = |role: &'static str, text: String, visual: &mut gpui::VisualTestContext| {
+        s.window
+            .update(visual, |_, _, cx| {
+                let chat = s.manager.read(cx).chats[&s.id].clone();
+                chat.update(cx, |v, cx| v.pilot_post(role, text, cx))
+                    .unwrap();
+            })
+            .unwrap();
+        visual.run_until_parked();
+    };
+    let tasks = |visual: &mut gpui::VisualTestContext| {
+        s.window
+            .update(visual, |shell, _, cx| {
+                shell.refresh_my_tasks(cx);
+                shell.my_task_snapshot_for_test(cx)
+            })
+            .unwrap()
+    };
+    post("user", "Review today's merge requests".into(), visual);
+    post(
+        "assistant",
+        "Two are open. Which should I start with?".into(),
+        visual,
+    );
+    post(
+        "pilot-card",
+        serde_json::json!({"type": "choices", "options": ["ae!29", "ae!31"]}).to_string(),
+        visual,
+    );
+    let found = tasks(visual);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, gespan_core::tasks::Kind::PilotChoice);
+    assert_eq!(found[0].1, "Two are open. Which should I start with?");
+
+    post("user", "ae!29".into(), visual);
+    assert!(tasks(visual).is_empty());
+}

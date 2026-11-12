@@ -119,6 +119,10 @@ impl MyTasks {
         cx.notify();
     }
 
+    pub(crate) fn tasks(&self) -> &[TaskItem] {
+        &self.tasks
+    }
+
     pub(crate) fn open_count(&self) -> usize {
         self.tasks.len()
     }

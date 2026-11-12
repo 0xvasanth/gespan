@@ -63,3 +63,23 @@ impl Pilots {
         true
     }
 }
+
+impl Pilots {
+    /// Each Pilot chat whose latest card asks the user to choose, with no
+    /// reply since: (Pilot id, its chat, the open choice).
+    pub(crate) fn open_choices(
+        &self,
+        cx: &App,
+    ) -> Vec<(String, Entity<Conversation>, gespan_core::tasks::OpenChoice)> {
+        let mut found: Vec<_> = self
+            .chats
+            .iter()
+            .filter_map(|(pilot, chat)| {
+                let open = gespan_core::tasks::open_choice(chat.read(cx).history_rows(cx))?;
+                Some((pilot.clone(), chat.clone(), open))
+            })
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found
+    }
+}

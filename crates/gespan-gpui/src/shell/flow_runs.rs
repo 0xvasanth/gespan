@@ -362,6 +362,8 @@ impl Shell {
         for id in recheck {
             self.flow_session_changed(id, cx);
         }
+        // A run may have started or stopped waiting for approval.
+        self.refresh_my_tasks(cx);
         Some(result)
     }
 
