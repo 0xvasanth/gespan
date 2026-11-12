@@ -1,0 +1,26 @@
+crates/board-store/src/views.rs
+  s_a2c0f0f2f96e87::t_e0d1e84bc05819 138-139,158-159,162-171,174-175,226,228
+crates/board-store/src/meta.rs
+  s_a2c0f0f2f96e87::t_e0d1e84bc05819 491,500,504,514,517,519,531,534,536,546,550,560
+crates/board-store/src/db.rs
+  s_a2c0f0f2f96e87::t_6d9d90fe401d5a 229-239,252-256,303-309,319-323,325
+  s_a2c0f0f2f96e87::t_86e5f8fe0fc849 324
+crates/board-store/src/ops.rs
+  s_a2c0f0f2f96e87::t_6d9d90fe401d5a 70,72-82,87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da2ce725dc42ff9e7940cf38f3289c5a2f82a965",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
