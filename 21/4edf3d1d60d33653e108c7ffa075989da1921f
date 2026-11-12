@@ -1,0 +1,88 @@
+crates/gespan-gpui/src/settings/pages/providers.rs
+  s_c589f1ba8a8fa6::t_5eb18e34e0ee31 13-14,21-22,112-132,164-166,245-260,262-266,271-282,284-397
+  s_c589f1ba8a8fa6::t_225291c864363c 23
+crates/gespan-gpui/src/settings/pages/browser.rs
+  s_c589f1ba8a8fa6::t_781cbf957ae617 71-73,75-76,170,601-621
+  s_c589f1ba8a8fa6::t_27deeccfa37265 77-79,85-90
+  s_c589f1ba8a8fa6::t_598d16d1add58c 74
+  s_c589f1ba8a8fa6::t_7fe6fb3d254f18 622-623
+crates/gespan-gpui/src/settings/pages/connections.rs
+  s_c589f1ba8a8fa6::t_30563036947fc5 742-747,1091-1094
+  s_c589f1ba8a8fa6::t_cc2d9a72756df9 106-121,748-752,754-757,1082-1090,1095-1096
+  s_c589f1ba8a8fa6::t_225291c864363c 723
+  s_c589f1ba8a8fa6::t_3e94b2d5645c69 718,720-721,776,778-779,794,821,823-824
+crates/gespan-gpui/src/accounts/ui.rs
+  s_c589f1ba8a8fa6::t_30563036947fc5 232-235,237-311,313,316,325,328-330,332-349,352-378,382-384,391-400,409-417
+  s_c589f1ba8a8fa6::t_734f5cb946aca1 224-231,386-387,389-390,401-403,405-408,418-420
+crates/gespan-gpui/src/settings/pages/skills.rs
+  s_c589f1ba8a8fa6::t_850d7930cd9c1a 229-231,233
+  s_c589f1ba8a8fa6::t_76c82e3f06840f 5,635-641
+  s_c589f1ba8a8fa6::t_37d588a61cd8d0 12-26,367-368,370-371,379,386-387,389-390,518-554
+crates/gespan-gpui/src/settings/mod.rs
+  s_c589f1ba8a8fa6::t_1faa5fc2547b60 362-368,748-753
+crates/gespan-gpui/src/settings/glass_tests.rs
+  s_c589f1ba8a8fa6::t_1061b008f07819 342-349,381-385,389-392,404-413,417-421,432-436,438-440
+  s_c589f1ba8a8fa6::t_4cef10a810625d 446-456
+  s_c589f1ba8a8fa6::t_76c82e3f06840f 457-484
+  s_c589f1ba8a8fa6::t_af83ef2e18e840 375-380,386-388,393-403,414-416,422-431,437,441-445
+  s_c589f1ba8a8fa6::t_3968115f88453d 328-341,350-374
+crates/gespan-gpui/src/settings/pages/chat.rs
+  s_c589f1ba8a8fa6::t_1061b008f07819 221-260
+  s_c589f1ba8a8fa6::t_9fe70cafedab37 3-4
+  s_c589f1ba8a8fa6::t_67d1fd08a3ad30 15,201-220,261
+  s_c589f1ba8a8fa6::t_f3d23c228bcde4 262-263
+crates/gespan-gpui/src/settings/pages/appearance.rs
+  s_c589f1ba8a8fa6::t_f179c69b746291 447-449,451-453
+  s_c589f1ba8a8fa6::t_67d1fd08a3ad30 5-7
+crates/gespan-gpui/src/settings/pages/herdr_machines.rs
+  s_c589f1ba8a8fa6::t_3e94b2d5645c69 564,566-567,579,581-582
+crates/gespan-gpui/src/settings/pages/keybindings.rs
+  s_c589f1ba8a8fa6::t_1faa5fc2547b60 413-417,422-450,525-542,545-548,554-563,566-574,577-610,616-619,627-657,661-665,668-702,706-708,710-712,717,721-722,730-732,736-752,755-769,772-783,785-805,807-814
+  s_c589f1ba8a8fa6::t_1061b008f07819 418-421,549-553,564-565,611-614,621-626,703-705,727-729
+crates/gespan-gpui/src/settings/pages/dictation.rs
+  s_c589f1ba8a8fa6::t_4cef10a810625d 263
+  s_c589f1ba8a8fa6::t_f11d15d3b0c70d 268,304,306-307,316,318,329,332
+crates/gespan-gpui/src/settings/pages/mobile.rs
+  s_c589f1ba8a8fa6::t_3e94b2d5645c69 329,331-332,515,517-518,532,534-535
+crates/gespan-gpui/src/settings/pages/mcp.rs
+  s_c589f1ba8a8fa6::t_8bc7c844e45034 14,83-86,315
+  s_c589f1ba8a8fa6::t_3e94b2d5645c69 162,164-165
+crates/gespan-gpui/src/settings/widgets.rs
+  s_c589f1ba8a8fa6::t_67d1fd08a3ad30 97-127
+crates/gespan-gpui/src/settings/pages/worktrees.rs
+  s_c589f1ba8a8fa6::t_3e94b2d5645c69 306,308-309,335,337-338
+crates/gespan-gpui/src/settings/model.rs
+  s_c589f1ba8a8fa6::t_f179c69b746291 119
+crates/gespan-gpui/src/settings/pages/mcp_catalog.rs
+  s_c589f1ba8a8fa6::t_8bc7c844e45034 555
+  s_c589f1ba8a8fa6::t_3e94b2d5645c69 737,739-740
+crates/gespan-gpui/src/settings/pages/mod.rs
+  s_c589f1ba8a8fa6::t_76c82e3f06840f 35-36
+  s_c589f1ba8a8fa6::t_af83ef2e18e840 31-32
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_a2c0f0f2f96e87::t_fa14a97b578d8d 494-495
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "214edf3d1d60d33653e108c7ffa075989da1921f",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_c589f1ba8a8fa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39f78400-f644-4002-b3b7-119922fa07b9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
