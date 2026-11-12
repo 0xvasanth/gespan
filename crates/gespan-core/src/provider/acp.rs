@@ -93,6 +93,23 @@ fn acp_approval_tool(tool: &Value, id: &str, kind: Option<&str>) -> ToolCall {
     call
 }
 
+/// The shell command a permission request would run, as one string. An argv
+/// array is joined the way Codex's is; `None` when no command can be found.
+fn acp_command(tool: &Value, known: Option<&ToolCall>) -> Option<String> {
+    let input = tool
+        .get("rawInput")
+        .or_else(|| tool.get("raw_input"))
+        .cloned()
+        .or_else(|| serde_json::from_str(&known?.input).ok())?;
+    match &input["command"] {
+        Value::String(command) => Some(command.clone()),
+        Value::Array(argv) => {
+            shlex::try_join(argv.iter().map(Value::as_str).collect::<Option<Vec<_>>>()?).ok()
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     /// Lets process tests reach a request deadline without waiting for it.
@@ -975,7 +992,41 @@ impl Protocol {
                         )?;
                         return Ok(events);
                     }
-                    if planning || auto {
+                    // A pull request review runs only what its policy allows, whatever
+                    // the access mode: reads pass, a shell command is judged, the rest is denied.
+                    let review = self.request.settings.review.as_ref().and_then(|policy| {
+                        if read {
+                            return None;
+                        }
+                        Some(match kind {
+                            _ if self.probe => Verdict::Deny,
+                            Some("execute") => acp_command(tool, known)
+                                .map_or(Verdict::Deny, |c| review_policy::verdict(policy, &c)),
+                            _ => Verdict::Deny,
+                        })
+                    });
+                    if let Some(verdict) = review {
+                        match verdict {
+                            Verdict::Allow | Verdict::Deny => self.respond(
+                                Control {
+                                    id,
+                                    decision: if verdict == Verdict::Allow {
+                                        Decision::Allow
+                                    } else {
+                                        Decision::Deny
+                                    },
+                                },
+                                stdin,
+                            )?,
+                            Verdict::Ask => events.push(Event::Approval(Approval {
+                                id,
+                                title,
+                                detail,
+                                can_remember: false,
+                                tool: Some(approved),
+                            })),
+                        }
+                    } else if planning || auto {
                         self.respond(
                             Control {
                                 id,
@@ -2860,6 +2911,152 @@ mod tests {
                 );
             }
         }
+    }
+    fn acp_review_protocol(
+        results: crate::review_policy::ReviewResults,
+        access: AccessMode,
+    ) -> Protocol {
+        use crate::review_policy::{ReviewPolicy, ReviewTarget};
+        let mut p = protocol(Kind::Cursor);
+        p.acp.stage = Stage::Prompt;
+        p.request.settings.access = access;
+        p.request.settings.review = Some(ReviewPolicy {
+            results,
+            target: Some(ReviewTarget {
+                repo: "acme/app".into(),
+                number: 7,
+            }),
+        });
+        p
+    }
+    fn acp_permission(p: &mut Protocol, tool: Value) -> (Vec<Event>, Vec<u8>) {
+        let mut out = Vec::new();
+        let events = p.frame(json!({"id":"permission","method":"session/request_permission","params":{"toolCall":tool,"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"allow_always","optionId":"always"},{"kind":"reject_once","optionId":"no"}]}}), &mut out).unwrap();
+        (events, out)
+    }
+    #[test]
+    fn acp_review_policy_decides_execute() {
+        use crate::review_policy::ReviewResults;
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::FullAccess,
+            AccessMode::Supervised,
+        ] {
+            let mut p = acp_review_protocol(ReviewResults::Draft, access);
+            // A read that names the target repo is allowed once.
+            let (events, mut out) = acp_permission(
+                &mut p,
+                json!({"kind":"execute","rawInput":{"command":"gh pr diff 7 -R acme/app"}}),
+            );
+            assert!(events.is_empty(), "{access:?} {events:?}");
+            assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+            // argv arrays are joined the way Codex's are, and launchers are unwrapped.
+            let (events, mut out) = acp_permission(
+                &mut p,
+                json!({"kind":"execute","rawInput":{"command":["gh","pr","view","7","-R","acme/app"]}}),
+            );
+            assert!(events.is_empty());
+            assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+            let (events, mut out) = acp_permission(
+                &mut p,
+                json!({"kind":"execute","rawInput":{"command":["/bin/zsh","-lc","gh pr diff 7 -R acme/app; rm -rf x"]}}),
+            );
+            assert!(events.is_empty());
+            assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "no");
+            // Wrong repo, unrelated command, missing command: denied.
+            for tool in [
+                json!({"kind":"execute","rawInput":{"command":"gh pr diff 7"}}),
+                json!({"kind":"execute","rawInput":{"command":"rm x"}}),
+                json!({"kind":"execute","rawInput":{}}),
+                json!({"kind":"execute"}),
+                json!({"kind":"execute","rawInput":{"command":[1,2]}}),
+            ] {
+                let (events, mut out) = acp_permission(&mut p, tool.clone());
+                assert!(events.is_empty(), "{tool}");
+                assert_eq!(
+                    last(&mut out)["result"]["outcome"]["optionId"],
+                    "no",
+                    "{tool}"
+                );
+            }
+            // The posting command asks the user, never rememberable.
+            let (events, out) = acp_permission(
+                &mut p,
+                json!({"kind":"execute","rawInput":{"command":"gh pr review 7 -R acme/app --comment -b \"x\""}}),
+            );
+            assert!(
+                out.is_empty(),
+                "nothing is answered before the user decides"
+            );
+            let [Event::Approval(a)] = events.as_slice() else {
+                panic!("{events:?}")
+            };
+            assert!(!a.can_remember);
+            // "Allow for this session" is a one-off allow.
+            let mut out = Vec::new();
+            p.respond(
+                Control {
+                    id: "\"permission\"".into(),
+                    decision: Decision::Session,
+                },
+                &mut out,
+            )
+            .unwrap();
+            assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+        }
+    }
+    #[test]
+    fn acp_review_policy_post_allows_and_reads_known_tool_input() {
+        use crate::review_policy::ReviewResults;
+        let mut p = acp_review_protocol(ReviewResults::Post, AccessMode::Supervised);
+        let (events, mut out) = acp_permission(
+            &mut p,
+            json!({"kind":"execute","rawInput":{"command":"gh pr review 7 -R acme/app --comment -b x"}}),
+        );
+        assert!(events.is_empty());
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+        // A call announced earlier supplies the command when the request is sparse.
+        let mut tool = ToolCall::new("t", "Run");
+        tool.input = "{\"command\":\"rm x\"}".into();
+        p.tools.insert("t".into(), tool);
+        p.acp.tool_kinds.insert("t".into(), "execute".into());
+        let (events, mut out) = acp_permission(&mut p, json!({"toolCallId":"t"}));
+        assert!(events.is_empty());
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "no");
+    }
+    #[test]
+    fn acp_review_policy_rejects_anything_but_execute_and_reads() {
+        use crate::review_policy::ReviewResults;
+        for access in [
+            AccessMode::FullAccess,
+            AccessMode::Auto,
+            AccessMode::Supervised,
+        ] {
+            let mut p = acp_review_protocol(ReviewResults::Post, access);
+            for kind in ["edit", "delete", "move", "fetch", "other"] {
+                let (events, mut out) = acp_permission(&mut p, json!({"kind":kind}));
+                assert!(events.is_empty(), "{kind}");
+                assert_eq!(
+                    last(&mut out)["result"]["outcome"]["optionId"],
+                    "no",
+                    "{access:?} {kind}"
+                );
+            }
+            // Reads behave as they do without a review: Supervised still asks.
+            let (events, mut out) = acp_permission(&mut p, json!({"kind":"read"}));
+            if access == AccessMode::Supervised {
+                assert!(matches!(events.as_slice(), [Event::Approval(_)]));
+            } else {
+                assert!(events.is_empty());
+                assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+            }
+        }
+        // Without a review policy a supervised edit still asks.
+        let mut p = protocol(Kind::Cursor);
+        p.acp.stage = Stage::Prompt;
+        p.request.settings.access = AccessMode::Supervised;
+        let (events, _) = acp_permission(&mut p, json!({"kind":"edit"}));
+        assert!(matches!(events.as_slice(), [Event::Approval(a)] if a.can_remember));
     }
     #[test]
     fn cursor_planning_denies_execution_without_requiring_a_session_mode() {
