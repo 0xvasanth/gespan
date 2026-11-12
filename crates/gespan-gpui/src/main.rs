@@ -45,6 +45,7 @@ mod hang_watchdog;
 mod history;
 mod hold;
 mod hold_confirm;
+mod home;
 mod image_lightbox;
 mod image_memory;
 mod import_dialog;

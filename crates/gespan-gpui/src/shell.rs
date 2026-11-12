@@ -22,6 +22,9 @@ mod flow_view_tests;
 #[cfg(test)]
 mod hidden_flows_tests;
 mod hold;
+mod home;
+#[cfg(test)]
+mod home_tests;
 mod idle_agents;
 #[cfg(test)]
 mod image_lightbox_tests;
@@ -87,6 +90,7 @@ mod transcript_find_tests;
 #[cfg(test)]
 mod transfer_tests;
 mod tray;
+pub(crate) use agents_panel::elapsed as running_elapsed;
 pub(crate) use multi_window::WindowSeed;
 pub(crate) use tray::reopen;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -787,6 +791,7 @@ pub(crate) struct Shell {
     flows: Option<Entity<crate::flows::FlowsView>>,
     board: Option<Entity<crate::board::BoardView>>,
     runs: Option<Entity<crate::runs::Runs>>,
+    home: Option<Entity<crate::home::Home>>,
     my_tasks: Option<Entity<crate::my_tasks::MyTasks>>,
     /// When each open task was first seen, by key, in milliseconds.
     /// Each open task as kept in the database, with the time Gespan first
@@ -1226,6 +1231,7 @@ impl Shell {
             flows: None,
             board: None,
             runs: None,
+            home: None,
             my_tasks: None,
             my_task_records: HashMap::new(),
             my_task_turns: HashMap::new(),

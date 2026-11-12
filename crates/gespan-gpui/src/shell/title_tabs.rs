@@ -185,6 +185,7 @@ impl Shell {
     ) {
         match tab {
             TitleTab::App(view) => match view {
+                app_views::AppView::Home => self.open_home(window, cx),
                 app_views::AppView::MyTasks => self.open_my_tasks(window, cx),
                 app_views::AppView::Inbox => self.open_inbox(window, cx),
                 app_views::AppView::Notes => self.open_notes(window, cx),

@@ -854,6 +854,7 @@ impl Shell {
             )
             .children(
                 [
+                    ("Home", "home"),
                     ("My tasks", "circle-alert"),
                     ("Inbox", "inbox"),
                     ("Runs", "clock"),
@@ -984,6 +985,7 @@ impl Shell {
                             "Settings" => {
                                 this.open_settings(crate::settings::Section::General, window, cx)
                             }
+                            "Home" => this.open_home(window, cx),
                             "My tasks" => this.open_my_tasks(window, cx),
                             "Inbox" => this.open_inbox(window, cx),
                             "Runs" => this.show_runs(window, cx),
