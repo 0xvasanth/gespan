@@ -1,0 +1,66 @@
+crates/gespan-core/migrations/settings/history.toml
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 2-6
+crates/gespan-core/src/store/shared/tests.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 2-10,258-260,357-364,366,369,371,377-410,412-413,420,437,498-507,511,518-519,521,822-823
+crates/gespan-core/src/orm/tests.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 44-45,86,110,112,115
+crates/gespan-core/src/orm/kind.rs
+  s_a2c0f0f2f96e87::t_70c94449f2db02 50-65,97-106,122
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 47,69,125
+crates/gespan-core/src/store/in_flight.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 4-5,19-22,28-33,35,48-60
+crates/gespan-core/src/store/managed_sessions.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 22-30,32
+crates/gespan-core/src/store/session_metadata.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 35-36,44-49,52-61
+crates/gespan-core/src/store/inbox_ask.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 41,55
+crates/gespan-core/src/store/session_preview.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 2,14-31
+crates/gespan-core/src/store/shared/edit.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 20-23,172,200
+crates/gespan-core/src/store/shared/settings.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 1-8,10-12,25-50,54,61-62,64-70,72-84,88-112,116-147,149-151,218-232,240,242,251-257,260
+crates/gespan-core/src/store/provider_ids.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 13-18,20-24,26-29
+crates/gespan-core/src/store/shared/window.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 21-24,37-45,55,57-58,60-61,81,83-84,102-111,134,137-138
+crates/gespan-core/src/store/shared.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 1-4,15,22,34-35,42,138-143,145-157,159-169,238-240,261-264,271-289,292-315,317-327,332,351-352,355-356,386-388,431-434,456-458,466-473,488,490-494,496-497,531-532,538-541,546-557,560,565-570,572-573,578-586,590,629,631-632,648-652,671-692,838,840-842,866,879,881-883,974,986-990,1004,1006-1007,1017,1020-1021,1025,1027,1030,1062-1067,1085,1088-1090,1116,1120-1134,1157,1159-1161,1163-1164,1170,1172-1174,1176-1177,1207,1210,1217,1219-1220,1234,1261-1264,1275,1295,1298,1313-1314,1319,1321-1322,1332-1337,1341-1345,1352-1356,1361-1366,1381,1385,1405-1409,1427-1430,1432-1435,1466-1474,1485,1487,1490,1494,1496,1505-1506,1515,1517,1521,1531,1534-1535,1540,1546-1550,1561-1564,1566-1567,1581,1608,1620-1622,1624-1628,1682-1684,1692-1696,1733-1737,1805
+crates/gespan-core/src/store/db.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 1-307
+crates/gespan-core/src/store/notes.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 2-3,13-14,19-22,25-26,30,34-36,38-41,46,51,64,78,82-92,109-124,140-149,152,245,253,255,279-288,347,355,417,421-423,425-428,430,619,691
+crates/gespan-core/src/store/pilots.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 1,15-38,46-60,76,80-81,83-84,86-99,108-111,129,131,234,244-245,249-251
+crates/gespan-core/src/store/remote_legacy.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 3,18-23,188-192,275,277,279-281,288,294,298
+crates/gespan-core/src/store.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 3,14,96-100,103-105,107-108,110-112,114-126,129,134-137,140-161,207-211,216-221,294,297,735,738
+crates/gespan-core/migrations/settings/snapshots/0000_snapshot.toml
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 1-28
+crates/gespan-core/src/project_location.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 235-236,238-239
+docs/toasty.md
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 44-52
+crates/gespan-core/src/store/schema.rs
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 1-500
+crates/gespan-core/migrations/settings/migrations/0000_init.sql
+  s_a2c0f0f2f96e87::t_3c30b9ade9fc06 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d949db7f86f524c4d406dda5c24c804788e8553",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
