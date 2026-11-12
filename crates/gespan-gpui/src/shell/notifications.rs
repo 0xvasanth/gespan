@@ -2,7 +2,7 @@
 use super::*;
 use crate::notifications::{
     app_update::{self, AppUpdateEvent, InstalledUpdateNotice, WhatsNew, WhatsNewEvent},
-    approvals::{self, ApprovalNotices, SessionInputs},
+    approvals::{self, SessionInputs},
     delivery::{self, Permission, Target},
     errors,
     file_error::{FileActionError, FileActionErrorEvent},
@@ -14,13 +14,9 @@ use crate::notifications::{
 };
 use std::{sync::mpsc::Receiver, time::Duration};
 
-/// The title bar's waiting-requests button, the size of its other controls.
-const WAITING_BUTTON: f32 = 24.;
-
 pub(super) struct State {
     pub region: AnchorSlot,
     pub harness: Entity<HarnessUpdates>,
-    pub approvals: Entity<ApprovalNotices>,
     pub reminders: Entity<reminders::View>,
     pub installed: Entity<InstalledUpdateNotice>,
     pub updater: Entity<Updater>,
@@ -42,9 +38,6 @@ pub(super) struct State {
     responding: HashSet<i64>,
     sequence: u64,
     badge: usize,
-    /// Closed requests the title bar last counted, so its room is re-laid
-    /// out only when the button appears, goes or changes.
-    waiting: usize,
     sounds_enabled: bool,
     sounds_enabled_at: u64,
     poll: Option<gpui::Task<()>>,
@@ -71,7 +64,6 @@ impl State {
             region: AnchorSlot::default(),
             harness: cx
                 .new(|cx| HarnessUpdates::new(workspace.preferences.hidden_providers.clone(), cx)),
-            approvals: cx.new(|_| ApprovalNotices::default()),
             reminders: cx.new(|_| reminders::View::default()),
             installed: cx.new(|_| InstalledUpdateNotice::new(None)),
             updater: updater::shared(store, cx),
@@ -92,7 +84,6 @@ impl State {
             announcements: Default::default(),
             responding: HashSet::new(),
             sequence: 0,
-            waiting: 0,
             badge: 0,
             sounds_enabled: workspace.preferences.sounds,
             sounds_enabled_at: 0,
@@ -192,34 +183,6 @@ impl Shell {
                     this.sync_settings(cx);
                 }
                 cx.notify();
-            },
-        ));
-        self.observations.push(cx.subscribe(
-            &self.notification_state.approvals,
-            |this, _, event, cx| match event {
-                approvals::Action::OpenSession { session_id } => {
-                    if let Ok(id) = session_id.parse() {
-                        this.open_notice_target(Target::Session(id), cx);
-                    }
-                }
-                approvals::Action::Decide {
-                    session_id,
-                    request_id,
-                    decision,
-                } => {
-                    if let Ok(id) = session_id.parse()
-                        && let Some(view) = this.notification_chat(id, cx)
-                    {
-                        view.update(cx, |view, cx| {
-                            view.decide_notification_request(request_id, decision.clone(), cx);
-                        });
-                    }
-                    cx.notify();
-                }
-                approvals::Action::Changed => {
-                    this.sync_waiting_button(cx);
-                    cx.notify();
-                }
             },
         ));
         self.observations.push(cx.subscribe(
@@ -348,11 +311,10 @@ impl Shell {
                         this.poll_reminders(cx);
                         this.poll_linked_activity(cx);
                         // Scheduled mutes expire without a preference change.
-                        if !this.notification_state.approvals.read(cx).is_empty()
-                            || this
-                                .notification_chats(cx)
-                                .iter()
-                                .any(|v| v.read(cx).needs_approval())
+                        if this
+                            .notification_chats(cx)
+                            .iter()
+                            .any(|v| v.read(cx).needs_approval())
                         {
                             cx.notify();
                         }
@@ -392,19 +354,11 @@ impl Shell {
                 let chat = view.read(cx);
                 SessionInputs {
                     session_id: chat.summary.id.to_string(),
-                    title: chat.display_title().to_owned(),
-                    provider: chat.summary.provider.clone(),
-                    harness: Kind::from_id(&chat.summary.provider).label().to_owned(),
                     pending: chat.pending_notification_inputs(cx),
                     inbox_ask: false,
-                    orchestration_worker: self.orchestration_worker(chat.summary.id),
-                    conversation_focused: false,
                 }
             })
             .collect();
-        self.notification_state.approvals.update(cx, |notices, _| {
-            notices.track_pending(&snapshots);
-        });
         let badge = delivery::dock_badge_count(
             snapshots
                 .iter()
@@ -461,7 +415,7 @@ impl Shell {
         })
     }
 
-    pub(super) fn sync_notices(&mut self, window: &Window, cx: &mut Context<Self>) {
+    pub(super) fn sync_notices(&mut self, cx: &mut Context<Self>) {
         let now = gespan_core::time::now_ms();
         let prefs = self.workspace.preferences.clone();
         if self.notification_state.sounds_enabled != prefs.sounds {
@@ -494,19 +448,10 @@ impl Shell {
                 completed.push((chat.summary.clone(), chat.notification_reply_body(cx)));
             }
             directories.insert(id.to_string(), chat.summary.cwd.clone());
-            let pilot_visible = self.pilot_active(cx) && self.notice_session_visible(id, cx);
             snapshots.push(SessionInputs {
                 session_id: id.to_string(),
-                title: chat.display_title().to_owned(),
-                provider: chat.summary.provider.clone(),
-                harness: Kind::from_id(&chat.summary.provider).label().to_owned(),
                 pending: chat.pending_notification_inputs(cx),
                 inbox_ask: false,
-                orchestration_worker: self.orchestration_worker(id),
-                conversation_focused: self.window_active
-                    && (self.workspace.active == Some(id) || pilot_visible)
-                    && self.notice_session_visible(id, cx)
-                    && chat.composer_focused(window, cx),
             });
         }
         self.notification_state
@@ -547,23 +492,6 @@ impl Shell {
                 cx,
             );
         }
-        self.notification_state.approvals.update(cx, |notices, cx| {
-            notices.sync(
-                &snapshots,
-                |session, at| {
-                    let occurred = at
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis()
-                        .min(u64::MAX as u128) as u64;
-                    directories.get(&session.session_id).is_some_and(|cwd| {
-                        prefs.allows_project_notification(cwd, "agentInput", Some(occurred), now)
-                    })
-                },
-                cx,
-            )
-        });
-        self.sync_waiting_button(cx);
         let due = self
             .reminders
             .iter()
@@ -1051,85 +979,6 @@ impl Shell {
         cx.notify();
     }
 
-    /// Lays the title bar out again when its waiting-requests button
-    /// appears, goes or changes its count; the tabs give it its room.
-    fn sync_waiting_button(&mut self, cx: &mut Context<Self>) {
-        let waiting = self.notification_state.approvals.read(cx).waiting();
-        if waiting != self.notification_state.waiting {
-            self.notification_state.waiting = waiting;
-            self.invalidate_chrome(cx);
-        }
-    }
-
-    /// Room the waiting-requests button takes in the title bar.
-    pub(super) fn waiting_room(&self) -> f32 {
-        if self.notification_state.waiting > 0 {
-            WAITING_BUTTON + super::CORNER_CONTROL_GAP
-        } else {
-            0.
-        }
-    }
-
-    /// Closed requests still waiting, as a button in the title bar beside
-    /// the corner, so it never covers anything. It brings their notices back.
-    pub(super) fn waiting_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let count = self.notification_state.waiting;
-        if count == 0 {
-            return None;
-        }
-        let label = self.notification_state.approvals.read(cx).waiting_label();
-        let amber = gpui::rgb(0xffb900);
-        let badge = if count > 9 {
-            "9+".to_owned()
-        } else {
-            count.to_string()
-        };
-        Some(
-            div()
-                .id("waiting-requests")
-                .debug_selector(|| "waiting-requests".into())
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .role(Role::Button)
-                .aria_label(format!("{label}: open My tasks"))
-                .cursor_pointer()
-                .size(px(WAITING_BUTTON))
-                .mr(px(super::CORNER_CONTROL_GAP))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_md()
-                .hover(|s| s.bg(content(0.1)))
-                .child(
-                    div()
-                        .relative()
-                        .size(px(14.))
-                        .child(icon("square-lock", 14.).text_color(amber))
-                        .child(
-                            div()
-                                .absolute()
-                                .top(px(-6.))
-                                .right(px(-8.))
-                                .h(px(13.))
-                                .min_w(px(13.))
-                                .px(px(3.))
-                                .rounded_full()
-                                .bg(amber)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .text_size(px(9.))
-                                .font_weight(gpui::FontWeight::BOLD)
-                                .text_color(black(0.9))
-                                .child(badge),
-                        ),
-                )
-                // Every closed request is listed on My tasks, answerable there.
-                .on_click(cx.listener(|this, _, window, cx| this.open_my_tasks(window, cx)))
-                .into_any_element(),
-        )
-    }
-
     pub(super) fn notices_overlay(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.sync_error_toast();
         let report_error = self.report_error_button(cx);
@@ -1203,14 +1052,6 @@ impl Shell {
             })
             .when(state.harness.read(cx).is_visible(), |d| {
                 d.child(div().w(px(340.)).max_w_full().child(state.harness.clone()))
-            })
-            .when(!state.approvals.read(cx).is_empty(), |d| {
-                d.child(
-                    div()
-                        .w(px(360.))
-                        .max_w_full()
-                        .child(state.approvals.clone()),
-                )
             });
         // Toasts remain actionable above dialogs, including Pilot settings.
         gpui::deferred(stack).with_priority(110).into_any_element()
@@ -1722,18 +1563,15 @@ mod waiting_tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext};
 
-    fn overlaps(a: gpui::Bounds<Pixels>, b: gpui::Bounds<Pixels>) -> bool {
-        a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom()
-    }
-
     #[gpui::test]
-    fn a_closed_request_waits_in_the_title_bar_and_its_button_opens_my_tasks(
+    fn a_waiting_request_is_listed_on_my_tasks_with_no_toast_or_title_bar_button(
         cx: &mut TestAppContext,
     ) {
         let (window, first, second) = crate::shell::tests::window(cx);
         cx.update(|cx| cx.set_reduce_motion(true));
         cx.simulate_window_resize(window.into(), gpui::size(px(1280.), px(800.)));
-        // Waiting in a session you're not looking at, so it has a notice.
+        // Waiting in a session you're not looking at: before My tasks this
+        // raised a toast, and closing it a title-bar button.
         window
             .update(cx, |shell, _, cx| {
                 let waiting = if shell.workspace.active == Some(first) {
@@ -1750,65 +1588,32 @@ mod waiting_tests {
                         tool: None,
                     }])
                 });
+                shell.process_notification_inputs(cx);
                 cx.notify();
             })
             .unwrap();
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        visual.refresh().unwrap();
-        assert!(
-            visual.debug_bounds("waiting-requests").is_none(),
-            "nothing closed"
-        );
-        let close = visual
-            .debug_bounds("approval-toast-close-0")
-            .expect("the request has a notice");
-        visual.simulate_click(close.center(), Default::default());
-        visual.refresh().unwrap();
-        visual.refresh().unwrap();
-
-        assert!(
-            visual.debug_bounds("approval-toast-close-0").is_none(),
-            "closed"
-        );
-        let button = visual
-            .debug_bounds("waiting-requests")
-            .expect("the title bar counts it");
-        assert!(
-            button.top() >= px(0.) && button.bottom() <= px(crate::theme::TITLE_BAR_HEIGHT),
-            "it sits in the title bar: {button:?}"
-        );
-        for other in ["toggle-right-panel", "notification-stack"] {
-            if let Some(bounds) = visual.debug_bounds(other) {
-                assert!(!overlaps(button, bounds), "it overlaps {other}");
-            }
-        }
-        window
-            .read_with(visual, |shell, cx| {
-                // The decision is still the user's to make.
-                assert!(
-                    shell
-                        .notification_chats(cx)
-                        .iter()
-                        .any(|v| v.read(cx).needs_approval())
-                );
-            })
-            .unwrap();
-
-        visual.simulate_click(button.center(), Default::default());
         visual.run_until_parked();
         visual.refresh().unwrap();
+        // No toast: the notice stack, where it used to show, stays empty.
+        let stack = visual.debug_bounds("notification-stack");
+        assert!(
+            stack.is_none_or(|bounds| bounds.size.height < px(8.)),
+            "nothing on the notice stack: {stack:?}"
+        );
         window
             .read_with(visual, |shell, cx| {
+                assert_eq!(shell.my_task_count(cx), 1, "My tasks lists it");
                 assert_eq!(
-                    shell.active_app_view,
-                    Some(crate::workspace::AppView::MyTasks)
+                    shell.notification_state.badge, 1,
+                    "the dock still counts it"
                 );
-                assert_eq!(shell.my_task_count(cx), 1, "the request is listed there");
             })
             .unwrap();
-        assert!(visual.debug_bounds("my-tasks-card").is_some());
-        // Closing it decided nothing, and the page shows it, so the toast
-        // stays closed.
-        assert!(visual.debug_bounds("approval-toast-close-0").is_none());
+        assert!(
+            visual
+                .debug_bounds("sidebar-navigation-count-My tasks")
+                .is_some()
+        );
     }
 }

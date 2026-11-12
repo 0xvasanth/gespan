@@ -5599,7 +5599,6 @@ impl Shell {
                         .h(px(TITLE_BAR_HEIGHT)),
                 ),
             )
-            .children(self.waiting_button(cx))
             .child(if classic {
                 // The toggle holds the window's corner (classic_body); the
                 // strip keeps only the part an open panel leaves uncovered.
@@ -8096,7 +8095,6 @@ impl Shell {
         (window.viewport_size().width.as_f32()
             - lead
             - trailing
-            - self.waiting_room()
             - (client_controls_width(window) - self.window_controls))
             .max(0.)
     }
@@ -9022,7 +9020,7 @@ impl Render for Shell {
                 view.set_expand_labels(expand, cx);
             });
         }
-        self.sync_notices(window, cx);
+        self.sync_notices(cx);
         div()
             .id("gespan-workspace")
             .relative()
