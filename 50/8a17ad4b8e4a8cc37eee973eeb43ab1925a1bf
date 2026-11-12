@@ -1,0 +1,49 @@
+crates/gespan-gpui/src/main.rs
+  s_2b6ac00be3f1b8::t_fc6c50dfb83db0 474-480
+  s_2b6ac00be3f1b8::t_7667daa7f69b22 12-13,605-606
+scripts/bench.test.mjs
+  s_2b6ac00be3f1b8::t_f0d699069ab80d 5,168-182
+  s_2b6ac00be3f1b8::t_5c5cbaccfdb4bb 116-120
+  s_2b6ac00be3f1b8::t_9afe34fd564bd4 1-4,6-115,121-164,166-167,183
+  s_2b6ac00be3f1b8::t_36f7d392b14ab0 165
+.gitignore
+  s_2b6ac00be3f1b8::t_d692860cf1e77f 59-61
+package.json
+  s_2b6ac00be3f1b8::t_d692860cf1e77f 28-29
+crates/gespan-gpui/src/bench.rs
+  s_2b6ac00be3f1b8::t_5c5cbaccfdb4bb 397
+  s_2b6ac00be3f1b8::t_427bcd846ed6d2 568
+  s_2b6ac00be3f1b8::t_23434db5290b60 1-91,100-144,149-190,195-202,207-224,228-238,240-243,253-257,259,269,271-274,276-290,292-294,296-390,392-396,398-475,480-510,515-567,569-584
+  s_2b6ac00be3f1b8::t_3f867cdfbf1921 145-148,191-194,203-206,225-227,244-252,260-268,476-479,511-514
+  s_2b6ac00be3f1b8::t_90d3fa2b018ed1 92-99
+  s_2b6ac00be3f1b8::t_7667daa7f69b22 239,258,270,275,291,295,391
+scripts/bench.mjs
+  s_2b6ac00be3f1b8::t_87608005f94113 297,303
+  s_2b6ac00be3f1b8::t_9c4eb07a469af1 1-17,19-296,299-302,304,306-400
+  s_2b6ac00be3f1b8::t_f0d699069ab80d 18,298,305
+scripts/bench-lib.mjs
+  s_2b6ac00be3f1b8::t_f0d699069ab80d 156-169
+  s_2b6ac00be3f1b8::t_d521b119d57ea2 269
+  s_2b6ac00be3f1b8::t_967928e8e5e39c 1-155,170-225,228,232,234-242,246,248-268,270-287,289-294,296-315
+  s_2b6ac00be3f1b8::t_5c5cbaccfdb4bb 226-227,229-231,233,243-245,247,288,295
+docs/diagnostics/benchmarks.md
+  s_2b6ac00be3f1b8::t_2be4e40599e414 72
+  s_2b6ac00be3f1b8::t_7efb47bc5c8714 1-11,13-70,73-134
+  s_2b6ac00be3f1b8::t_5c5cbaccfdb4bb 12,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "508a17ad4b8e4a8cc37eee973eeb43ab1925a1bf",
+  "prompts": {},
+  "sessions": {
+    "s_2b6ac00be3f1b8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "08e8372c-aa75-463c-bd37-ce0ed4cda2c3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
