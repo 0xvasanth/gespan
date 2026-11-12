@@ -1996,6 +1996,23 @@ cat >/dev/null"#,
         assert_eq!(r["result"]["decision"], "denied");
     }
     #[test]
+    fn codex_review_denies_a_launcher_that_is_not_a_known_shell() {
+        use crate::review_policy::ReviewResults;
+        let mut p = codex_review_protocol(ReviewResults::Post);
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/abs/checkout/tools/zsh","-lc","gh pr diff 7 -R acme/app"]}),
+        );
+        assert_eq!(r["result"]["decision"], "denied");
+        let (_, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["/usr/bin/bash","-c","gh pr diff 7 -R acme/app"]}),
+        );
+        assert_eq!(r["result"]["decision"], "approved");
+    }
+    #[test]
     fn codex_review_access_ignores_the_access_mode() {
         use crate::review_policy::ReviewResults;
         for access in [
@@ -2014,6 +2031,7 @@ cat >/dev/null"#,
                 for m in &starts {
                     let params = &m["params"];
                     assert_eq!(params["approvalPolicy"], "untrusted", "{access:?} {m}");
+                    assert_eq!(params["approvalsReviewer"], "user", "{access:?} {m}");
                     assert_eq!(
                         params["sandboxPolicy"]["type"], "readOnly",
                         "{access:?} {m}"
