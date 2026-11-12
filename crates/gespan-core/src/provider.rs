@@ -2553,7 +2553,15 @@ cat >/dev/null"#,
                 .any(|a| a == "--allow-dangerously-skip-permissions"));
             assert_eq!(args.iter().filter(|a| *a == "--settings").count(), 1);
             let settings: Value = serde_json::from_str(flag(&args, "--settings").unwrap()).unwrap();
-            assert_eq!(settings["permissions"]["ask"], json!(["Bash"]));
+            // MCP calls reach the prompt tool too, and no user or project MCP
+            // server is loaded at all.
+            assert_eq!(settings["permissions"]["ask"], json!(["Bash", "mcp__*"]));
+            assert_eq!(
+                args.iter().filter(|a| *a == "--strict-mcp-config").count(),
+                1,
+                "{args:?}"
+            );
+            assert_eq!(flag(&args, "--mcp-config"), None);
             assert_eq!(
                 settings["permissions"]["deny"],
                 json!(["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"])
@@ -2585,6 +2593,7 @@ cat >/dev/null"#,
         assert!(args
             .iter()
             .any(|a| a == "--setting-sources=user,project,local"));
+        assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
         request.settings.access = AccessMode::FullAccess;
         let args = claude_argv(&request);
         assert_eq!(flag(&args, "--permission-mode"), Some("bypassPermissions"));
