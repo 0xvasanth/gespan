@@ -1,0 +1,109 @@
+crates/board-store/src/labels.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-4,33-34,36-44,58-66,85,96-103,142-143,145,148,153,155,157,160,168-189,231-235,240-246,253-259,261-267,287-302,368-370
+crates/gespan-core/tests/toasty_only.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 11-16,102,134-138,148-352,378-395,399,402-406,408-426,428-429,440-441,449,467,483-538,544
+crates/gespan-gpui/src/main.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 12-13,453-468,490-496,612-619,629-630
+crates/gespan-gpui/src/pilots/panel_stack.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 173-174
+crates/gespan-core/src/automations.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 680,683-689,693,696-704,1127-1135,1137,1140,1143-1147,1213-1216,1218-1219,1222
+crates/gespan-graph/src/store.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 3,5-7,9,15,23,210,213-244,287-295,297-305,321,324-327,329-353,391-393,396-397,495-496,498-508,511-516,520-526,528,530-536,545-554,556-557,559-563,565,572-584,587-589,603-604,630-631,633-643
+crates/gespan-core/src/provider/parked.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 288-295,1156,1178,1195,1199-1214
+  s_4da1cd92bbfc0d::t_287790589af71b 1215-1216
+crates/board-store/tests/agent.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 293-300
+crates/board-store/src/templates.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 9,204-206,503-509,600-615
+crates/board-store/src/settings.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 8-10,12,262-264,276,343,347-348,350,353,358-431,487-489,491,493-496,499,503-536,549-551
+scripts/bench-lib.mjs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-315
+crates/board-store/src/agent.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 8,10-11,103-108,110-113,218-230,232-238,240-241
+crates/board-store/tests/typed_queries.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-289
+crates/gespan-core/src/provider/hold_tests.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 340
+crates/gespan-gpui/src/shell/hold.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 420-421,1560-1572,1574
+scripts/bench.test.mjs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-183
+crates/gespan-core/src/diagnostics/metrics.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 243-248,250-251
+crates/board-store/src/subtasks.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1,56-57,78-86,193-198
+crates/gespan-core/src/diagnostics/session.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-359
+crates/gespan-core/src/automations/review_drafts.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 45-55,113-134
+crates/board-store/src/ops.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1,3,5,22-24,39-55,173-179,183-184,199-205,212-218,234-235,237,239-240,245-250,302-303,305-312,315,325-326,348-349,382-390,410-419,443,445,475-481,502,504,537-538,574-599,605-612,619-631,695-700,759-772,774-777,781-787,868-889,905-906,1007-1013,1027-1032,1069-1076,1126-1131,1134-1139,1142-1147
+crates/board-store/src/auto_move.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 9-10,12,202-203,205-211,214
+crates/board-store/src/relations.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-3,6,26-44,72,74,77,101-102,104-114,117,150,152,155,158-162,178-183,185-197,199,208-243,245-253
+crates/gespan-browser/src/audit.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 239-240,242-262,326-334,360-376,378-380,391-406,427,505-506,700-750
+  s_4da1cd92bbfc0d::t_813fb35e4d52e3 751-752
+crates/gespan-gpui/src/pilots/overview.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 22-25,38-39,68-69,72-74,77-84,115
+crates/board-store/src/meta.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 3-4,6,12,69-78,81,85,88-120,128,138,160,171,182,196,206-218,222-246,257,298,315,335,391,418,421-426,462-464,466,469,482-483,521-527,529-551,555-584,595-602,604-606,608-614,616,618-619,621-623
+crates/gespan-gpui/bench/baseline.json
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-573
+.gitignore
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 59-61
+crates/gespan-core/src/flow/store.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 285-286,301-302
+docs/diagnostics/benchmarks.md
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-137
+crates/board-store/src/comments.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 65-66
+crates/board-store/src/views.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 7-12,14,149-150,193-195,200-207,213-222,231-249,319,321-325,327,333-344,346-347,663-664,692-693,707-713,730,733-741,773-791,805-810,812-816
+scripts/bench.mjs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-404
+crates/gespan-graph/src/schema.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 51-54,56-63
+crates/board-store/src/links.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 4,7,12-13,30-54,106-114,162-167,195-201,206-214,226-251,253-275,312-319,331-339,361-366,375-380,382-385,392-397,399-403,473-479
+crates/board-store/src/seed.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 3-7,78-84,98-114,117-127,129-134,142-148,151-159,162-174,177-185,189-194,206-207,226-234,258-266
+crates/gespan-core/src/diagnostics/mod.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 14,35-38
+crates/gespan-gpui/src/bench.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 1-603
+crates/gespan-graph/src/query.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 16,97-101,187,192-195,197-199,252
+crates/gespan-core/src/provider.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 101-103
+docs/toasty.md
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 18-19,45-49,102-126
+package.json
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 28-29
+crates/board-store/src/card_ops.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 4,6-9,11-12,30,78-79,123-128,156,187-262,274-279,299-300,312-327,335-339,346-347,364-383,395-400,404-409,411-414,416-427
+crates/board-store/src/fields.rs
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 3-5,97-98,101-109,125-126,156-161,163-166,170,188-192,220-221,386-387,401-407,471-486,560-562,564-567,653-659,664-669,713-714,716,719,722-730,732-735
+CLAUDE.md
+  s_4da1cd92bbfc0d::t_d6cb6fc6a9b46f 32-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6b07db9e771fc9d2b582936ac7ef0356cd244d7",
+  "prompts": {},
+  "sessions": {
+    "s_4da1cd92bbfc0d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7c69d565-faa4-432d-8876-79281771e4b8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
