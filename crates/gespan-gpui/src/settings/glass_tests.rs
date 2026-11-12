@@ -568,3 +568,54 @@ fn archive_lists_its_projects_and_conversations_and_deletes_them(cx: &mut TestAp
     click(visual, "settings-delete-project-0");
     assert_eq!(*seen.borrow(), ["delete:7", "delete-project:/work/old"]);
 }
+
+#[gpui::test]
+fn the_mcp_registry_lists_results_as_cards_even_while_providers_load(cx: &mut TestAppContext) {
+    use gespan_core::mcp_registry::{Install, Listing};
+    let (window, mut visual) = window(Section::Mcp, Preferences::default(), cx);
+    let visual = &mut visual;
+    window
+        .update(visual, |view, _, cx| {
+            view.discovery_loading = true;
+            view.mcp_listings = [
+                "postgres-tools",
+                "sqlite-explorer",
+                "mysql-mcp",
+                "duckdb-local",
+            ]
+            .map(|name| Listing {
+                name: name.into(),
+                description: format!("{name} for your data"),
+                version: "1.0.0".into(),
+                install: Install::Command {
+                    command: "npx".into(),
+                    args: vec![name.into()],
+                },
+                inputs: Vec::new(),
+            })
+            .to_vec();
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual
+            .debug_bounds("settings-catalog-registry-results")
+            .is_some()
+    );
+    let first = visual.debug_bounds("settings-catalog-listing-0").unwrap();
+    let second = visual.debug_bounds("settings-catalog-listing-1").unwrap();
+    let fourth = visual.debug_bounds("settings-catalog-listing-3").unwrap();
+    // Three to a row: the second sits beside the first, the fourth below it.
+    assert_eq!(first.top(), second.top());
+    assert!(second.left() > first.right());
+    assert!(fourth.top() > first.bottom());
+    assert!(visual.debug_bounds("settings-catalog-add-3").is_some());
+    // The managed switch now sits in the Gespan servers card with a title.
+    assert!(
+        visual
+            .debug_bounds("settings-row-catalog-managed")
+            .is_some()
+    );
+}

@@ -25,8 +25,9 @@ impl SettingsView {
                 .child(self.project_picker(cx))
                 .child(self.refresh_button("refresh-mcp", "Refresh", cx))
                 .child(
-                    crate::glass::button(
+                    crate::settings::widgets::icon_button_labelled(
                         "add-mcp",
+                        "plus",
                         "Add MCP server",
                         crate::glass::Button::Primary,
                     )
@@ -73,25 +74,24 @@ impl SettingsView {
                                 .child("Servers for this project and your accounts."),
                         ),
                 )
-                .child(
-                    div().flex().items_center().gap_2().child(
-                        glass_secondary(
-                            "mcp-show-all",
-                            if self.mcp_show_all {
-                                "Show available providers"
-                            } else {
-                                "Show all providers"
-                            },
-                            false,
-                            false,
-                        )
-                        .child(icon("filter", 14.))
+                .child(div().flex().items_center().gap_2().child({
+                    let label = if self.mcp_show_all {
+                        "Show available providers"
+                    } else {
+                        "Show all providers"
+                    };
+                    crate::glass::button("mcp-show-all", label, crate::glass::Button::Ghost)
+                        .debug_selector(|| "settings-mcp-show-all".into())
+                        .role(gpui::Role::Button)
+                        .aria_label(label)
+                        .h(px(28.))
+                        .text_size(px(12.5))
+                        .child(icon("filter", 14.).text_color(content(0.62)))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.mcp_show_all = !this.mcp_show_all;
                             cx.notify();
-                        })),
-                    ),
-                )
+                        }))
+                }))
                 .into_any_element(),
         ];
         // Gespan's own servers and what runs now come first, then each
@@ -129,7 +129,7 @@ impl SettingsView {
             .collect::<Vec<_>>();
         page.push(
             div()
-                .mt_6()
+                .flex()
                 .child(self.segmented(
                     "mcp-filter",
                     "Filter MCP servers by provider",
@@ -155,8 +155,11 @@ impl SettingsView {
                     .into_any_element(),
             );
         }
+        // While providers are still being read, say so, and still offer
+        // the registry below.
         if self.discovery_loading {
             page.push(note("Checking servers…"));
+            page.extend(self.registry_section(cx));
             return page;
         }
         let servers = self
