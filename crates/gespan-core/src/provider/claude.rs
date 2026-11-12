@@ -32,10 +32,17 @@ pub(super) fn configure(
         "stdio",
     ]);
     let settings = &request.settings;
+    let review = settings.review.is_some();
+    let access = settings.effective_access();
+    // A review runs in default mode, not plan: plan tells the model not to
+    // run anything but reads, which can stop a Draft or Post review from
+    // posting. The tool list below and the ask rule keep it read-only.
     let mode = if settings.plan {
         "plan"
+    } else if review {
+        "default"
     } else {
-        settings.access.claude()
+        access.claude()
     };
     command.args(["--permission-mode", mode]);
     if settings.text_only {
@@ -49,7 +56,7 @@ pub(super) fn configure(
             "--mcp-config",
             "{\"mcpServers\":{}}",
         ]);
-    } else if settings.access == AccessMode::ReadOnly {
+    } else if access == AccessMode::ReadOnly {
         // No Bash pattern here: a pattern approves any arguments. Each Bash
         // call comes to the approval path, which allows only `read_only`.
         command.args([
@@ -66,8 +73,20 @@ pub(super) fn configure(
         command.arg("--allow-dangerously-skip-permissions");
     }
     let mut config = json!({});
-    if settings.disable_claude_hooks || settings.text_only {
+    if settings.disable_claude_hooks || settings.text_only || review {
         config["disableAllHooks"] = true.into();
+    }
+    if review {
+        // Flag settings rank above user settings, and an ask rule beats any
+        // allow rule (deny > ask > allow), so a user's `Bash(gh:*)` cannot
+        // approve a command before it reaches the prompt tool. Hooks are off
+        // because a PreToolUse hook can approve a call on its own, and the
+        // sandbox must not auto-approve Bash either.
+        config["permissions"] = json!({
+            "ask": ["Bash"],
+            "deny": ["Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"],
+        });
+        config["sandbox"] = json!({"autoAllowBashIfSandboxed": false});
     }
     if settings.fast {
         config["fastMode"] = true.into();
@@ -103,7 +122,11 @@ pub(super) fn configure(
         command.args(["--effort", effort]);
     }
     command.args(["--settings", &config.to_string()]);
-    if !settings.text_only {
+    if review {
+        // Project and local settings live in the repository under review, so
+        // a review reads only the user's own (for auth and environment).
+        command.arg("--setting-sources=user");
+    } else if !settings.text_only {
         command.arg("--setting-sources=user,project,local");
     }
     if let Some(id) = &request.provider_id {
