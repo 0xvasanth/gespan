@@ -86,7 +86,7 @@ pub fn render_block(prefs: &[Entry], decisions: &[Entry], budget_bytes: usize) -
         max_k += 1;
     }
     for k in (0..=max_k).rev() {
-        let text = assemble(&lines[..k], lines.len() - k);
+        let text = assemble(STANDING_INSTRUCTION, &lines[..k], lines.len() - k);
         if text.len() <= budget_bytes || k == 0 {
             return Block {
                 included: lines[..k].iter().map(|l| l.id).collect(),
@@ -98,8 +98,8 @@ pub fn render_block(prefs: &[Entry], decisions: &[Entry], budget_bytes: usize) -
     unreachable!("k == 0 always returns")
 }
 
-fn assemble(kept: &[Line], omitted: usize) -> String {
-    let mut out = String::from(STANDING_INSTRUCTION);
+fn assemble(opening: &str, kept: &[Line], omitted: usize) -> String {
+    let mut out = String::from(opening);
     for (heading, want) in [
         ("Preferences", Section::Preferences),
         ("Decisions", Section::Decisions),
@@ -122,6 +122,54 @@ fn assemble(kept: &[Line], omitted: usize) -> String {
         ));
     }
     out
+}
+
+/// Opens the per-turn related block. The standing instruction is left out:
+/// the session-start block and the harness files already carry it, and
+/// repeating it would take about a quarter of each turn's budget.
+pub const RELATED_HEADING: &str =
+    "Gespan decision log: entries related to this message, most relevant first.";
+
+/// Render `entries` in the order given (a search ranking, best first)
+/// within `budget_bytes`, for the per-turn related block.
+///
+/// Unlike [`render_block`] nothing is re-sorted: approved entries keep their
+/// rank under their section (preferences, then decisions), and pending ones
+/// keep theirs under the "Not yet approved" heading, last, each with its
+/// marker before any field text. When over budget, entries are dropped from
+/// the end of the ranking, so the best match is the last to go, and the
+/// closing `N more decisions: use decisions_search` line counts toward the
+/// budget. `included` lists the ids in the order shown.
+pub fn render_ranked(entries: &[Entry], budget_bytes: usize) -> Block {
+    use super::entry::Kind;
+    let lines: Vec<Line> = entries
+        .iter()
+        .map(|e| Line {
+            id: e.id,
+            text: line(e),
+            section: match (e.status, e.kind) {
+                (Status::Pending, _) => Section::Pending,
+                (_, Kind::Preference) => Section::Preferences,
+                (_, Kind::Decision) => Section::Decisions,
+            },
+        })
+        .collect();
+    for k in (0..=lines.len()).rev() {
+        let text = assemble(RELATED_HEADING, &lines[..k], lines.len() - k);
+        if text.len() <= budget_bytes || k == 0 {
+            let included = [Section::Preferences, Section::Decisions, Section::Pending]
+                .into_iter()
+                .flat_map(|want| lines[..k].iter().filter(move |l| l.section == want))
+                .map(|l| l.id)
+                .collect();
+            return Block {
+                text,
+                included,
+                omitted: lines.len() - k,
+            };
+        }
+    }
+    unreachable!("k == 0 always returns")
 }
 
 /// `- D-14 (title): text. Why: why.` on one line. A pending entry carries its

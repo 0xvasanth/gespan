@@ -2,7 +2,7 @@
 //! decision file is told about the log, once, and again only after it changes.
 //! And, with search by meaning on, each turn's related block.
 use super::entry::{Entry, Kind as EntryKind};
-use super::render::{render_block, START_BUDGET, TURN_BUDGET};
+use super::render::{render_block, render_ranked, START_BUDGET, TURN_BUDGET};
 use super::scope::scope_for;
 use super::service;
 use crate::diagnostics::metrics::{self, ErrorKind};
@@ -109,9 +109,17 @@ pub fn related_in_flight() -> usize {
 /// with search by meaning on. `None` when the log is off, search by meaning
 /// is off, nothing related is left once what the session start already
 /// gave (preferences and pinned decisions) is taken out, or the lookup is
-/// not ready within `deadline`. In that last case, or when the lookups
-/// already running leave no room for another, the turn goes without it and
-/// `decisions.related.skipped` is counted.
+/// not ready within `deadline`. When the turn goes without it for want of
+/// time or room, `decisions.related.skipped` is counted, by kind:
+/// - `Other`: the cap is full ([`MAX_RELATED_WORKERS`] lookups running);
+/// - `Timeout`: the lookup was past the deadline;
+/// - `Panic`: the worker panicked;
+/// - `SpawnFailed`: the worker thread could not start.
+///
+/// Nothing related is not a skip and is not counted. The block opens with
+/// [`RELATED_HEADING`](super::render::RELATED_HEADING), not the standing
+/// instruction, and lists entries in search order
+/// ([`render_ranked`](super::render::render_ranked)).
 ///
 /// The lookup (the project's scope, which asks git, then hybrid search
 /// with its relevance cut-off) runs on its own thread; this waits for it
@@ -174,5 +182,6 @@ fn related_block(workspace: &Path, message: &str) -> Option<String> {
         .into_iter()
         .filter(|e| e.kind != EntryKind::Preference && !e.pinned)
         .collect();
-    (!related.is_empty()).then(|| render_block(&[], &related, TURN_BUDGET).text)
+    // Search order is relevance order: kept, so the budget trims the weakest.
+    (!related.is_empty()).then(|| render_ranked(&related, TURN_BUDGET).text)
 }
