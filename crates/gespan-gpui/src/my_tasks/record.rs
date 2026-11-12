@@ -79,6 +79,7 @@ impl Source {
             Self::Session(id) => format!("session:{id}"),
             Self::FlowRun(run) => format!("flow:{run}"),
             Self::Pilot { pilot, session } => format!("pilot:{pilot}:{session}"),
+            Self::DraftReview { run, url } => format!("draft-review:{run}:{url}"),
         }
     }
 
@@ -87,6 +88,14 @@ impl Source {
         Some(match kind {
             "session" => Self::Session(rest.parse().ok()?),
             "flow" => Self::FlowRun(rest.to_owned()),
+            // A run id has no colon; the URL after it may.
+            "draft-review" => {
+                let (run, url) = rest.split_once(':')?;
+                Self::DraftReview {
+                    run: run.to_owned(),
+                    url: url.to_owned(),
+                }
+            }
             "pilot" => {
                 let (pilot, session) = rest.rsplit_once(':')?;
                 Self::Pilot {
@@ -107,6 +116,11 @@ impl TaskItem {
             Body::Question(card) => question_request(card.read(cx).request()),
             Body::Flow { prompt } => json!({ "prompt": prompt }),
             Body::Choice { options } => json!({ "options": options }),
+            Body::DraftReview {
+                body,
+                comments,
+                outside,
+            } => json!({ "body": body, "comments": comments, "outside": outside }),
         };
         TaskRecord::open(
             self.key.clone(),
@@ -141,6 +155,15 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_draft_review_origin_reads_back_with_its_url() {
+        let source = Source::DraftReview {
+            run: "run-1".into(),
+            url: "https://github.com/acme/app/pull/7#pullrequestreview-42".into(),
+        };
+        assert_eq!(Source::from_origin(&source.origin()), Some(source));
     }
 
     #[test]

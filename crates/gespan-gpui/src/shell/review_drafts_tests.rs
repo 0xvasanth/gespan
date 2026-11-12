@@ -211,6 +211,14 @@ fn a_finished_review_leaves_a_draft_and_my_tasks_asks_to_submit_it(cx: &mut Test
             .unwrap()
             .is_empty()
     );
+    // My tasks keeps the request and its answer in its history.
+    let kept = Store::open(&rig.db)
+        .unwrap()
+        .task(&format!("draft-review:{}", rig.run))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.kind, Kind::DraftReview);
+    assert_eq!(kept.answer.as_deref(), Some("Submitted"));
 }
 
 #[gpui::test]
@@ -220,6 +228,13 @@ fn keeping_a_draft_sends_nothing_and_stops_asking(cx: &mut TestAppContext) {
     decide(&rig, false, cx);
     assert_eq!(jobs(&rig), ["create github:acme/app#7 reply=true"]);
     assert!(tasks(&rig, cx).is_empty());
+    let kept = Store::open(&rig.db)
+        .unwrap()
+        .task(&format!("draft-review:{}", rig.run))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.kind, Kind::DraftReview);
+    assert_eq!(kept.answer.as_deref(), Some("Kept as draft"));
 }
 
 #[gpui::test]

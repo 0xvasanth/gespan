@@ -627,6 +627,26 @@ impl MyTasks {
                 .map(|p| mono(p.to_owned()))
                 .into_iter()
                 .collect(),
+            Kind::DraftReview => {
+                let mut shown = Vec::new();
+                if let Some(body) = request["body"].as_str().filter(|b| !b.is_empty()) {
+                    shown.push(mono(body.to_owned()));
+                }
+                for comment in request["comments"].as_array().into_iter().flatten() {
+                    let side = if comment["side"] == "old" {
+                        " (old)"
+                    } else {
+                        ""
+                    };
+                    shown.push(mono(format!(
+                        "{}:{}{side} \u{2014} {}",
+                        comment["path"].as_str().unwrap_or_default(),
+                        comment["line"],
+                        comment["body"].as_str().unwrap_or_default()
+                    )));
+                }
+                shown
+            }
             Kind::PilotChoice => {
                 let answer = record.answer.as_deref().unwrap_or_default();
                 request["options"]

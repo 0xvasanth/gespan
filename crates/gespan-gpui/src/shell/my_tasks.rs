@@ -127,7 +127,12 @@ impl Shell {
 
     /// Keeps an answer given on My tasks to a request with no chat of its
     /// own to keep it: a Pilot choice or a Flow step.
-    fn keep_my_task_answer(&mut self, key: &str, answer: String, value: serde_json::Value) {
+    pub(super) fn keep_my_task_answer(
+        &mut self,
+        key: &str,
+        answer: String,
+        value: serde_json::Value,
+    ) {
         let Some(record) = self.my_task_records.remove(key) else {
             return;
         };

@@ -11,6 +11,7 @@ impl Kind {
             Self::Approval => "approval",
             Self::FlowApproval => "flow-approval",
             Self::PilotChoice => "pilot-choice",
+            Self::DraftReview => "draft-review",
         }
     }
     pub fn from_id(id: &str) -> Option<Self> {

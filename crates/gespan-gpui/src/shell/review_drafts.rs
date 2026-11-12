@@ -199,6 +199,15 @@ impl Shell {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.automation_state.deciding_drafts.remove(&run_id);
+                // Kept in My tasks' history once the forge took the answer.
+                if matches!(result, Ok(true)) {
+                    let answer = if submit { "Submitted" } else { "Kept as draft" };
+                    this.keep_my_task_answer(
+                        &format!("draft-review:{run_id}"),
+                        answer.into(),
+                        serde_json::json!({ "submit": submit }),
+                    );
+                }
                 if let Err(error) = result {
                     tracing::warn!(%error, "a draft review was not settled");
                     this.error = Some(if submit {
