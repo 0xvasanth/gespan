@@ -1,0 +1,19 @@
+crates/gespan-browser/tests/real_browser.rs
+  s_d4a92bfab0759f::t_3208150cabcadb 364-377,385-394
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "258ab18e2767cb905317907115ad7a15c9136c4e",
+  "prompts": {},
+  "sessions": {
+    "s_d4a92bfab0759f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a3649a7-b3cb-4a6f-a4df-0c4b2c0d1aea",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
