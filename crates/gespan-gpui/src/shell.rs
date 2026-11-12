@@ -823,9 +823,9 @@ pub(crate) struct Shell {
     group_tab_bounds: tab_groups::GroupTabBounds,
     /// The peek drawn last frame, so the next peek knows which group closed.
     drawn_peek: Option<String>,
-    /// Groups left of the peeking one held at the width they had open, so
-    /// the peeking chip stays under the pointer: project to box width.
-    peek_holds: HashMap<String, f32>,
+    /// A group left of the new peek that closed, with its open box width:
+    /// the strip scrolls back by what it gave up.
+    peek_shift: Option<(String, f32)>,
     /// Set when the active tab changes; cleared once it is in view.
     reveal_tab: std::rc::Rc<std::cell::Cell<bool>>,
     /// Tab animations: opening and closing title tabs, with each tab's last label.
@@ -1262,7 +1262,7 @@ impl Shell {
             strip_children: Vec::new(),
             group_tab_bounds: Default::default(),
             drawn_peek: None,
-            peek_holds: HashMap::new(),
+            peek_shift: None,
             reveal_tab: Default::default(),
             title_tab_motion: Default::default(),
             title_tab_selection: (None, None, std::time::Instant::now()),
@@ -8137,15 +8137,12 @@ impl Shell {
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let strip_width = self.tabs_width(window, cx);
-        // Holds only keep a peeking chip in place; with no peek they let go.
-        if self.strip_peek.is_none() {
-            self.peek_holds.clear();
-        }
         self.drawn_peek = self.strip_peek.clone();
         // Every project's tabs, grouped; collapsed groups draw only a chip.
         let entries = self.strip_entries(cx);
         let tabs = self.drawn_strip_tabs(&entries);
         let chips = self.group_chip_widths(&entries, false, window, cx);
+        self.keep_peek_in_place(&chips);
         // Tabs share the strip as if no group peeked: a peek pushes the rest
         // along instead of squeezing it, and the strip scrolls.
         let group_room = Self::group_room(&self.group_chip_widths(&entries, true, window, cx));
@@ -8315,6 +8312,26 @@ impl Shell {
             }
         }
         let tab_width = |tab: &TitleTab| base_width(tab) + extra.get(tab).copied().unwrap_or(0.);
+        // The tabs' own width as drawn, peeking groups included: the scrolled
+        // part of the strip takes this much, up to the room it has.
+        let tabs_extent: f32 = STRIP_LEAD
+            + slots
+                .iter()
+                .map(|s| match s {
+                    crate::tab_motion::Slot::Live { key, open }
+                    | crate::tab_motion::Slot::Closing { key, open, .. } => {
+                        if *open >= 1. {
+                            base_width(key) + 2.
+                        } else {
+                            let (w, give) = slot_size(key, *open);
+                            w + 2. - give
+                        }
+                    }
+                })
+                .sum::<f32>()
+            + extra.values().sum::<f32>()
+            + Self::group_room(&chips)
+            - 2.;
         let dragged = self
             .tab_drag
             .as_ref()
@@ -8774,12 +8791,18 @@ impl Shell {
             .flex()
             .items_center()
             .overflow_hidden()
+            .pr(px(STRIP_TRAIL - 2.))
             .children(dock)
             .child(
                 div()
                     .on_children_prepainted(reveal)
                     .id("session-tabs")
-                    .flex_1()
+                    // As wide as its tabs, shrinking to scroll once they
+                    // fill the strip; the new-tab button stays outside it.
+                    // Sized from the slots rather than measured, so a tab
+                    // easing open never moves the button.
+                    .flex_basis(px(tabs_extent.max(0.)))
+                    .flex_shrink(1.)
                     .min_w_0()
                     .h_full()
                     // A full strip scrolls sideways; a plain wheel does too.
@@ -8789,49 +8812,45 @@ impl Shell {
                     .items_center()
                     .gap(px(2.))
                     .pl(px(STRIP_LEAD))
-                    .pr(px(STRIP_TRAIL - 2.))
-                    .children(elements)
-                    .child(
-                        div()
-                            .id("new-tab")
-                            .debug_selector(|| "new-tab".into())
-                            .group("new-tab")
-                            .role(Role::Button)
-                            .aria_label("New session tab")
-                            .cursor_pointer()
-                            .size(px(TAB_PLATE_HEIGHT))
-                            .flex_shrink_0()
-                            .ml(px(new_tab_lead))
-                            .rounded_md()
-                            .bg(content(0.04))
-                            .opacity(0.65)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .hover(|s| s.opacity(1.).bg(content(0.07)))
-                            .relative()
-                            .when(self.menu_open(&MenuTarget::NewTab), |d| {
-                                d.opacity(1.).bg(content(0.07))
-                            })
-                            .child(self.new_tab_anchor.probe())
-                            .child(
-                                icon("plus", 14.)
-                                    .group_hover("new-tab", |s| s.text_color(content(1.))),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                // Title bar terminals: pick a session or a terminal.
-                                if !this.terminal_in_title() {
-                                    this.new_chat(cx);
-                                } else if this.menu_open(&MenuTarget::NewTab) {
-                                    this.close_menu(cx);
-                                } else {
-                                    let anchor = Anchor::Slot(this.new_tab_anchor.clone());
-                                    this.open_menu(MenuTarget::NewTab, anchor, window, cx);
-                                }
-                            })),
-                    )
-                    .child(titlebar_drag_area().flex_1().min_w_0()),
+                    .children(elements),
             )
+            .child(
+                div()
+                    .id("new-tab")
+                    .debug_selector(|| "new-tab".into())
+                    .group("new-tab")
+                    .role(Role::Button)
+                    .aria_label("New session tab")
+                    .cursor_pointer()
+                    .size(px(TAB_PLATE_HEIGHT))
+                    .flex_shrink_0()
+                    .ml(px(2. + new_tab_lead))
+                    .rounded_md()
+                    .bg(content(0.04))
+                    .opacity(0.65)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .hover(|s| s.opacity(1.).bg(content(0.07)))
+                    .relative()
+                    .when(self.menu_open(&MenuTarget::NewTab), |d| {
+                        d.opacity(1.).bg(content(0.07))
+                    })
+                    .child(self.new_tab_anchor.probe())
+                    .child(icon("plus", 14.).group_hover("new-tab", |s| s.text_color(content(1.))))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        // Title bar terminals: pick a session or a terminal.
+                        if !this.terminal_in_title() {
+                            this.new_chat(cx);
+                        } else if this.menu_open(&MenuTarget::NewTab) {
+                            this.close_menu(cx);
+                        } else {
+                            let anchor = Anchor::Slot(this.new_tab_anchor.clone());
+                            this.open_menu(MenuTarget::NewTab, anchor, window, cx);
+                        }
+                    })),
+            )
+            .child(titlebar_drag_area().ml(px(2.)).flex_1().min_w_0())
             .into_any()
     }
 }

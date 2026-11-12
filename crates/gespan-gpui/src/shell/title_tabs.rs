@@ -306,6 +306,17 @@ impl Shell {
                 project,
                 worktree,
             } => {
+                // A Pilot gone from the roster can't open; land on its project.
+                let exists = self
+                    .pilots
+                    .as_ref()
+                    .is_some_and(|m| m.read(cx).roster.get(id).is_some());
+                if !exists {
+                    if path_key(project) != path_key(&self.workspace.project) {
+                        self.select_project(project.clone(), window, cx);
+                    }
+                    return;
+                }
                 self.enter_pilot_scope(project, worktree);
                 if let Some(pilots) = self.pilots.clone() {
                     pilots.update(cx, |m, cx| m.open(id, window, cx));

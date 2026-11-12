@@ -305,7 +305,6 @@ impl Shell {
             .chain(children.iter().map(|(key, _)| Some(key.clone())))
             .collect();
         let store = self.group_tab_bounds.clone();
-        let hold = self.peek_holds.get(project).copied();
         div()
             .on_children_prepainted(move |bounds, _, _| {
                 let mut store = store.borrow_mut();
@@ -319,7 +318,6 @@ impl Shell {
             .debug_selector(move || format!("tab-group-{name}"))
             .role(Role::Group)
             .flex_shrink_0()
-            .when_some(hold, |d, width| d.min_w(px(width)))
             .h(px(TITLE_BAR_HEIGHT))
             .relative()
             .px(px(GROUP_INSET))
@@ -422,8 +420,9 @@ impl Shell {
     }
 
     /// Opens `project`'s group in place while the pointer rests on its
-    /// chip. Groups left of it that close keep their open width until the
-    /// peek ends, so the chip doesn't slide out from under the pointer.
+    /// chip. A group left of it that was peeking closes; the next frame
+    /// scrolls the strip back by what it gave up, so the chip stays under
+    /// the pointer when the strip can scroll that far.
     pub(super) fn peek_group(&mut self, project: &str, cx: &mut Context<Self>) {
         if self.strip_peek.as_deref() == Some(project) {
             return;
@@ -434,22 +433,33 @@ impl Shell {
                 .position(|child| matches!(child, StripChild::Group(g) if g == p))
         };
         let at = place(project);
-        let left_of_it = |p: &str| matches!((place(p), at), (Some(p), Some(at)) if p < at);
-        let mut holds = std::mem::take(&mut self.peek_holds);
-        holds.retain(|p, _| left_of_it(p));
-        if let Some(shown) = self.drawn_peek.clone().filter(|p| left_of_it(p))
-            && let Some(bounds) = self.group_box_bounds(&shown)
-        {
-            let width = bounds
-                .size
-                .width
-                .as_f32()
-                .max(holds.get(&shown).copied().unwrap_or(0.));
-            holds.insert(shown, width);
-        }
-        self.peek_holds = holds;
+        self.peek_shift = self
+            .drawn_peek
+            .clone()
+            .filter(|p| matches!((place(p), at), (Some(p), Some(at)) if p < at))
+            .and_then(|p| {
+                let width = self.group_box_bounds(&p)?.size.width.as_f32();
+                Some((p, width))
+            });
         self.strip_peek = Some(project.to_owned());
         self.tabs_frame.update(cx, |_, cx| cx.notify());
+    }
+
+    /// Scrolls the strip right by the width a group left of the new peek
+    /// gave up as it closed, clamped to the scroll range.
+    pub(super) fn keep_peek_in_place(&mut self, chips: &HashMap<String, f32>) {
+        let Some((project, open)) = self.peek_shift.take() else {
+            return;
+        };
+        let Some(chip) = chips.get(&project) else {
+            return;
+        };
+        let given_up = open - (chip + 2. * GROUP_INSET);
+        if given_up > 0. {
+            let offset = self.tab_scroll.offset();
+            let x = (offset.x + px(given_up)).min(px(0.));
+            self.tab_scroll.set_offset(gpui::point(x, offset.y));
+        }
     }
 
     /// Closes every tab in `project`'s group, pins aside, by the usual

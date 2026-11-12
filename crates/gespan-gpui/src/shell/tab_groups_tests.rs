@@ -608,6 +608,15 @@ fn crowded_strip_scrolls_instead_of_squeezing(cx: &mut TestAppContext) {
         .update(visual, |shell, _, _| shell.tab_scroll.max_offset().x)
         .unwrap();
     assert!(max > px(0.), "the strip scrolls");
+    // The new-tab button stays in sight at the strip's end, outside the
+    // scrolled tabs.
+    let new_tab = visual.debug_bounds("new-tab").expect("new-tab drawn");
+    let strip = visual.debug_bounds("title-tab-strip").unwrap();
+    let view = window
+        .update(visual, |shell, _, _| shell.tab_scroll.bounds())
+        .unwrap();
+    assert!(strip.left() <= new_tab.left() && new_tab.right() <= strip.right());
+    assert!(new_tab.left() >= view.right(), "{new_tab:?} {view:?}");
     // A plain vertical wheel scrolls the strip sideways.
     let before = window
         .update(visual, |shell, _, _| shell.tab_scroll.offset().x)
@@ -677,21 +686,43 @@ fn the_active_tab_scrolls_into_view(cx: &mut TestAppContext) {
 #[gpui::test]
 fn moving_from_one_chip_to_the_next_keeps_the_next_peeked(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_reduce_motion(true));
-    let (window, other, _) = window(cx);
+    let (window, _, _) = window(cx);
     let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-    visual.simulate_resize(gpui::size(px(2400.), px(700.)));
+    visual.simulate_resize(gpui::size(px(1400.), px(700.)));
+    // A full current group makes the strip scroll; small groups follow.
     let (wide, third) = window
         .update(visual, |shell, _, cx| {
+            for _ in 0..20 {
+                add_background_tab(shell, "/work/gespan", cx);
+            }
             let wide: Vec<i64> = (0..3)
-                .map(|_| add_background_tab(shell, "/work/another-project", cx))
+                .map(|_| add_background_tab(shell, "/work/wide-project", cx))
                 .collect();
-            (wide, add_background_tab(shell, "/work/third-project", cx))
+            let third = add_background_tab(shell, "/work/third-project", cx);
+            // Collapsed groups after them leave room to scroll either way.
+            for ix in 0..8 {
+                add_background_tab(shell, &format!("/work/after-{ix}"), cx);
+            }
+            (wide, third)
         })
         .unwrap();
     settle(visual);
-    hover(visual, "tab-group-chip-another-project".into());
-    for id in wide.iter().chain([&other]) {
-        assert!(drawn(visual, format!("title-tab-{id}")));
+    // Scroll the first small group's chip to near the strip's left edge.
+    let chip = visual.debug_bounds("tab-group-chip-wide-project").unwrap();
+    window
+        .update(visual, |shell, _, cx| {
+            let view = shell.tab_scroll.bounds();
+            let offset = shell.tab_scroll.offset();
+            let x = offset.x - (chip.left() - view.left() - px(40.));
+            assert!(x < px(0.));
+            shell.tab_scroll.set_offset(gpui::point(x, offset.y));
+            shell.tabs_frame.update(cx, |_, cx| cx.notify());
+        })
+        .unwrap();
+    settle(visual);
+    hover(visual, "tab-group-chip-wide-project".into());
+    for id in &wide {
+        assert!(drawn(visual, format!("title-tab-{id}")), "peeks");
     }
     let chip = visual.debug_bounds("tab-group-chip-third-project").unwrap();
     hover(visual, "tab-group-chip-third-project".into());
@@ -703,13 +734,62 @@ fn moving_from_one_chip_to_the_next_keeps_the_next_peeked(cx: &mut TestAppContex
         })
         .unwrap();
     assert!(drawn(visual, format!("title-tab-{third}")));
+    for id in &wide {
+        assert!(
+            !drawn(visual, format!("title-tab-{id}")),
+            "the first closed"
+        );
+    }
+    // Closed fully: its box is its chip and insets, no gap.
+    let wide_box = visual.debug_bounds("tab-group-wide-project").unwrap();
+    let wide_chip = visual.debug_bounds("tab-group-chip-wide-project").unwrap();
     assert!(
-        !drawn(visual, format!("title-tab-{other}")),
-        "the first closed"
+        wide_box.size.width <= wide_chip.size.width + px(9.),
+        "{wide_box:?} {wide_chip:?}"
     );
+    // The strip scrolled back by what closed, so the chip stayed put.
     let held = visual.debug_bounds("tab-group-chip-third-project").unwrap();
-    assert_eq!(held.left(), chip.left(), "the chip stays under the pointer");
+    assert!(
+        (held.left() - chip.left()).abs() <= px(3.),
+        "{held:?} vs {chip:?}"
+    );
     assert!(held.contains(&chip.center()));
+}
+
+#[gpui::test]
+fn a_pilot_gone_from_the_roster_opens_its_project(cx: &mut TestAppContext) {
+    let (window, other, _) = window(cx);
+    let pilot = window
+        .update(cx, |shell, w, cx| {
+            shell.select_project("/work/another-project".into(), w, cx);
+            let manager = shell.pilot_manager();
+            manager.update(cx, |m, cx| m.create(Vec::new(), w, cx));
+            manager.read(cx).active.clone().unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let tab = window
+        .update(cx, |shell, w, cx| {
+            let tab = shell.pilot_tab(pilot.clone());
+            shell.select_project("/work/gespan".into(), w, cx);
+            shell
+                .pilot_manager()
+                .update(cx, |m, _| m.roster.pilots.retain(|p| p.id != pilot));
+            tab
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, w, cx| shell.open_title_tab(&tab, w, cx))
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.workspace.project, "/work/another-project");
+            assert_eq!(shell.workspace.active, Some(other), "its chat, not nothing");
+            assert_eq!(shell.pilot_manager().read(cx).active, None);
+        })
+        .unwrap();
 }
 
 #[gpui::test]
