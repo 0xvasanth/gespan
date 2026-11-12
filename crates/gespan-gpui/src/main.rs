@@ -37,6 +37,7 @@ mod git_cache;
 mod git_graph;
 mod git_picker;
 mod git_status;
+mod glass;
 #[cfg(target_os = "macos")]
 mod hang_watchdog;
 mod history;
