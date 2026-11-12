@@ -864,3 +864,24 @@ fn the_delete_default_controls_set_the_app_and_the_project(cx: &mut TestAppConte
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn related_by_meaning_row_is_shown_only_while_the_decision_log_is_on(cx: &mut TestAppContext) {
+    let window = window(Section::Providers, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(6000.)));
+    for log in [false, true, false] {
+        appearance_prefs(window, visual, |p| {
+            p.decision_log = log;
+            p.decision_meaning = true;
+        });
+        assert!(visual.debug_bounds("settings-row-decision-log").is_some());
+        assert_eq!(
+            visual
+                .debug_bounds("settings-row-decision-meaning")
+                .is_some(),
+            log,
+            "decision log {log}"
+        );
+    }
+}

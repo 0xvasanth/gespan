@@ -13,7 +13,7 @@ use super::embed::{Embedder, DIMS};
 use super::entry::{
     Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, ShownHash, Source, Status,
 };
-use super::vector::{self, Vector};
+use super::vector::{self, Embedding, Vector};
 use crate::store::db::{self, args, Sql, SqlRow};
 use crate::store::my_tasks::TaskDecision;
 
@@ -145,6 +145,15 @@ impl DecisionStore {
             *self.embedder.write().unwrap_or_else(|e| e.into_inner()) = None;
             return Ok(());
         };
+        self.switch_embedder(embedder.clone())?;
+        self.reembed_or_turn_off(&embedder).map(drop)
+    }
+
+    /// The first half of turning search by meaning on: records `embedder`'s
+    /// model (deleting another model's vectors in the same transaction) and
+    /// makes it the one new writes use. Quick; [`reembed_or_turn_off`]
+    /// (Self::reembed_or_turn_off) is the slow half.
+    pub fn switch_embedder(&self, embedder: Arc<dyn Embedder>) -> Result<(), Error> {
         if embedder.dims() != DIMS {
             return Err(Error::Embed(format!(
                 "{} makes {}-dimension vectors; the log stores {DIMS}",
@@ -161,8 +170,22 @@ impl DecisionStore {
             Box::pin(async move { vector::adopt_model(tx, &model, dims).await })
         })?;
         *self.embedder.write().unwrap_or_else(|e| e.into_inner()) = Some(embedder);
-        drop(_one_pass);
-        self.reembed().map(drop)
+        Ok(())
+    }
+
+    /// The pass after [`switch_embedder`](Self::switch_embedder):
+    /// [`reembed`](Self::reembed). If vectors can't be written, `embedder`
+    /// is turned back off (unless another took its place), so proposals,
+    /// whose vector is written with them, keep working. The error is logged
+    /// and returned.
+    pub fn reembed_or_turn_off(&self, embedder: &Arc<dyn Embedder>) -> Result<usize, Error> {
+        self.reembed().inspect_err(|error| {
+            tracing::warn!(%error, "search by meaning could not embed the log; it stays off");
+            let mut slot = self.embedder.write().unwrap_or_else(|e| e.into_inner());
+            if slot.as_ref().is_some_and(|now| Arc::ptr_eq(now, embedder)) {
+                *slot = None;
+            }
+        })
     }
 
     /// Brings the vectors in line with the entries: embeds each active or
@@ -170,9 +193,12 @@ impl DecisionStore {
     /// text or in another scope, and deletes the vectors of entries that
     /// can no longer be shown (or no longer exist). Each entry's write is
     /// its own transaction, which re-reads the entry and skips it if it
-    /// changed while it was being embedded (the next pass catches it).
-    /// Returns how many entries were embedded; does nothing while search by
-    /// meaning is off. Embeds one entry at a time: call it off the UI thread.
+    /// changed while it was being embedded (the next pass catches it). An
+    /// entry the embedder fails on is logged, loses any old vector and is
+    /// skipped; the pass goes on. The pass stops when search by meaning is
+    /// switched off or to another embedder meanwhile. Returns how many
+    /// entries were embedded; does nothing while search by meaning is off.
+    /// Embeds one entry at a time: call it off the UI thread.
     pub fn reembed(&self) -> Result<usize, Error> {
         let _one_pass = self.reembedding.lock().unwrap_or_else(|e| e.into_inner());
         let Some(embedder) = self.embedder() else {
@@ -189,21 +215,36 @@ impl DecisionStore {
             .map(|r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))
             .collect::<Result<_, String>>()?;
         let rows = self.sql().query(
-            "SELECT id, scope, title, statement, why FROM task_decisions              WHERE status IN ('active', 'pending') ORDER BY id",
+            "SELECT id, scope, title, statement, why FROM task_decisions \
+             WHERE status IN ('active', 'pending') ORDER BY id",
             args![],
         )?;
         let mut keep = std::collections::HashSet::new();
         let mut embedded = 0;
         for row in rows {
+            let still_current = self
+                .embedder()
+                .is_some_and(|now| Arc::ptr_eq(&now, &embedder));
+            if !still_current {
+                return Ok(embedded);
+            }
             let (id, scope): (i64, String) = (row.get(0)?, row.get(1)?);
             let (title, text, why): (String, String, String) =
                 (row.get(2)?, row.get(3)?, row.get(4)?);
-            keep.insert(id);
             let fingerprint = vector::fingerprint(&model, &title, &text, &why);
             if stored.get(&id) == Some(&(scope.clone(), fingerprint.clone())) {
+                keep.insert(id);
                 continue;
             }
-            let embedding = embedder.embed_document(&vector::document(&title, &text, &why))?;
+            let embedding = match embedder.embed_document(&vector::document(&title, &text, &why)) {
+                Ok(embedding) => embedding,
+                Err(error) => {
+                    // Not kept: its old vector (of other text) goes below.
+                    tracing::warn!(id, %error, "a decision log entry could not be embedded");
+                    continue;
+                }
+            };
+            keep.insert(id);
             let v = Vector {
                 embedding,
                 fingerprint,
@@ -244,19 +285,22 @@ impl DecisionStore {
     }
 
     /// The vector for an entry with this title, text and why, when search by
-    /// meaning is on. An embedder failure is logged and gives `None`: the
-    /// entry is written without one, and the next [`reembed`](Self::reembed)
-    /// adds it.
-    fn vector_for(&self, title: &str, text: &str, why: &str) -> Option<Vector> {
-        let embedder = self.embedder()?;
+    /// meaning is on. An embedder failure is logged and gives
+    /// [`Embedding::Failed`]: the entry is written without a vector (an old
+    /// one, of other text, is removed), and the next
+    /// [`reembed`](Self::reembed) adds it.
+    fn vector_for(&self, title: &str, text: &str, why: &str) -> Embedding {
+        let Some(embedder) = self.embedder() else {
+            return Embedding::Off;
+        };
         match embedder.embed_document(&vector::document(title, text, why)) {
-            Ok(embedding) => Some(Vector {
+            Ok(embedding) => Embedding::Vector(Vector {
                 embedding,
                 fingerprint: vector::fingerprint(embedder.model_id(), title, text, why),
             }),
             Err(error) => {
                 tracing::warn!(%error, "a decision log entry could not be embedded");
-                None
+                Embedding::Failed
             }
         }
     }
@@ -348,9 +392,7 @@ impl DecisionStore {
                     .decided_at(None)
                     .exec(&mut *tx)
                     .await?;
-                if let Some(v) = v {
-                    vector::put(tx, row.id, &scope, &v).await?;
-                }
+                v.apply(tx, row.id, &scope).await?;
                 Ok(row.id)
             })
         })?;
@@ -412,9 +454,7 @@ impl DecisionStore {
                     .decided_at(None)
                     .exec(&mut *tx)
                     .await?;
-                if let Some(v) = v {
-                    vector::put(tx, row.id, &scope, &v).await?;
-                }
+                v.apply(tx, row.id, &scope).await?;
                 Ok(Some(row.id))
             })
         })?;
@@ -510,9 +550,9 @@ impl DecisionStore {
             None => None,
         };
         // An edit changes what the entry says, so its vector is made again.
-        let v = edit
-            .as_ref()
-            .and_then(|ed| self.vector_for(&ed.title, &ed.text, &ed.why));
+        let v = edit.as_ref().map_or(Embedding::Off, |ed| {
+            self.vector_for(&ed.title, &ed.text, &ed.why)
+        });
         let replaces = replaces.to_vec();
         // The transaction's own error type is Toasty's, so a refusal is
         // carried out as the value and returned after the rollback.
@@ -545,9 +585,7 @@ impl DecisionStore {
                     update = update.title(ed.title).statement(ed.text).why(ed.why);
                 }
                 update.exec(&mut *tx).await?;
-                if let Some(v) = v {
-                    vector::put(tx, id, &scope, &v).await?;
-                }
+                v.apply(tx, id, &scope).await?;
                 Ok(None)
             })
         })?;
@@ -614,9 +652,7 @@ impl DecisionStore {
                     .exec(tx)
                     .await?;
                 mark_replaced(tx, &[id], successor.id, now_ms).await?;
-                if let Some(v) = v {
-                    vector::put(tx, successor.id, &old.scope, &v).await?;
-                }
+                v.apply(tx, successor.id, &old.scope).await?;
                 Ok(Ok(successor.id))
             })
         })?;
@@ -663,13 +699,13 @@ impl DecisionStore {
         let n = self.db.transaction(move |tx| {
             Box::pin(async move {
                 let n = update.exec(&mut *tx).await?;
-                if let (1.., Some(v)) = (n, v) {
+                if n > 0 && !matches!(v, Embedding::Off) {
                     let row = TaskDecision::filter_by_id(id)
                         .first()
                         .exec(&mut *tx)
                         .await?;
                     if let Some(row) = row {
-                        vector::put(tx, id, &row.scope, &v).await?;
+                        v.apply(tx, id, &row.scope).await?;
                     }
                 }
                 Ok(n)
@@ -870,12 +906,35 @@ impl DecisionStore {
             .collect())
     }
 
-    /// The `k` entries nearest `query_vec` by meaning that `visible` would
-    /// show for `scope`, nearest first. Each nearest-neighbour query reads
-    /// one partition of the vector table: `scope`'s, then (for a project
-    /// scope) `global`'s, the preferences every scope sees. No other
-    /// scope's vectors are read. Empty while search by meaning is off.
+    /// The entries related to `query_vec`: the [`nearest`](Self::nearest)
+    /// `k` within the embedder's [`max_distance`](Embedder::max_distance),
+    /// nearest first. Hybrid search keeps keyword hits whatever their
+    /// distance, and adds only these by meaning.
     pub fn related(&self, scope: &Scope, query_vec: &[f32], k: usize) -> Result<Vec<Entry>, Error> {
+        let Some(embedder) = self.embedder() else {
+            return Ok(Vec::new());
+        };
+        let max = f64::from(embedder.max_distance());
+        Ok(self
+            .nearest(scope, query_vec, k)?
+            .into_iter()
+            .take_while(|(_, distance)| *distance <= max)
+            .map(|(e, _)| e)
+            .collect())
+    }
+
+    /// The `k` entries nearest `query_vec` by meaning that `visible` would
+    /// show for `scope`, nearest first, with their cosine distances, however
+    /// far. Each nearest-neighbour query reads one partition of the vector
+    /// table: `scope`'s, then (for a project scope) `global`'s, the
+    /// preferences every scope sees. No other scope's vectors are read.
+    /// Empty while search by meaning is off.
+    pub fn nearest(
+        &self,
+        scope: &Scope,
+        query_vec: &[f32],
+        k: usize,
+    ) -> Result<Vec<(Entry, f64)>, Error> {
         if k == 0 || self.embedder().is_none() {
             return Ok(Vec::new());
         }
@@ -890,9 +949,6 @@ impl DecisionStore {
         if scope_text != "global" {
             partitions.push("global".into());
         }
-        // Rows that can't be shown lose their vectors as they leave, so a
-        // pool a little past `k` is enough; the filter below is the rule.
-        let pool = i64::try_from(k.saturating_mul(2).clamp(64, MAX_KNN)).unwrap_or(64);
         let limit = i64::try_from(k).unwrap_or(i64::MAX);
         let sql = format!(
             "WITH hits AS (SELECT rowid AS id, distance FROM task_decisions_vec \
@@ -902,18 +958,41 @@ impl DecisionStore {
             visible_filter()
         );
         let blob = vector::blob(query_vec);
-        let mut found: Vec<(f64, Entry)> = Vec::new();
+        let mut found: Vec<(Entry, f64)> = Vec::new();
         for partition in partitions {
-            let rows = self.sql().query(
-                &sql,
-                args![scope_text.clone(), blob.clone(), pool, partition, limit],
+            // Entries that can't be shown lose their vectors as they leave,
+            // but hidden pending ones keep theirs: when the filter drops
+            // enough of the pool to leave fewer than `k`, ask again for a
+            // wider one, while the partition holds more than was read.
+            let size: i64 = self.sql().value(
+                "SELECT COUNT(*) FROM task_decisions_vec WHERE scope = ?1",
+                args![partition.clone()],
             )?;
+            let mut pool = k.saturating_mul(2).clamp(64, MAX_KNN);
+            let rows = loop {
+                let rows = self.sql().query(
+                    &sql,
+                    args![
+                        scope_text.clone(),
+                        blob.clone(),
+                        i64::try_from(pool).unwrap_or(64),
+                        partition.clone(),
+                        limit
+                    ],
+                )?;
+                let read_all = i64::try_from(pool).unwrap_or(i64::MAX) >= size;
+                if rows.len() >= k || read_all || pool >= MAX_KNN {
+                    break rows;
+                }
+                pool = pool.saturating_mul(8).min(MAX_KNN);
+            };
             for row in rows {
-                found.push((row.get(18)?, row_to_entry(&row)?));
+                found.push((row_to_entry(&row)?, row.get(18)?));
             }
         }
-        found.sort_by(|a, b| a.0.total_cmp(&b.0).then(b.1.id.cmp(&a.1.id)));
-        Ok(found.into_iter().take(k).map(|(_, e)| e).collect())
+        found.sort_by(|a, b| a.1.total_cmp(&b.1).then(b.0.id.cmp(&a.0.id)));
+        found.truncate(k);
+        Ok(found)
     }
 
     /// Keyword search: what [`search`](Self::search) is with search by

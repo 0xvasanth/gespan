@@ -522,15 +522,19 @@ fn similar_active_finds_rewordings_by_meaning() {
     let _guard = isolated();
     service::with(|store| {
         let other = Scope::Repo("github.com/o/other@0123456789ab".into());
-        let reworded = active(store, &repo(), "History", "Rebasing keeps history linear");
-        let elsewhere = active(store, &other, "Rebase", "Prefer rebase");
-        let e = propose(store, &repo(), "Rebase", "Prefer rebase");
+        let reworded = active(store, &repo(), "Branching", "Rebasing branch history");
+        let unrelated = active(store, &repo(), "Deploys", "Never deploy on Fridays");
+        let elsewhere = active(store, &other, "Rebase", "Rebase branches");
+        let e = propose(store, &repo(), "Rebase", "Rebase branches");
         assert!(similar_active(store, &e, 3).is_empty(), "no shared word");
         store
             .set_embedder(Some(Arc::new(crate::decisions::HashEmbedder::new())))
             .unwrap();
         let found: Vec<i64> = similar_active(store, &e, 3).iter().map(|x| x.id).collect();
+        // The rewording, but not an unrelated entry, nor the same words in
+        // another project.
         assert_eq!(found, [reworded.id]);
+        assert!(!found.contains(&unrelated.id));
         assert!(!found.contains(&elsewhere.id));
     })
     .unwrap();

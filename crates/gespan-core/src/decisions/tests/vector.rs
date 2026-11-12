@@ -1,7 +1,7 @@
 //! Search by meaning: the `vec0` table, its partitions, the model sidecar,
 //! atomic entry-and-vector writes and hybrid (keyword + vector) search.
 //! Every test embeds with `HashEmbedder`; nothing downloads a model.
-use crate::decisions::embed::{Embedder, HashEmbedder, DIMS};
+use crate::decisions::embed::{Embedder, HashEmbedder, DIMS, HASH_MAX_DISTANCE};
 use crate::decisions::entry::Error;
 use crate::decisions::store::RRF_K;
 use crate::decisions::vector::{self, fuse};
@@ -9,7 +9,8 @@ use crate::decisions::{Config, DecisionStore, Edit, Entry, Kind, NewEntry, Scope
 use rusqlite::Connection;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 struct Log {
@@ -104,6 +105,10 @@ fn ids(entries: &[Entry]) -> Vec<i64> {
     entries.iter().map(|e| e.id).collect()
 }
 
+fn near_ids(found: &[(Entry, f64)]) -> Vec<i64> {
+    found.iter().map(|(e, _)| e.id).collect()
+}
+
 fn query(text: &str) -> Vec<f32> {
     HashEmbedder::new().embed_query(text).unwrap()
 }
@@ -139,18 +144,18 @@ fn vec_table_is_partitioned_by_scope_and_never_crosses() {
     assert_eq!(stored[&b.id].0, repo("b").to_string());
     assert_eq!(stored[&pref.id].0, "global");
 
-    let near = s.related(&repo("a"), &query("tabs indent"), 10).unwrap();
-    assert_eq!(ids(&near), [a.id, pref.id], "own scope, then global");
-    let near = s.related(&repo("b"), &query("tabs indent"), 10).unwrap();
-    assert_eq!(ids(&near), [b.id, pref.id]);
+    let near = s.nearest(&repo("a"), &query("tabs indent"), 10).unwrap();
+    assert_eq!(near_ids(&near), [a.id, pref.id], "own scope, then global");
+    let near = s.nearest(&repo("b"), &query("tabs indent"), 10).unwrap();
+    assert_eq!(near_ids(&near), [b.id, pref.id]);
     // A scope with nothing of its own sees only the global partition.
-    let near = s.related(&repo("c"), &query("tabs indent"), 10).unwrap();
-    assert_eq!(ids(&near), [pref.id]);
+    let near = s.nearest(&repo("c"), &query("tabs indent"), 10).unwrap();
+    assert_eq!(near_ids(&near), [pref.id]);
     // The global scope reads its own partition only.
     let near = s
-        .related(&Scope::Global, &query("tabs indent"), 10)
+        .nearest(&Scope::Global, &query("tabs indent"), 10)
         .unwrap();
-    assert_eq!(ids(&near), [pref.id]);
+    assert_eq!(near_ids(&near), [pref.id]);
     // Hybrid search keeps to the scope as well.
     let found = s.search(&repo("a"), "tabs", 10).unwrap();
     assert!(found.iter().all(|e| e.id != b.id), "{found:?}");
@@ -164,8 +169,44 @@ fn vec_table_is_partitioned_by_scope_and_never_crosses() {
         active(s, &repo("b"), "Tabs", crowd);
     }
     let doc = vector::document("Tabs", crowd, "the user said so");
-    let near = s.related(&repo("a"), &query(&doc), 1).unwrap();
-    assert_eq!(ids(&near), [a.id]);
+    let near = s.nearest(&repo("a"), &query(&doc), 1).unwrap();
+    assert_eq!(near_ids(&near), [a.id]);
+}
+
+/// Pending entries no user vouched for are hidden but keep their vectors.
+/// When more of them than the first pool are nearer than a visible entry,
+/// the search widens until it finds the visible one.
+#[test]
+fn hidden_pending_entries_never_crowd_out_visible_ones() {
+    let log = log();
+    with_hash(&log, "hash-v1");
+    let s = &log.store;
+    let shown = active(s, &repo("a"), "Tabs", "Indent with tabs");
+    let crowd = "Always indent every file with hard tabs";
+    for _ in 0..80 {
+        s.propose(
+            NewEntry {
+                kind: Kind::Decision,
+                scope: repo("a"),
+                title: "Tabs".into(),
+                text: crowd.into(),
+                why: "the user said so".into(),
+                user_answer: None,
+                source: Source::default(),
+            },
+            10,
+        )
+        .unwrap();
+    }
+    let doc = vector::document("Tabs", crowd, "the user said so");
+    assert_eq!(
+        near_ids(&s.nearest(&repo("a"), &query(&doc), 1).unwrap()),
+        [shown.id]
+    );
+    assert_eq!(
+        ids(&s.search(&repo("a"), "hard tabs", 5).unwrap()),
+        [shown.id]
+    );
 }
 
 #[test]
@@ -203,8 +244,8 @@ fn rejected_and_replaced_rows_never_returned() {
         )
         .unwrap();
 
-    let near = s.related(&scope, &query("indent with tabs"), 10).unwrap();
-    let mut got = ids(&near);
+    let near = s.nearest(&scope, &query("indent with tabs"), 10).unwrap();
+    let mut got = near_ids(&near);
     got.sort();
     assert_eq!(got, [new.id, successor.id]);
     let found = s.search(&scope, "tabs indent", 10).unwrap();
@@ -285,6 +326,9 @@ fn an_embedder_of_another_size_is_refused() {
         fn embed_query(&self, _: &str) -> Result<Vec<f32>, Error> {
             Ok(vec![1.0; 384])
         }
+        fn max_distance(&self) -> f32 {
+            1.0
+        }
     }
     let log = log();
     with_hash(&log, "hash-v1");
@@ -298,40 +342,62 @@ fn an_embedder_of_another_size_is_refused() {
     assert!(log.vectors().contains_key(&a.id));
 }
 
-/// Says it makes 768 floats, but its document vectors are one short: the
-/// `vec0` insert fails after the entry row was written, in the same
-/// transaction, as a crash between the two writes would.
-struct ShortDocuments;
+/// A hash embedder that can be broken on demand: `short` makes its document
+/// vectors one float short (the `vec0` insert then fails inside the
+/// transaction that wrote the entry, as a crash between the two writes
+/// would); `failing` makes it return an error for texts containing a word.
+struct Faulty {
+    short: AtomicBool,
+    failing: Mutex<Option<&'static str>>,
+}
 
-impl Embedder for ShortDocuments {
+impl Faulty {
+    fn new() -> Arc<Faulty> {
+        Arc::new(Faulty {
+            short: AtomicBool::new(false),
+            failing: Mutex::new(None),
+        })
+    }
+}
+
+impl Embedder for Faulty {
     fn model_id(&self) -> &str {
-        "short"
+        "hash-v1"
     }
     fn dims(&self) -> usize {
         DIMS
     }
     fn embed_document(&self, text: &str) -> Result<Vec<f32>, Error> {
+        if let Some(word) = *self.failing.lock().unwrap() {
+            if text.contains(word) {
+                return Err(Error::Embed("the model failed".into()));
+            }
+        }
         let mut v = HashEmbedder::new().embed_document(text)?;
-        v.pop();
+        if self.short.load(Ordering::SeqCst) {
+            v.pop();
+        }
         Ok(v)
     }
     fn embed_query(&self, text: &str) -> Result<Vec<f32>, Error> {
         HashEmbedder::new().embed_query(text)
+    }
+    fn max_distance(&self) -> f32 {
+        HASH_MAX_DISTANCE
     }
 }
 
 #[test]
 fn crash_between_entry_and_vector_write_leaves_no_orphan() {
     let log = log();
-    with_hash(&log, "hash-v1");
     let s = &log.store;
+    let faulty = Faulty::new();
+    s.set_embedder(Some(faulty.clone())).unwrap();
     let kept = active(s, &repo("a"), "Tabs", "Indent with tabs");
     let pending = propose(s, &repo("a"), Kind::Decision, "Rebase", "Prefer rebase");
     let rows = log.rows();
-    s.set_embedder(Some(Arc::new(ShortDocuments))).unwrap_err();
-    // `set_embedder` recorded the new model (the old vectors are gone) and
-    // failed on its first re-embed: no entry has a vector now.
-    assert!(log.vectors().is_empty());
+    let before = log.vectors();
+    faulty.short.store(true, Ordering::SeqCst);
 
     // A proposal whose vector write fails leaves no entry behind.
     let refused = s.propose(
@@ -367,12 +433,116 @@ fn crash_between_entry_and_vector_write_leaves_no_orphan() {
     assert!(s.replace_from_flag(kept.id, flag.id, edit, 60).is_err());
     assert_eq!(log.rows(), rows);
     assert_eq!(s.get(kept.id).unwrap().unwrap().0.status, Status::Active);
-    assert!(log.vectors().is_empty(), "no vector without its entry");
+    assert_eq!(log.vectors(), before, "no vector without its entry");
+}
 
-    // A working embedder again: every live entry gets exactly one vector.
-    with_hash(&log, "hash-v1");
+/// When the first pass after switching on cannot write vectors, search by
+/// meaning goes back off, so proposals (written with their vector) still
+/// work.
+#[test]
+fn a_first_pass_that_cannot_write_turns_it_back_off() {
+    let log = log();
+    let s = &log.store;
+    active(s, &repo("a"), "Tabs", "Indent with tabs");
+    let faulty = Faulty::new();
+    faulty.short.store(true, Ordering::SeqCst);
+    assert!(s.set_embedder(Some(faulty)).is_err());
+    assert!(s.embedder().is_none());
+    let e = propose(s, &repo("a"), Kind::Decision, "Rebase", "Prefer rebase");
+    assert_eq!(s.get(e.id).unwrap().unwrap().0.text, "Prefer rebase");
+}
+
+/// An edit the embedder fails on keeps the edit and drops the old vector,
+/// which no longer stands for the entry's words.
+#[test]
+fn a_failed_embed_on_edit_removes_the_old_vector() {
+    let log = log();
+    let s = &log.store;
+    let faulty = Faulty::new();
+    s.set_embedder(Some(faulty.clone())).unwrap();
+    let revised = propose(s, &repo("a"), Kind::Decision, "Tabs", "Indent with tabs");
+    let approved = propose(s, &repo("a"), Kind::Decision, "Rebase", "Prefer rebase");
+    assert!(log.vectors().contains_key(&revised.id));
+    *faulty.failing.lock().unwrap() = Some("poison");
+
+    let edit = |text: &str| Edit {
+        title: "New".into(),
+        text: text.into(),
+        why: "the user said so".into(),
+    };
+    s.revise_pending(revised.id, edit("poison tabs"), None, &revised.source)
+        .unwrap();
+    assert_eq!(s.get(revised.id).unwrap().unwrap().0.text, "poison tabs");
+    assert!(!log.vectors().contains_key(&revised.id));
+
+    s.approve(approved.id, Some(edit("poison rebase")), false, &[], 30)
+        .unwrap();
+    assert_eq!(
+        s.get(approved.id).unwrap().unwrap().0.status,
+        Status::Active
+    );
+    assert!(!log.vectors().contains_key(&approved.id));
+}
+
+/// One entry the embedder fails on is skipped; the pass goes on to the rest.
+#[test]
+fn reembed_skips_an_entry_it_cannot_embed_and_goes_on() {
+    let log = log();
+    let s = &log.store;
+    let bad = active(s, &repo("a"), "Poison", "poison text");
+    let good = active(s, &repo("a"), "Tabs", "Indent with tabs");
+    let later = active(s, &repo("a"), "Rebase", "Prefer rebase");
+    let faulty = Faulty::new();
+    *faulty.failing.lock().unwrap() = Some("poison");
+    s.set_embedder(Some(faulty)).unwrap();
     let stored: Vec<i64> = log.vectors().into_keys().collect();
-    assert_eq!(stored, [kept.id, pending.id]);
+    assert_eq!(stored, [good.id, later.id]);
+    assert!(!stored.contains(&bad.id));
+}
+
+/// Switching off (or to another embedder) stops a running pass before its
+/// next entry.
+#[test]
+fn switching_off_stops_a_running_reembed() {
+    struct SwitchesOff {
+        store: Mutex<Option<Arc<DecisionStore>>>,
+    }
+    impl Embedder for SwitchesOff {
+        fn model_id(&self) -> &str {
+            "switches-off"
+        }
+        fn dims(&self) -> usize {
+            DIMS
+        }
+        fn embed_document(&self, text: &str) -> Result<Vec<f32>, Error> {
+            if let Some(store) = self.store.lock().unwrap().take() {
+                store.set_embedder(None).unwrap();
+            }
+            HashEmbedder::new().embed_document(text)
+        }
+        fn embed_query(&self, text: &str) -> Result<Vec<f32>, Error> {
+            HashEmbedder::new().embed_query(text)
+        }
+        fn max_distance(&self) -> f32 {
+            HASH_MAX_DISTANCE
+        }
+    }
+    let dir = TempDir::new().unwrap();
+    let store =
+        Arc::new(DecisionStore::open(&dir.path().join("gespan.db"), Config::app()).unwrap());
+    for title in ["One", "Two", "Three"] {
+        active(&store, &repo("a"), title, "Indent with tabs");
+    }
+    let embedder = Arc::new(SwitchesOff {
+        store: Mutex::new(Some(store.clone())),
+    });
+    store.set_embedder(Some(embedder)).unwrap();
+    assert!(store.embedder().is_none());
+    let vectors: i64 = Connection::open(dir.path().join("gespan.db"))
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM task_decisions_vec", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(vectors, 1, "the entry being embedded, then it stopped");
 }
 
 #[test]
@@ -390,29 +560,54 @@ fn hybrid_search_merges_keyword_and_vector_by_rrf() {
     // No word in common with "rebase", only word parts.
     let meaning = active(s, &scope, "History", "Rebasing keeps history linear");
     let other = active(s, &scope, "Deploys", "Never deploy on Fridays");
+    // The word, lost in a long text about something else: far by meaning.
+    let buried_text = format!(
+        "{} Rebase optional.",
+        "Ship the quarterly finance export through the nightly batch scheduler \
+         with signed manifests, checksum verification, encrypted uploads, paging \
+         alerts, audit summaries and a runbook for outages."
+            .repeat(5)
+    );
+    let buried = active(s, &scope, "Exports", &buried_text);
 
     // Keyword only (search by meaning off): the stemmed form isn't found.
     let keyword = s.search(&scope, "rebase", 10).unwrap();
-    assert_eq!(ids(&keyword), [words.id]);
+    assert_eq!(ids(&keyword), [words.id, buried.id]);
 
     with_hash(&log, "hash-v1");
+    let near = s.nearest(&scope, &query("rebase"), 50).unwrap();
+    let distance = |id: i64| near.iter().find(|(e, _)| e.id == id).unwrap().1;
+    assert!(distance(meaning.id) <= f64::from(HASH_MAX_DISTANCE));
+    assert!(distance(other.id) > f64::from(HASH_MAX_DISTANCE));
+    assert!(
+        distance(buried.id) > f64::from(HASH_MAX_DISTANCE),
+        "{}",
+        distance(buried.id)
+    );
+    // Related: within the cut-off only, nearest first.
     let by_meaning = s.related(&scope, &query("rebase"), 50).unwrap();
-    assert_eq!(by_meaning[0].id, words.id);
-    assert_eq!(by_meaning[1].id, meaning.id);
+    assert_eq!(ids(&by_meaning), [words.id, meaning.id]);
+
     let hybrid = s.search(&scope, "rebase", 10).unwrap();
     assert_eq!(
         ids(&hybrid),
         fuse(&[ids(&keyword), ids(&by_meaning)], RRF_K),
         "keyword and vector ranks fused with k = 60"
     );
-    assert_eq!(ids(&hybrid)[..2], [words.id, meaning.id]);
-    assert!(ids(&hybrid).contains(&other.id));
+    // Found both ways first; then the second keyword hit and the second hit
+    // by meaning tie (1/62 each) and the newer goes first.
+    assert_eq!(ids(&hybrid), [words.id, buried.id, meaning.id]);
+    // A keyword hit stays whatever its distance; an unrelated entry found by
+    // meaning alone does not come back.
+    assert!(ids(&hybrid).contains(&buried.id));
+    assert!(!ids(&hybrid).contains(&other.id));
     assert_eq!(s.search(&scope, "rebase", 1).unwrap()[0].id, words.id);
     assert!(s.search(&scope, "  *  ", 10).unwrap().is_empty());
+    assert!(s.search(&scope, "zebra", 10).unwrap().is_empty());
 
     // Off again: exactly keyword search.
     s.set_embedder(None).unwrap();
-    assert_eq!(ids(&s.search(&scope, "rebase", 10).unwrap()), [words.id]);
+    assert_eq!(ids(&s.search(&scope, "rebase", 10).unwrap()), ids(&keyword));
     assert!(s.related(&scope, &query("rebase"), 10).unwrap().is_empty());
 }
 

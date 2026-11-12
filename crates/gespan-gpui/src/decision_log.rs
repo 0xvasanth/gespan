@@ -1,13 +1,14 @@
 //! The app's side of the decision log: what the user wrote in a session, so a
 //! proposal can be checked against the user's own words.
 use crate::runtime::{Database, locked};
+use gespan_core::decisions::Embedder;
 use gespan_core::outside_turns::without_injected;
 use gespan_core::pilot::files::content_hash as digest;
 use gespan_core::store::Store;
 use gespan_core::transcript::Row;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// How many of a session's answers are kept, newest last.
 const ANSWERS_KEPT: usize = 50;
@@ -393,7 +394,10 @@ pub(crate) fn meaning_wanted(prefs: &crate::settings::Preferences) -> bool {
 pub(crate) fn meaning_description() -> String {
     let about = "Match decisions by what they mean, not only their words, when agents \
                  search and when you review a proposal. Downloads a 137 MB model the first \
-                 time and runs it on this Mac.";
+                 time and runs it on this computer.";
+    if cfg!(not(feature = "nomic")) {
+        return format!("{about} This build of Gespan does not include the model.");
+    }
     match &*MEANING_STATUS.lock().unwrap_or_else(|e| e.into_inner()) {
         Some(status) => format!("{about} {status}"),
         None => about.to_string(),
@@ -414,55 +418,90 @@ fn set_meaning_status(status: Option<String>) {
     *MEANING_STATUS.lock().unwrap_or_else(|e| e.into_inner()) = status;
 }
 
+/// Loads the embedder for search by meaning; given whether its switch is
+/// still the latest, so a long download can stop early. `None` when it was
+/// switched again meanwhile.
+type Loader = dyn Fn(&dyn Fn() -> bool) -> Result<Option<Arc<dyn Embedder>>, String> + Send + Sync;
+
 /// Applies the search-by-meaning switch: called with every preferences
 /// apply. On: the model is downloaded if it is missing, loaded and handed to
 /// the log, which embeds every entry that needs it. Off: the log goes back
 /// to keyword search. All of it on its own thread, never the UI's, and
 /// never under `locked`.
 pub(crate) fn meaning_switched(on: bool) {
+    switch_meaning(on, Arc::new(load_embedder));
+}
+
+/// [`meaning_switched`] with its loader given; the thread doing the work,
+/// when the switch changed anything.
+fn switch_meaning(on: bool, loader: Arc<Loader>) -> Option<std::thread::JoinHandle<()>> {
     use std::sync::atomic::Ordering;
     let previous = MEANING
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .replace(on);
     if previous == Some(on) || (previous.is_none() && !on) {
-        return;
+        return None;
     }
     let generation = MEANING_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    let current = move || MEANING_GENERATION.load(Ordering::SeqCst) == generation;
-    std::thread::spawn(move || {
+    Some(std::thread::spawn(move || {
+        apply_meaning(on, generation, &*loader)
+    }))
+}
+
+/// One switch's work. Switches run one at a time (`SWITCHING`), and each
+/// re-checks under that lock that no later switch was made, so an "off"
+/// made during a slow "on" always wins. The re-embedding pass runs after the
+/// lock is released: a later "off" stops it before its next entry.
+fn apply_meaning(on: bool, generation: u64, loader: &Loader) {
+    use std::sync::atomic::Ordering;
+    static SWITCHING: Mutex<()> = Mutex::new(());
+    let current = || MEANING_GENERATION.load(Ordering::SeqCst) == generation;
+    let embedder = {
+        let _one_at_a_time = SWITCHING.lock().unwrap_or_else(|e| e.into_inner());
+        if !current() {
+            return;
+        }
         if !on {
             set_meaning_status(None);
             let _ = gespan_core::decisions::service::with(|log| log.set_embedder(None));
             return;
         }
-        match load_embedder(&current) {
-            Ok(Some(embedder)) if current() => {
-                set_meaning_status(None);
-                match gespan_core::decisions::service::with(|log| log.set_embedder(Some(embedder)))
-                {
-                    Ok(Ok(())) | Err(_) => {}
-                    Ok(Err(error)) => {
-                        tracing::warn!(%error, "the decision log could not embed its entries");
-                        set_meaning_status(Some(format!("Embedding failed: {error}")));
-                    }
-                }
-            }
-            Ok(_) => {}
+        let embedder = match loader(&current) {
+            Ok(Some(embedder)) => embedder,
+            Ok(None) => return,
             Err(error) => {
                 tracing::warn!(%error, "the decision embedding model is not available");
                 set_meaning_status(Some(error));
+                return;
             }
+        };
+        if !current() {
+            return;
         }
-    });
+        match gespan_core::decisions::service::with(|log| log.switch_embedder(embedder.clone())) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "search by meaning could not be turned on");
+                set_meaning_status(Some(format!("Search by meaning failed: {error}")));
+                return;
+            }
+            Err(_) => return,
+        }
+        set_meaning_status(None);
+        embedder
+    };
+    if let Ok(Err(error)) =
+        gespan_core::decisions::service::with(|log| log.reembed_or_turn_off(&embedder))
+    {
+        set_meaning_status(Some(format!("Embedding failed: {error}")));
+    }
 }
 
 /// Downloads (when missing) and loads the Nomic model. `None` when it was
 /// switched off while downloading.
 #[cfg(feature = "nomic")]
-fn load_embedder(
-    current: &dyn Fn() -> bool,
-) -> Result<Option<std::sync::Arc<dyn gespan_core::decisions::Embedder>>, String> {
+fn load_embedder(current: &dyn Fn() -> bool) -> Result<Option<Arc<dyn Embedder>>, String> {
     use gespan_core::decisions::embed::{NOMIC_MODEL, Nomic};
     use gespan_models::{CancelToken, ModelStatus, ModelStore, default_root};
     let models = ModelStore::new(default_root());
@@ -487,14 +526,12 @@ fn load_embedder(
     }
     set_meaning_status(Some("Loading the model…".into()));
     let nomic = Nomic::load(&models.dir(&NOMIC_MODEL)).map_err(|e| e.to_string())?;
-    Ok(Some(std::sync::Arc::new(nomic)))
+    Ok(Some(Arc::new(nomic)))
 }
 
 /// This build has no embedding model: search stays keyword only.
 #[cfg(not(feature = "nomic"))]
-fn load_embedder(
-    _current: &dyn Fn() -> bool,
-) -> Result<Option<std::sync::Arc<dyn gespan_core::decisions::Embedder>>, String> {
+fn load_embedder(_current: &dyn Fn() -> bool) -> Result<Option<Arc<dyn Embedder>>, String> {
     Err("This build of Gespan has no embedding model, so search stays by words.".into())
 }
 
@@ -900,5 +937,74 @@ mod tests {
         assert!(known_workspaces().contains(&worktree.path().to_path_buf()));
         *KNOWN_PROJECTS.lock().unwrap() = saved;
         SESSION_CHECKOUTS.lock().unwrap().clear();
+    }
+
+    /// The decision log on a gespan.db this process's tests share, search
+    /// by meaning off and its switch never applied.
+    fn meaning_log() -> std::sync::MutexGuard<'static, ()> {
+        static DIR: LazyLock<tempfile::TempDir> = LazyLock::new(|| tempfile::tempdir().unwrap());
+        let guard = exclusive();
+        gespan_core::decisions::init(&DIR.path().join("gespan.db")).unwrap();
+        *MEANING.lock().unwrap() = None;
+        gespan_core::decisions::service::with(|log| log.set_embedder(None).unwrap()).unwrap();
+        guard
+    }
+
+    fn model_in_use() -> Option<String> {
+        gespan_core::decisions::service::with(|log| {
+            log.embedder().map(|e| e.model_id().to_string())
+        })
+        .unwrap()
+    }
+
+    fn hash_loader() -> Arc<Loader> {
+        Arc::new(|_: &dyn Fn() -> bool| {
+            Ok(Some(
+                Arc::new(gespan_core::decisions::HashEmbedder::new()) as Arc<dyn Embedder>
+            ))
+        })
+    }
+
+    #[test]
+    fn decision_meaning_on_hands_the_log_an_embedder_and_off_takes_it_away() {
+        let _log = meaning_log();
+        // Off before it was ever on: nothing to do.
+        assert!(switch_meaning(false, hash_loader()).is_none());
+        switch_meaning(true, hash_loader()).unwrap().join().unwrap();
+        assert_eq!(model_in_use().as_deref(), Some("hash-v1"));
+        // The same switch again changes nothing.
+        assert!(switch_meaning(true, hash_loader()).is_none());
+        switch_meaning(false, hash_loader())
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(model_in_use(), None);
+    }
+
+    /// The user turns it off while the model is still loading: the slow
+    /// "on" finishes after the "off" was made, and must not win.
+    #[test]
+    fn decision_meaning_off_during_a_slow_on_leaves_it_off() {
+        let _log = meaning_log();
+        let (started, loading) = std::sync::mpsc::channel::<()>();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let released = Mutex::new(released);
+        let slow: Arc<Loader> = Arc::new(move |_: &dyn Fn() -> bool| {
+            started.send(()).unwrap();
+            released.lock().unwrap().recv().unwrap();
+            Ok(Some(
+                Arc::new(gespan_core::decisions::HashEmbedder::new()) as Arc<dyn Embedder>
+            ))
+        });
+        let on = switch_meaning(true, slow).unwrap();
+        loading.recv().unwrap();
+        let off = switch_meaning(false, hash_loader()).unwrap();
+        release.send(()).unwrap();
+        on.join().unwrap();
+        off.join().unwrap();
+        assert_eq!(model_in_use(), None);
+        // And on again after that works.
+        switch_meaning(true, hash_loader()).unwrap().join().unwrap();
+        assert_eq!(model_in_use().as_deref(), Some("hash-v1"));
     }
 }

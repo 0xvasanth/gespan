@@ -53,6 +53,35 @@ pub(crate) struct Vector {
     pub(crate) fingerprint: String,
 }
 
+/// What a write does to an entry's vector.
+#[derive(Clone, Debug)]
+pub(crate) enum Embedding {
+    /// Search by meaning is off: the vector is left alone (the next pass
+    /// after it comes on checks it).
+    Off,
+    /// The embedder failed on the entry's new text: any old vector, of other
+    /// text, is removed, so it never stands for words the entry no longer has.
+    Failed,
+    Vector(Vector),
+}
+
+impl Embedding {
+    /// Applies this to entry `id` in partition `scope`, inside the
+    /// transaction that writes the entry.
+    pub(crate) async fn apply(
+        &self,
+        tx: &mut toasty::Transaction<'_>,
+        id: i64,
+        scope: &str,
+    ) -> toasty::Result<()> {
+        match self {
+            Embedding::Off => Ok(()),
+            Embedding::Failed => remove(tx, &[id]).await,
+            Embedding::Vector(v) => put(tx, id, scope, v).await,
+        }
+    }
+}
+
 /// The text an entry is embedded from.
 pub(crate) fn document(title: &str, text: &str, why: &str) -> String {
     format!("{title}\n{text}\n{why}")

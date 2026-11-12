@@ -18,6 +18,10 @@ pub trait Embedder: Send + Sync {
     fn dims(&self) -> usize;
     fn embed_document(&self, text: &str) -> Result<Vec<f32>, Error>;
     fn embed_query(&self, text: &str) -> Result<Vec<f32>, Error>;
+    /// The largest cosine distance from a query at which an entry still
+    /// counts as related. Found by meaning alone, an entry farther away is
+    /// left out; a keyword match is kept whatever its distance.
+    fn max_distance(&self) -> f32;
 }
 
 /// A deterministic embedder for tests: each lower-cased word and each of its
@@ -95,7 +99,16 @@ impl Embedder for HashEmbedder {
     fn embed_query(&self, text: &str) -> Result<Vec<f32>, Error> {
         Ok(self.embed(text))
     }
+
+    /// Texts sharing a word or a few word parts come out well under this;
+    /// texts with nothing in common sit near 1.
+    fn max_distance(&self) -> f32 {
+        HASH_MAX_DISTANCE
+    }
 }
+
+/// [`HashEmbedder`]'s cut-off for related entries.
+pub const HASH_MAX_DISTANCE: f32 = 0.9;
 
 /// Scales `v` to unit length (a zero vector is left as it is).
 pub fn normalize(v: &mut [f32]) {
@@ -147,7 +160,7 @@ pub static NOMIC_MODEL: gespan_models::ModelSpec = gespan_models::ModelSpec {
 };
 
 #[cfg(feature = "nomic")]
-pub use nomic::Nomic;
+pub use nomic::{runtime_version, Nomic};
 
 #[cfg(feature = "nomic")]
 mod nomic {
@@ -157,7 +170,62 @@ mod nomic {
         UserDefinedEmbeddingModel,
     };
     use std::path::Path;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, OnceLock};
+    // The crate that links the process's one ONNX Runtime (see `ort_api`).
+    use sherpa_onnx_sys as _;
+
+    unsafe extern "system" {
+        /// ONNX Runtime's C entry point, from the static onnxruntime
+        /// sherpa-onnx-sys links.
+        fn OrtGetApiBase() -> *const ort::sys::OrtApiBase;
+    }
+
+    /// Hands ort the API of the ONNX Runtime linked into this binary, once.
+    /// ort is built with `alternative-backend`, so it links no runtime of its
+    /// own and needs this before any session is made. Fails when that
+    /// runtime is older than ort's API version.
+    fn ort_api() -> Result<(), Error> {
+        static READY: OnceLock<Result<(), String>> = OnceLock::new();
+        READY
+            .get_or_init(|| {
+                // SAFETY: `OrtGetApiBase` is ONNX Runtime's documented entry
+                // point; it returns a static struct whose `GetApi` returns a
+                // static API table, or null for an unsupported version.
+                let api = unsafe {
+                    let base = OrtGetApiBase();
+                    if base.is_null() {
+                        return Err("ONNX Runtime has no API base".into());
+                    }
+                    ((*base).GetApi)(ort::sys::ORT_API_VERSION)
+                };
+                if api.is_null() {
+                    return Err(format!(
+                        "the linked ONNX Runtime ({}) is older than API {}",
+                        runtime_version(),
+                        ort::sys::ORT_API_VERSION
+                    ));
+                }
+                // SAFETY: non-null, and valid for the life of the process.
+                ort::set_api(unsafe { std::ptr::read(api) });
+                Ok(())
+            })
+            .clone()
+            .map_err(Error::Embed)
+    }
+
+    /// The linked ONNX Runtime's version, such as "1.28.2".
+    pub fn runtime_version() -> String {
+        // SAFETY: as in `ort_api`; the string is static and NUL-terminated.
+        unsafe {
+            let base = OrtGetApiBase();
+            if base.is_null() {
+                return String::new();
+            }
+            std::ffi::CStr::from_ptr(((*base).GetVersionString)())
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
 
     /// Tokens embedded per text. Entries are capped at 1,000 characters a
     /// field, so three fields fit; longer queries are cut.
@@ -175,6 +243,7 @@ mod nomic {
         /// Loads the model from `dir`, where `gespan-models` downloaded
         /// [`NOMIC_MODEL`]'s files.
         pub fn load(dir: &Path) -> Result<Nomic, Error> {
+            ort_api()?;
             let read = |name: &str| {
                 std::fs::read(dir.join(name))
                     .map_err(|e| Error::Embed(format!("cannot read {name}: {e}")))
@@ -226,6 +295,15 @@ mod nomic {
 
         fn embed_query(&self, text: &str) -> Result<Vec<f32>, Error> {
             self.embed("search_query: ", text)
+        }
+
+        /// Calibrated on this Mac (`nomic_distances_for_related_and_unrelated_decisions`):
+        /// 12 queries against the decision each is about measured 0.246 to
+        /// 0.378 (median 0.335); against the 132 they are not about, 0.352 to
+        /// over 0.6 (5th percentile 0.426, median 0.521). 0.40 keeps every
+        /// related pair and lets about 3% of unrelated ones through.
+        fn max_distance(&self) -> f32 {
+            0.40
         }
     }
 }

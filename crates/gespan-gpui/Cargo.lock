@@ -2860,6 +2860,7 @@ dependencies = [
  "mcp-hub",
  "minisign-verify",
  "natpmp",
+ "ort",
  "quinn",
  "rand 0.10.3",
  "rayon",
@@ -2873,6 +2874,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2 0.11.1",
+ "sherpa-onnx-sys",
  "shlex",
  "similar",
  "sqlite-vec",
@@ -2890,7 +2892,7 @@ dependencies = [
  "tungstenite",
  "unicode-normalization",
  "unicode-width",
- "ureq 2.12.1",
+ "ureq",
  "url",
  "uuid",
  "webpki-roots 1.0.11",
@@ -3038,7 +3040,7 @@ dependencies = [
  "dirs 7.0.0",
  "sha2 0.11.1",
  "thiserror 2.0.21",
- "ureq 2.12.1",
+ "ureq",
 ]
 
 [[package]]
@@ -3074,7 +3076,7 @@ dependencies = [
  "quick-xml 0.42.0",
  "serde",
  "serde_json",
- "ureq 2.12.1",
+ "ureq",
  "url",
 ]
 
@@ -3975,12 +3977,6 @@ checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
 dependencies = [
  "digest 0.11.3",
 ]
-
-[[package]]
-name = "hmac-sha256"
-version = "1.1.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ad320b3b96fb2a455a0726d16efe0a5afdbd34b71dea5bc53b05ea057714d4e"
 
 [[package]]
 name = "home"
@@ -4901,12 +4897,6 @@ dependencies = [
 
 [[package]]
 name = "lzma-rust2"
-version = "0.15.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e20f57f9918e5bd7bc58c22cdd70a6afc7375d4dd9683af5f2b34bd3d2bba619"
-
-[[package]]
-name = "lzma-rust2"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1c46f3fcd2e888afdb01a07efc071cb21300e07c68d32c3e8b01b5c8cb1fcaa"
@@ -5021,7 +5011,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "ureq 2.12.1",
+ "ureq",
  "url",
 ]
 
@@ -6116,7 +6106,6 @@ dependencies = [
  "ort-sys",
  "smallvec",
  "tracing",
- "ureq 3.5.2",
 ]
 
 [[package]]
@@ -6124,11 +6113,6 @@ name = "ort-sys"
 version = "2.0.0-rc.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d22b0417f1838db5a3ac0b3f98dfe39f6fb73624aa0a27c6bbb5040b9c7db2b"
-dependencies = [
- "hmac-sha256",
- "lzma-rust2 0.15.8",
- "ureq 3.5.2",
-]
 
 [[package]]
 name = "p256"
@@ -8022,7 +8006,7 @@ checksum = "d3e8ed33aa539ebfe102a65afe5dcff8e63d8180881973f052d6098badfdd8de"
 dependencies = [
  "bzip2 0.4.4",
  "tar",
- "ureq 2.12.1",
+ "ureq",
  "zip",
 ]
 
@@ -9669,34 +9653,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ureq"
-version = "3.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ac5cecf619ca81f66a96482db09687c9f7465af65f4300a8c30cca05bd5a59d"
-dependencies = [
- "base64 0.23.1",
- "log",
- "percent-encoding",
- "rustls",
- "rustls-pki-types",
- "ureq-proto",
- "utf8-zero",
- "webpki-roots 1.0.11",
-]
-
-[[package]]
-name = "ureq-proto"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "622dce33c252115466d83f63e9744a18f12b4406aae51a01c15ad8fcf1185eb3"
-dependencies = [
- "base64 0.23.1",
- "http",
- "httparse",
- "log",
-]
-
-[[package]]
 name = "url"
 version = "2.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9735,12 +9691,6 @@ dependencies = [
  "unicode-vo",
  "xmlwriter",
 ]
-
-[[package]]
-name = "utf8-zero"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c0a043c9540bae7c578c88f91dda8bd82e59ae27c21baca69c8b191aaf5a6e"
 
 [[package]]
 name = "utf8_iter"
@@ -11472,7 +11422,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hmac 0.13.0",
  "indexmap",
- "lzma-rust2 0.23.0",
+ "lzma-rust2",
  "memchr",
  "nix 0.31.3",
  "pbkdf2 0.13.0",
