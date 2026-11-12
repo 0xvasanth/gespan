@@ -302,8 +302,12 @@ fn the_panel_hugs_a_few_agents_and_scrolls_inside_six_rows_for_many(cx: &mut Tes
             .bottom()
             <= list.top()
     );
-    let hold = visual.debug_bounds("agents-hold-all").unwrap();
+    // Past six rows the footer says how many are below; Hold all stays in
+    // the status bar.
+    let hold = visual.debug_bounds("agents-open-runs").unwrap();
     assert!(hold.top() >= list.bottom() && hold.bottom() <= panel.bottom());
+    assert!(visual.debug_bounds("agents-scroll-more").is_some());
+    assert!(visual.debug_bounds("agents-hold-all").is_none());
     assert!(panel.bottom() < footer.top());
     // Scrolling the list moves its rows, not the header or the actions.
     let row = Box::leak(format!("agents-row-{}", ids[0]).into_boxed_str());
@@ -317,7 +321,7 @@ fn the_panel_hugs_a_few_agents_and_scrolls_inside_six_rows_for_many(cx: &mut Tes
     let after = visual.debug_bounds(row).map(|b| b.top());
     assert!(after.is_none_or(|top| top < before), "the list scrolled");
     assert_eq!(visual.debug_bounds("agents-list").unwrap(), list);
-    assert_eq!(visual.debug_bounds("agents-hold-all").unwrap(), hold);
+    assert_eq!(visual.debug_bounds("agents-open-runs").unwrap(), hold);
 }
 
 #[gpui::test]
