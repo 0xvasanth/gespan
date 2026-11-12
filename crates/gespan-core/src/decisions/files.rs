@@ -32,13 +32,13 @@ fn line_ending(text: &str) -> &'static str {
 
 /// A code fence opener: up to 3 spaces, then 3 or more backticks or tildes
 /// (a backtick fence's info string cannot contain a backtick).
-fn fence_opener(line: &str) -> Option<(char, usize)> {
+pub(crate) fn fence_opener(line: &str) -> Option<(char, usize)> {
     let (ch, run, rest) = fence_run(line)?;
     (run >= 3 && !(ch == '`' && rest.contains('`'))).then_some((ch, run))
 }
 
 /// A fence closer: the opener's character, at least as long, nothing after.
-fn closes_fence(line: &str, ch: char, len: usize) -> bool {
+pub(crate) fn closes_fence(line: &str, ch: char, len: usize) -> bool {
     fence_run(line).is_some_and(|(c, run, rest)| c == ch && run >= len && rest.trim().is_empty())
 }
 

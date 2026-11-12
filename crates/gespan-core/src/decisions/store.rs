@@ -186,6 +186,22 @@ impl DecisionStore {
         self.load(row.id)?.ok_or(Error::NotFound(row.id))
     }
 
+    /// Proposes an imported entry unless its source already has one with the
+    /// same text, whatever became of it (rejected and archived rows count, so
+    /// a rejected import never comes back). `None` when it was already there.
+    pub fn propose_import(&self, e: NewEntry, now_ms: i64) -> Result<Option<Entry>, Error> {
+        let src = e.source.import.as_deref().map(|v| self.clean(v));
+        let text = self.clean(&e.text);
+        let seen = self.sql().query(
+            "SELECT 1 FROM task_decisions WHERE import_src = ?1 AND statement = ?2 LIMIT 1",
+            args![src.unwrap_or_default(), text],
+        )?;
+        if !seen.is_empty() {
+            return Ok(None);
+        }
+        self.propose(e, now_ms).map(Some)
+    }
+
     /// Approve a pending entry, optionally edited, optionally replacing active
     /// entries. All in one transaction.
     pub fn approve(

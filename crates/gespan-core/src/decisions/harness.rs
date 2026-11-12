@@ -312,7 +312,7 @@ struct Job {
 
 /// Reads a regular file of at most [`MAX_FILE_BYTES`]; `None` when missing.
 /// Anything else is an error, so the file is left alone.
-fn read_capped(path: &Path) -> io::Result<Option<String>> {
+pub(crate) fn read_capped(path: &Path) -> io::Result<Option<String>> {
     let meta = match fs::metadata(path) {
         Ok(meta) => meta,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),

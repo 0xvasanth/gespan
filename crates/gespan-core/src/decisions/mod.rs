@@ -4,6 +4,7 @@ pub mod context;
 pub mod entry;
 pub mod files;
 pub mod harness;
+pub mod import;
 pub mod render;
 pub mod review;
 pub mod scope;

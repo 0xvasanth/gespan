@@ -245,16 +245,20 @@ pub(crate) fn note_session_workspace(workspace: &Path) -> bool {
 /// What the harness writer should do when the log's switch is applied.
 #[derive(Debug, PartialEq, Eq)]
 enum SwitchAction {
+    /// Turned on by the user: offer their existing harness preferences for
+    /// review, then write the files.
+    ImportThenRegenerate,
     Regenerate,
     RemoveAll,
 }
 
 /// The first apply at startup regenerates when the log is on; turning it on
-/// regenerates; turning it off removes what Gespan wrote. An unchanged
+/// imports the user's existing preferences once, then regenerates; turning it off removes what Gespan wrote. An unchanged
 /// switch, or the log off from the start, does nothing.
 fn switch_action(previous: Option<bool>, on: bool) -> Option<SwitchAction> {
     match (previous, on) {
         (Some(was), now) if was == now => None,
+        (Some(false), true) => Some(SwitchAction::ImportThenRegenerate),
         (_, true) => Some(SwitchAction::Regenerate),
         (Some(true), false) => Some(SwitchAction::RemoveAll),
         (_, false) => None,
@@ -270,6 +274,14 @@ pub(crate) fn decision_log_switched(on: bool) {
     let previous = SWITCH.lock().unwrap_or_else(|e| e.into_inner()).replace(on);
     match switch_action(previous, on) {
         Some(SwitchAction::Regenerate) => gespan_core::decisions::service::regenerate(),
+        Some(SwitchAction::ImportThenRegenerate) => {
+            // Off the UI thread, and not under `locked`: it reads files and
+            // writes through the decision log's own handle.
+            std::thread::spawn(|| {
+                import_global_preferences(&gespan_core::decisions::harness::default_homes);
+                gespan_core::decisions::service::regenerate();
+            });
+        }
         Some(SwitchAction::RemoveAll) => {
             let store = HARNESS_STORE
                 .lock()
@@ -281,6 +293,32 @@ pub(crate) fn decision_log_switched(on: bool) {
         }
         None => {}
     }
+}
+
+/// Offers the user's existing global harness preferences as pending entries
+/// (once: rules already imported are skipped) and tells My tasks to look
+/// again. Does nothing while the log is off or not open.
+fn import_global_preferences(homes: gespan_core::decisions::harness::Homes) {
+    if !gespan_core::decisions::enabled() {
+        return;
+    }
+    let now = gespan_core::time::now_ms() as i64;
+    match gespan_core::decisions::service::with(|log| import_from_homes(log, homes, now)) {
+        Ok(Ok(0)) | Err(_) => {}
+        Ok(Ok(_)) => gespan_core::decisions::service::changed(),
+        Ok(Err(error)) => tracing::warn!(%error, "existing preferences could not be imported"),
+    }
+}
+
+/// Imports the rule files found under `homes` into `log`; returns how many
+/// entries were added.
+fn import_from_homes(
+    log: &gespan_core::decisions::DecisionStore,
+    homes: gespan_core::decisions::harness::Homes,
+    now_ms: i64,
+) -> Result<usize, String> {
+    let files = gespan_core::decisions::import::global_files(homes);
+    gespan_core::decisions::import::import_once(log, &files, now_ms)
 }
 
 /// The paths whose "edit replaced" notice is waiting for a window to show.
@@ -662,11 +700,39 @@ mod tests {
         );
         assert_eq!(
             switch_action(Some(false), true),
-            Some(SwitchAction::Regenerate)
+            Some(SwitchAction::ImportThenRegenerate)
         );
         // Other preference changes re-apply an unchanged switch: nothing.
         assert_eq!(switch_action(Some(true), true), None);
         assert_eq!(switch_action(Some(false), false), None);
+    }
+
+    #[test]
+    fn decision_import_reads_the_injected_homes_and_only_once() {
+        use gespan_core::decisions::{Config, DecisionStore, Status};
+        use gespan_core::provider::Kind;
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join("claude");
+        let codex = dir.path().join("codex");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::create_dir_all(&codex).unwrap();
+        std::fs::write(
+            claude.join("CLAUDE.md"),
+            "# Style\n\n- Prefer small functions.\n",
+        )
+        .unwrap();
+        std::fs::write(codex.join("AGENTS.md"), "- Run tests before committing.\n").unwrap();
+        let homes = |kind: Kind| match kind {
+            Kind::Claude => Some(claude.clone()),
+            Kind::Codex => Some(codex.clone()),
+            _ => None,
+        };
+        let log = DecisionStore::open(&dir.path().join("gespan.db"), Config::app()).unwrap();
+        assert_eq!(import_from_homes(&log, &homes, 1).unwrap(), 2);
+        assert_eq!(import_from_homes(&log, &homes, 2).unwrap(), 0);
+        let pending = log.pending().unwrap();
+        assert_eq!(pending.len(), 2);
+        assert!(pending.iter().all(|e| e.status == Status::Pending));
     }
 
     #[test]
