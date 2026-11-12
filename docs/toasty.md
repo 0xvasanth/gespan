@@ -95,6 +95,12 @@ an adopted copy, so the file itself never changes.
 
 - Generated DDL has no `DEFAULT`, no `REFERENCES` and no `DESC` index columns.
   The model must set every value. Foreign keys are not enforced by the schema.
+- A new `NOT NULL` column on a table that already shipped is generated as
+  `ALTER TABLE ... ADD COLUMN ... NOT NULL` with no default, which SQLite
+  refuses. Edit the generated `.sql` by hand: add a `DEFAULT` to that
+  `ADD COLUMN`, and end the migration with an `UPDATE` that gives existing
+  rows their real values. `gespan/0001_decision_log.sql` does both. The
+  snapshot stays as generated.
 - An `#[auto]` integer key is stored as a 4-byte `INTEGER ... AUTOINCREMENT`
   column.
 - Field-level `#[index]` cannot be named. Use a struct-level

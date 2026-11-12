@@ -164,6 +164,22 @@ pub struct Config {
     pub redact: fn(&str) -> String,
 }
 
+impl Config {
+    /// The app's: Gespan's secret redactor.
+    pub fn app() -> Config {
+        Config {
+            redact: crate::pilot::memory::redact,
+        }
+    }
+
+    /// What every text field of `task_decisions` is stored as, whoever
+    /// writes it (the decision log or My tasks): redacted, then capped at
+    /// [`MAX_FIELD_CHARS`] characters (not bytes).
+    pub fn clean(&self, text: &str) -> String {
+        (self.redact)(text).chars().take(MAX_FIELD_CHARS).collect()
+    }
+}
+
 /// Everything a decision-log operation can fail with.
 #[derive(Debug)]
 pub enum Error {

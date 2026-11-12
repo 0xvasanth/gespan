@@ -254,11 +254,10 @@ impl Store {
         Ok(records(rows))
     }
 
-    /// Saves a decision for `project` from the answers under `sources`. It
-    /// is an active project decision of the decision log too, in the scope
-    /// [`crate::decisions::scope_for`] gives `project` (which runs git, so it
-    /// is worked out before the transaction), carrying the first answer it
-    /// came from as its user source.
+    /// Saves a decision for `project` from the answers under `sources`, in
+    /// the scope [`crate::decisions::scope_for`] gives `project`. That runs
+    /// git: a caller on the UI thread works the scope out elsewhere and calls
+    /// [`Store::save_decision_in`].
     pub fn save_decision(
         &self,
         project: &str,
@@ -267,23 +266,44 @@ impl Store {
         sources: &[String],
         at: u64,
     ) -> Result<i64, String> {
-        use crate::decisions::entry::{derived_title, Kind, Status};
+        let scope = crate::decisions::scope_for(std::path::Path::new(project));
+        self.save_decision_in(&scope, project, statement, why, sources, at)
+    }
+
+    /// Saves a decision for `project` from the answers under `sources` as an
+    /// active project decision of the decision log in `scope`, carrying the
+    /// first answer it came from as its user source. Its text is cleaned
+    /// like every decision-log entry (redacted, capped), since it reaches
+    /// harness files.
+    pub fn save_decision_in(
+        &self,
+        scope: &crate::decisions::Scope,
+        project: &str,
+        statement: &str,
+        why: &str,
+        sources: &[String],
+        at: u64,
+    ) -> Result<i64, String> {
+        use crate::decisions::entry::{derived_title, Config, Kind, Status};
         let statement = statement.trim();
         if statement.is_empty() {
             return Err("A decision needs a statement".into());
         }
-        let scope = crate::decisions::scope_for(std::path::Path::new(project)).to_string();
-        let title = derived_title(statement);
-        let (project, statement, why) = (project.to_owned(), statement.to_owned(), why.trim());
-        let (why, sources) = (why.to_owned(), sources.to_vec());
-        self.orm()?.transaction(|tx| {
+        let config = Config::app();
+        let statement = config.clean(statement);
+        let title = derived_title(&statement);
+        let why = config.clean(why.trim());
+        let (project, scope, sources) = (project.to_owned(), scope.to_string(), sources.to_vec());
+        let question_ref = sources.first().map(|key| config.clean(key));
+        self.orm()?.transaction(move |tx| {
             Box::pin(async move {
                 let answer = match sources.first() {
                     Some(key) => MyTask::filter_by_key(key)
                         .first()
                         .exec(tx)
                         .await?
-                        .and_then(|task| task.answer),
+                        .and_then(|task| task.answer)
+                        .map(|answer| config.clean(&answer)),
                     None => None,
                 };
                 let decision = TaskDecision::create()
@@ -299,7 +319,7 @@ impl Store {
                     .title(title)
                     .user_answer(answer)
                     .session(None)
-                    .question_ref(sources.first().cloned())
+                    .question_ref(question_ref)
                     .user_turn(None)
                     .import_src(None)
                     .pinned(false)
@@ -323,11 +343,13 @@ impl Store {
     /// Rewrites a decision's statement. A title derived from the old
     /// statement follows it; a title of its own (an agent's) is kept.
     pub fn edit_decision(&self, id: i64, statement: &str, at: u64) -> Result<(), String> {
-        use crate::decisions::entry::derived_title;
-        let statement = statement.trim().to_owned();
+        use crate::decisions::entry::{derived_title, Config};
+        let statement = statement.trim();
         if statement.is_empty() {
             return Err("A decision needs a statement".into());
         }
+        // Cleaned like every decision-log entry: it reaches harness files.
+        let statement = Config::app().clean(statement);
         self.orm()?.transaction(|tx| {
             Box::pin(async move {
                 let Some(mut row) = TaskDecision::filter_by_id(id).first().exec(tx).await? else {

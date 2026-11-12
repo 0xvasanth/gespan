@@ -35,9 +35,7 @@ pub fn init(database: &Path) -> Result<(), String> {
 }
 
 fn config() -> Config {
-    Config {
-        redact: crate::pilot::memory::redact,
-    }
+    Config::app()
 }
 
 /// Runs `f` on the open store, or says the log isn't open.

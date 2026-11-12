@@ -8,9 +8,7 @@
 //! deterministic under test.
 use std::path::Path;
 
-use super::entry::{
-    Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, Source, Status, MAX_FIELD_CHARS,
-};
+use super::entry::{Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, Source, Status};
 use crate::store::db::{args, Sql, SqlRow};
 use crate::store::my_tasks::TaskDecision;
 
@@ -103,12 +101,9 @@ impl DecisionStore {
         Sql::Orm(&self.db)
     }
 
-    /// Redact, then cap at `MAX_FIELD_CHARS` characters (not bytes).
+    /// Redact, then cap (`Config::clean`, which My tasks uses too).
     fn clean(&self, s: &str) -> String {
-        (self.config.redact)(s)
-            .chars()
-            .take(MAX_FIELD_CHARS)
-            .collect()
+        self.config.clean(s)
     }
 
     /// Source text is user-supplied free text too: redact and cap it, then
@@ -117,6 +112,35 @@ impl DecisionStore {
         s.as_deref()
             .map(|v| self.clean(v))
             .filter(|v| !v.is_empty())
+    }
+
+    /// Moves My tasks decisions that are still keyed `project:<their
+    /// project>` (rows migration 0001 gave that scope, or ones saved without
+    /// git) into the scope `scope_of` gives their project: a repo scope for a
+    /// repository with a remote, the main checkout for a worktree, a
+    /// canonical path. `scope_of` (which runs git) is called for each
+    /// distinct project outside any transaction. A row whose scope already
+    /// differs is never touched, so running it again changes nothing.
+    /// Returns how many rows moved.
+    pub fn rescope_project_rows(&self, scope_of: impl Fn(&Path) -> Scope) -> Result<usize, Error> {
+        let projects = self.sql().query(
+            "SELECT DISTINCT project FROM task_decisions WHERE scope = 'project:' || project",
+            args![],
+        )?;
+        let mut moved = 0;
+        for row in projects {
+            let project: String = row.get(0)?;
+            let scope = scope_of(Path::new(&project)).to_string();
+            if scope == format!("project:{project}") {
+                continue;
+            }
+            moved += self.sql().execute(
+                "UPDATE task_decisions SET scope = ?1 \
+                 WHERE project = ?2 AND scope = 'project:' || ?2",
+                args![scope, project],
+            )?;
+        }
+        Ok(moved)
     }
 
     pub fn propose(&self, e: NewEntry, now_ms: i64) -> Result<Entry, Error> {

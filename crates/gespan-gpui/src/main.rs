@@ -476,6 +476,22 @@ fn main() {
     // uses it.
     if let Err(error) = gespan_core::decisions::init(&database) {
         tracing::warn!(%error, "the decision log did not open");
+    } else {
+        // Decisions saved before the log, still keyed by their project's
+        // path, move to the scope that project has now (a repo, a main
+        // checkout). That runs git, so not on the UI thread; every start.
+        std::thread::spawn(|| {
+            let moved = gespan_core::decisions::service::with(|log| {
+                log.rescope_project_rows(gespan_core::decisions::scope_for)
+            });
+            match moved {
+                Ok(Ok(0)) | Err(_) => {}
+                Ok(Ok(_)) => gespan_core::decisions::service::regenerate(),
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "the decision log could not rescope old decisions")
+                }
+            }
+        });
     }
     // Optional: without it the browser toolkit lists nothing and says so.
     if let Err(error) = gespan_core::browser::start(Some(tool_data)) {

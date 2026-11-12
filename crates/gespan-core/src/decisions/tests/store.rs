@@ -326,3 +326,142 @@ fn either_handle_can_open_a_new_file_first() {
         assert!(log.get(id).unwrap().is_some());
     }
 }
+
+/// gespan.db at migration 1 holding one My tasks decision for `project`.
+fn legacy_with_decision(path: &Path, project: &Path) {
+    file_at_migration(DbKind::Gespan, path, 1);
+    Connection::open(path)
+        .unwrap()
+        .execute(
+            "INSERT INTO task_decisions (id, project, statement, why, created_at, updated_at)
+             VALUES (3, ?1, 'Ship from main only', 'one release line', 10, 20)",
+            [project.to_string_lossy()],
+        )
+        .unwrap();
+}
+
+#[test]
+fn legacy_rows_are_rescoped_to_their_projects_scope() {
+    let dir = TempDir::new().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let repo = repo(&root);
+    let path = root.join("gespan.db");
+    legacy_with_decision(&path, &repo);
+    let log = DecisionStore::open(&path, config()).unwrap();
+    let scope = scope_for(&repo);
+    assert!(matches!(scope, Scope::Repo(_)));
+    assert!(
+        log.active(&scope).unwrap().is_empty(),
+        "the migration can only key it by its path"
+    );
+
+    assert_eq!(log.rescope_project_rows(scope_for).unwrap(), 1);
+
+    let ids: Vec<i64> = log.active(&scope).unwrap().iter().map(|e| e.id).collect();
+    assert_eq!(ids, [3]);
+    // Every start runs it again: nothing left to move, nothing changes.
+    let calls = std::cell::Cell::new(0);
+    let again = log
+        .rescope_project_rows(|p| {
+            calls.set(calls.get() + 1);
+            scope_for(p)
+        })
+        .unwrap();
+    assert_eq!((again, calls.get()), (0, 0));
+    assert_eq!(log.get(3).unwrap().unwrap().0.scope, scope);
+}
+
+#[test]
+fn rescoping_leaves_rows_already_in_their_scope_alone() {
+    let dir = TempDir::new().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let plain = root.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let path = root.join("gespan.db");
+    legacy_with_decision(&path, &plain);
+    let log = DecisionStore::open(&path, config()).unwrap();
+    // A project with no git: its scope is the path the migration used.
+    assert_eq!(log.rescope_project_rows(scope_for).unwrap(), 0);
+    let entry = log.get(3).unwrap().unwrap().0;
+    assert_eq!(entry.scope, Scope::Project(plain.to_string_lossy().into()));
+    // A row an agent proposed in another scope is never touched.
+    let other = log
+        .propose(proposal(Scope::Global, "Pref", "Prefer tabs"), 1)
+        .unwrap();
+    log.rescope_project_rows(|_| Scope::Repo("x".into()))
+        .unwrap();
+    assert_eq!(log.get(other.id).unwrap().unwrap().0.scope, Scope::Global);
+}
+
+#[test]
+fn save_decision_in_keeps_the_scope_it_is_given() {
+    let dir = TempDir::new().unwrap();
+    let (store, log) = both(&dir);
+    let scope = Scope::Repo("github.com/o/r@abc".into());
+    let id = store
+        .save_decision_in(&scope, "/work/gespan", "Use one table", "", &[], 1)
+        .unwrap();
+    let ids: Vec<i64> = log.active(&scope).unwrap().iter().map(|e| e.id).collect();
+    assert_eq!(ids, [id]);
+    assert_eq!(store.decisions().unwrap()[0].project, "/work/gespan");
+}
+
+#[test]
+fn my_tasks_text_is_redacted_and_capped_like_the_logs() {
+    let dir = TempDir::new().unwrap();
+    let (store, log) = both(&dir);
+    let secret = "sk-abcdefghijklmnopqrstuvwx";
+    let github = "ghp_abcdefghijklmnopqrstuvwxyz0123";
+    let answered = crate::tasks::TaskRecord::open(
+        "question:7:q1",
+        crate::tasks::Kind::Question,
+        "/work/gespan",
+        "session:7",
+        "Keys",
+        "Which key?",
+        serde_json::json!({}),
+        1,
+    )
+    .answered(format!("use {secret}"), serde_json::json!([]), 2);
+    store.answer_task(&answered).unwrap();
+    let id = store
+        .save_decision(
+            "/work/gespan",
+            &format!("Call the API with {secret}"),
+            &format!("{github} works"),
+            &["question:7:q1".into()],
+            3,
+        )
+        .unwrap();
+    let entry = log.get(id).unwrap().unwrap().0;
+    for field in [
+        &entry.title,
+        &entry.text,
+        &entry.why,
+        entry.user_answer.as_ref().unwrap(),
+    ] {
+        assert!(
+            !field.contains(secret) && !field.contains(github),
+            "{field}"
+        );
+        assert!(field.contains("redacted"), "{field}");
+    }
+    store
+        .edit_decision(id, &format!("Rotate {github} {}", "x".repeat(2_000)), 4)
+        .unwrap();
+    let entry = log.get(id).unwrap().unwrap().0;
+    assert!(!entry.text.contains(github) && !entry.title.contains(github));
+    assert_eq!(
+        entry.text.chars().count(),
+        crate::decisions::MAX_FIELD_CHARS
+    );
+    let saved = &store.decisions().unwrap()[0];
+    assert!(!saved.statement.contains(github));
+    let block = crate::decisions::render_block(
+        &[],
+        &log.active(&entry.scope).unwrap(),
+        crate::decisions::START_BUDGET,
+    );
+    assert!(block.included.contains(&id));
+    assert!(!block.text.contains(secret) && !block.text.contains(github));
+}

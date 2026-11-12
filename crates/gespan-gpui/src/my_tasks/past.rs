@@ -176,34 +176,45 @@ impl MyTasks {
             return;
         };
         let statement = self.statement.read(cx).content.to_string();
-        let Some(store) = &self.store else {
+        let Some(store) = self.store.clone() else {
             return;
         };
-        let saved = crate::runtime::locked(store).and_then(|store| {
-            store.save_decision(
-                &record.project,
-                &statement,
-                "",
-                std::slice::from_ref(&record.key),
-                gespan_core::time::now_ms(),
-            )
+        let key = key.to_owned();
+        // The scope runs git: work it out off the UI thread, before taking
+        // the store's lock.
+        let work = cx.background_spawn(async move {
+            let scope = gespan_core::decisions::scope_for(std::path::Path::new(&record.project));
+            crate::runtime::locked(&store).and_then(|store| {
+                store.save_decision_in(
+                    &scope,
+                    &record.project,
+                    &statement,
+                    "",
+                    std::slice::from_ref(&record.key),
+                    gespan_core::time::now_ms(),
+                )
+            })
         });
-        match saved {
-            Ok(_) => {
-                // The decision is the decision log's too: its harness files
-                // follow (nothing happens while the log is off).
-                gespan_core::decisions::service::regenerate();
-                self.writing = None;
-                if self.offer.as_ref().is_some_and(|o| o.key == key) {
-                    self.offer = None;
+        cx.spawn(async move |this, cx| {
+            let saved = work.await;
+            let _ = this.update(cx, |this, cx| match saved {
+                Ok(_) => {
+                    // The decision is the decision log's too: its harness
+                    // files follow (nothing happens while the log is off).
+                    gespan_core::decisions::service::regenerate();
+                    this.writing = None;
+                    if this.offer.as_ref().is_some_and(|o| o.key == key) {
+                        this.offer = None;
+                    }
+                    this.reload(cx);
                 }
-                self.reload(cx);
-            }
-            Err(error) => {
-                self.error = Some(error);
-                cx.notify();
-            }
-        }
+                Err(error) => {
+                    this.error = Some(error);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn change_decision(
