@@ -863,7 +863,9 @@ mod tests {
         let store = first.update(cx, |shell, _, _| shell.store.clone()).unwrap();
         let mut saved = locked(&store).unwrap().take_in_flight().unwrap();
         saved.sort_unstable();
-        assert_eq!(saved, vec![id, other]);
+        let mut expected = vec![id, other];
+        expected.sort_unstable();
+        assert_eq!(saved, expected);
         // A chat ending in one window keeps the other's on the list.
         set_busy(first, id, false, cx);
         assert_eq!(
@@ -1014,14 +1016,17 @@ mod tests {
 
     #[gpui::test]
     fn a_new_primary_on_its_own_store_does_not_inherit_the_old_ones_chats(cx: &mut TestAppContext) {
-        let open = |cx: &mut TestAppContext| {
-            let store = Store::open(Path::new(":memory:")).unwrap();
-            let id = store.create("codex", CWD).unwrap().id;
-            (first_window(store, cx), id)
-        };
-        let (_, id) = open(cx);
-        let (second, same_id) = open(cx);
-        assert_eq!(id, same_id, "each store numbers its chats from the start");
+        // Two stores holding a chat with the same id: a copy of the first.
+        let dir = tempfile::tempdir().unwrap();
+        let (path, copy) = (dir.path().join("first.db"), dir.path().join("second.db"));
+        let store = Store::open(&path).unwrap();
+        let id = store.create("codex", CWD).unwrap().id;
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute("VACUUM INTO ?1", [copy.to_string_lossy()])
+            .unwrap();
+        let _first = first_window(store, cx);
+        let second = first_window(Store::open(&copy).unwrap(), cx);
         second
             .update(cx, |shell, _, _| assert!(shell.sessions.contains_key(&id)))
             .unwrap();

@@ -1539,8 +1539,13 @@ mod tests {
                 assert_eq!(chat.summary.provider, provider);
                 assert!(!chat.settings.fast, "{provider}: fast");
                 assert_eq!(chat.settings.thinking, None, "{provider}: thinking");
+                // The store mirrors the session's own controls into its
+                // desktop model settings; nothing else comes along.
                 assert!(
-                    chat.settings.model_settings.is_empty(),
+                    chat.settings.model_settings.iter().all(|(key, value)| {
+                        (key == "fast" && value == "false")
+                            || (key == "effort" && chat.settings.effort.as_ref() == Some(value))
+                    }),
                     "{provider}: {:?}",
                     chat.settings.model_settings
                 );

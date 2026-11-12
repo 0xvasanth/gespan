@@ -652,7 +652,8 @@ fn unsaved_terminal_turns_are_read_again_on_the_next_send() {
     // The store refuses the marker row, as a full disk would.
     let db = rusqlite::Connection::open(chat.fixture.0.join("sessions.db")).unwrap();
     db.execute_batch(
-        "CREATE TRIGGER refuse_marker BEFORE INSERT ON native_rows WHEN NEW.role='interjection'
+        "CREATE TRIGGER refuse_marker BEFORE UPDATE OF blocks_json ON sessions
+         WHEN NEW.blocks_json LIKE '%interjection%'
          BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
     )
     .unwrap();

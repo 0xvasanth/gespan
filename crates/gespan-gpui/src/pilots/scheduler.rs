@@ -1,5 +1,6 @@
 use super::panels::{button, empty_state, matches_query, search_bar};
 use super::*;
+use gespan_core::pilot::completions;
 use gespan_core::pilot::habits::{Run, Schedule};
 use gespan_core::time::now_ms;
 
@@ -178,7 +179,9 @@ impl Pilots {
                     .iter()
                     .flat_map(|m| m.launches.iter())
                     .filter(|l| {
-                        (l.origin_turn >> 32) as i64 == session && !l.completed && !l.dismissed
+                        completions::launched_from(l.origin_turn, session)
+                            && !l.completed
+                            && !l.dismissed
                     })
                 {
                     if let Some(view) = owner
@@ -1288,7 +1291,9 @@ impl Pilots {
                 .pilots
                 .iter_mut()
                 .flat_map(|m| m.launches.iter_mut())
-                .filter(|l| (l.origin_turn >> 32) as i64 == id && !l.completed && !l.dismissed)
+                .filter(|l| {
+                    completions::launched_from(l.origin_turn, id) && !l.completed && !l.dismissed
+                })
                 .map(|l| {
                     l.dismissed = true;
                     l.session_id
@@ -1551,7 +1556,7 @@ impl Pilots {
             .iter()
             .flat_map(|m| m.launches.iter())
             .any(|l| {
-                (l.origin_turn >> 32) as i64 == session
+                completions::launched_from(l.origin_turn, session)
                     && l.notify_on_complete
                     && !l.completed
                     && !l.dismissed

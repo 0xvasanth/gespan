@@ -1197,7 +1197,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
             self.chats
                 .values()
                 .chain(self.running.values().map(|r| &r.view))
-                .any(|v| v.read(cx).summary.id == source && v.read(cx).busy)
+                .any(|v| completions::is_source(source, v.read(cx).summary.id) && v.read(cx).busy)
         };
         let mut ready = Vec::new();
         for pilot in &self.roster.pilots {
@@ -1315,6 +1315,13 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
             self.save(cx);
             return;
         }
+        // The report knows only the low 32 bits of the habit run's chat id.
+        let source = self
+            .running
+            .keys()
+            .copied()
+            .find(|run| completions::is_source(source, *run))
+            .unwrap_or(source);
         if let Some(run) = self.running.get_mut(&source) {
             match run.mailbox.iter_mut().find(|m| !m.report.is_empty()) {
                 Some(queued) => {

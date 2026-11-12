@@ -610,9 +610,13 @@ fn an_undated_item_whose_claim_failed_is_retried_after_a_restart(cx: &mut TestAp
     conn.execute_batch("ALTER TABLE automations_away RENAME TO automations")
         .unwrap();
     assert!(runs(&data.db, &id).is_empty());
-    let saved: String = conn
+    // Store settings live in the Settings database next to the store's.
+    let name = data.db.file_name().unwrap().to_string_lossy();
+    let settings = data.db.with_file_name(format!("{name}.gpui.sqlite3"));
+    let saved: String = rusqlite::Connection::open(settings)
+        .unwrap()
         .query_row(
-            "SELECT value FROM native_settings WHERE key = 'native-automation-inbox-retries'",
+            "SELECT value FROM settings WHERE key = 'native-automation-inbox-retries'",
             [],
             |row| row.get(0),
         )
