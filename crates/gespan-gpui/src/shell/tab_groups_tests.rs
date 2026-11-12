@@ -1773,3 +1773,29 @@ fn a_saved_pilot_tab_of_an_unknown_project_draws_no_group(cx: &mut TestAppContex
     assert!(!drawn(visual, "tab-group-chip-gone".into()));
     assert!(drawn(visual, "tab-group-chip-another-project".into()));
 }
+
+#[gpui::test]
+fn pins_of_another_windows_tabs_stay_out_of_this_deck(cx: &mut TestAppContext) {
+    let (window, _, _) = window(cx);
+    let (_, pilot) = pilot_in(window, "/work/gespan", cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.workspace.preferences.board = true;
+            let board = TitleTab::App(app_views::AppView::Board);
+            // Another window pinned these; this window's strip has neither.
+            shell
+                .workspace
+                .title_order
+                .retain(|t| *t != pilot && *t != board);
+            shell.workspace.pinned_tabs.push(pilot.clone());
+            shell.workspace.pinned_tabs.push(board.clone());
+            assert!(shell.tab_drawable(&pilot, cx), "the Pilot itself exists");
+            let deck = shell.pinned_visible(cx);
+            assert!(!deck.contains(&pilot), "{deck:?}");
+            assert!(!deck.contains(&board), "{deck:?}");
+            // Once this window opens it too, its pin shows.
+            shell.workspace.title_order.push(board.clone());
+            assert!(shell.pinned_visible(cx).contains(&board));
+        })
+        .unwrap();
+}

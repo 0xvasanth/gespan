@@ -111,12 +111,14 @@ impl Shell {
         }
     }
 
-    /// Every pinned tab that can draw, from any project, in pin order.
+    /// Every pinned tab of this window that can draw, from any project, in
+    /// pin order. Pins are shared between windows, so another window's pin
+    /// shows only once this window has that tab too.
     pub(super) fn pinned_visible(&self, cx: &App) -> Vec<TitleTab> {
         self.workspace
             .pinned_tabs
             .iter()
-            .filter(|tab| self.tab_drawable(tab, cx))
+            .filter(|tab| self.workspace.title_order.contains(tab) && self.tab_drawable(tab, cx))
             .cloned()
             .collect()
     }
