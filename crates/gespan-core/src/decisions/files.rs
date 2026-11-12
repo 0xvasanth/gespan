@@ -85,51 +85,79 @@ fn scan_sections(lines: &[&str], fence_aware: bool) -> (Vec<Span>, bool) {
     (spans, fence.is_some())
 }
 
-/// Complete sections outside code fences (``` or ~~~, closed only by the
-/// same character at least as long). A marker counts only as a whole line
-/// (ignoring surrounding whitespace). A BEGIN that is never closed, or is
-/// followed by another BEGIN first, is left alone as user text.
+/// The sections Gespan treats as its own. A marker counts only as a whole
+/// line (ignoring surrounding whitespace); code fences are ``` or ~~~,
+/// closed only by the same character at least as long.
 ///
-/// Rule: the first fence-aware pass wins; if it finds no section, the LAST
-/// complete BEGIN..END pair of a fence-blind pass is ours (Gespan appends at
-/// the end). Two linear passes at most, and since Gespan's bodies never
-/// contain line-leading fences, the section written by one run is found by
-/// one of the two passes on the next, so regeneration is idempotent for any
-/// input. Accepted trade-off: if the only BEGIN..END pair in a file is a
-/// user's fenced example of Gespan's exact markers, it is treated as ours
-/// (and an orphan BEGIN before such a pair is swallowed with what follows).
+/// Rule:
+/// 1. Fence-aware pass: every BEGIN..END pair outside code fences, where a
+///    BEGIN followed by another BEGIN is superseded by the later one. If it
+///    finds any, those are the sections.
+/// 2. Otherwise, fence-blind pass (markers count even inside fences, which
+///    can only be mis-tracked when the file has unbalanced fences): of its
+///    pairs, the LAST one whose interior lines, scanned on their own, leave
+///    no fence open. Gespan's bodies never contain unbalanced line-leading
+///    fences, so a section Gespan wrote always passes this check, while a
+///    pair whose interior would open a fence (an orphan BEGIN above a fenced
+///    `END`) is rejected.
+/// 3. Otherwise there is no section, and Gespan appends one.
+///
+/// So an orphan BEGIN is user text unless rule 2 pairs it with a later END
+/// whose interior is fence-balanced; then the lines between are taken as
+/// ours. Accepted trade-off: when a file has no section found by rule 1, a
+/// user's fenced example of Gespan's exact markers with a fence-balanced
+/// interior (or an orphan BEGIN above a bare END with only balanced text
+/// between) is taken as ours and replaced. At most two linear passes over
+/// the file plus one over the accepted pair's interior.
 fn find_sections(lines: &[&str]) -> Vec<Span> {
     let (spans, _) = scan_sections(lines, true);
     if !spans.is_empty() {
         return spans;
     }
     let (blind, _) = scan_sections(lines, false);
-    blind.last().copied().into_iter().collect()
+    blind
+        .into_iter()
+        .rev()
+        .find(|&(begin, end)| !scan_sections(&lines[begin + 1..end], true).1)
+        .into_iter()
+        .collect()
 }
 
 /// Replaces Gespan's section in `existing` with `body`, adds it when missing,
 /// or removes it when `body` is empty. Everything outside the section is
 /// returned byte for byte, with one exception: removing a section also drops
 /// the single blank line Gespan put before it. Of several sections the first
-/// is kept and the rest are removed.
+/// is kept and the rest are removed; marker lines left behind that would pair
+/// up into a new section are dropped on their own, keeping the text between.
+/// See `find_sections` for which pairs count as sections.
 pub fn replace_section(existing: &str, body: &str) -> String {
-    // Dropping later sections can leave orphan markers that pair up into a
-    // new section, so apply until the text no longer changes. Each extra
-    // round removes marker lines, so this ends quickly.
+    let mut current = replace_section_once(existing, body);
     // Removal is a single pass: repeating it would go on to eat a user's
     // fenced example of the markers once the real section is gone.
-    let mut current = replace_section_once(existing, body);
-    for _ in 0..16 {
-        if body.is_empty() {
-            break;
-        }
-        let next = replace_section_once(&current, body);
-        if next == current {
-            break;
-        }
-        current = next;
+    if body.is_empty() {
+        return current;
     }
-    current
+    // Dropping later sections can leave orphan markers that now pair up
+    // after the kept section (BEGIN u1 [section] u2 END). Those pairs are not
+    // sections Gespan wrote and the lines between them are the user's, so
+    // drop only their marker lines, until one section remains; otherwise
+    // the next run would find and remove them. Lines before the kept
+    // section are untouched, so it stays the first section, and every round
+    // removes marker lines, so this ends.
+    loop {
+        let lines: Vec<&str> = current.split_inclusive('\n').collect();
+        let spans = find_sections(&lines);
+        if spans.len() <= 1 {
+            return current;
+        }
+        let stray: Vec<usize> = spans[1..].iter().flat_map(|&(b, e)| [b, e]).collect();
+        current = lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| stray.binary_search(i).is_err())
+            .map(|(_, line)| *line)
+            .collect();
+    }
 }
 
 fn replace_section_once(existing: &str, body: &str) -> String {

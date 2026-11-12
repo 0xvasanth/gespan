@@ -638,19 +638,100 @@ fn many_stray_fences_are_scanned_in_linear_passes() {
 
 #[test]
 fn begin_fence_end_fence_counterexample_is_idempotent() {
+    // The blind pair's interior opens a fence, so it is not ours: append.
     let x = format!("```\n{BEGIN}\n```\n{END}\n```\n");
     let r1 = replace_section(&x, "body");
-    assert_eq!(r1.matches(BEGIN).count(), 1);
+    assert_eq!(r1, format!("{x}\n{}", section("body")));
     let r2 = replace_section(&r1, "body");
     assert_eq!(r2, r1);
+    assert_eq!(replace_section(&r1, ""), x);
+}
+
+/// The rule from `find_sections`, written out independently for inputs made
+/// only of ``` / ~~~ fences, whole-line markers and plain text: the
+/// fence-aware pairs, else the last fence-blind pair whose interior leaves no
+/// fence open, else nothing.
+fn reference_spans(lines: &[&str]) -> Vec<(usize, usize)> {
+    fn scan(lines: &[&str], aware: bool) -> (Vec<(usize, usize)>, bool) {
+        let (mut spans, mut open, mut fence) = (Vec::new(), None, None::<&str>);
+        for (i, &line) in lines.iter().enumerate() {
+            if aware {
+                if let Some(f) = fence {
+                    if line == f {
+                        fence = None;
+                    }
+                    continue;
+                }
+                if line == "```" || line == "~~~" {
+                    fence = Some(line);
+                    continue;
+                }
+            }
+            if line == BEGIN {
+                open = Some(i);
+            } else if line == END {
+                if let Some(b) = open.take() {
+                    spans.push((b, i));
+                }
+            }
+        }
+        (spans, fence.is_some())
+    }
+    let (aware, _) = scan(lines, true);
+    if !aware.is_empty() {
+        return aware;
+    }
+    let (blind, _) = scan(lines, false);
+    blind
+        .into_iter()
+        .rev()
+        .find(|&(b, e)| !scan(&lines[b + 1..e], true).1)
+        .into_iter()
+        .collect()
+}
+
+/// Every input line that is not a marker and not inside a span Gespan
+/// accepted (nor the one blank line right before such a span, which removal
+/// drops by design) must appear, in order, in `out` outside the section
+/// Gespan rendered for `body`.
+fn assert_user_lines_survive(x: &str, out: &str, body: &str, label: &str) {
+    let lines: Vec<&str> = x.lines().collect();
+    let spans = reference_spans(&lines);
+    let owned = |i: usize| {
+        spans
+            .iter()
+            .any(|&(b, e)| (b..=e).contains(&i) || (i + 1 == b && lines[i].is_empty()))
+    };
+    let kept: Vec<&str> = (0..lines.len())
+        .filter(|&i| lines[i] != BEGIN && lines[i] != END && !owned(i))
+        .map(|i| lines[i])
+        .collect();
+    let rest = if body.is_empty() {
+        out.to_owned()
+    } else {
+        let rendered = format!("{BEGIN}\n{body}\n{END}");
+        assert_eq!(
+            out.matches(&rendered).count(),
+            1,
+            "{label}: {x:?} -> {out:?}"
+        );
+        out.replacen(&rendered, "", 1)
+    };
+    let mut remaining = rest.lines();
+    for line in &kept {
+        assert!(
+            remaining.any(|l| l == *line),
+            "{label}: user line {line:?} of {x:?} lost in {out:?}"
+        );
+    }
 }
 
 #[test]
-fn regeneration_is_idempotent_for_every_short_sequence_of_fences_and_markers() {
+fn regeneration_is_idempotent_and_keeps_user_lines_for_every_short_sequence() {
     let alphabet = ["```", "~~~", BEGIN, END, "text"];
     let bodies = ["b", "b\n```\nc\n```"];
     let mut checked = 0usize;
-    for len in 0..=6usize {
+    for len in 0..=7usize {
         let total = alphabet.len().pow(len as u32);
         for mut code in 0..total {
             let mut lines = Vec::with_capacity(len);
@@ -663,8 +744,14 @@ fn regeneration_is_idempotent_for_every_short_sequence_of_fences_and_markers() {
                 if trailing_newline && !x.is_empty() {
                     x.push('\n');
                 }
+                let removed = replace_section(&x, "");
+                assert_user_lines_survive(&x, &removed, "", "removal");
+                if reference_spans(&lines).is_empty() {
+                    assert_eq!(removed, x, "nothing of ours in {x:?}, yet it changed");
+                }
                 for body in bodies {
                     let r1 = replace_section(&x, body);
+                    assert_user_lines_survive(&x, &r1, body, "replacement");
                     assert_eq!(
                         replace_section(&r1, body),
                         r1,
@@ -676,7 +763,7 @@ fn regeneration_is_idempotent_for_every_short_sequence_of_fences_and_markers() {
                         r1.matches(BEGIN).count(),
                         "section count changed: {x:?} / {body:?}"
                     );
-                    if replace_section(&x, "") == x {
+                    if removed == x {
                         let back = replace_section(&r1, "");
                         assert!(
                             back == x || (!x.ends_with('\n') && back == format!("{x}\n")),
@@ -688,7 +775,62 @@ fn regeneration_is_idempotent_for_every_short_sequence_of_fences_and_markers() {
             }
         }
     }
-    assert!(checked > 50_000);
+    assert!(checked > 300_000);
+}
+
+#[test]
+fn an_orphan_begin_does_not_capture_a_fenced_example() {
+    // No real section: the orphan BEGIN must not pair with the fenced END.
+    let existing = format!("{BEGIN}\nuser\n```\n{END}\n```\nafter\n");
+    let out = replace_section(&existing, "fresh");
+    assert_eq!(out, format!("{existing}\n{}", section("fresh")));
+    assert_eq!(replace_section(&out, "fresh"), out);
+    assert_eq!(replace_section(&existing, ""), existing);
+    assert_eq!(replace_section(&out, ""), existing);
+}
+
+#[test]
+fn deleting_the_end_line_above_a_fenced_example_keeps_every_user_byte() {
+    // The user deleted Gespan's END line; a fenced example below shows END.
+    for tail in ["after\n", "after"] {
+        let edited = format!(
+            "# Project\n\n{BEGIN}\n- D-1 old\nmy note\n\n## Example\n```\n{END}\n```\n{tail}"
+        );
+        let first = replace_section(&edited, "- D-1 new");
+        assert!(first.starts_with(&edited), "user bytes changed: {first:?}");
+        assert!(first.ends_with(&section("- D-1 new")));
+        assert_eq!(first.matches(&section("- D-1 new")).count(), 1);
+        // The next run finds the appended section and nothing else.
+        let second = replace_section(&first, "- D-1 new");
+        assert_eq!(second, first);
+        let third = replace_section(&first, "- D-2 newer");
+        assert!(third.starts_with(&edited));
+        assert!(third.ends_with(&section("- D-2 newer")));
+        assert_eq!(third.matches(END).count(), 2, "fenced END plus ours");
+        // Removal restores the edited file (a missing final newline gains one).
+        let back = replace_section(&first, "");
+        let expected = if edited.ends_with('\n') {
+            edited.clone()
+        } else {
+            format!("{edited}\n")
+        };
+        assert_eq!(back, expected);
+        assert_eq!(replace_section(&edited, ""), edited);
+    }
+}
+
+#[test]
+fn collapsing_a_later_section_keeps_the_text_around_its_orphan_markers() {
+    // An orphan BEGIN and END enclose a second section; dropping that
+    // section must not turn the orphans into a section that eats u1 and u2.
+    let existing = format!(
+        "{}{BEGIN}\nu1\n{}u2\n{END}\ntail\n",
+        section("one"),
+        section("two")
+    );
+    let out = replace_section(&existing, "new");
+    assert_eq!(out, format!("{}u1\nu2\ntail\n", section("new")));
+    assert_eq!(replace_section(&out, "new"), out);
 }
 
 #[test]
