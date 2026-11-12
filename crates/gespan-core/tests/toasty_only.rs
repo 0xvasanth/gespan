@@ -208,9 +208,19 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "rowid tie-breaks Toasty cannot order by",
     ),
     (
+        "board-store/src/settings.rs",
+        1,
+        "a read that must fail, not panic, on a corrupt row",
+    ),
+    (
         "board-store/src/subtasks.rs",
         1,
         "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/templates.rs",
+        1,
+        "a read that must fail, not panic, on a corrupt row",
     ),
     ("board-store/src/testing.rs", 1, "test fixture"),
     (

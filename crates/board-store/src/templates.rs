@@ -6,7 +6,7 @@
 //! label and field ids inside view specs, layouts, display options and
 //! auto-move rules are remapped to the new ids; a value with no match is
 //! dropped (the saved-view rule), and an auto-move target with no match stays.
-use crate::db::{err, with_db, with_tx, Conn, Ex};
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex};
 use crate::fields::list_fields_in;
 use crate::labels::list_labels_in;
 use crate::models::{BoardRow, ColumnRow, FieldRow, LabelRow, SettingsRow, TemplateRow, ViewRow};
@@ -201,28 +201,26 @@ pub fn list_templates(conn: &Conn) -> Result<Vec<TemplateInfo>, String> {
             built_in: true,
         })
         .collect();
-    let mut saved: Vec<TemplateInfo> = with_db!(conn, |ex| {
-        TemplateRow::all()
-            .select((TemplateRow::fields().id(), TemplateRow::fields().name()))
-            .exec(ex)
-            .await
-            .map_err(err)
-    })?
-    .into_iter()
-    .map(|(id, name)| TemplateInfo {
-        id,
-        name,
-        built_in: false,
-    })
-    .collect();
-    // By name ignoring ASCII case (SQLite's `lower`), then name, then id.
-    saved.sort_by(|a, b| {
-        (a.name.to_ascii_lowercase(), &a.name, &a.id).cmp(&(
-            b.name.to_ascii_lowercase(),
-            &b.name,
-            &b.id,
-        ))
-    });
+    // Raw, not typed: a typed read of a corrupt row (a blob for a name)
+    // panics Toasty 0.11's SQLite driver, and the switcher must still offer
+    // Blank when the saved list can't be read (docs/toasty.md).
+    let saved = with_db!(conn, |ex| {
+        query(
+            ex,
+            "SELECT id, name FROM board_templates ORDER BY lower(name), name, id",
+            args![],
+        )
+        .await?
+        .iter()
+        .map(|r| {
+            Ok(TemplateInfo {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                built_in: false,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()
+    })?;
     templates.extend(saved);
     Ok(templates)
 }

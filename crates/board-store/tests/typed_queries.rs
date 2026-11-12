@@ -221,3 +221,69 @@ fn update_view_with_only_a_spec_keeps_the_name_and_layout() {
         "View not found"
     );
 }
+
+// A typed read of a row whose stored value doesn't match the model panics
+// Toasty 0.11's SQLite driver and takes the connection down with it. The two
+// reads the app shows an error for instead (settings and the saved-template
+// list) stay raw, so a corrupt row is an error and the connection lives on.
+
+#[test]
+fn an_unreadable_settings_row_is_an_error_and_the_connection_survives() {
+    let conn = fresh();
+    let board = create_board(&conn, "Work").unwrap();
+    update_board_settings(
+        &conn,
+        &board.id,
+        &SettingsPatch {
+            write_back: Some(false),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    conn.raw()
+        .execute(
+            "UPDATE board_settings SET run_with = 'garbage' WHERE board_id = ?1",
+            [&board.id],
+        )
+        .unwrap();
+    assert!(board_settings(&conn, &board.id).is_err());
+    // The same connection still serves reads and writes.
+    assert_eq!(list_boards(&conn).unwrap().len(), 1);
+    conn.raw()
+        .execute(
+            "UPDATE board_settings SET run_with = 1 WHERE board_id = ?1",
+            [&board.id],
+        )
+        .unwrap();
+    let settings = board_settings(&conn, &board.id).unwrap();
+    assert!(settings.run_with);
+    assert!(!settings.write_back, "the stored value, not the default");
+}
+
+#[test]
+fn a_template_with_an_unreadable_name_is_an_error_and_the_connection_survives() {
+    let conn = fresh();
+    let board = create_board(&conn, "Source").unwrap();
+    save_board_as_template(&conn, &board.id, "Mine").unwrap();
+    conn.raw()
+        .execute(
+            "INSERT INTO board_templates (id, name, spec_json, created_at)
+             VALUES ('broken', X'00ff', '{}', 0)",
+            [],
+        )
+        .unwrap();
+    assert!(list_templates(&conn).is_err());
+    // A blank board can still be made on the same connection.
+    let blank = create_board_from_template(&conn, "Fallback", "blank").unwrap();
+    assert_eq!(get_board(&conn, &blank.id).unwrap().board.name, "Fallback");
+    conn.raw()
+        .execute("DELETE FROM board_templates WHERE id = 'broken'", [])
+        .unwrap();
+    let saved: Vec<String> = list_templates(&conn)
+        .unwrap()
+        .into_iter()
+        .filter(|t| !t.built_in)
+        .map(|t| t.name)
+        .collect();
+    assert_eq!(saved, ["Mine"]);
+}

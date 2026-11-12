@@ -120,7 +120,9 @@ an adopted copy, so the file itself never changes.
   rows first with `count()` or `first()` gives an update's or delete's
   count.
 - The SQLite driver panics when a stored value doesn't match the model's
-  type, which ends that connection's task. A test that corrupts a row on
-  purpose reads it on a connection of its own.
+  type, which ends that connection's task. A read the app must survive a
+  corrupt row on (board settings, the saved-template list) stays raw, where a
+  bad value is an error. A test that corrupts a row on purpose reads it on a
+  connection of its own.
 - Toasty brings `PartialEq` impls for tuples into scope. An
   `assert_eq!(x, [])` on a tuple vector may then need a type annotation.

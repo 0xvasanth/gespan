@@ -5,7 +5,7 @@
 //! Both apps write settings at once (one toggles write-back while the other
 //! renames the board), so writes are patches: [`update_board_settings`]
 //! changes only the fields it is given.
-use crate::db::{err, with_db, with_tx, Conn, Ex};
+use crate::db::{args, err, query_opt, with_db, with_tx, Conn, Ex};
 use crate::models::{BoardRow, CardRow, LinkRow, SessionSettingRow, SettingsRow, ViewRow};
 use crate::ops::{check_color, count};
 use serde::{Deserialize, Serialize};
@@ -259,42 +259,34 @@ pub(crate) async fn board_settings_in(
     ex: &mut Ex<'_>,
     board_id: &str,
 ) -> Result<BoardSettings, String> {
-    if count(ex, BoardRow::filter_by_id(board_id).count()).await? == 0 {
-        return Err("Board not found".into());
-    }
-    let row = SettingsRow::filter_by_board_id(board_id)
-        .first()
-        .exec(ex)
-        .await
-        .map_err(err)?;
+    // Raw, not typed: a typed read of a corrupt row (text in a flag column)
+    // panics Toasty 0.11's SQLite driver, and an unreadable settings row must
+    // come back as an error the board can show (docs/toasty.md).
+    let row = query_opt(
+        ex,
+        "SELECT s.run_with, s.write_back, s.ticket_status_changes, s.auto_move_json,
+                s.icon, s.color, s.default_view_id, s.display_json, s.priority_json,
+                s.run_in_worktree, s.run_worktree_choice
+         FROM boards b LEFT JOIN board_settings s ON s.board_id = b.id
+         WHERE b.id = ?1",
+        args![board_id],
+    )
+    .await?
+    .ok_or_else(|| "Board not found".to_string())?;
     // A board without a settings row has the defaults: every switch on.
-    let Some(row) = row else {
-        return Ok(BoardSettings {
-            run_with: true,
-            write_back: true,
-            ticket_status_changes: true,
-            auto_move_json: None,
-            icon: None,
-            color: None,
-            default_view_id: None,
-            display_json: None,
-            priority_json: None,
-            run_in_worktree: false,
-            run_worktree_choice: None,
-        });
-    };
+    let on = |value: Option<i64>| value.is_none_or(|v| v != 0);
     Ok(BoardSettings {
-        run_with: row.run_with,
-        write_back: row.write_back,
-        ticket_status_changes: row.ticket_status_changes,
-        auto_move_json: row.auto_move_json,
-        icon: row.icon,
-        color: row.color,
-        default_view_id: row.default_view_id,
-        display_json: row.display_json,
-        priority_json: row.priority_json,
-        run_in_worktree: row.run_in_worktree.unwrap_or(false),
-        run_worktree_choice: row.run_worktree_choice,
+        run_with: on(row.get(0)?),
+        write_back: on(row.get(1)?),
+        ticket_status_changes: on(row.get(2)?),
+        auto_move_json: row.get(3)?,
+        icon: row.get(4)?,
+        color: row.get(5)?,
+        default_view_id: row.get(6)?,
+        display_json: row.get(7)?,
+        priority_json: row.get(8)?,
+        run_in_worktree: row.get::<Option<i64>>(9)?.is_some_and(|v| v != 0),
+        run_worktree_choice: row.get::<Option<i64>>(10)?.map(|v| v != 0),
     })
 }
 

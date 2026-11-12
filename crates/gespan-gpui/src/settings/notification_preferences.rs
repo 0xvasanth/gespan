@@ -1140,35 +1140,39 @@ impl SettingsView {
                                         false,
                                     )
                                     .child("Mute until then")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let Some(custom) = &this.notification_state.custom else {
-                                            return;
-                                        };
-                                        let parsed = NaiveDateTime::parse_from_str(
-                                            &format!(
-                                                "{} {}",
-                                                custom.date,
-                                                custom.input.read(cx).content.trim()
-                                            ),
-                                            "%Y-%m-%d %H:%M",
-                                        )
-                                        .ok()
-                                        .and_then(|at| Local.from_local_datetime(&at).earliest())
-                                        .map(|at| at.timestamp_millis().max(0) as u64);
-                                        let now = gespan_core::time::now_ms();
-                                        match parsed {
-                                            Some(at) if at > now => {
-                                                let ids = custom.ids.clone();
-                                                this.update(cx, |p| {
-                                                    p.mute_projects(&ids, Some(json!(at)), now)
-                                                });
-                                                this.notification_state.custom = None;
-                                            }
-                                            _ => {
-                                                if let Some(custom) =
-                                                    this.notification_state.custom.as_mut()
-                                                {
-                                                    custom.error = Some(
+                                    .on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            let Some(custom) = &this.notification_state.custom
+                                            else {
+                                                return;
+                                            };
+                                            let parsed = NaiveDateTime::parse_from_str(
+                                                &format!(
+                                                    "{} {}",
+                                                    custom.date,
+                                                    custom.input.read(cx).content.trim()
+                                                ),
+                                                "%Y-%m-%d %H:%M",
+                                            )
+                                            .ok()
+                                            .and_then(|at| {
+                                                Local.from_local_datetime(&at).earliest()
+                                            })
+                                            .map(|at| at.timestamp_millis().max(0) as u64);
+                                            let now = gespan_core::time::now_ms();
+                                            match parsed {
+                                                Some(at) if at > now => {
+                                                    let ids = custom.ids.clone();
+                                                    this.update(cx, |p| {
+                                                        p.mute_projects(&ids, Some(json!(at)), now)
+                                                    });
+                                                    this.notification_state.custom = None;
+                                                }
+                                                _ => {
+                                                    if let Some(custom) =
+                                                        this.notification_state.custom.as_mut()
+                                                    {
+                                                        custom.error = Some(
                                                         if parsed.is_some() {
                                                             "Choose a date and time in the future."
                                                         } else {
@@ -1176,11 +1180,12 @@ impl SettingsView {
                                                         }
                                                         .into(),
                                                     );
+                                                    }
                                                 }
                                             }
-                                        }
-                                        cx.notify();
-                                    })),
+                                            cx.notify();
+                                        },
+                                    )),
                                 ),
                         ),
                 )
