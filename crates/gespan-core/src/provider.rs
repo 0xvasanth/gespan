@@ -632,16 +632,18 @@ impl Protocol {
         }
         let file_change = kind.contains("fileChange") || kind == "applyPatchApproval";
         let permissions = kind.contains("permissions");
-        if self.request.settings.access == AccessMode::FullAccess
-            || (self.request.kind == Kind::Codex
-                && self.request.settings.access == AccessMode::AutoAcceptEdits
-                && file_change)
-            || (self.request.kind == Kind::Codex
-                && permissions
-                && matches!(
-                    self.request.settings.access,
-                    AccessMode::Auto | AccessMode::AutoAcceptEdits
-                ))
+        let ask = review == Some(Verdict::Ask);
+        if !ask
+            && (self.request.settings.access == AccessMode::FullAccess
+                || (self.request.kind == Kind::Codex
+                    && self.request.settings.access == AccessMode::AutoAcceptEdits
+                    && file_change)
+                || (self.request.kind == Kind::Codex
+                    && permissions
+                    && matches!(
+                        self.request.settings.access,
+                        AccessMode::Auto | AccessMode::AutoAcceptEdits
+                    )))
         {
             return self.respond(
                 Control {
@@ -655,7 +657,7 @@ impl Protocol {
             id,
             title,
             detail,
-            can_remember: self.request.kind != Kind::Codex && !file_change,
+            can_remember: self.request.kind != Kind::Codex && !file_change && !ask,
             tool,
         }));
         Ok(())
@@ -718,12 +720,16 @@ impl Protocol {
             );
         }
         if kind == "claude" {
+            let policy_denied = self.review_verdict(&kind, &request) == Some(Verdict::Deny);
             let mut response = if allow {
                 json!({"behavior":"allow","updatedInput":request["input"]})
+            } else if policy_denied {
+                json!({"behavior":"deny","message":"Not allowed for a pull request review"})
             } else {
                 json!({"behavior":"deny","message":"Denied by the user"})
             };
-            if session && allow {
+            // A review never installs a CLI-side rule: every post must come back here.
+            if session && allow && self.request.settings.review.is_none() {
                 if let Some(suggestions) = request.get("permission_suggestions") {
                     response["updatedPermissions"] = suggestions.clone();
                 }
@@ -2230,6 +2236,96 @@ cat >/dev/null"#,
             response["behavior"], "deny",
             "no policy: read-only denies gh"
         );
+    }
+    fn review_protocol(
+        results: crate::review_policy::ReviewResults,
+        access: AccessMode,
+    ) -> Protocol {
+        use crate::review_policy::{ReviewPolicy, ReviewTarget};
+        let mut p = protocol(Kind::Claude);
+        p.request.settings.access = access;
+        p.request.settings.review = Some(ReviewPolicy {
+            results,
+            target: Some(ReviewTarget {
+                repo: "acme/app".into(),
+                number: 7,
+            }),
+        });
+        p
+    }
+    const REVIEW_POST: &str = "gh pr review 7 -R acme/app --comment -b \"x\"";
+    #[test]
+    fn claude_review_policy_ask_is_not_rememberable_and_session_installs_no_rule() {
+        use crate::review_policy::ReviewResults;
+        let mut p = review_protocol(ReviewResults::Draft, AccessMode::Supervised);
+        let mut out = Vec::new();
+        let events = p
+            .frame(json!({"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":REVIEW_POST},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"gh pr review:*"}]}]}}), &mut out)
+            .unwrap();
+        let approvals: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Approval(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(approvals.len(), 1);
+        assert!(!approvals[0].can_remember);
+        assert!(
+            approvals[0]
+                .detail
+                .contains("gh pr review 7 -R acme/app --comment"),
+            "{}",
+            approvals[0].detail
+        );
+        let id = approvals[0].id.clone();
+        let mut out = Vec::new();
+        p.respond(
+            Control {
+                id,
+                decision: Decision::Session,
+            },
+            &mut out,
+        )
+        .unwrap();
+        let response =
+            serde_json::from_slice::<Value>(&out).unwrap()["response"]["response"].clone();
+        assert_eq!(response["behavior"], "allow");
+        assert!(response.get("updatedPermissions").is_none(), "{response}");
+    }
+    #[test]
+    fn claude_review_policy_ask_reaches_the_user_even_in_full_access() {
+        use crate::review_policy::ReviewResults;
+        let mut p = review_protocol(ReviewResults::Draft, AccessMode::FullAccess);
+        let (events, response) = claude_bash(&mut p, REVIEW_POST);
+        assert_eq!(response, Value::Null);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, Event::Approval(_)))
+                .count(),
+            1
+        );
+    }
+    #[test]
+    fn claude_review_policy_deny_says_it_is_policy_and_other_tools_are_denied() {
+        use crate::review_policy::ReviewResults;
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let mut p = review_protocol(results, AccessMode::ReadOnly);
+            let (_, response) = claude_bash(&mut p, "gh pr merge 7 -R acme/app");
+            assert_eq!(response["behavior"], "deny");
+            assert_eq!(response["message"], "Not allowed for a pull request review");
+            for tool in ["Write", "mcp__github__create_review"] {
+                let mut out = Vec::new();
+                let events = p
+                    .frame(json!({"type":"control_request","request_id":"r","request":{"subtype":"can_use_tool","tool_name":tool,"input":{}}}), &mut out)
+                    .unwrap();
+                assert!(events.is_empty(), "{tool}: {events:?}");
+                let response =
+                    serde_json::from_slice::<Value>(&out).unwrap()["response"]["response"].clone();
+                assert_eq!(response["behavior"], "deny", "{tool} under {results:?}");
+            }
+        }
     }
     #[test]
     fn safe_bash_still_asks_outside_read_only() {
