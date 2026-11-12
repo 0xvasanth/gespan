@@ -6049,6 +6049,15 @@ fn a_pilot_choices_card_is_a_task_until_the_user_replies(cx: &mut TestAppContext
 
     post("user", "ae!29".into(), visual);
     assert!(tasks(visual).is_empty());
+    // Answered by typing in the chat: kept with what was typed.
+    let past = s
+        .window
+        .read_with(visual, |shell, _| shell.past_tasks_for_test())
+        .unwrap();
+    assert_eq!(past.len(), 1, "{past:?}");
+    assert_eq!(past[0].kind, gespan_core::tasks::Kind::PilotChoice);
+    assert_eq!(past[0].answer.as_deref(), Some("ae!29"));
+    assert_eq!(past[0].request["options"][1], "ae!31");
 }
 
 #[gpui::test]
@@ -6087,6 +6096,13 @@ fn choosing_a_pilot_option_on_my_tasks_sends_it_to_the_pilot(cx: &mut TestAppCon
         .pop()
         .expect("the choice was sent");
     assert_eq!(sent.text, "ae!31");
+    let past = s
+        .window
+        .read_with(visual, |shell, _| shell.past_tasks_for_test())
+        .unwrap();
+    assert_eq!(past.len(), 1, "{past:?}");
+    assert_eq!(past[0].answer.as_deref(), Some("ae!31"));
+    assert!(past[0].can_remember());
 }
 
 #[gpui::test]

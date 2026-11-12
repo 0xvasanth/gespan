@@ -1012,4 +1012,16 @@ fn a_waiting_approval_is_approved_from_my_tasks_with_the_note(cx: &mut TestAppCo
             assert_eq!(shell.my_task_count(cx), 0, "the task left once resolved")
         })
         .unwrap();
+    let past = window
+        .read_with(visual, |shell, _| {
+            crate::runtime::locked(&shell.store)
+                .unwrap()
+                .past_tasks()
+                .unwrap()
+        })
+        .unwrap();
+    assert_eq!(past.len(), 1, "{past:?}");
+    assert_eq!(past[0].kind, gespan_core::tasks::Kind::FlowApproval);
+    assert_eq!(past[0].answer.as_deref(), Some("Approved: ship it"));
+    assert_eq!(past[0].origin, format!("flow:{}", run.id));
 }

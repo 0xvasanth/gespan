@@ -481,47 +481,68 @@ impl Conversation {
         cx: &mut Context<Self>,
     ) {
         let card = cx.new(|cx| crate::questions::QuestionCard::new(request, cx));
-        let events = cx.subscribe(&card, |this, _, reply: &crate::questions::Answered, cx| {
-            if this
-                .questions
-                .front()
-                .is_none_or(|(card, _)| card.read(cx).id() != reply.id)
-            {
-                return;
-            }
-            let before = this.needs_approval();
-            let decision = reply
-                .answers
-                .clone()
-                .map_or(Decision::Deny, Decision::Answer);
-            if this.controls.as_ref().is_none_or(|controls| {
-                controls
-                    .send(Control {
-                        id: reply.id.clone(),
-                        decision,
-                    })
-                    .is_err()
-            }) {
-                this.status = "The provider is no longer waiting for this answer".into();
+        let events = cx.subscribe(
+            &card,
+            |this, card, reply: &crate::questions::Answered, cx| {
+                if this
+                    .questions
+                    .front()
+                    .is_none_or(|(card, _)| card.read(cx).id() != reply.id)
+                {
+                    return;
+                }
+                let before = this.needs_approval();
+                let decision = reply
+                    .answers
+                    .clone()
+                    .map_or(Decision::Deny, Decision::Answer);
+                if this.controls.as_ref().is_none_or(|controls| {
+                    controls
+                        .send(Control {
+                            id: reply.id.clone(),
+                            decision,
+                        })
+                        .is_err()
+                }) {
+                    this.status = "The provider is no longer waiting for this answer".into();
+                    cx.notify();
+                    return;
+                }
+                let record = {
+                    let question = card.read(cx);
+                    this.task_record(
+                        crate::my_tasks::record::question_key(this.summary.id, &reply.id),
+                        gespan_core::tasks::Kind::Question,
+                        question.headline().to_owned(),
+                        crate::my_tasks::record::question_request(question.request()),
+                    )
+                    .answered(
+                        crate::my_tasks::record::question_answer(
+                            question.request(),
+                            reply.answers.as_deref(),
+                        ),
+                        serde_json::json!(reply.answers),
+                        gespan_core::time::now_ms(),
+                    )
+                };
+                this.keep_task_answer(record);
+                if let Some((card, _)) = this.questions.pop_front() {
+                    this.question_overlay.release(card, cx);
+                }
+                this.status = if !this.approvals.is_empty() {
+                    "Waiting for approval"
+                } else if !this.questions.is_empty() {
+                    "Waiting for your answer"
+                } else {
+                    "Working…"
+                }
+                .into();
+                if before != this.needs_approval() {
+                    cx.emit(SessionChanged);
+                }
                 cx.notify();
-                return;
-            }
-            if let Some((card, _)) = this.questions.pop_front() {
-                this.question_overlay.release(card, cx);
-            }
-            this.status = if !this.approvals.is_empty() {
-                "Waiting for approval"
-            } else if !this.questions.is_empty() {
-                "Waiting for your answer"
-            } else {
-                "Working…"
-            }
-            .into();
-            if before != this.needs_approval() {
-                cx.emit(SessionChanged);
-            }
-            cx.notify();
-        });
+            },
+        );
         let keep_open = cx.subscribe(
             &card,
             |this, _, request: &crate::questions::KeptOpen, cx| {

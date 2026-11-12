@@ -171,7 +171,9 @@ impl Shell {
         self.with_flow_host(cx, |host, driver| {
             host.resolve_approval(driver, run_id, approved, note)
         })
-        .ok_or_else(|| STILL_OPENING.into())
+        .ok_or_else(|| STILL_OPENING.to_owned())?;
+        self.keep_flow_answer(run_id, approved, note);
+        Ok(())
     }
 
     pub(crate) fn cancel_flow_run(
