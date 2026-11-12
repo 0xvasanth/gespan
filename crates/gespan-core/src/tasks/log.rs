@@ -12,6 +12,7 @@ impl Kind {
             Self::FlowApproval => "flow-approval",
             Self::PilotChoice => "pilot-choice",
             Self::DraftReview => "draft-review",
+            Self::Decision => "decision",
         }
     }
     pub fn from_id(id: &str) -> Option<Self> {
@@ -145,4 +146,12 @@ pub struct SavedDecision {
     pub updated_at: u64,
     /// The answers it came from, newest first: "How you got here".
     pub sources: Vec<TaskRecord>,
+    /// A preference or a project decision.
+    pub kind: crate::decisions::Kind,
+    /// Where it applies: a preference is global; a decision is keyed by its
+    /// repository or project.
+    pub scope: crate::decisions::Scope,
+    /// The session whose agent proposed it, for one approved from the
+    /// decision log.
+    pub session: Option<i64>,
 }

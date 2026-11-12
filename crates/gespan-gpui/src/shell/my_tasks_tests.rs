@@ -1078,3 +1078,516 @@ fn the_answered_filter_has_no_waiting_section_and_hides_projects(cx: &mut TestAp
     let shown = page(window, visual).read_with(visual, |p, cx| p.visible_past(cx).len());
     assert_eq!(shown, 0, "the hidden project's answers are filtered out");
 }
+
+/// The decision log, on, on a gespan.db in a temporary directory this
+/// process's tests share (nextest gives each test its own process). Each test
+/// uses its own project and finds its tasks by key, so a shared store never
+/// mixes them. Call it after `setup`: the shell applies the user's
+/// preference, off by default, as it starts.
+fn decision_log() {
+    static DIR: std::sync::LazyLock<tempfile::TempDir> =
+        std::sync::LazyLock::new(|| tempfile::tempdir().unwrap());
+    gespan_core::decisions::init(&DIR.path().join("gespan.db")).unwrap();
+    gespan_core::decisions::set_enabled(true);
+}
+
+fn with_log<T>(f: impl FnOnce(&gespan_core::decisions::DecisionStore) -> T) -> T {
+    gespan_core::decisions::service::with(f).unwrap()
+}
+
+/// A pending proposal in `project` that the user answered in `session`.
+fn propose_decision(
+    project: &str,
+    session: i64,
+    title: &str,
+    text: &str,
+) -> gespan_core::decisions::Entry {
+    use gespan_core::decisions::{Kind as EntryKind, NewEntry, Scope, Source};
+    with_log(|log| {
+        log.propose(
+            NewEntry {
+                kind: EntryKind::Decision,
+                scope: Scope::Project(project.into()),
+                title: title.into(),
+                text: text.into(),
+                why: "panics hid failures in A".into(),
+                user_answer: Some("Use Result<T, MigrationError>, never panics".into()),
+                source: Source {
+                    session: Some(session),
+                    question_ref: Some("q1".into()),
+                    ..Source::default()
+                },
+            },
+            1,
+        )
+        .unwrap()
+    })
+}
+
+fn active_decision(project: &str, title: &str, text: &str) -> gespan_core::decisions::Entry {
+    let entry = propose_decision(project, 1, title, text);
+    with_log(|log| log.approve(entry.id, None, false, &[], 2).unwrap())
+}
+
+fn log_entry(id: i64) -> gespan_core::decisions::Entry {
+    with_log(|log| log.get(id).unwrap().unwrap().0)
+}
+
+/// The task with `key` once the decision log is read again, if any.
+fn task_by_key(
+    window: WindowHandle<Shell>,
+    visual: &mut VisualTestContext,
+    key: &str,
+) -> Option<TaskItem> {
+    window
+        .update(visual, |shell, _, cx| shell.load_decision_tasks(cx))
+        .unwrap();
+    visual.run_until_parked();
+    window
+        .read_with(visual, |shell, cx| {
+            shell
+                .my_tasks
+                .as_ref()?
+                .read(cx)
+                .tasks()
+                .iter()
+                .find(|t| t.key == key)
+                .cloned()
+        })
+        .unwrap()
+}
+
+/// Opens My tasks with the card on `key`.
+fn open_task(window: WindowHandle<Shell>, visual: &mut VisualTestContext, key: &str) {
+    window
+        .update(visual, |shell, window, cx| shell.open_my_tasks(window, cx))
+        .unwrap();
+    visual.run_until_parked();
+    page(window, visual).update(visual, |view, cx| view.select(key, cx));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert_eq!(selected_key(window, visual).as_deref(), Some(key));
+}
+
+fn on_screen(visual: &mut VisualTestContext, selector: &str) -> bool {
+    visual.refresh().unwrap();
+    visual
+        .debug_bounds(Box::leak(selector.to_string().into_boxed_str()))
+        .is_some()
+}
+
+#[gpui::test]
+fn pending_proposal_appears_as_decision_task_with_question_and_answer(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let session = other_session(window, visual);
+    let project = "/work/decisions-pending";
+    let entry = propose_decision(project, session, "Errors as values", "Return Result");
+    let key = format!("decision:{}", entry.id);
+    let task = task_by_key(window, visual, &key).expect("the proposal is a task");
+    assert_eq!(task.kind, Kind::Decision);
+    assert_eq!(Kind::Decision.label(), "Decision to review");
+    assert_eq!(task.headline, "Errors as values");
+    assert_eq!(task.project, project);
+    assert_eq!(task.source, Source::Session(session));
+    let Body::Decision {
+        entry: shown,
+        flag,
+        similar,
+    } = &task.body
+    else {
+        panic!("a decision card");
+    };
+    assert_eq!(shown.text, "Return Result");
+    assert_eq!(shown.why, "panics hid failures in A");
+    assert_eq!(
+        shown.user_answer.as_deref(),
+        Some("Use Result<T, MigrationError>, never panics")
+    );
+    assert!(flag.is_none() && similar.is_empty());
+    open_task(window, visual, &key);
+    for part in [
+        "my-tasks-review-text",
+        "my-tasks-review-why",
+        "my-tasks-review-answer",
+        "my-tasks-review-approve",
+        "my-tasks-review-edit",
+        "my-tasks-review-pin",
+        "my-tasks-review-reject",
+    ] {
+        assert!(on_screen(visual, part), "{part} is on the card");
+    }
+    // Nothing to replace: no "Replaces:" choices, and no flag.
+    assert!(!on_screen(visual, "my-tasks-review-replaces"));
+    assert!(!on_screen(visual, "my-tasks-review-flag"));
+    // The link opens the session the user answered in.
+    click(visual, "my-tasks-open-source");
+    window
+        .read_with(visual, |shell, _| {
+            assert_eq!(shell.workspace.active, Some(session))
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn open_flag_appears_on_its_decision_task(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let session = other_session(window, visual);
+    let entry = active_decision("/work/decisions-flag", "No panics", "Never panic");
+    let flag = with_log(|log| {
+        log.flag(entry.id, session, "FFI boundaries must abort instead", 3)
+            .unwrap()
+    });
+    let key = format!("decision-flag:{}", flag.id);
+    let task = task_by_key(window, visual, &key).expect("the flag is a task");
+    assert_eq!(task.kind, Kind::Decision);
+    assert_eq!(task.headline, "No panics");
+    assert_eq!(task.source, Source::Session(session));
+    let Body::Decision {
+        entry: shown,
+        flag: Some(shown_flag),
+        ..
+    } = &task.body
+    else {
+        panic!("a decision card with its flag");
+    };
+    assert_eq!(shown.id, entry.id);
+    assert_eq!(shown_flag.reason, "FFI boundaries must abort instead");
+    // An active decision is not also a proposal to review.
+    assert!(task_by_key(window, visual, &format!("decision:{}", entry.id)).is_none());
+    open_task(window, visual, &key);
+    assert!(on_screen(visual, "my-tasks-review-flag"));
+    assert!(!on_screen(visual, "my-tasks-review-approve"));
+    assert!(on_screen(visual, "my-tasks-review-dismiss"));
+    // "Replace with…" opens the fields on the current wording; saving makes
+    // the new wording the active successor and closes the flag.
+    click(visual, "my-tasks-review-replace");
+    assert!(on_screen(visual, "my-tasks-review-edit-title"));
+    page(window, visual).update(visual, |view, cx| {
+        assert_eq!(
+            view.decision_text.read(cx).content.to_string(),
+            "Never panic"
+        );
+        view.decision_text.update(cx, |input, cx| {
+            input.set_text("Never panic, except at FFI boundaries".into(), cx)
+        });
+    });
+    click(visual, "my-tasks-review-save-replacement");
+    let old = log_entry(entry.id);
+    assert_eq!(old.status, gespan_core::decisions::Status::Replaced);
+    let successor = log_entry(old.replaced_by.expect("a successor"));
+    assert_eq!(successor.status, gespan_core::decisions::Status::Active);
+    assert_eq!(successor.text, "Never panic, except at FFI boundaries");
+    assert!(
+        task_by_key(window, visual, &key).is_none(),
+        "the flag is closed"
+    );
+}
+
+#[gpui::test]
+fn dismissing_a_flag_keeps_the_decision(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let entry = active_decision("/work/decisions-dismiss", "No panics", "Never panic");
+    let flag = with_log(|log| log.flag(entry.id, 1, "disagree", 3).unwrap());
+    let key = format!("decision-flag:{}", flag.id);
+    assert!(task_by_key(window, visual, &key).is_some());
+    open_task(window, visual, &key);
+    click(visual, "my-tasks-review-dismiss");
+    assert!(task_by_key(window, visual, &key).is_none());
+    assert_eq!(
+        log_entry(entry.id).status,
+        gespan_core::decisions::Status::Active
+    );
+}
+
+#[gpui::test]
+fn approve_removes_the_task(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let project = "/work/decisions-approve";
+    let old = active_decision(project, "Error handling", "Errors use anyhow");
+    let entry = propose_decision(project, 1, "Error handling", "Errors use thiserror");
+    let key = format!("decision:{}", entry.id);
+    let task = task_by_key(window, visual, &key).expect("the proposal is a task");
+    let Body::Decision { similar, .. } = &task.body else {
+        panic!("a decision card");
+    };
+    assert_eq!(similar.iter().map(|e| e.id).collect::<Vec<_>>(), [old.id]);
+    open_task(window, visual, &key);
+    // Offered, unticked: approving alone would keep the old one.
+    assert!(on_screen(visual, "my-tasks-review-replaces"));
+    page(window, visual).read_with(visual, |view, _| {
+        assert!(view.decision_replaces().is_empty());
+        assert!(!view.decision_pinned());
+    });
+    click(visual, &format!("my-tasks-review-replaces-{}", old.id));
+    click(visual, "my-tasks-review-pin");
+    click(visual, "my-tasks-review-approve");
+    assert!(
+        task_by_key(window, visual, &key).is_none(),
+        "approved leaves"
+    );
+    let approved = log_entry(entry.id);
+    assert_eq!(approved.status, gespan_core::decisions::Status::Active);
+    assert!(approved.pinned);
+    assert_eq!(approved.text, "Errors use thiserror");
+    assert_eq!(log_entry(old.id).replaced_by, Some(entry.id));
+    // The review is kept on the Answered tab.
+    let kept = window
+        .read_with(visual, |shell, _| shell.past_tasks_for_test())
+        .unwrap();
+    let kept = kept
+        .iter()
+        .find(|t| t.key == key)
+        .expect("the review is kept");
+    assert_eq!(kept.answer.as_deref(), Some("Approved"));
+}
+
+#[gpui::test]
+fn edit_then_approve_saves_the_new_wording_and_reject_leaves(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let project = "/work/decisions-edit";
+    let entry = propose_decision(project, 1, "Errors", "Use anyhow");
+    let other = propose_decision(project, 1, "Tabs", "Indent with tabs");
+    let key = format!("decision:{}", entry.id);
+    task_by_key(window, visual, &key).expect("the proposal is a task");
+    open_task(window, visual, &key);
+    click(visual, "my-tasks-review-edit");
+    page(window, visual).update(visual, |view, cx| {
+        assert_eq!(view.decision_title.read(cx).content.to_string(), "Errors");
+        view.decision_text
+            .update(cx, |input, cx| input.set_text("Return Result".into(), cx));
+    });
+    click(visual, "my-tasks-review-approve");
+    let approved = log_entry(entry.id);
+    assert_eq!(approved.status, gespan_core::decisions::Status::Active);
+    assert_eq!(approved.text, "Return Result");
+    assert_eq!(approved.title, "Errors");
+    let key = format!("decision:{}", other.id);
+    task_by_key(window, visual, &key).expect("the second proposal is a task");
+    open_task(window, visual, &key);
+    click(visual, "my-tasks-review-reject");
+    assert!(task_by_key(window, visual, &key).is_none());
+    assert_eq!(
+        log_entry(other.id).status,
+        gespan_core::decisions::Status::Rejected
+    );
+}
+
+#[gpui::test]
+fn a_proposal_revised_after_the_card_showed_it_is_refused_and_shown_again(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let entry = propose_decision("/work/decisions-revised", 1, "Errors", "Use thiserror");
+    let key = format!("decision:{}", entry.id);
+    task_by_key(window, visual, &key).expect("the proposal is a task");
+    open_task(window, visual, &key);
+    // The agent rewrites its proposal while the card shows the old wording.
+    with_log(|log| {
+        log.revise_pending(
+            entry.id,
+            gespan_core::decisions::Edit {
+                title: entry.title.clone(),
+                text: "Errors are plain strings".into(),
+                why: entry.why.clone(),
+            },
+            entry.user_answer.as_deref(),
+            &entry.source,
+        )
+        .unwrap()
+    });
+    click(visual, "my-tasks-review-approve");
+    assert_eq!(
+        log_entry(entry.id).status,
+        gespan_core::decisions::Status::Pending
+    );
+    assert!(on_screen(visual, "my-tasks-review-error"));
+    // The card now shows what the agent wrote, and approving that works.
+    let task = task_by_key(window, visual, &key).expect("still waiting");
+    let Body::Decision { entry: shown, .. } = &task.body else {
+        panic!("a decision card");
+    };
+    assert_eq!(shown.text, "Errors are plain strings");
+    visual.run_until_parked();
+    click(visual, "my-tasks-review-approve");
+    assert_eq!(
+        log_entry(entry.id).status,
+        gespan_core::decisions::Status::Active
+    );
+    assert!(!on_screen(visual, "my-tasks-review-error"));
+}
+
+#[gpui::test]
+fn kind_filter_hides_decisions(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let entry = propose_decision("/work/decisions-filter", 1, "Errors", "Use anyhow");
+    let key = format!("decision:{}", entry.id);
+    task_by_key(window, visual, &key).expect("the proposal is a task");
+    open_task(window, visual, &key);
+    let row = format!("my-tasks-row-{key}");
+    assert!(on_screen(visual, &row));
+    click(visual, "my-tasks-filter");
+    click(visual, "my-tasks-filter-kind-Decision to review");
+    let shown = page(window, visual).read_with(visual, |view, cx| {
+        view.visible(cx).iter().map(|t| t.kind).collect::<Vec<_>>()
+    });
+    assert!(!shown.contains(&Kind::Decision), "{shown:?}");
+    assert!(!on_screen(visual, &row));
+}
+
+#[gpui::test]
+fn decisions_are_not_tasks_while_the_log_is_off(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    // After the shell applied the (off) preference.
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let entry = propose_decision("/work/decisions-off", 1, "Errors", "Use anyhow");
+    let key = format!("decision:{}", entry.id);
+    gespan_core::decisions::set_enabled(false);
+    let off = task_by_key(window, visual, &key);
+    gespan_core::decisions::set_enabled(true);
+    assert!(off.is_none());
+    assert!(task_by_key(window, visual, &key).is_some());
+}
+
+#[gpui::test]
+fn decisions_tab_groups_preferences_and_names_repo_scoped_decisions_by_project(
+    cx: &mut TestAppContext,
+) {
+    use gespan_core::decisions::{Config, DecisionStore, Kind as EntryKind, NewEntry, Scope};
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    // The app's store and the decision log on one gespan.db, as in the app.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let store = gespan_core::store::Store::open_gespan(&path).unwrap();
+    let log = DecisionStore::open(&path, Config::app()).unwrap();
+    let gespan = Scope::Repo("github.com/o/gespan@0123456789ab".into());
+    let widgets = Scope::Repo("github.com/o/widgets@ba9876543210".into());
+    let approved = |kind, scope: &Scope, title: &str| {
+        let entry = log
+            .propose(
+                NewEntry {
+                    kind,
+                    scope: scope.clone(),
+                    title: title.into(),
+                    text: title.into(),
+                    why: "the user said so".into(),
+                    user_answer: None,
+                    source: Default::default(),
+                },
+                1,
+            )
+            .unwrap();
+        log.approve(entry.id, None, false, &[], 2).unwrap().id
+    };
+    let short = approved(EntryKind::Preference, &Scope::Global, "Answer briefly");
+    let tests = approved(EntryKind::Preference, &Scope::Global, "Tests first");
+    let proposed = approved(EntryKind::Decision, &gespan, "Errors as values");
+    let only_proposed = approved(EntryKind::Decision, &widgets, "Widgets are pure");
+    let saved = store
+        .save_decision_in(&gespan, "/work/gespan-main", "Squash merges", "", &[], 3)
+        .unwrap();
+    store
+        .save_decision_in(
+            &Scope::Project("/work/api".into()),
+            "/work/api",
+            "Tabs, not spaces",
+            "",
+            &[],
+            3,
+        )
+        .unwrap();
+    let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+    window
+        .update(visual, |shell, window, cx| {
+            shell.open_my_tasks(window, cx);
+            let view = shell.my_tasks.clone().unwrap();
+            view.update(cx, |view, cx| {
+                view.store = Some(store.clone());
+                view.reload(cx);
+            });
+        })
+        .unwrap();
+    visual.run_until_parked();
+    click(visual, "my-tasks-tab-decisions");
+    let groups = page(window, visual).read_with(visual, |view, _| view.decision_groups_for_test());
+    let names: Vec<(&str, usize)> = groups
+        .iter()
+        .map(|(_, name, ids)| (name.as_str(), ids.len()))
+        .collect();
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted,
+        [
+            ("Your preferences", 2),
+            ("api", 1),
+            // Saved in the gespan-main checkout, with an agent's proposal for
+            // the same repository beside it.
+            ("gespan-main", 2),
+            // Only an agent's proposal: named after its repository.
+            ("widgets", 1),
+        ]
+    );
+    let ids = |name: &str| {
+        let mut ids = groups.iter().find(|(_, n, _)| n == name).unwrap().2.clone();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ids("Your preferences"), {
+        let mut both = vec![short, tests];
+        both.sort();
+        both
+    });
+    assert_eq!(ids("gespan-main"), {
+        let mut both = vec![proposed, saved];
+        both.sort();
+        both
+    });
+    assert_eq!(ids("widgets"), [only_proposed]);
+    for group in [
+        "my-tasks-group-global",
+        "my-tasks-group-repo:github.com/o/gespan@0123456789ab",
+        "my-tasks-group-/work/api",
+    ] {
+        assert!(on_screen(visual, group), "{group} is on the list");
+    }
+    // Editing and archiving work on the decision log's own entries.
+    click(visual, &format!("my-tasks-decision-{proposed}"));
+    click(visual, "my-tasks-edit-decision");
+    page(window, visual).update(visual, |view, cx| {
+        view.statement.update(cx, |input, cx| {
+            input.set_text("Return errors as values".into(), cx)
+        })
+    });
+    click(visual, "my-tasks-edit-save");
+    let entry = log.get(proposed).unwrap().unwrap().0;
+    assert_eq!(entry.text, "Return errors as values");
+    assert_eq!(entry.status, gespan_core::decisions::Status::Active);
+    click(visual, &format!("my-tasks-decision-{short}"));
+    click(visual, "my-tasks-archive-decision");
+    assert_eq!(
+        log.get(short).unwrap().unwrap().0.status,
+        gespan_core::decisions::Status::Archived
+    );
+    assert!(!on_screen(visual, &format!("my-tasks-decision-{short}")));
+}

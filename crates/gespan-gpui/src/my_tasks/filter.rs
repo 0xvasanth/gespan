@@ -1,7 +1,6 @@
 //! The filter menu, in Inbox's style: PROJECTS, KIND and WAITING.
 use super::*;
 use crate::popover::{Align, Anchor, popover};
-use crate::workspace::project_name;
 use gespan_core::tasks::MinWait;
 use gpui::{AnyElement, Div, FontWeight, Role, SharedString, Stateful, Toggled, px};
 
@@ -64,22 +63,22 @@ fn toggle<T: std::hash::Hash + Eq>(set: &mut std::collections::HashSet<T>, value
 impl MyTasks {
     /// Every project with a task, and any hidden one, so it can be shown again.
     /// The project and kind of each entry on the tab shown.
-    fn tab_entries(&self) -> Vec<(&str, Option<Kind>)> {
+    fn tab_entries(&self) -> Vec<(String, Option<Kind>)> {
         match self.tab {
             Tab::Waiting => self
                 .tasks
                 .iter()
-                .map(|t| (t.project.as_str(), Some(t.kind)))
+                .map(|t| (t.project.clone(), Some(t.kind)))
                 .collect(),
             Tab::Answered => self
                 .past
                 .iter()
-                .map(|t| (t.project.as_str(), Some(t.kind)))
+                .map(|t| (t.project.clone(), Some(t.kind)))
                 .collect(),
             Tab::Decisions => self
                 .decisions
                 .iter()
-                .map(|d| (d.project.as_str(), None))
+                .map(|d| (super::past::decision_group(d).0, None))
                 .collect(),
         }
     }
@@ -89,7 +88,7 @@ impl MyTasks {
         let entries = self.tab_entries();
         for project in entries
             .iter()
-            .map(|(project, _)| *project)
+            .map(|(project, _)| project.as_str())
             .chain(self.filter.hidden_projects.iter().map(String::as_str))
         {
             if !projects.iter().any(|p| p == project) {
@@ -114,7 +113,7 @@ impl MyTasks {
             rows.push(
                 menu_row(
                     format!("my-tasks-filter-project-{project}"),
-                    project_name(&project),
+                    self.project_label(&project),
                     Some(count),
                     shown,
                     Role::MenuItemCheckBox,

@@ -19,6 +19,7 @@ pub(super) fn kind_icon(kind: Kind) -> &'static str {
         Kind::Question | Kind::PilotChoice => "task-question",
         Kind::FlowApproval => "task-flow",
         Kind::DraftReview => "git-pull-request-draft",
+        Kind::Decision => "note",
     }
 }
 
@@ -31,6 +32,7 @@ pub(super) fn kind_status(kind: Kind) -> (&'static str, Tone) {
         Kind::FlowApproval => ("Flow", Tone::Muted),
         Kind::PilotChoice => ("Choice", Tone::Muted),
         Kind::DraftReview => ("Review", Tone::Muted),
+        Kind::Decision => ("Decision", Tone::Muted),
     }
 }
 
@@ -42,6 +44,9 @@ fn kind_ink(kind: Kind) -> Hsla {
         Kind::FlowApproval => (0x6ee7b7, 0x15874f),
         // A draft review waits quietly, like the muted status beside it.
         Kind::DraftReview => (0xa3a3a3, 0x666666),
+        // A decision to review: the questions' violet, since it comes from
+        // one.
+        Kind::Decision => (0xc0affc, 0x6d4fd6),
     };
     gpui::rgb(if is_light() { light } else { dark }).into()
 }

@@ -148,6 +148,34 @@ impl Entry {
     }
 }
 
+/// A fingerprint of what a review card showed of an entry: its title, text,
+/// why and user answer. Approving or rejecting a proposal carries the
+/// fingerprint the user saw, so a proposal an agent revised in the meantime
+/// is refused instead of decided unseen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShownHash([u8; 32]);
+
+impl ShownHash {
+    /// Each field is length-prefixed (and an absent answer marked apart from
+    /// an empty one), so no two different wordings share a fingerprint by
+    /// moving text from one field into the next.
+    pub fn of(title: &str, text: &str, why: &str, user_answer: Option<&str>) -> ShownHash {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        for field in [Some(title), Some(text), Some(why), user_answer] {
+            match field {
+                Some(value) => {
+                    hash.update([1]);
+                    hash.update((value.len() as u64).to_le_bytes());
+                    hash.update(value.as_bytes());
+                }
+                None => hash.update([0]),
+            }
+        }
+        ShownHash(hash.finalize().into())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Flag {
     pub id: i64,
@@ -194,6 +222,8 @@ pub enum Error {
     FlagNotFound(i64),
     /// A stored kind, status or scope this build does not recognise.
     BadValue(String),
+    /// A pending entry's wording is no longer what the user was shown.
+    Changed,
 }
 
 impl fmt::Display for Error {
@@ -207,6 +237,7 @@ impl fmt::Display for Error {
             Error::SelfReplace(id) => write!(f, "entry {id} cannot replace itself"),
             Error::FlagNotFound(id) => write!(f, "flag {id} does not exist"),
             Error::BadValue(value) => write!(f, "stored value {value:?} is not recognised"),
+            Error::Changed => f.write_str("This proposal changed. Review it again."),
         }
     }
 }

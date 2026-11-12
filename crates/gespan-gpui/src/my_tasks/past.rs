@@ -42,6 +42,64 @@ fn caption(text: impl Into<SharedString>) -> Div {
     glass::eyebrow(text)
 }
 
+/// The Decisions list's group key for preferences: their scope's text.
+const PREFERENCES: &str = "global";
+
+/// Where the Decisions list groups a decision, and the name a group of its
+/// own would show: preferences under "Your preferences"; a project decision
+/// under its project's folder name; a repository decision, which can come
+/// from any clone, under its repository's scope, named after the checkout it
+/// was saved in or, for an agent's proposal, after the repository.
+pub(super) fn decision_group(decision: &SavedDecision) -> (String, String) {
+    use gespan_core::decisions::{Kind as EntryKind, Scope};
+    match &decision.scope {
+        _ if decision.kind == EntryKind::Preference => {
+            (PREFERENCES.into(), "Your preferences".into())
+        }
+        Scope::Global => (PREFERENCES.into(), "Your preferences".into()),
+        Scope::Project(path) => (path.clone(), project_name(path)),
+        Scope::Repo(repo) => {
+            let saved_in = decision.project.as_str();
+            let label = if saved_in.starts_with("repo:") || saved_in == PREFERENCES {
+                repo_name(repo)
+            } else {
+                project_name(saved_in)
+            };
+            (format!("repo:{repo}"), label)
+        }
+    }
+}
+
+/// `github.com/o/gespan@0123456789ab` is the repository `gespan`.
+pub(super) fn repo_name(repo: &str) -> String {
+    let path = repo.rsplit_once('@').map_or(repo, |(path, _)| path);
+    path.rsplit('/').next().unwrap_or(path).to_owned()
+}
+
+/// Decisions grouped as [`decision_group`] says, in the order their first
+/// one comes. A group is named after its first member saved in a checkout,
+/// so a repository's decisions all show under one name.
+pub(super) fn decision_groups<'a>(
+    decisions: impl IntoIterator<Item = &'a SavedDecision>,
+) -> Vec<(String, String, Vec<&'a SavedDecision>)> {
+    let mut groups: Vec<(String, String, Vec<&SavedDecision>)> = Vec::new();
+    for decision in decisions {
+        let (key, label) = decision_group(decision);
+        match groups.iter_mut().find(|(k, _, _)| *k == key) {
+            Some((_, name, members)) => {
+                if !decision.project.starts_with("repo:")
+                    && members.iter().all(|m| m.project.starts_with("repo:"))
+                {
+                    *name = label;
+                }
+                members.push(decision);
+            }
+            None => groups.push((key, label, vec![decision])),
+        }
+    }
+    groups
+}
+
 /// The options a question item offered, with the ones picked marked.
 fn picked_options(item: &Value, picked: Option<&Value>) -> Vec<(String, bool)> {
     let chosen: Vec<&str> = picked
@@ -109,12 +167,34 @@ impl MyTasks {
             .collect()
     }
 
+    /// A project's name in the filter menu: on the Decisions tab, the name
+    /// its group shows.
+    pub(super) fn project_label(&self, project: &str) -> String {
+        if self.tab == Tab::Decisions
+            && let Some((_, label, _)) = decision_groups(&self.decisions)
+                .into_iter()
+                .find(|(key, _, _)| key == project)
+        {
+            return label;
+        }
+        project_name(project)
+    }
+
+    /// Every decision's group: its key, its name and its decisions' ids.
+    #[cfg(test)]
+    pub(crate) fn decision_groups_for_test(&self) -> Vec<(String, String, Vec<i64>)> {
+        decision_groups(&self.decisions)
+            .into_iter()
+            .map(|(key, name, members)| (key, name, members.iter().map(|d| d.id).collect()))
+            .collect()
+    }
+
     pub(crate) fn visible_decisions(&self, cx: &gpui::App) -> Vec<&SavedDecision> {
         let query = self.search.read(cx).content.to_lowercase();
         self.decisions
             .iter()
             .filter(|d| {
-                !self.filter.hidden_projects.contains(&d.project)
+                !self.filter.hidden_projects.contains(&decision_group(d).0)
                     && (query.is_empty()
                         || format!("{} {}", d.statement, d.why)
                             .to_lowercase()
@@ -331,16 +411,19 @@ impl MyTasks {
         let shown = self.visible_decisions(cx);
         let selected = self.selected_decision(&shown).map(|d| d.id);
         let mut rows = Vec::new();
-        for (ix, (project, decisions)) in
-            Self::grouped(shown, |d| &d.project).into_iter().enumerate()
-        {
-            rows.push(Self::group_header(&project, decisions.len(), ix == 0));
+        for (ix, (key, name, decisions)) in decision_groups(shown).into_iter().enumerate() {
+            rows.push(group_label(
+                format!("my-tasks-group-{key}"),
+                format!("{name} \u{b7} {}", decisions.len()),
+                ix == 0,
+            ));
             for decision in decisions {
                 let id = decision.id;
-                let meta = match decision.sources.len() {
-                    0 => "Written by hand".to_owned(),
-                    1 => "From 1 answer".to_owned(),
-                    n => format!("From {n} answers"),
+                let meta = match (decision.sources.len(), decision.session) {
+                    (0, Some(session)) => format!("Proposed in session {session}"),
+                    (0, None) => "Written by hand".to_owned(),
+                    (1, _) => "From 1 answer".to_owned(),
+                    (n, _) => format!("From {n} answers"),
                 };
                 rows.push(
                     task_row(format!("my-tasks-decision-{id}"), selected == Some(id))
@@ -569,6 +652,11 @@ impl MyTasks {
                 }
                 shown
             }
+            Kind::Decision => ["text", "why", "user_answer", "flag"]
+                .iter()
+                .filter_map(|field| request[*field].as_str().filter(|t| !t.is_empty()))
+                .map(|text| mono(text.to_owned()))
+                .collect(),
             Kind::PilotChoice => {
                 let answer = record.answer.as_deref().unwrap_or_default();
                 request["options"]
@@ -763,7 +851,12 @@ impl MyTasks {
                     .into_any_element()
             })
             .collect();
-        let bar = top_bar(&decision.project, "Decision".into());
+        let (_, group) = decision_group(&decision);
+        let noun = match decision.kind {
+            gespan_core::decisions::Kind::Preference => "Preference",
+            gespan_core::decisions::Kind::Decision => "Decision",
+        };
+        let bar = top_bar(&group, noun.into());
         let actions = if editing {
             div()
                 .flex()
@@ -823,7 +916,7 @@ impl MyTasks {
                 )
         };
         let card = glass::card_strong()
-            .child(caption(project_name(&decision.project)))
+            .child(caption(group))
             .child(if editing {
                 glass::field()
                     .debug_selector(|| "my-tasks-statement".into())

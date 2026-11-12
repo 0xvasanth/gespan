@@ -403,7 +403,16 @@ impl Store {
                     .order_by(task.closed_at().desc())
                     .exec(&mut db)
                     .await?;
+                let kind = crate::decisions::Kind::parse(&row.kind)
+                    .unwrap_or(crate::decisions::Kind::Decision);
+                // A row whose scope this build can't read stays with its
+                // project.
+                let scope = crate::decisions::Scope::parse(&row.scope)
+                    .unwrap_or_else(|_| crate::decisions::Scope::Project(row.project.clone()));
                 decisions.push(SavedDecision {
+                    kind,
+                    scope,
+                    session: row.session,
                     id: row.id,
                     project: row.project,
                     statement: row.statement,

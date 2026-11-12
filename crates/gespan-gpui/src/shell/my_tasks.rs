@@ -1,9 +1,10 @@
 //! The shell's side of My tasks: the page entity, its count for the sidebar,
 //! opening it, and the snapshot of everything waiting, built from every chat,
-//! the Pilots and the Flow store.
+//! the Pilots, the Flow store and the decision log.
 use super::*;
 use crate::conversation::approval_card::Card;
 use crate::my_tasks::{self, Body, MyTasks, Source, TaskItem};
+use gespan_core::decisions::{self, Entry, Flag, Review};
 use gespan_core::tasks::{self, History, Kind, TaskRecord};
 
 /// Turns of history a task opens with, and how many each "load more" adds.
@@ -329,7 +330,77 @@ impl Shell {
                 });
             }
         }
+        if decisions::enabled() {
+            found.extend(self.my_task_decisions.iter().cloned());
+        }
         found
+    }
+
+    /// Reads the decision log's proposals and open flags off the UI thread,
+    /// keeps them for My tasks and refreshes the list. A call while a read
+    /// runs reads again once it ends, so a review is never shown stale.
+    pub(super) fn load_decision_tasks(&mut self, cx: &mut Context<Self>) {
+        if self.decision_tasks_loading {
+            self.decision_tasks_again = true;
+            return;
+        }
+        self.decision_tasks_loading = true;
+        let work = cx.background_spawn(async move { waiting_decisions() });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                this.decision_tasks_loading = false;
+                match result {
+                    Ok(waiting) => {
+                        this.my_task_decisions = waiting.into_iter().map(decision_task).collect();
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "My tasks could not read the decision log")
+                    }
+                }
+                if std::mem::take(&mut this.decision_tasks_again) {
+                    this.load_decision_tasks(cx);
+                }
+                this.refresh_my_tasks(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Applies the user's review off the UI thread. Once it went through,
+    /// the task leaves the list and its answer is kept; when it failed (a
+    /// proposal an agent changed since the card showed it), the card says
+    /// why. Either way the log is read again, so the card shows what is there
+    /// now.
+    fn review_decision(&mut self, key: String, id: i64, review: Review, cx: &mut Context<Self>) {
+        let answer = match &review {
+            Review::Approve { .. } => "Approved",
+            Review::Reject { .. } => "Rejected",
+            Review::ReplaceFromFlag { .. } => "Replaced",
+            Review::DismissFlag { .. } => "Flag dismissed",
+        };
+        let now = i64::try_from(gespan_core::time::now_ms()).unwrap_or(i64::MAX);
+        let work = cx.background_spawn(async move {
+            decisions::service::with(|log| decisions::review::apply(log, id, review, now))
+                .and_then(|applied| applied)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                let view = this.ensure_my_tasks(cx);
+                match result {
+                    Ok(()) => {
+                        this.my_task_sent.insert(key.clone());
+                        let value = serde_json::json!({ "review": answer });
+                        this.keep_my_task_answer(&key, answer.to_owned(), value);
+                        view.update(cx, |view, cx| view.review_done(cx));
+                    }
+                    Err(error) => view.update(cx, |view, cx| view.set_review_error(key, error, cx)),
+                }
+                this.load_decision_tasks(cx);
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn open_my_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -345,6 +416,7 @@ impl Shell {
             ));
         }
         self.refresh_my_tasks(cx);
+        self.load_decision_tasks(cx);
         self.show_app_view(app_views::AppView::MyTasks, window, cx);
     }
 
@@ -401,7 +473,11 @@ impl Shell {
                         pilots.update(cx, |pilots, cx| pilots.open(pilot, window, cx));
                     }
                 }
+                Source::Log => {}
             },
+            my_tasks::Event::DecisionReview { key, id, review } => {
+                self.review_decision(key.clone(), *id, review.clone(), cx);
+            }
             my_tasks::Event::LoadEarlier(key) => {
                 let turns = self
                     .my_task_turns
@@ -416,6 +492,89 @@ impl Shell {
     #[cfg(test)]
     pub(super) fn show_my_tasks_for_test(&mut self, tasks: Vec<TaskItem>, cx: &mut Context<Self>) {
         self.set_my_tasks(tasks, cx);
+    }
+}
+
+/// How many similar active entries a proposal offers to replace.
+const SIMILAR_OFFERED: usize = 3;
+
+/// A decision-log item waiting on the user: a proposal with the active
+/// entries it might replace, or an active entry with an agent's open flag.
+struct WaitingDecision {
+    entry: Entry,
+    flag: Option<Flag>,
+    similar: Vec<Entry>,
+}
+
+/// What the decision log has waiting on the user; nothing while it is off.
+/// Runs off the UI thread: it reads the database.
+fn waiting_decisions() -> Result<Vec<WaitingDecision>, String> {
+    if !decisions::enabled() {
+        return Ok(Vec::new());
+    }
+    decisions::service::with(|log| {
+        let mut found = Vec::new();
+        for entry in log.pending().map_err(|e| e.to_string())? {
+            let similar = decisions::review::similar_active(log, &entry, SIMILAR_OFFERED);
+            found.push(WaitingDecision {
+                entry,
+                flag: None,
+                similar,
+            });
+        }
+        for (flag, entry) in log.open_flags().map_err(|e| e.to_string())? {
+            // A flag on an entry since replaced or archived has nothing left
+            // to decide.
+            if entry.status == decisions::Status::Active {
+                found.push(WaitingDecision {
+                    entry,
+                    flag: Some(flag),
+                    similar: Vec::new(),
+                });
+            }
+        }
+        Ok(found)
+    })?
+}
+
+/// A waiting proposal or flag as a My tasks item. It opens the session that
+/// proposed the entry (or raised the flag).
+fn decision_task(waiting: WaitingDecision) -> TaskItem {
+    let WaitingDecision {
+        entry,
+        flag,
+        similar,
+    } = waiting;
+    let (key, who, session, since) = match &flag {
+        None => (
+            format!("decision:{}", entry.id),
+            Kind::Decision.label().to_owned(),
+            entry.source.session,
+            entry.created_ms,
+        ),
+        Some(flag) => (
+            format!("decision-flag:{}", flag.id),
+            format!("An agent flagged {}", entry.label()),
+            Some(flag.session),
+            flag.created_ms,
+        ),
+    };
+    TaskItem {
+        key,
+        kind: Kind::Decision,
+        project: my_tasks::decision_project(&entry),
+        headline: entry.title.clone(),
+        who,
+        agent: None,
+        source_label: entry.label(),
+        source: session.map_or(Source::Log, Source::Session),
+        since_ms: u64::try_from(since).unwrap_or(0),
+        history: History::default(),
+        body: Body::Decision {
+            entry: Box::new(entry),
+            flag,
+            similar,
+        },
     }
 }
 

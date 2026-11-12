@@ -8,7 +8,9 @@
 //! deterministic under test.
 use std::path::Path;
 
-use super::entry::{Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, Source, Status};
+use super::entry::{
+    Config, Edit, Entry, Error, Flag, Kind, NewEntry, Scope, ShownHash, Source, Status,
+};
 use crate::store::db::{args, Sql, SqlRow};
 use crate::store::my_tasks::TaskDecision;
 
@@ -194,6 +196,69 @@ impl DecisionStore {
         replaces: &[i64],
         now_ms: i64,
     ) -> Result<Entry, Error> {
+        self.approve_checked(id, None, edit, pinned, replaces, now_ms)
+    }
+
+    /// [`approve`](Self::approve), but only while the proposal still reads
+    /// as `shown` (its title, text, why and user answer). The check and the
+    /// approval are one transaction, so an agent's `revise_pending` can't
+    /// slip in between; a changed proposal is refused with
+    /// [`Error::Changed`] and nothing is written.
+    pub fn approve_if_unchanged(
+        &self,
+        id: i64,
+        shown: &ShownHash,
+        edit: Option<Edit>,
+        pinned: bool,
+        replaces: &[i64],
+        now_ms: i64,
+    ) -> Result<Entry, Error> {
+        self.approve_checked(id, Some(shown.clone()), edit, pinned, replaces, now_ms)
+    }
+
+    /// [`reject`](Self::reject), but only while the proposal still reads as
+    /// `shown`; see [`approve_if_unchanged`](Self::approve_if_unchanged).
+    pub fn reject_if_unchanged(
+        &self,
+        id: i64,
+        shown: &ShownHash,
+        now_ms: i64,
+    ) -> Result<(), Error> {
+        let shown = shown.clone();
+        let refused = self.db.transaction(move |tx| {
+            Box::pin(async move {
+                let Some(current) = TaskDecision::filter_by_id(id).first().exec(tx).await? else {
+                    return Ok(Some(Error::NotFound(id)));
+                };
+                if Status::parse(&current.status).ok() != Some(Status::Pending) {
+                    return Ok(Some(Error::NotPending(id)));
+                }
+                if shown_now(&current) != shown {
+                    return Ok(Some(Error::Changed));
+                }
+                let mut current = current;
+                current
+                    .update()
+                    .status(Status::Rejected.as_str())
+                    .decided_at(Some(now_ms))
+                    .updated_at(now_ms)
+                    .exec(tx)
+                    .await?;
+                Ok(None)
+            })
+        })?;
+        refused.map_or(Ok(()), Err)
+    }
+
+    fn approve_checked(
+        &self,
+        id: i64,
+        shown: Option<ShownHash>,
+        edit: Option<Edit>,
+        pinned: bool,
+        replaces: &[i64],
+        now_ms: i64,
+    ) -> Result<Entry, Error> {
         let edit = match edit {
             Some(ed) => {
                 if ed.why.trim().is_empty() {
@@ -218,6 +283,9 @@ impl DecisionStore {
                 };
                 if status(&current) != Some(Status::Pending) {
                     return Ok(Some(Error::NotPending(id)));
+                }
+                if shown.is_some_and(|shown| shown_now(&current) != shown) {
+                    return Ok(Some(Error::Changed));
                 }
                 for &old in &replaces {
                     if old == id {
@@ -485,6 +553,16 @@ impl DecisionStore {
             .map(|row| row_to_entry(&row))
             .transpose()
     }
+}
+
+/// The fingerprint of what a review card would show of `row` now.
+fn shown_now(row: &TaskDecision) -> ShownHash {
+    ShownHash::of(
+        &row.title,
+        &row.statement,
+        &row.why,
+        row.user_answer.as_deref(),
+    )
 }
 
 fn row_to_entry(r: &SqlRow) -> Result<Entry, Error> {

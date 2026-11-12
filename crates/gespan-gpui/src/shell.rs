@@ -801,6 +801,11 @@ pub(crate) struct Shell {
     draft_forge: Option<review_drafts::DraftForge>,
     /// The last Flow approvals read, for a tick whose store is busy.
     my_task_flows: Vec<crate::my_tasks::TaskItem>,
+    /// The decision log's proposals and flags, as last read off the UI thread.
+    my_task_decisions: Vec<crate::my_tasks::TaskItem>,
+    decision_tasks_loading: bool,
+    /// Another read was asked for while one ran.
+    decision_tasks_again: bool,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -1079,6 +1084,7 @@ impl Shell {
                     .update(cx, |this, cx| {
                         this.poll_reminders(cx);
                         this.poll_automations(cx);
+                        this.load_decision_tasks(cx);
                         this.update_chat_visibility(cx);
                         if this.workspace.sidebar_visible {
                             this.notify_sidebar(cx);
@@ -1233,6 +1239,9 @@ impl Shell {
             my_task_sent: HashSet::new(),
             draft_forge: None,
             my_task_flows: Vec::new(),
+            my_task_decisions: Vec::new(),
+            decision_tasks_loading: false,
+            decision_tasks_again: false,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
