@@ -1,12 +1,12 @@
 //! The page's list (automations grouped by project, each a frosted card with
 //! a run sparkline) and the detail's summary cards.
 use super::*;
-use crate::modal;
+use crate::glass;
 
 /// Days the card sparkline covers, oldest first and today last.
 pub(super) const SPARK_DAYS: usize = 10;
 const CARD_RADIUS: f32 = 12.;
-const SPARK_HEIGHT: f32 = 22.;
+const SPARK_HEIGHT: f32 = 16.;
 
 /// The editor section a summary card jumps to, in the order the Instructions
 /// tab draws them.
@@ -65,11 +65,11 @@ impl Automations {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(10.))
+            .px(px(12.))
             .pb(px(12.))
             .flex()
             .flex_col()
-            .gap(px(6.));
+            .gap(px(8.));
         if visible.is_empty() {
             return list.child(
                 div()
@@ -93,19 +93,17 @@ impl Automations {
                 div()
                     .debug_selector(move || selector)
                     .px(px(6.))
-                    .pt(px(if index == 0 { 4. } else { 10. }))
+                    .pt(px(if index == 0 { 2. } else { 10. }))
+                    .pb(px(2.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .text_size(px(12.))
-                    .text_color(content(0.55))
                     .child(self.project_mark(&cwd, 14.))
                     .child(
-                        div()
+                        glass::eyebrow(self.project_label(&cwd))
                             .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .child(self.project_label(&cwd)),
+                            .truncate(),
                     ),
             );
             for automation in items {
@@ -129,24 +127,27 @@ impl Automations {
         let zeros = [0; SPARK_DAYS];
         let counts = self.sparklines.get(&id).map_or(&zeros[..], Vec::as_slice);
         let selector = format!("automation-card-{id}");
-        div()
+        // The selected automation is an accent-edged card; the rest are
+        // plain glass.
+        glass::card()
             .id(SharedString::from(format!("automation-{id}")))
             .debug_selector(move || selector)
             .relative()
             .flex_shrink_0()
             .rounded(px(CARD_RADIUS))
-            .border_1()
-            .border_color(content(modal::BORDER))
-            .child(modal::surface(CARD_RADIUS - 1.))
+            .when(selected, |d| {
+                d.border_color(accent_color().opacity(0.45))
+                    .bg(accent_color().opacity(0.08))
+            })
             .child(
                 div()
                     .id(SharedString::from(format!("open-{id}")))
                     .role(Role::Button)
                     .aria_label(format!("Open {}", automation.name))
+                    .aria_selected(selected)
                     .relative()
                     .rounded(px(CARD_RADIUS - 1.))
-                    .when(selected, |d| d.bg(content(0.1)))
-                    .when(!selected, |d| d.hover(|s| s.bg(content(0.05))))
+                    .when(!selected, |d| d.hover(|s| s.bg(glass::hover_fill())))
                     .p(px(12.))
                     .flex()
                     .flex_col()
@@ -157,17 +158,7 @@ impl Automations {
                             .flex()
                             .items_center()
                             .gap(px(10.))
-                            .child(
-                                div()
-                                    .size(px(30.))
-                                    .flex_shrink_0()
-                                    .rounded(px(8.))
-                                    .bg(content(0.08))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(trigger_mark(&mark, 16.)),
-                            )
+                            .child(icon_tile(&mark, 30., 14.))
                             .child(
                                 div()
                                     .flex_1()
@@ -185,8 +176,8 @@ impl Automations {
                                     .child(
                                         div()
                                             .truncate()
-                                            .text_size(px(11.))
-                                            .text_color(content(0.5))
+                                            .text_size(px(11.5))
+                                            .text_color(content(0.55))
                                             .child(format!(
                                                 "{} · {}",
                                                 automation.trigger_label(),
@@ -205,17 +196,16 @@ impl Automations {
                     .child(
                         div()
                             .flex()
-                            .items_end()
+                            .items_center()
                             .justify_between()
                             .gap(px(10.))
                             .child(sparkline(&id, counts))
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(11.))
-                                    .text_color(content(0.5))
-                                    .child(last_run(automation.last_run_at, now)),
-                            ),
+                            .child(last_run_note(
+                                &id,
+                                automation.last_run_status.as_deref(),
+                                automation.last_run_at,
+                                now,
+                            )),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.select(id.clone(), cx))),
             )
@@ -347,19 +337,16 @@ impl Automations {
                 let project =
                     card.key == "project" && self.editor.as_ref().is_some_and(|e| !e.saved);
                 let selector = format!("automation-summary-{}", card.key);
-                div()
+                glass::card()
                     .id(SharedString::from(selector.clone()))
                     .debug_selector(move || selector)
                     .role(Role::Button)
                     .aria_label(format!("{}: {}", card.title, card.primary))
+                    .cursor_pointer()
                     .relative()
                     .flex_1()
                     .min_w_0()
-                    .rounded(px(14.))
-                    .border_1()
-                    .border_color(content(modal::BORDER))
-                    .hover(|s| s.border_color(content(0.2)))
-                    .child(modal::surface(13.))
+                    .hover(|s| s.bg(glass::fill_strong()))
                     .child(
                         div()
                             .relative()
@@ -367,12 +354,7 @@ impl Automations {
                             .flex()
                             .flex_col()
                             .gap(px(4.))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(content(0.5))
-                                    .child(card.title),
-                            )
+                            .child(glass::eyebrow(card.title))
                             .child(
                                 div()
                                     .truncate()
@@ -425,12 +407,12 @@ fn sparkline(id: &str, counts: &[usize]) -> gpui::Stateful<gpui::Div> {
         .flex_shrink_0()
         .flex()
         .items_end()
-        .gap(px(3.))
+        .gap(px(2.))
         .children(counts.iter().enumerate().map(|(day, &count)| {
             let selector = format!("automation-spark-{id}-{day}");
             div()
                 .debug_selector(move || selector)
-                .w(px(5.))
+                .w(px(4.))
                 .rounded(px(2.))
                 .h(px(if count == 0 {
                     2.
@@ -438,19 +420,25 @@ fn sparkline(id: &str, counts: &[usize]) -> gpui::Stateful<gpui::Div> {
                     4. + (SPARK_HEIGHT - 4.) * count as f32 / peak as f32
                 }))
                 .bg(if count == 0 {
-                    content(0.14)
+                    content(0.12)
                 } else {
-                    accent_color()
+                    accent_color().opacity(0.8)
                 })
         }))
 }
 
 fn last_run(at: Option<i64>, now: i64) -> String {
-    let Some(at) = at.filter(|at| *at > 0) else {
-        return "Never run".into();
-    };
+    match at.filter(|at| *at > 0) {
+        None => "Never run".into(),
+        Some(at) => format!("Last run {}", ago(at, now)),
+    }
+}
+
+/// How long before `now` the run at `at` was: "5m ago", or a date once it is
+/// a week old.
+fn ago(at: i64, now: i64) -> String {
     let minutes = (now - at).max(0) / 60_000;
-    let label = match minutes {
+    match minutes {
         0 => "just now".into(),
         1..60 => format!("{minutes}m ago"),
         60..1440 => format!("{}h ago", minutes / 60),
@@ -462,8 +450,73 @@ fn last_run(at: Option<i64>, now: i64) -> String {
                     .to_string()
             })
             .unwrap_or_default(),
+    }
+}
+
+/// The card's latest-run pill: the result in words and its tone, so colour
+/// is never the only cue. `None` when there is no known result to show.
+pub(super) fn last_run_pill(
+    status: Option<&str>,
+    at: Option<i64>,
+    now: i64,
+) -> Option<(String, glass::Tone)> {
+    use glass::Tone;
+    let when = at.filter(|at| *at > 0).map(|at| ago(at, now));
+    let pill = match (status?, when) {
+        ("running", _) => ("Running now".into(), Tone::Running),
+        ("pending", _) => ("Queued".into(), Tone::Running),
+        ("succeeded", Some(when)) => (format!("Last run {when}"), Tone::Ok),
+        ("failed", Some(when)) => (format!("Failed {when}"), Tone::Bad),
+        ("skipped", Some(when)) => (format!("Skipped {when}"), Tone::Waiting),
+        ("cancelled", Some(when)) => (format!("Cancelled {when}"), Tone::Muted),
+        _ => return None,
     };
-    format!("Last run {label}")
+    Some(pill)
+}
+
+/// "Last run …" beneath a card: a status pill once the latest result is
+/// known, plain text before that.
+fn last_run_note(id: &str, status: Option<&str>, at: Option<i64>, now: i64) -> AnyElement {
+    let id = id.to_owned();
+    match last_run_pill(status, at, now) {
+        Some((label, tone)) => glass::status(label, tone)
+            .h(px(18.))
+            .text_size(px(11.))
+            .debug_selector(move || format!("automation-last-run-pill-{id}"))
+            .into_any_element(),
+        None => div()
+            .debug_selector(move || format!("automation-last-run-{id}"))
+            .truncate()
+            .text_size(px(11.5))
+            .text_color(content(0.55))
+            .child(last_run(at, now))
+            .into_any_element(),
+    }
+}
+
+/// A rounded glass tile holding a trigger's mark.
+pub(super) fn icon_tile(kind: &str, side: f32, glyph: f32) -> gpui::Div {
+    tile(side, trigger_mark(kind, glyph))
+}
+
+/// A gallery glyph in the card's ink.
+pub(super) fn icon_glyph(path: &'static str, side: f32) -> AnyElement {
+    icon(path, side).text_color(content(0.9)).into_any_element()
+}
+
+/// A rounded glass tile around a glyph: a card's icon plate.
+pub(super) fn tile(side: f32, glyph: AnyElement) -> gpui::Div {
+    div()
+        .size(px(side))
+        .flex_shrink_0()
+        .rounded(px(side * 0.27))
+        .bg(glass::fill_strong())
+        .border_1()
+        .border_color(glass::edge())
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(glyph)
 }
 
 fn source_name(kind: &str) -> &str {
@@ -493,5 +546,41 @@ mod tests {
         // A clock a little behind the run never reads as the future.
         assert_eq!(last_run(Some(now + 60_000), now), "Last run just now");
         assert!(!last_run(Some(now - 30 * 86_400_000), now).contains("ago"));
+    }
+
+    #[test]
+    fn last_run_pill_names_the_result_in_words() {
+        use glass::Tone;
+        let now = 1_800_000_000_000;
+        let hours_ago = Some(now - 6 * 3_600_000);
+        let pill = |status| last_run_pill(Some(status), hours_ago, now);
+        assert_eq!(
+            pill("succeeded"),
+            Some(("Last run 6h ago".into(), Tone::Ok))
+        );
+        // Anything but success says what happened, so colour is never the
+        // only cue.
+        assert_eq!(pill("failed"), Some(("Failed 6h ago".into(), Tone::Bad)));
+        assert_eq!(
+            pill("skipped"),
+            Some(("Skipped 6h ago".into(), Tone::Waiting))
+        );
+        assert_eq!(
+            pill("cancelled"),
+            Some(("Cancelled 6h ago".into(), Tone::Muted))
+        );
+        // A live run is about now, whenever it was scheduled.
+        assert_eq!(pill("running"), Some(("Running now".into(), Tone::Running)));
+        assert_eq!(pill("pending"), Some(("Queued".into(), Tone::Running)));
+        assert_eq!(
+            last_run_pill(Some("running"), None, now),
+            Some(("Running now".into(), Tone::Running))
+        );
+        // No result yet, an unknown status, or a finished result with no time
+        // fall back to the plain "Last run …" line.
+        assert_eq!(last_run_pill(None, hours_ago, now), None);
+        assert_eq!(pill("exploded"), None);
+        assert_eq!(last_run_pill(Some("failed"), None, now), None);
+        assert_eq!(last_run_pill(Some("succeeded"), Some(0), now), None);
     }
 }
