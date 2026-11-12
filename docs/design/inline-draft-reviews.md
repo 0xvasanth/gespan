@@ -78,8 +78,13 @@ meant. There is a cap of 50 inline comments.
 
 GitLab runs quick actions (`/merge`, `/approve`, …) from a note when it is
 published, bots act on `/commands`, and a `/gespan review` line would start
-another review. Every line Gespan posts that starts with `/` outside a code
-fence is escaped as `\/`, which renders the same.
+another review. Every line Gespan posts that starts with `/` is escaped as
+`\/`, which renders the same, fenced or not, since forges disagree on what
+a fence is. The whole summary is escaped, not just the bodies, and file paths
+from the reply lose control characters and backticks. Draft and Post runs,
+where the agent posts with `gh`, are denied any body with such a line. That
+is why the account's own `/gespan review` can count: no Gespan reviewer can
+post one.
 
 ## Asking the user
 

@@ -691,6 +691,12 @@ fn api_read(target: Option<&ReviewTarget>, args: &[&str]) -> bool {
     }
 }
 
+/// A posted body with a line starting with `/` could run a GitLab quick
+/// action or a bot's command, or start another Gespan review.
+fn runs_commands(body: &str) -> bool {
+    body.lines().any(|line| line.trim_start().starts_with('/'))
+}
+
 /// The one write: a comment review (or plain comment) on the target pull
 /// request. Only the flags it needs are understood; any other flag denies.
 fn post(policy: &ReviewPolicy, args: &[&str], review: bool) -> Verdict {
@@ -707,17 +713,18 @@ fn post(policy: &ReviewPolicy, args: &[&str], review: bool) -> Verdict {
                 Some(value) => repos.push(value),
                 None => return Verdict::Deny,
             },
-            "-b" | "--body" => {
-                if iter.next().is_none() {
-                    return Verdict::Deny;
-                }
-            }
+            "-b" | "--body" => match iter.next() {
+                Some(body) if !runs_commands(body) => {}
+                _ => return Verdict::Deny,
+            },
             "-c" | "--comment" if review => comment = true,
             _ => {
                 if let Some(value) = arg.strip_prefix("--repo=") {
                     repos.push(value);
-                } else if arg.starts_with("--body=") {
-                    // The body text itself is not inspected.
+                } else if let Some(body) = arg.strip_prefix("--body=") {
+                    if runs_commands(body) {
+                        return Verdict::Deny;
+                    }
                 } else if arg.starts_with('-') || selector.replace(arg).is_some() {
                     return Verdict::Deny;
                 }
@@ -1251,6 +1258,23 @@ mod tests {
             ] {
                 assert_eq!(verdict(&p, c), Verdict::Deny, "{results:?} {c}");
             }
+        }
+    }
+
+    #[test]
+    fn a_posted_review_cannot_carry_a_slash_command_line() {
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let p = policy(results);
+            for c in [
+                "gh pr review 7 --repo acme/app --comment --body '/gespan review'",
+                "gh pr review 7 --repo acme/app --comment --body 'ok\n  /approve'",
+                "gh pr comment 7 --repo acme/app -b '/merge'",
+                "gh pr comment 7 --repo acme/app --body='/gespan review'",
+            ] {
+                assert_eq!(verdict(&p, c), Verdict::Deny, "{results:?} {c}");
+            }
+            let fine = "gh pr review 7 --repo acme/app --comment --body 'Use a/b paths'";
+            assert_ne!(verdict(&p, fine), Verdict::Deny, "{results:?}");
         }
     }
 

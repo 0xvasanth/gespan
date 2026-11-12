@@ -80,7 +80,14 @@ fn finding(value: &Value) -> Option<Finding> {
     if body.is_empty() {
         return None;
     }
-    let path = normalize_path(value.get("path").and_then(Value::as_str).unwrap_or(""));
+    // The path is agent text too: it lands in the posted summary, so no
+    // control characters or backticks that could start a line or end the
+    // code span.
+    let path: String = normalize_path(value.get("path").and_then(Value::as_str).unwrap_or(""))
+        .chars()
+        .filter(|c| !c.is_control() && *c != '`')
+        .take(400)
+        .collect();
     let side = match value
         .get("side")
         .and_then(Value::as_str)
@@ -139,29 +146,17 @@ fn clip(text: &str) -> String {
     }
 }
 
-/// Escapes every line that starts with `/` outside a code fence, so posting
+/// Escapes every line that starts with `/`, so posting
 /// the text runs nothing: GitLab applies quick actions such as `/merge` or
 /// `/approve` from a published note, bots act on `/commands`, and a
 /// `/gespan review` line would start another review. `\/` renders as `/`.
 pub fn inert(text: &str) -> String {
+    // Every such line, inside a code fence or not: forges and bots do not
+    // agree on what a fence is, and `\/` in code only changes how it looks.
     let mut out = String::with_capacity(text.len());
-    let mut fence: Option<(char, usize)> = None;
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        let mark = trimmed.chars().next().filter(|c| *c == '`' || *c == '~');
-        if let Some(c) = mark {
-            let run = trimmed.chars().take_while(|x| *x == c).count();
-            if run >= 3 {
-                fence = match fence {
-                    None => Some((c, run)),
-                    Some((open, len)) if open == c && run >= len => None,
-                    other => other,
-                };
-                out.push_str(line);
-                continue;
-            }
-        }
-        if fence.is_none() && trimmed.starts_with('/') {
+        if trimmed.starts_with('/') {
             let indent = line.len() - trimmed.len();
             out.push_str(&line[..indent]);
             out.push('\\');
@@ -258,7 +253,8 @@ impl Plan {
                 out.push_str(&format!("\n- {place}{body}"));
             }
         }
-        out
+        // Everything here is posted: no line of it may run a command.
+        inert(&out)
     }
 }
 

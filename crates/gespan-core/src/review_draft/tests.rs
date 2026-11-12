@@ -214,10 +214,10 @@ fn a_longer_fence_and_long_bodies_are_handled() {
 
 #[test]
 fn slash_commands_in_anything_gespan_posts_are_made_inert() {
-    let text = "/merge\n  /approve\nok /not-a-command\n```\n/inside code\n```\n/gespan review";
+    let text = "/merge\n  /approve\nok /not-a-command\n```\n/inside code\n```\n~~~\n/tilde fence\n/gespan review";
     assert_eq!(
         inert(text),
-        "\\/merge\n  \\/approve\nok /not-a-command\n```\n/inside code\n```\n\\/gespan review"
+        "\\/merge\n  \\/approve\nok /not-a-command\n```\n\\/inside code\n```\n~~~\n\\/tilde fence\n\\/gespan review"
     );
     // A reply steered by the pull request into quick actions or a new review
     // posts none of them.
@@ -231,6 +231,27 @@ fn slash_commands_in_anything_gespan_posts_are_made_inert() {
     ));
     // So does a reply without a block.
     assert_eq!(parse_reply("/merge").summary, "\\/merge");
+}
+
+#[test]
+fn an_agent_path_cannot_put_a_command_on_its_own_line_in_the_summary() {
+    let findings = parse_reply(&reply(
+        r#"{"summary":"s","comments":[{"path":"x\n/merge\r\n/approve`","line":1,"body":"b"}]}"#,
+    ));
+    assert_eq!(findings.comments[0].path, "x/merge/approve");
+    let plan = Plan::new(findings, &map());
+    let body = plan.body();
+    assert!(
+        body.lines().all(|l| !l.trim_start().starts_with('/')),
+        "{body}"
+    );
+    // Even a summary built by hand is made inert as a whole.
+    let plan = Plan {
+        summary: "ok".into(),
+        inline: Vec::new(),
+        general: vec![finding("p", Side::New, Some(1), "a\n/close")],
+    };
+    assert!(plan.body().contains("\\/close"), "{}", plan.body());
 }
 
 // ------------------------------------------------------------ placement
