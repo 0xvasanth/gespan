@@ -1,6 +1,7 @@
 //! OpenCode v1 snapshots and v2 durable events share one native transcript.
 use super::*;
 use crate::agent::{Question, QuestionItem, QuestionOption};
+use crate::review_policy::{self, ReviewPolicy, Verdict};
 use crate::tool::tasks::{AgentRun, AgentStep, Panel};
 use std::collections::HashSet;
 
@@ -440,6 +441,33 @@ impl State {
                         .as_str()
                         .or_else(|| permission["action"].as_str())
                         .unwrap_or("tool");
+                    if let Some(policy) = self.protocol.request.settings.review.clone() {
+                        let verdict = review_verdict(&policy, action, permission);
+                        match verdict {
+                            Ok((Verdict::Allow, _)) => client.permission(&session, id, true)?,
+                            Ok((Verdict::Ask, command)) if interactive => {
+                                let ui = format!("opencode-permission-{id}");
+                                self.approvals.insert(
+                                    ui.clone(),
+                                    Pending {
+                                        session: session.clone(),
+                                        wire: id.into(),
+                                        form: None,
+                                    },
+                                );
+                                events.push(Event::Approval(Approval {
+                                    id: ui,
+                                    title: action.into(),
+                                    detail: command.unwrap_or_else(|| permission.to_string()),
+                                    can_remember: false,
+                                    tool: None,
+                                }));
+                            }
+                            // Nobody to ask, no command to judge, or not allowed: reject.
+                            _ => client.permission(&session, id, false)?,
+                        }
+                        return Ok(events);
+                    }
                     let planning = self.protocol.request.settings.plan
                         || self.protocol.request.settings.access == AccessMode::ReadOnly;
                     if planning
@@ -919,4 +947,49 @@ pub(super) fn error_message(value: &Value) -> String {
         .or_else(|| value["error"]["message"].as_str())
         .unwrap_or("OpenCode session failed.")
         .into()
+}
+
+/// The command an opencode permission asks to run: its `pattern` (a string, or
+/// an array joined into one shell line), else `metadata.command`.
+pub(super) fn permission_command(permission: &Value) -> Option<String> {
+    let text = |value: &Value| -> Option<String> {
+        match value {
+            Value::String(text) => Some(text.clone()),
+            Value::Array(words) => {
+                let words: Option<Vec<&str>> = words.iter().map(Value::as_str).collect();
+                shlex::try_join(words?).ok()
+            }
+            _ => None,
+        }
+    };
+    text(&permission["pattern"])
+        .or_else(|| text(&permission["metadata"]["command"]))
+        .filter(|command| !command.trim().is_empty())
+}
+
+/// What a pull request review does with a permission request. `Ask` carries
+/// the command the user is shown. Anything unclear is a rejection.
+fn review_verdict(
+    policy: &ReviewPolicy,
+    action: &str,
+    permission: &Value,
+) -> Result<(Verdict, Option<String>), ()> {
+    let action = action.to_lowercase();
+    if ["read", "grep", "glob", "search", "find"].contains(&action.as_str()) {
+        return Ok((Verdict::Allow, None));
+    }
+    if !["bash", "command", "shell"].contains(&action.as_str()) {
+        return Err(());
+    }
+    // Anything beside the command that changes what runs cannot be judged.
+    let changes_run = |value: &Value| {
+        ["env", "args", "arguments"]
+            .iter()
+            .any(|key| !value[*key].is_null())
+    };
+    if changes_run(permission) || changes_run(&permission["metadata"]) {
+        return Err(());
+    }
+    let command = permission_command(permission).ok_or(())?;
+    Ok((review_policy::verdict(policy, &command), Some(command)))
 }
