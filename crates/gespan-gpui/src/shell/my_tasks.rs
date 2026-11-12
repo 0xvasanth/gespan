@@ -197,6 +197,7 @@ impl Shell {
                     kind: Kind::Approval,
                     project: project.clone(),
                     who: format!("{harness} wants approval"),
+                    agent: Some(harness.to_string()),
                     source_label: title.clone(),
                     source: Source::Session(id),
                     body: Body::Approval {
@@ -216,6 +217,7 @@ impl Shell {
                     kind: Kind::Question,
                     project: project.clone(),
                     who: format!("{harness} asks"),
+                    agent: Some(harness.to_string()),
                     source_label: title.clone(),
                     source: Source::Session(id),
                     body: Body::Question(card.clone()),
@@ -239,6 +241,7 @@ impl Shell {
                     kind: Kind::PilotChoice,
                     project: chat.summary.cwd.clone(),
                     who: format!("{name} asks"),
+                    agent: Some("Pilot".into()),
                     source_label: name,
                     source: Source::Pilot { pilot, session },
                     body: Body::Choice {
@@ -284,6 +287,8 @@ impl Shell {
                 },
                 since_ms: u64::try_from(saved.created_at).unwrap_or(now),
                 history: History::default(),
+                // A review run's draft, not one agent's chat: no agent pill.
+                agent: None,
             });
         }
         // A run write in progress holds the store; this tick keeps the last
@@ -313,6 +318,7 @@ impl Shell {
                     project: run.flow.cwd.clone(),
                     headline: format!("Approve step \u{201c}{}\u{201d}?", visit.state_id),
                     who: format!("{} Flow", run.flow.name),
+                    agent: None,
                     source_label: format!("{} · run {short}", run.flow.name),
                     source: Source::FlowRun(run.id.clone()),
                     body: Body::Flow {

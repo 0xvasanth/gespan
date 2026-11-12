@@ -66,7 +66,6 @@ pub(super) fn glass_page_header(title: &'static str, description: &'static str) 
         )
         .child(
             div()
-                .max_w(px(576.))
                 .text_size(px(13.))
                 .line_height(px(20.))
                 .text_color(content(0.62))
@@ -94,6 +93,37 @@ fn hue_track() -> Div {
         }))
 }
 
+/// A picture option: a small preview over its name, ringed in the accent
+/// once chosen.
+pub(super) fn picture_option(
+    id: SharedString,
+    preview: Div,
+    label: &'static str,
+    selected: bool,
+) -> gpui::Stateful<Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(8.))
+        .text_size(px(12.))
+        .text_color(content(if selected { 1. } else { 0.62 }))
+        .hover(|s| s.text_color(content(1.)))
+        .child(preview.overflow_hidden().relative().border_1().map(|d| {
+            if selected {
+                d.border_color(accent_color()).shadow(vec![
+                    gpui::BoxShadow::new(px(0.), px(0.), accent_color().opacity(0.35))
+                        .spread_radius(px(2.)),
+                ])
+            } else {
+                d.border_color(content(0.1))
+            }
+        }))
+        .child(label)
+}
+
 /// A muted line inside a group card: an empty state or a hint.
 pub(super) fn note(text: impl Into<SharedString>) -> AnyElement {
     div()
@@ -104,6 +134,50 @@ pub(super) fn note(text: impl Into<SharedString>) -> AnyElement {
         .text_color(content(0.45))
         .child(text.into())
         .into_any_element()
+}
+
+/// Settings' secondary button on the glass pages: a glass plate, or red
+/// text when it destroys something. Same arguments as [`secondary_button`].
+pub(super) fn glass_secondary(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    danger: bool,
+    disabled: bool,
+) -> Stateful<Div> {
+    let label = label.into();
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .h(px(28.))
+        .px(px(11.))
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap(px(6.))
+        .rounded(px(8.))
+        .text_size(px(12.5))
+        .whitespace_nowrap()
+        .map(|d| {
+            if danger {
+                d.text_color(red(1.))
+            } else {
+                d.bg(crate::glass::fill_strong())
+                    .border_1()
+                    .border_color(crate::glass::edge())
+                    .text_color(content(0.9))
+            }
+        })
+        .map(|d| {
+            if disabled {
+                d.opacity(0.4)
+            } else if danger {
+                d.cursor_pointer().hover(|s| s.bg(red(0.1)))
+            } else {
+                d.cursor_pointer()
+                    .hover(|s| s.bg(content(0.12)).text_color(content(1.)))
+            }
+        })
 }
 
 pub(crate) fn secondary_button(
@@ -236,7 +310,7 @@ impl SettingsView {
     ) -> AnyElement {
         let flash = self.flashing(id);
         if self.glass() {
-            return self.glass_group(id, title, description, action, children);
+            return self.glass_group(id, title, description, action, None, children);
         }
         div()
             .relative()
@@ -291,12 +365,14 @@ impl SettingsView {
 
     /// The glass Group: a title over a glass card whose rows part on
     /// hairlines. The page's column spaces groups apart.
-    fn glass_group(
+    /// `toolbar` sits between the title and the card: a search, a filter.
+    pub(super) fn glass_group(
         &self,
         id: Option<&'static str>,
         title: impl IntoElement,
         description: Option<SharedString>,
         action: Option<AnyElement>,
+        toolbar: Option<AnyElement>,
         children: Vec<AnyElement>,
     ) -> AnyElement {
         let flash = self.flashing(id);
@@ -319,7 +395,7 @@ impl SettingsView {
                             .child(
                                 div()
                                     .text_size(px(13.))
-                                    .line_height(px(19.5))
+                                    .line_height(px(16.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(content(1.))
                                     .child(title),
@@ -339,14 +415,18 @@ impl SettingsView {
                         d.child(div().flex_shrink_0().child(action))
                     }),
             )
-            .child(
-                crate::glass::card()
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .when(flash, |d| d.border_color(accent(0.6)))
-                    .children(children),
-            )
+            .children(toolbar)
+            // A group can be only a header, with its cards after it.
+            .when(!children.is_empty(), |d| {
+                d.child(
+                    crate::glass::card()
+                        .overflow_hidden()
+                        .flex()
+                        .flex_col()
+                        .when(flash, |d| d.border_color(accent(0.6)))
+                        .children(children),
+                )
+            })
             .into_any_element()
     }
 
@@ -462,7 +542,7 @@ impl SettingsView {
                     .child(
                         div()
                             .text_size(px(13.))
-                            .line_height(px(19.5))
+                            .line_height(px(if glass { 16. } else { 19.5 }))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(content(1.))
                             .child(label),
@@ -1140,7 +1220,7 @@ impl SettingsView {
         label: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        secondary_button(id, label, false, self.discovery_loading)
+        glass_secondary(id, label, false, self.discovery_loading)
             .child(icon("refresh-cw", 14.))
             .child(label)
             .when(!self.discovery_loading, |d| {

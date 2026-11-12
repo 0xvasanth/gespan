@@ -160,6 +160,8 @@ pub(crate) struct Automations {
     runs: Vec<AutomationRun>,
     /// Runs per day over the last ten days, by automation id.
     sparklines: HashMap<String, Vec<usize>>,
+    /// Per sparkline day, whether a run failed, by automation id.
+    spark_failed: HashMap<String, Vec<bool>>,
     settings_scroll: gpui::ScrollHandle,
     selected: Option<String>,
     editor: Option<Editor>,
@@ -232,6 +234,7 @@ impl Automations {
             automations: Vec::new(),
             runs: Vec::new(),
             sparklines: HashMap::new(),
+            spark_failed: HashMap::new(),
             settings_scroll: gpui::ScrollHandle::new(),
             selected: None,
             editor: None,
@@ -341,6 +344,21 @@ impl Automations {
             _ => "Project: none chosen".into(),
         }
     }
+    /// The list's group mark: a small square in the project's colour.
+    fn project_swatch(&self, path: &str) -> AnyElement {
+        let color = self
+            .appearances
+            .get(path)
+            .cloned()
+            .unwrap_or_default()
+            .color(path);
+        div()
+            .size(px(14.))
+            .flex_shrink_0()
+            .rounded(px(4.))
+            .bg(rgb(color))
+            .into_any_element()
+    }
     fn project_mark(&self, path: &str, side: f32) -> AnyElement {
         crate::project_settings::project_icon(
             &self.appearances.get(path).cloned().unwrap_or_default(),
@@ -389,6 +407,7 @@ impl Automations {
             let list = service.list()?;
             let now = gespan_core::time::now_ms() as i64;
             let mut sparklines = HashMap::new();
+            let mut failed = HashMap::new();
             let mut runs = None;
             // Each automation keeps at most 100 runs, so this stays small.
             for automation in &list {
@@ -396,6 +415,10 @@ impl Automations {
                 sparklines.insert(
                     automation.id.clone(),
                     automations::runs_per_day(&history, layout::SPARK_DAYS, now),
+                );
+                failed.insert(
+                    automation.id.clone(),
+                    layout::failed_days(&history, layout::SPARK_DAYS, now),
                 );
                 if selected_for_work.as_deref() == Some(automation.id.as_str()) {
                     runs = Some(history);
@@ -406,16 +429,17 @@ impl Automations {
                 (None, Some(id)) => service.runs(id)?,
                 (None, None) => Vec::new(),
             };
-            Ok::<_, String>((list, runs, sparklines))
+            Ok::<_, String>((list, runs, sparklines, failed))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 match result {
-                    Ok((list, runs, sparklines)) => {
+                    Ok((list, runs, sparklines, failed)) => {
                         this.automations = list;
                         this.sparklines = sparklines;
+                        this.spark_failed = failed;
                         if this.selected == selected {
                             this.runs = runs;
                         }
@@ -497,6 +521,26 @@ impl Automations {
         self.selected = None;
         self.runs.clear();
         self.set_editor(draft, false, cx);
+    }
+    /// The Inbox's "New pull request automation": the editor, with a
+    /// trigger on `event` from `provider`.
+    pub(crate) fn new_pull_request_automation(
+        &mut self,
+        provider: &str,
+        event: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.begin(None, cx);
+        if let Some(editor) = &mut self.editor {
+            editor.draft.triggers = Some(vec![AutomationTrigger::new(provider, event)]);
+        }
+        self.rebuild_trigger_fields(cx);
+        cx.notify();
+    }
+    /// The Inbox's "Review with an agent" when the project has no review
+    /// automation: the review setup sheet.
+    pub(crate) fn start_review_setup(&mut self, cx: &mut Context<Self>) {
+        self.open_review_setup(cx);
     }
     fn select(&mut self, id: String, cx: &mut Context<Self>) {
         let Some(automation) = self.automations.iter().find(|a| a.id == id) else {

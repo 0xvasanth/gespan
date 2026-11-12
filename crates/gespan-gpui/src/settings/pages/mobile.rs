@@ -3,7 +3,7 @@ use crate::{
     input::{self, Input},
     settings::{
         Section, SettingsEvent, SettingsView,
-        widgets::{icon_action, note, red, secondary_button},
+        widgets::{glass_secondary, icon_action, note, red},
     },
     theme::*,
 };
@@ -115,7 +115,7 @@ impl SettingsView {
     /// Status and the router change on their own, and the code counts down:
     /// read them every second while the page is open.
     pub(in crate::settings) fn watch_mobile(&mut self, cx: &mut Context<Self>) {
-        if self.section != Section::Connections {
+        if self.section != Section::Devices {
             self.mobile.poll = None;
             return;
         }
@@ -147,7 +147,7 @@ impl SettingsView {
 
     /// Leaving the page closes its code, as unmounting MobileSettings did.
     pub(in crate::settings) fn leave_mobile(&mut self, cx: &mut Context<Self>) {
-        if self.section != Section::Connections {
+        if self.section != Section::Devices {
             return;
         }
         if self.ctx.mobile_invite.is_some() {
@@ -161,7 +161,7 @@ impl SettingsView {
 
     /// Escape closes the pairing code, then a pending removal.
     pub(in crate::settings) fn dismiss_mobile(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.section != Section::Connections {
+        if self.section != Section::Devices {
             return false;
         }
         if self.ctx.mobile_invite.is_some() {
@@ -325,10 +325,10 @@ impl SettingsView {
         let Some(status) = status else {
             page.push(
                 div()
-                    .mt_5()
-                    .rounded_xl()
+                    .rounded(px(14.))
                     .border_1()
-                    .border_color(content(0.1))
+                    .border_color(crate::glass::edge())
+                    .bg(crate::glass::fill())
                     .bg(content(0.03))
                     .child(note(
                         "Mobile access isn’t available on this desktop right now.",
@@ -344,7 +344,6 @@ impl SettingsView {
         if let Some(error) = &status.error {
             page.push(
                 div()
-                    .mt_5()
                     .rounded_lg()
                     .bg(red(0.05))
                     .p_3()
@@ -358,7 +357,6 @@ impl SettingsView {
         if let Some(notice) = &self.mobile.notice {
             page.push(
                 div()
-                    .mt_5()
                     .text_size(px(13.))
                     .text_color(rgb(EMERALD))
                     .child(notice.clone())
@@ -374,17 +372,13 @@ impl SettingsView {
             div()
                 .mt_1()
                 .text_size(px(12.))
-                .line_height(px(19.5))
-                .text_color(content(0.45))
+                .line_height(px(18.))
+                .text_color(content(0.62))
                 .child(text)
         };
-        // Below Your machines, set off from them.
         div()
             .relative()
-            .mt_10()
-            .pt_8()
-            .border_t_1()
-            .border_color(content(0.1))
+            .px(px(4.))
             .child(self.reveal_probe("mobile-access"))
             .flex()
             .items_end()
@@ -406,19 +400,7 @@ impl SettingsView {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child("Your phones"),
                             )
-                            .child(
-                                div()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(content(0.1))
-                                    .bg(content(0.05))
-                                    .px(px(6.))
-                                    .py(px(2.))
-                                    .text_size(px(10.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(content(0.6))
-                                    .child("Invite-only beta"),
-                            ),
+                            .child(crate::glass::beta("Invite-only beta")),
                     )
                     .child(paragraph(
                         "Check on projects and conversations from the Gespan mobile app. Your phone connects straight to this desktop.",
@@ -434,7 +416,7 @@ impl SettingsView {
                                     .debug_selector(|| "mobile-testflight".into())
                                     .role(Role::Link)
                                     .aria_label("Get the iPhone app on TestFlight")
-                                    .text_color(content(0.7))
+                                    .text_color(accent_color())
                                     .underline()
                                     .cursor_pointer()
                                     .hover(|s| s.text_color(content(1.)))
@@ -444,7 +426,7 @@ impl SettingsView {
                     ),
             )
             .child(
-                secondary_button("pair-phone", "Pair phone", false, !can_pair)
+                glass_secondary("pair-phone", "Pair phone", false, !can_pair)
                     .child(icon("plus", 16.))
                     .child("Pair phone")
                     .when(can_pair, |d| {
@@ -468,7 +450,7 @@ impl SettingsView {
         if stuck {
             let remote = remote.clone();
             controls.push(
-                secondary_button("mobile-reconnect", "Reconnect", false, false)
+                glass_secondary("mobile-reconnect", "Reconnect", false, false)
                     .child("Reconnect")
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.configure_mobile(true, open_router, remote.clone(), cx)
@@ -484,52 +466,44 @@ impl SettingsView {
             cx,
             move |this, on, cx| this.configure_mobile(on, open_router, remote.clone(), cx),
         ));
-        div()
-            .mt_5()
+        // Reachable only while the desktop is actually listening.
+        let label = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child("Accept connections")
+            .when(status.listening, |d| {
+                d.child(
+                    crate::glass::status("Reachable", crate::glass::Tone::Ok)
+                        .debug_selector(|| "mobile-reachable".into()),
+                )
+            });
+        crate::glass::card()
             .overflow_hidden()
-            .rounded_xl()
-            .border_1()
-            .border_color(if stuck {
+            .when(stuck, |d| {
                 let mut amber: gpui::Hsla = rgb(AMBER).into();
                 amber.a = 0.3;
-                amber
-            } else {
-                content(0.1)
+                d.border_color(amber)
             })
-            .bg(content(0.03))
-            .child(self.row(
-                None,
-                true,
-                "Accept connections",
-                Some(description),
-                controls,
-            ))
+            .child(self.row(None, true, label, Some(description), controls))
             .into_any_element()
     }
 
     fn mobile_devices(&self, status: &Status, showing: bool, cx: &mut Context<Self>) -> AnyElement {
         if status.devices.is_empty() {
-            return div()
-                .mt_5()
-                .rounded_xl()
-                .border_1()
-                .border_color(content(0.15))
+            return crate::glass::card()
                 .px_5()
                 .py_8()
                 .text_center()
                 .text_size(px(13.))
-                .text_color(content(0.45))
+                .text_color(content(0.55))
                 .child("Pair your iPhone or Android phone to get started.")
                 .into_any_element();
         }
         let last = status.devices.len() == 1;
         let (open_router, remote) = (status.open_router, status.remote_address.clone());
-        div()
-            .mt_5()
+        crate::glass::card()
             .overflow_hidden()
-            .rounded_xl()
-            .border_1()
-            .border_color(content(0.1))
             .flex()
             .flex_col()
             .children(status.devices.iter().enumerate().map(|(ix, device)| {
@@ -537,15 +511,30 @@ impl SettingsView {
                 let name = device.name.clone();
                 let confirming = self.mobile.removing.as_deref() == Some(id.as_str());
                 div()
-                    .when(ix > 0, |d| d.border_t_1().border_color(content(0.1)))
+                    .when(ix > 0, |d| d.border_t_1().border_color(crate::glass::hairline()))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_3()
+                            .gap(px(14.))
                             .px_4()
-                            .py_4()
-                            .child(icon("smart-phone", 20.).text_color(content(0.45)))
+                            .py(px(14.))
+                            .child(
+                                div()
+                                    .size(px(22.))
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_full()
+                                    .bg(rgb(0xc0affc))
+                                    .text_size(px(10.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(0x111111))
+                                    .child(
+                                        name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default(),
+                                    ),
+                            )
                             .child(
                                 div()
                                     .min_w_0()
@@ -617,7 +606,7 @@ impl SettingsView {
                                         .flex()
                                         .gap_2()
                                         .child(
-                                            secondary_button(
+                                            glass_secondary(
                                                 "mobile-confirm-remove",
                                                 "Remove phone",
                                                 true,
@@ -640,7 +629,7 @@ impl SettingsView {
                                             })),
                                         )
                                         .child(
-                                            secondary_button(
+                                            glass_secondary(
                                                 "mobile-cancel-remove",
                                                 "Cancel",
                                                 false,
@@ -671,15 +660,28 @@ impl SettingsView {
                 .role(Role::Button)
                 .aria_label("Connect away from home")
                 .aria_expanded(open)
-                .mt_8()
-                .text_size(px(12.))
-                .text_color(content(0.45))
+                .px_4()
+                .py(px(12.))
+                .flex()
+                .items_center()
+                .gap_2()
+                .rounded(px(14.))
+                .border_1()
+                .border_color(crate::glass::edge())
+                .bg(crate::glass::fill())
+                .text_size(px(12.5))
+                .text_color(content(0.62))
                 .cursor_pointer()
-                .child(if open {
-                    "▾ Connect away from home"
-                } else {
-                    "▸ Connect away from home"
-                })
+                .hover(|s| s.text_color(content(1.)))
+                .child(icon(
+                    if open {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                    14.,
+                ))
+                .child("Connect away from home")
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.mobile.away = !this.mobile.away;
                     cx.notify();
@@ -763,7 +765,7 @@ impl SettingsView {
                                         .child(field),
                                 )
                                 .child(
-                                    secondary_button(
+                                    glass_secondary(
                                         "mobile-save-remote",
                                         "Save",
                                         false,
@@ -807,7 +809,7 @@ impl SettingsView {
     /// The pairing dialog, presented by Shell alongside the other window
     /// overlays so its scrim and centering cover the entire viewport.
     pub(crate) fn mobile_overlay_open(&self) -> bool {
-        self.section == Section::Connections && self.ctx.mobile_invite.is_some()
+        self.section == Section::Devices && self.ctx.mobile_invite.is_some()
     }
 
     pub(crate) fn mobile_overlay(
@@ -1312,7 +1314,7 @@ mod tests {
                     cx.new(|cx| {
                         let settings = cx.new(|cx| {
                             let mut view = SettingsView::new(
-                                Section::Connections,
+                                Section::Devices,
                                 Preferences {
                                     notifications: false,
                                     ..Default::default()

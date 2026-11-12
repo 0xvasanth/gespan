@@ -2,7 +2,7 @@
 use crate::{
     settings::{
         SettingsView,
-        widgets::{note, secondary_button},
+        widgets::{glass_secondary, note},
     },
     theme::*,
 };
@@ -310,8 +310,13 @@ impl SettingsView {
             None => entry.command_line(),
         };
         let stale = self.mcp_catalog_stale.contains(&entry.id);
+        let state = status(&entry, stale);
+        let tone = match state {
+            "On" => crate::glass::Tone::Ok,
+            "Off" => crate::glass::Tone::Muted,
+            _ => crate::glass::Tone::Waiting,
+        };
         let mut facts = vec![
-            status(&entry, stale).to_owned(),
             // Older remote entries kept a class that never applied to them.
             class_label(match (&entry.url, entry.class) {
                 (Some(_), Class::PerWorktree) => Class::Shared,
@@ -326,42 +331,67 @@ impl SettingsView {
         if let Some(tools) = &entry.tools {
             facts.push(format!("{} tools", tools.len()));
         }
-        let mut row = div()
-            .id(SharedString::from(format!("catalog-server-{ix}")))
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_3()
-            .px_4()
-            .py(px(14.))
-            .border_b_1()
-            .border_color(content(0.05))
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(entry.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .mt_1()
-                            .text_size(px(12.))
-                            .text_color(content(0.45))
-                            .child(facts.join(" · ")),
-                    )
-                    .child(
-                        div()
-                            .debug_selector(move || format!("settings-catalog-detail-{ix}"))
-                            .truncate()
-                            .text_size(px(11.))
-                            .text_color(content(0.35))
-                            .child(detail),
-                    ),
-            );
+        let mut row =
+            div()
+                .id(SharedString::from(format!("catalog-server-{ix}")))
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py(px(14.))
+                .border_b_1()
+                .border_color(crate::glass::hairline())
+                .child(
+                    div()
+                        .size(px(32.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(9.))
+                        .bg(content(0.07))
+                        .border_1()
+                        .border_color(crate::glass::edge())
+                        .child(icon("package", 16.).text_color(content(0.8))),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(13.))
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .child(entry.name.clone()),
+                                )
+                                .child(crate::glass::status(state, tone).debug_selector(
+                                    move || format!("settings-catalog-status-{ix}"),
+                                )),
+                        )
+                        .child(
+                            div()
+                                .mt_1()
+                                .text_size(px(11.5))
+                                .text_color(content(0.55))
+                                .child(facts.join(" · ")),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(move || format!("settings-catalog-detail-{ix}"))
+                                .mt(px(2.))
+                                .truncate()
+                                .font_family(crate::fonts::monospace())
+                                .text_size(px(11.))
+                                .text_color(content(0.55))
+                                .child(detail),
+                        ),
+                );
         // A remote server's connection is shared whatever this would say.
         if entry.url.is_none() {
             let id = entry.id.clone();
@@ -399,7 +429,7 @@ impl SettingsView {
         if entry.enabled {
             let id = entry.id.clone();
             row = row.child(
-                secondary_button(
+                glass_secondary(
                     SharedString::from(format!("catalog-here-{ix}")),
                     "This project",
                     false,
@@ -423,7 +453,7 @@ impl SettingsView {
             );
             let id = entry.id.clone();
             row = row.child(
-                secondary_button(
+                glass_secondary(
                     SharedString::from(format!("catalog-off-{ix}")),
                     "Turn off",
                     false,
@@ -448,7 +478,7 @@ impl SettingsView {
         if !entry.enabled || stale {
             let approving = entry.clone();
             row = row.child(
-                secondary_button(
+                glass_secondary(
                     SharedString::from(format!("catalog-approve-{ix}")),
                     "Review and turn on",
                     false,
@@ -464,7 +494,7 @@ impl SettingsView {
         if entry.url.is_none() {
             let id = entry.id.clone();
             row = row.child(
-                secondary_button(
+                glass_secondary(
                     SharedString::from(format!("catalog-settings-{ix}")),
                     "Settings",
                     false,
@@ -491,7 +521,7 @@ impl SettingsView {
             let id = entry.id.clone();
             let waiting = self.mcp_signing_in.contains(&id);
             row = row.child(
-                secondary_button(
+                glass_secondary(
                     SharedString::from(format!("catalog-sign-in-{ix}")),
                     "Sign in",
                     false,
@@ -510,7 +540,7 @@ impl SettingsView {
         }
         let id = entry.id.clone();
         row.child(
-            secondary_button(
+            glass_secondary(
                 SharedString::from(format!("catalog-remove-{ix}")),
                 "Remove",
                 false,
@@ -527,32 +557,41 @@ impl SettingsView {
     }
 
     fn running_section(&self) -> Vec<AnyElement> {
+        // What runs now and what failed, each a card of its own.
         let mut section = Vec::new();
         if !self.mcp_running.is_empty() {
-            section.push(subheading("Running now"));
-            section.extend(self.mcp_running.iter().map(|(process, memory)| {
-                fact_row(process.server.clone(), running_line(process, *memory))
-            }));
+            section.push(
+                crate::glass::card()
+                    .debug_selector(|| "settings-catalog-running".into())
+                    .px_4()
+                    .py(px(12.))
+                    .child(subheading("Running now"))
+                    .children(self.mcp_running.iter().map(|(process, memory)| {
+                        fact_row(process.server.clone(), running_line(process, *memory))
+                    }))
+                    .into_any_element(),
+            );
         }
         let failures: Vec<&ServerFailure> = self.mcp_server_errors.iter().rev().take(5).collect();
         if !failures.is_empty() {
             section.push(
-                div()
+                crate::glass::card()
                     .debug_selector(|| "settings-catalog-errors".into())
+                    .px_4()
+                    .py(px(12.))
                     .child(subheading("Recent errors"))
+                    .children(failures.into_iter().enumerate().map(|(ix, failure)| {
+                        div()
+                            .debug_selector(move || format!("settings-catalog-failure-{ix}"))
+                            .child(fact_row(failure.server.clone(), failure.message.clone()))
+                    }))
                     .into_any_element(),
             );
-            section.extend(failures.into_iter().enumerate().map(|(ix, failure)| {
-                div()
-                    .debug_selector(move || format!("settings-catalog-failure-{ix}"))
-                    .child(fact_row(failure.server.clone(), failure.message.clone()))
-                    .into_any_element()
-            }));
         }
         section
     }
 
-    fn registry_section(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(super) fn registry_section(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let input = self
             .mcp_search
             .get_or_insert_with(|| {
@@ -575,7 +614,7 @@ impl SettingsView {
                 .gap_2()
                 .child(div().flex_1().child(input))
                 .child(
-                    secondary_button("catalog-search", "Search", false, self.mcp_searching)
+                    glass_secondary("catalog-search", "Search", false, self.mcp_searching)
                         .child("Search")
                         .on_click(cx.listener(|this, _, _, cx| this.catalog_search(cx))),
                 )
@@ -608,7 +647,7 @@ impl SettingsView {
                         ),
                 )
                 .child(
-                    secondary_button(
+                    glass_secondary(
                         SharedString::from(format!("catalog-add-{ix}")),
                         "Add",
                         false,
@@ -667,7 +706,7 @@ impl SettingsView {
                         ),
                 )
                 .child(
-                    secondary_button("catalog-import", "Import from agents", false, false)
+                    glass_secondary("catalog-import", "Import from agents", false, false)
                         .debug_selector(|| "settings-catalog-import".into())
                         .child(icon("plus", 14.))
                         .child("Import from agents")
@@ -723,7 +762,6 @@ impl SettingsView {
                 "None yet. Import copies your agents' servers here, without changing their files.",
             ));
             section.extend(self.running_section());
-            section.extend(self.registry_section(cx));
             return section;
         }
         let rows: Vec<_> = entries
@@ -735,9 +773,10 @@ impl SettingsView {
             div()
                 .mt_3()
                 .overflow_hidden()
-                .rounded_xl()
+                .rounded(px(14.))
                 .border_1()
-                .border_color(content(0.1))
+                .border_color(crate::glass::edge())
+                .bg(crate::glass::fill())
                 .bg(content(0.03))
                 .children(rows)
                 .into_any_element(),
@@ -749,7 +788,7 @@ impl SettingsView {
                 div()
                     .mt_2()
                     .child(
-                        secondary_button("catalog-settings-save", "Save", false, false)
+                        glass_secondary("catalog-settings-save", "Save", false, false)
                             .debug_selector(|| "settings-catalog-settings-save".into())
                             .child("Save")
                             .on_click(cx.listener(|this, _, _, cx| this.catalog_save_settings(cx))),
@@ -758,7 +797,6 @@ impl SettingsView {
             );
         }
         section.extend(self.running_section());
-        section.extend(self.registry_section(cx));
         section
     }
 }

@@ -1249,6 +1249,48 @@ impl Service {
         })
     }
 
+    /// A manual run that carries an event item, as "Run an automation" on
+    /// an Inbox item starts one: it records no claim, so the item's own
+    /// event still runs the automation when it comes.
+    pub fn run_event_now(
+        &mut self,
+        automation_id: &str,
+        claim: AutomationEventClaim,
+        now: i64,
+    ) -> Result<DueAutomationRun, String> {
+        validate_id(automation_id, "automation")?;
+        validate_event_key(&claim.event_key)?;
+        if claim.prompt.trim().is_empty() || claim.prompt.len() > MAX_PROMPT + 10_000 {
+            return Err("Invalid automation run prompt.".into());
+        }
+        let automation_id = automation_id.to_owned();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let mut automation = get(&mut *tx, &automation_id)
+                    .await?
+                    .ok_or_else(|| fail("Automation not found."))?;
+                let mut run = new_event_run(
+                    &automation_id,
+                    &claim.event_key,
+                    &claim.event_kind,
+                    &claim.event,
+                    now,
+                    now,
+                    &claim.prompt,
+                );
+                let title: String = claim.title.trim().chars().take(MAX_EVENT_TITLE).collect();
+                run.event_title = (!title.is_empty()).then_some(title);
+                automation.last_run_at = Some(now);
+                automation.last_run_status = Some(run.status.clone());
+                automation.last_run_error = None;
+                write_run(&mut *tx, &run).await?;
+                write_automation(&mut *tx, &automation).await?;
+                trim_history(&mut *tx, &automation_id).await?;
+                Ok(DueAutomationRun { automation, run })
+            })
+        })
+    }
+
     fn event_claimed(&mut self, automation_id: &str, event_key: &str) -> Result<bool, String> {
         let claim = self.db.run(|mut db| async move {
             let claim = EventClaimRow::fields();
@@ -1899,6 +1941,196 @@ pub fn claim_inbox_events(
 
 /// A failed match leaves its Inbox item retryable while successful claims are
 /// still returned for dispatch. The ledger makes retries of partial batches safe.
+/// The claim key of `item` for `event`: one per item, or one per event found
+/// on it, so a pull request runs again for its next comment.
+fn item_event_key(item: &crate::inbox::Item, event: &str) -> String {
+    let identity = if crate::inbox::is_tracker(&item.provider) {
+        let id = if !item.id.is_empty() {
+            item.id.clone()
+        } else if !item.identifier.is_empty() {
+            item.identifier.clone()
+        } else {
+            item.number.to_string()
+        };
+        format!("{}:issue:{id}", item.provider)
+    } else if let Some(occurrence) = &item.occurrence {
+        // One claim per event: a pull request runs again for the next.
+        format!(
+            "{}:{event}:{}:{}:{}",
+            item.provider, item.repo, item.number, occurrence.id
+        )
+    } else {
+        format!(
+            "{}:{}:{}:{}",
+            item.provider, item.kind, item.repo, item.number
+        )
+    };
+    identity
+        .trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-' | '.' | '/') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(400)
+        .collect::<String>()
+}
+
+/// The run prompt for `automation` on `item` and the headline its alert shows.
+fn item_prompt(
+    automation: &Automation,
+    item: &crate::inbox::Item,
+    event: &str,
+) -> (String, String) {
+    let provider = crate::inbox::provider_label(&item.provider);
+    let kind = if crate::inbox::is_tracker(&item.provider) || item.kind != "pr" {
+        "issue"
+    } else if item.provider == "gitlab" {
+        "merge request"
+    } else {
+        "pull request"
+    };
+    let reference = if crate::inbox::is_tracker(&item.provider) {
+        if item.identifier.trim().is_empty() {
+            format!("{provider} #{}", item.number)
+        } else {
+            item.identifier.trim().to_string()
+        }
+    } else {
+        format!("#{}", item.number)
+    };
+    let title = if item.title.trim().is_empty() {
+        if crate::inbox::is_tracker(&item.provider) {
+            reference.clone()
+        } else {
+            format!("{provider} {kind} #{}", item.number)
+        }
+    } else {
+        item.title.trim().to_string()
+    };
+    let headline = if crate::inbox::is_tracker(&item.provider) || item.repo.trim().is_empty() {
+        format!("{reference} {title}")
+    } else {
+        format!("{}{reference} {title}", item.repo.trim())
+    };
+    let mut external = format!("{reference} {title}");
+    if let Some(occurrence) = &item.occurrence {
+        let author = occurrence.author.trim();
+        if matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT)
+            || is_review_command_event(event)
+        {
+            external.push_str(&if author.is_empty() {
+                "\nComment:\n".to_string()
+            } else {
+                format!("\nComment by @{author}:\n")
+            });
+        } else {
+            external.push('\n');
+        }
+        external.push_str(occurrence.body.trim());
+    }
+    if !item.url.trim().is_empty() {
+        external.push('\n');
+        external.push_str(item.url.trim());
+    }
+    let task = event_task(event, provider, kind);
+    // `claim_event` limits the whole prompt, so nothing is cut here.
+    let prompt = format!(
+        "{}\n\n{task}\n\n{}",
+        automation.prompt.trim(),
+        crate::external_text::external_block(&external, usize::MAX)
+    );
+    let headline = match &item.occurrence {
+        Some(occurrence) if !occurrence.author.trim().is_empty() => {
+            format!("{headline} · @{}", occurrence.author.trim())
+        }
+        _ => headline,
+    };
+    (prompt, headline)
+}
+
+/// Events about a pull request (or merge request) itself.
+pub fn is_pull_request_event(event: &str) -> bool {
+    matches!(
+        event,
+        "pull_request_opened"
+            | "draft_opened"
+            | GITHUB_COMMENT_EVENT
+            | CHECK_FAILED_EVENT
+            | REVIEW_REQUESTED_EVENT
+            | MERGED_EVENT
+            | "merge_request_opened"
+            | GITLAB_COMMENT_EVENT
+            | "pull_request_appeared"
+    )
+}
+
+/// The first of `automation`'s triggers that a pull request event from the
+/// item's provider fires.
+fn pull_request_trigger(
+    automation: &Automation,
+    item: &crate::inbox::Item,
+) -> Option<AutomationTrigger> {
+    automation
+        .triggers()
+        .into_iter()
+        .find(|trigger| trigger.kind == item.provider && is_pull_request_event(&trigger.event))
+}
+
+/// The project's automations a pull request can be run through by hand:
+/// those in the item's project with a pull request trigger, by name.
+pub fn pull_request_automations<'a>(
+    automations: &'a [Automation],
+    item: &crate::inbox::Item,
+) -> Vec<&'a Automation> {
+    if item.kind != "pr" {
+        return vec![];
+    }
+    let mut found = automations
+        .iter()
+        .filter(|automation| {
+            crate::files::path_key(&automation.cwd) == crate::files::path_key(&item.project_path)
+                && pull_request_trigger(automation, item).is_some()
+        })
+        .collect::<Vec<_>>();
+    found.sort_by_key(|automation| automation.name.to_lowercase());
+    found
+}
+
+/// Runs `automation_id` now on `item`, with the prompt its pull request
+/// trigger would give it, so the run knows which pull request it is about.
+pub fn run_on_item(
+    service: &mut Service,
+    automation_id: &str,
+    item: &crate::inbox::Item,
+    now: i64,
+) -> Result<DueAutomationRun, String> {
+    let automation = service
+        .list()?
+        .into_iter()
+        .find(|automation| automation.id == automation_id)
+        .ok_or_else(|| "Automation not found.".to_string())?;
+    let trigger = pull_request_trigger(&automation, item)
+        .ok_or_else(|| "This automation does not run on pull requests.".to_string())?;
+    let (prompt, title) = item_prompt(&automation, item, &trigger.event);
+    service.run_event_now(
+        automation_id,
+        AutomationEventClaim {
+            event_key: item_event_key(item, &trigger.event),
+            event_kind: trigger.kind,
+            event: trigger.event,
+            scheduled_for: now,
+            prompt,
+            title,
+        },
+        now,
+    )
+}
+
 pub fn claim_inbox_events_retry(
     service: &mut Service,
     items: &[crate::inbox::Item],
@@ -1929,40 +2161,7 @@ pub fn claim_inbox_events_retry(
             ("azuredevops", "issue", _) => "work_item_appeared",
             _ => continue,
         };
-        let identity = if crate::inbox::is_tracker(&item.provider) {
-            let id = if !item.id.is_empty() {
-                item.id.clone()
-            } else if !item.identifier.is_empty() {
-                item.identifier.clone()
-            } else {
-                item.number.to_string()
-            };
-            format!("{}:issue:{id}", item.provider)
-        } else if let Some(occurrence) = &item.occurrence {
-            // One claim per event: a pull request runs again for the next.
-            format!(
-                "{}:{event}:{}:{}:{}",
-                item.provider, item.repo, item.number, occurrence.id
-            )
-        } else {
-            format!(
-                "{}:{}:{}:{}",
-                item.provider, item.kind, item.repo, item.number
-            )
-        };
-        let event_key = identity
-            .trim()
-            .to_lowercase()
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-' | '.' | '/') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .take(400)
-            .collect::<String>();
+        let event_key = item_event_key(item, event);
         let created = crate::inbox::timestamp_ms(&item.created_at);
         for automation in &automations {
             if !automation.enabled {
@@ -2049,71 +2248,7 @@ pub fn claim_inbox_events_retry(
             {
                 continue;
             }
-            let provider = crate::inbox::provider_label(&item.provider);
-            let kind = if crate::inbox::is_tracker(&item.provider) || item.kind != "pr" {
-                "issue"
-            } else if item.provider == "gitlab" {
-                "merge request"
-            } else {
-                "pull request"
-            };
-            let reference = if crate::inbox::is_tracker(&item.provider) {
-                if item.identifier.trim().is_empty() {
-                    format!("{provider} #{}", item.number)
-                } else {
-                    item.identifier.trim().to_string()
-                }
-            } else {
-                format!("#{}", item.number)
-            };
-            let title = if item.title.trim().is_empty() {
-                if crate::inbox::is_tracker(&item.provider) {
-                    reference.clone()
-                } else {
-                    format!("{provider} {kind} #{}", item.number)
-                }
-            } else {
-                item.title.trim().to_string()
-            };
-            let headline =
-                if crate::inbox::is_tracker(&item.provider) || item.repo.trim().is_empty() {
-                    format!("{reference} {title}")
-                } else {
-                    format!("{}{reference} {title}", item.repo.trim())
-                };
-            let mut external = format!("{reference} {title}");
-            if let Some(occurrence) = &item.occurrence {
-                let author = occurrence.author.trim();
-                if matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT)
-                    || is_review_command_event(event)
-                {
-                    external.push_str(&if author.is_empty() {
-                        "\nComment:\n".to_string()
-                    } else {
-                        format!("\nComment by @{author}:\n")
-                    });
-                } else {
-                    external.push('\n');
-                }
-                external.push_str(occurrence.body.trim());
-            }
-            if !item.url.trim().is_empty() {
-                external.push('\n');
-                external.push_str(item.url.trim());
-            }
-            let task = event_task(event, provider, kind);
-            // `claim_event` limits the whole prompt, so nothing is cut here.
-            let prompt = format!(
-                "{}\n\n{task}\n\n{}",
-                automation.prompt.trim(),
-                crate::external_text::external_block(&external, usize::MAX)
-            );
-            let headline = match &item.occurrence {
-                Some(occurrence) if !occurrence.author.trim().is_empty() => {
-                    format!("{headline} · @{}", occurrence.author.trim())
-                }
-                _ => headline,
-            };
+            let (prompt, headline) = item_prompt(automation, item, event);
             let occurred_at = if created != 0 {
                 created
             } else {
@@ -2372,6 +2507,115 @@ mod tests {
         assert!(claim_inbox_events(&mut service, &[item(4)], now_millis())
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn running_an_automation_on_an_item_carries_it_and_leaves_its_event_unclaimed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let automation = save(
+            &mut service,
+            vec![AutomationTrigger::new("github", REVIEW_REQUESTED_EVENT)],
+        );
+        let pr = item(476);
+        let due = run_on_item(&mut service, &automation.id, &pr, now_millis()).unwrap();
+        // The run is about this pull request, the way its event would be.
+        assert_eq!(due.run.trigger, "event");
+        assert_eq!(due.run.event_key.as_deref(), Some("github:pr:acme/app:476"));
+        assert_eq!(due.run.event.as_deref(), Some(REVIEW_REQUESTED_EVENT));
+        assert_eq!(
+            due.run.event_title.as_deref(),
+            Some("acme/app#476 Change 476")
+        );
+        let prompt = due.run.prompt.as_deref().unwrap();
+        assert!(prompt.starts_with("Review the change and implement safe fixes."));
+        assert!(prompt.contains("https://github.com/acme/app/pull/476"));
+        assert_eq!(due.run.status, "pending");
+        // Run by hand, it claims nothing: the item's own event still runs.
+        assert!(!service
+            .event_claimed(&automation.id, "github:pr:acme/app:476")
+            .unwrap());
+        assert_eq!(service.runs(&automation.id).unwrap().len(), 1);
+
+        // An automation without a pull request trigger cannot run on one.
+        let scheduled = save(
+            &mut service,
+            vec![AutomationTrigger::new("time", "weekdays")],
+        );
+        assert_eq!(
+            run_on_item(&mut service, &scheduled.id, &pr, now_millis()).unwrap_err(),
+            "This automation does not run on pull requests."
+        );
+        assert!(run_on_item(&mut service, "missing", &pr, now_millis()).is_err());
+    }
+
+    #[test]
+    fn a_pull_request_is_offered_its_projects_pull_request_automations_by_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let named = |service: &mut Service, name: &str, cwd: &str, trigger| {
+            let mut draft = AutomationUpsert::new(cwd.into(), "codex".into(), "model".into());
+            draft.name = name.into();
+            draft.prompt = "Do it.".into();
+            draft.triggers = Some(vec![trigger]);
+            draft.sync_triggers(now_millis());
+            service.upsert(draft).unwrap()
+        };
+        named(
+            &mut service,
+            "Triage",
+            "/repo",
+            AutomationTrigger::new("github", "pull_request_opened"),
+        );
+        named(
+            &mut service,
+            "check fixer",
+            "/repo",
+            AutomationTrigger::new("github", CHECK_FAILED_EVENT),
+        );
+        named(
+            &mut service,
+            "Issues",
+            "/repo",
+            AutomationTrigger::new("github", "issue_opened"),
+        );
+        named(
+            &mut service,
+            "Nightly",
+            "/repo",
+            AutomationTrigger::new("time", "weekdays"),
+        );
+        named(
+            &mut service,
+            "Elsewhere",
+            "/other",
+            AutomationTrigger::new("github", "pull_request_opened"),
+        );
+        named(
+            &mut service,
+            "GitLab",
+            "/repo",
+            AutomationTrigger::new("gitlab", "merge_request_opened"),
+        );
+        let list = service.list().unwrap();
+        let names = |item: &crate::inbox::Item| {
+            pull_request_automations(&list, item)
+                .into_iter()
+                .map(|automation| automation.name.clone())
+                .collect::<Vec<_>>()
+        };
+        // Same project, a pull request trigger from the item's provider, by name.
+        assert_eq!(names(&item(1)), ["check fixer", "Triage"]);
+        let issue = crate::inbox::Item {
+            kind: "issue".into(),
+            ..item(2)
+        };
+        assert!(names(&issue).is_empty());
+        let gitlab = crate::inbox::Item {
+            provider: "gitlab".into(),
+            ..item(3)
+        };
+        assert_eq!(names(&gitlab), ["GitLab"]);
     }
 
     #[test]

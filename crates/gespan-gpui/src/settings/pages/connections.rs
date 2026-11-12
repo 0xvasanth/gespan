@@ -4,7 +4,7 @@ use crate::{
     popover::AnchorSlot,
     settings::{
         Section, SettingsView,
-        widgets::{red, secondary_button},
+        widgets::{glass_secondary, red},
     },
     theme::*,
 };
@@ -103,6 +103,22 @@ fn describe_health(environment: &str, host: &Value) -> Result<Health, String> {
     })
 }
 
+/// The pill a machine's status shows in: connected is fine, connected with a
+/// caveat waits on you, offline is a problem, anything else is still being
+/// checked.
+pub(super) fn status_tone(label: &str) -> crate::glass::Tone {
+    use crate::glass::Tone;
+    if label == "Connected" {
+        Tone::Ok
+    } else if label.starts_with("Connected") {
+        Tone::Waiting
+    } else if label.starts_with("Offline") {
+        Tone::Bad
+    } else {
+        Tone::Muted
+    }
+}
+
 fn parse_port(value: &str) -> Result<Option<u16>, String> {
     if value.trim().is_empty() {
         return Ok(None);
@@ -119,8 +135,8 @@ fn parse_port(value: &str) -> Result<Option<u16>, String> {
 fn paragraph(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(12.))
-        .line_height(px(19.5))
-        .text_color(content(0.45))
+        .line_height(px(18.))
+        .text_color(content(0.62))
         .child(text.into())
 }
 
@@ -218,7 +234,7 @@ impl SettingsView {
     }
 
     pub(in crate::settings) fn watch_connections(&mut self, cx: &mut Context<Self>) {
-        if self.section != Section::Connections || self.ctx.remote.is_none() {
+        if self.section != Section::Devices || self.ctx.remote.is_none() {
             return;
         }
         self.initialize_connection_fields(cx);
@@ -254,10 +270,7 @@ impl SettingsView {
     }
 
     pub(in crate::settings) fn dismiss_connections(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.section != Section::Connections
-            || self.connections.busy
-            || self.connections.revoking
-        {
+        if self.section != Section::Devices || self.connections.busy || self.connections.revoking {
             return false;
         }
         if self.connections.removing.take().is_some() {
@@ -284,7 +297,7 @@ impl SettingsView {
         let weak = cx.weak_entity();
         window.on_next_frame(move |window, cx| {
             let _ = weak.update(cx, |this, cx| {
-                if this.section != Section::Connections || !this.connections.busy {
+                if this.section != Section::Devices || !this.connections.busy {
                     return;
                 }
                 if let Some(target) = this.connections.progress.get() {
@@ -312,7 +325,7 @@ impl SettingsView {
     }
 
     fn refresh_connections(&mut self, cx: &mut Context<Self>) {
-        if self.section != Section::Connections
+        if self.section != Section::Devices
             || self.connections.busy
             || self.connections.refresh.is_some()
         {
@@ -692,7 +705,7 @@ impl SettingsView {
                 .child(div().text_size(px(13.)).font_weight(FontWeight::SEMIBOLD).child("Your machines"))
                 .child(paragraph("Run agents on another computer and return to them from your laptop. The host keeps working when you close Gespan here.").mt_1()))
             .when(!self.connections.adding, |d| d.child(
-                secondary_button("add-machine", "Add machine", false, disabled).child(icon("plus", 16.)).child("Add machine")
+                glass_secondary("add-machine", "Add machine", false, disabled).child(icon("plus", 16.)).child("Add machine")
                     .on_click(cx.listener(|this, _, window, cx| {
                         if this.connections.busy || this.connections.revoking || this.ctx.remote.is_none() { return; }
                         this.connections.adding = true;
@@ -701,12 +714,12 @@ impl SettingsView {
                     })))).into_any_element()];
         if !self.connections.machines.is_empty() {
             let mut list = div()
-                .mt_5()
-                .rounded_xl()
+                .rounded(px(14.))
                 .border_1()
-                .border_color(content(0.1))
+                .border_color(crate::glass::edge())
+                .bg(crate::glass::fill())
                 .overflow_hidden();
-            for machine in self.connections.machines.clone() {
+            for (list_rows, machine) in self.connections.machines.clone().into_iter().enumerate() {
                 let id = machine.id.clone();
                 let endpoint = machine
                     .ssh
@@ -725,20 +738,29 @@ impl SettingsView {
                 let reconnect_id = id.clone();
                 let update_id = id.clone();
                 let remove_id = id.clone();
-                list = list.child(div().border_b_1().border_color(content(0.1))
-                    .child(div().flex().items_center().gap_3().p_4()
-                        .child(icon("globe", 20.).text_color(content(0.45)))
+                let status = self
+                    .connections
+                    .status
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| "Checking connection…".into());
+                let first = list_rows == 0;
+                list = list.child(div().when(!first, |d| d.border_t_1().border_color(crate::glass::hairline()))
+                    .child(div().flex().items_center().gap_3().px_4().py(px(14.))
+                        .child(div().size(px(32.)).flex_none().flex().items_center().justify_center().rounded(px(9.)).bg(content(0.07)).border_1().border_color(crate::glass::edge())
+                            .child(icon("globe", 16.).text_color(content(0.7))))
                         .child(div().min_w_0().flex_1()
-                            .child(div().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(machine.name.clone()))
-                            .child(paragraph(endpoint).mt_1())
-                            .child(paragraph(self.connections.status.get(&id).cloned().unwrap_or_else(|| "Checking connection…".into())).mt_1().text_color(content(0.5)))
+                            .child(div().flex().items_center().gap_2().min_w_0()
+                                .child(div().truncate().text_size(px(13.)).font_weight(FontWeight::MEDIUM).child(machine.name.clone()))
+                                .child(crate::glass::status(status.clone(), status_tone(&status)).debug_selector(|| "settings-machine-status".into())))
+                            .child(div().mt_1().truncate().font_family(crate::fonts::monospace()).text_size(px(11.5)).text_color(content(0.55)).child(endpoint))
                             .when(machine.ssh.is_some() && update, |d| d.child(paragraph("Updating restarts the host and interrupts active agent turns.").mt_1().text_size(px(11.)))))
                         .when(machine.ssh.is_some(), |d| d.child(div().flex().items_center().gap_2()
-                            .when(update, |d| d.child(secondary_button(SharedString::from(format!("update-host-{id}")), "Update Host", false, disabled)
+                            .when(update, |d| d.child(glass_secondary(SharedString::from(format!("update-host-{id}")), "Update Host", false, disabled)
                                 .child("Update Host").on_click(cx.listener(move |this, _, _, cx| this.begin_connection(Some(update_id.clone()), true, cx)))))
-                            .child(secondary_button(SharedString::from(format!("reconnect-{id}")), "Reconnect", false, disabled)
+                            .child(glass_secondary(SharedString::from(format!("reconnect-{id}")), "Reconnect", false, disabled)
                                 .child("Reconnect").on_click(cx.listener(move |this, _, _, cx| this.begin_connection(Some(reconnect_id.clone()), false, cx))))))
-                        .child(secondary_button(SharedString::from(format!("remove-machine-{id}")), format!("Remove {}", machine.name), true, disabled)
+                        .child(glass_secondary(SharedString::from(format!("remove-machine-{id}")), format!("Remove {}", machine.name), true, disabled)
                             .child(icon("trash", 16.)).on_click(cx.listener(move |this, _, _, cx| {
                                 if this.connections.busy || this.connections.revoking { return; }
                                 this.connections.error.clear(); this.connections.removing = Some(remove_id.clone()); cx.notify();
@@ -749,10 +771,10 @@ impl SettingsView {
         } else if self.connections.loaded && !self.connections.adding {
             page.push(
                 div()
-                    .mt_5()
-                    .rounded_xl()
+                    .rounded(px(14.))
                     .border_1()
-                    .border_color(content(0.15))
+                    .border_color(crate::glass::edge())
+                    .bg(crate::glass::fill())
                     .px_5()
                     .py_8()
                     .text_center()
@@ -767,7 +789,7 @@ impl SettingsView {
             let name = self.connection_field(NAME, "Name (optional)", disabled, cx);
             let port = self.connection_field(PORT, "SSH port", disabled, cx);
             let connect_disabled = disabled || self.connection_value(TARGET, cx).trim().is_empty();
-            page.push(div().mt_5().p_5().rounded_xl().border_1().border_color(content(0.1)).flex().flex_col().gap_4()
+            page.push(div().p_5().rounded(px(14.)).border_1().border_color(crate::glass::edge()).bg(crate::glass::fill()).flex().flex_col().gap_4()
                 .child(div().flex().justify_between().child(div().text_size(px(14.)).font_weight(FontWeight::MEDIUM).child("Connect through SSH"))
                     .child(div().rounded_sm().bg(content(0.1)).px_2().py_1().text_size(px(11.)).text_color(content(0.6)).child("SSH")))
                 .child(target).child(name)
@@ -778,10 +800,10 @@ impl SettingsView {
                 .child(paragraph("Gespan installs and starts its background host, then connects securely. Your SSH keys and config are used automatically. Enable SSH on the host and sign in to Codex or Claude Code there. On Windows and Mac, keep the host’s desktop account signed in and the machine awake. Locking the desktop is fine."))
                 .child(paragraph("On Linux, setup installs a systemd user service and turns on lingering for your account (loginctl enable-linger), so the host and your other user services keep running after you log out. Without systemd, as in many containers and microVMs, the host runs as a background process instead and is started again when you reconnect. The host keeps running until you stop it on that machine; removing it here only disconnects this desktop."))
                 .child(div().flex().justify_end().gap_2()
-                    .child(secondary_button("cancel-machine", "Cancel", false, busy).child("Cancel").on_click(cx.listener(|this, _, _, cx| {
+                    .child(glass_secondary("cancel-machine", "Cancel", false, busy).child("Cancel").on_click(cx.listener(|this, _, _, cx| {
                         if !this.connections.busy { this.connections.adding = false; cx.notify(); }
                     })))
-                    .child(secondary_button("connect-machine", "Connect", false, connect_disabled).child(if busy { "Connecting…" } else { "Connect" })
+                    .child(glass_secondary("connect-machine", "Connect", false, connect_disabled).child(if busy { "Connecting…" } else { "Connect" })
                         .on_click(cx.listener(|this, _, _, cx| this.begin_connection(None, false, cx)))))
                 .into_any_element());
         }
@@ -792,11 +814,11 @@ impl SettingsView {
                 .role(Role::Status)
                 .relative()
                 .child(self.connections.progress.probe())
-                .mt_5()
                 .p_5()
-                .rounded_xl()
+                .rounded(px(14.))
                 .border_1()
-                .border_color(content(0.1))
+                .border_color(crate::glass::edge())
+                .bg(crate::glass::fill())
                 .flex()
                 .flex_col()
                 .gap_3()
@@ -829,7 +851,7 @@ impl SettingsView {
                         .flex()
                         .gap_2()
                         .child(
-                            secondary_button("answer-ssh-prompt", "Continue", false, answering)
+                            glass_secondary("answer-ssh-prompt", "Continue", false, answering)
                                 .child(if prompt.confirm {
                                     "Trust host and continue"
                                 } else {
@@ -841,7 +863,7 @@ impl SettingsView {
                         )
                         .when(prompt.confirm, |d| {
                             d.child(
-                                secondary_button("reject-ssh-host", "Reject", false, answering)
+                                glass_secondary("reject-ssh-host", "Reject", false, answering)
                                     .child("Reject")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.answer_connection(Some("no"), cx)
@@ -853,14 +875,9 @@ impl SettingsView {
             page.push(
                 progress
                     .child(
-                        secondary_button(
-                            "cancel-ssh-connection",
-                            "Cancel connection",
-                            false,
-                            false,
-                        )
-                        .child("Cancel connection")
-                        .on_click(cx.listener(|this, _, _, cx| this.cancel_connection(cx))),
+                        glass_secondary("cancel-ssh-connection", "Cancel connection", false, false)
+                            .child("Cancel connection")
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_connection(cx))),
                     )
                     .into_any_element(),
             );
@@ -870,7 +887,6 @@ impl SettingsView {
                 div()
                     .id("remote-connection-error")
                     .role(Role::Alert)
-                    .mt_4()
                     .rounded_lg()
                     .bg(red(0.05))
                     .p_3()
@@ -886,52 +902,67 @@ impl SettingsView {
                 div()
                     .id("remote-connection-notice")
                     .role(Role::Status)
-                    .mt_4()
                     .text_size(px(13.))
                     .text_color(rgb(0x10b981))
                     .child(self.connections.notice.clone())
                     .into_any_element(),
             );
         }
-        page.push(
-            div()
-                .id("existing-host-url")
-                .role(Role::Button)
-                .aria_label("Connect to an existing host by URL")
-                .mt_5()
-                .text_size(px(12.))
-                .text_color(content(0.45))
-                .cursor_pointer()
-                .child(if self.connections.url {
-                    "▾ Connect to an existing host by URL"
-                } else {
-                    "▸ Connect to an existing host by URL"
-                })
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.connections.url = !this.connections.url;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        );
-        if self.connections.url {
+        let open = self.connections.url;
+        let fields = open.then(|| {
             let url = self.connection_field(URL, "Host URL", disabled, cx);
             let token = self.connection_field(TOKEN, "Device token", disabled, cx);
-            page.push(
-                div()
-                    .mt_4()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(url)
-                    .child(token)
-                    .child(
-                        secondary_button("connect-host-url", "Connect by URL", false, disabled)
+            div()
+                .px_4()
+                .pb_4()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(url)
+                .child(token)
+                .child(
+                    div().flex().child(
+                        glass_secondary("connect-host-url", "Connect by URL", false, disabled)
                             .child("Connect by URL")
                             .on_click(cx.listener(|this, _, _, cx| this.connect_url(cx))),
-                    )
-                    .into_any_element(),
-            );
-        }
+                    ),
+                )
+        });
+        page.push(
+            crate::glass::card()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .id("existing-host-url")
+                        .role(Role::Button)
+                        .aria_label("Connect to an existing host by URL")
+                        .aria_expanded(open)
+                        .px_4()
+                        .py(px(12.))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(12.5))
+                        .text_color(content(0.62))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(content(1.)))
+                        .child(icon(
+                            if open {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            14.,
+                        ))
+                        .child("Connect to an existing host by URL")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.connections.url = !this.connections.url;
+                            cx.notify();
+                        })),
+                )
+                .children(fields)
+                .into_any_element(),
+        );
         page
     }
 
@@ -948,11 +979,11 @@ impl SettingsView {
             .child(paragraph("Removing alone leaves this desktop’s credential valid on the host. Revoke access to invalidate it first; the machine must be reachable."))
             .child(paragraph("To stop the host and turn off its background service, run ~/.gespan-host/bin/gespan-host service uninstall on that machine (%USERPROFILE%\\.gespan-host\\bin\\gespan-host.cmd service uninstall on Windows). Its sessions and history are kept."))
             .child(div().flex().flex_wrap().gap_2()
-                .child(secondary_button("revoke-remove-machine", "Revoke access and remove", true, disabled).child("Revoke access and remove")
+                .child(glass_secondary("revoke-remove-machine", "Revoke access and remove", true, disabled).child("Revoke access and remove")
                     .on_click(cx.listener(move |this, _, _, cx| this.remove_connection(revoke_machine.clone(), true, cx))))
-                .child(secondary_button("remove-machine-only", "Remove from this desktop only", false, disabled).child("Remove from this desktop only")
+                .child(glass_secondary("remove-machine-only", "Remove from this desktop only", false, disabled).child("Remove from this desktop only")
                     .on_click(cx.listener(move |this, _, _, cx| this.remove_connection(machine.clone(), false, cx))))
-                .child(secondary_button("cancel-remove-machine", "Cancel", false, disabled).child("Cancel")
+                .child(glass_secondary("cancel-remove-machine", "Cancel", false, disabled).child("Cancel")
                     .on_click(cx.listener(|this, _, _, cx| { if !this.connections.revoking { this.connections.removing = None; cx.notify(); } })))).into_any_element()
     }
 }
@@ -1053,5 +1084,20 @@ mod tests {
         for value in ["0", "65536", "-1", "22.5", "ssh"] {
             assert!(parse_port(value).is_err());
         }
+    }
+
+    #[test]
+    fn a_machine_status_pill_matches_what_the_host_reported() {
+        use crate::glass::Tone;
+        assert_eq!(status_tone("Connected"), Tone::Ok);
+        assert_eq!(
+            status_tone("Connected · host update needed for Explorer and Changes"),
+            Tone::Waiting
+        );
+        assert_eq!(
+            status_tone("Offline · reconnect to check access"),
+            Tone::Bad
+        );
+        assert_eq!(status_tone("Checking connection…"), Tone::Muted);
     }
 }

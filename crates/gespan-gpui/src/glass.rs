@@ -91,8 +91,8 @@ pub(crate) fn page_header(title: &'static str, subtitle: &'static str) -> Div {
         .gap(px(4.))
         .child(
             div()
-                .text_size(px(24.))
-                .line_height(px(28.))
+                .text_size(px(26.))
+                .line_height(px(30.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(content(1.))
                 .child(title),
@@ -120,22 +120,24 @@ pub(crate) fn stat(id: &'static str, value: String, label: &'static str, ink: Hs
     card()
         .debug_selector(move || id.into())
         .rounded(px(12.))
-        .min_w(px(104.))
+        .min_w(px(116.))
         .px(px(14.))
-        .py(px(9.))
+        .py(px(10.))
         .flex()
         .flex_col()
         .child(
             div()
-                .text_size(px(20.))
-                .line_height(px(24.))
+                .text_size(px(22.))
+                .line_height(px(24.2))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(ink)
                 .child(value),
         )
         .child(
             div()
+                .mt(px(2.))
                 .text_size(px(11.5))
+                .line_height(px(14.))
                 .text_color(content(0.62))
                 .child(label),
         )
@@ -171,7 +173,7 @@ pub(crate) fn segment(
         .id(id)
         .cursor_pointer()
         .h(px(26.))
-        .px(px(11.))
+        .px(px(12.))
         .flex()
         .items_center()
         .gap(px(6.))
@@ -458,7 +460,7 @@ pub(crate) fn dot_segment(
         .id(id)
         .cursor_pointer()
         .h(px(26.))
-        .px(px(11.))
+        .px(px(12.))
         .flex()
         .items_center()
         .gap(px(6.))
@@ -474,6 +476,28 @@ pub(crate) fn dot_segment(
         })
         .when(!selected, |d| d.hover(|s| s.text_color(content(1.))))
         .child(div().flex_none().size(px(6.)).rounded_full().bg(tone.ink()))
+        .child(label.into())
+}
+
+/// A violet tag beside a title for something early: Beta, Invite-only beta.
+pub(crate) fn beta(label: impl Into<SharedString>) -> Div {
+    let ink: Hsla = if is_light() {
+        rgb(0x6d4fd6).into()
+    } else {
+        rgb(0xc0affc).into()
+    };
+    div()
+        .flex_none()
+        .px(px(7.))
+        .py(px(2.))
+        .rounded_full()
+        .bg(ink.opacity(0.12))
+        .border_1()
+        .border_color(ink.opacity(0.25))
+        .text_size(px(10.5))
+        .line_height(px(14.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(ink)
         .child(label.into())
 }
 

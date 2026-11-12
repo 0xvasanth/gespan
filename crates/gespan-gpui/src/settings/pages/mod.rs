@@ -14,6 +14,7 @@ mod mcp;
 mod mcp_catalog;
 mod mobile;
 mod providers;
+mod services;
 mod skills;
 mod worktrees;
 
@@ -27,8 +28,12 @@ pub(super) use dictation::DictationState;
 #[cfg(test)]
 pub(super) use general::version_pill;
 pub(super) use herdr_machines::HerdrMachinesState;
+#[cfg(test)]
+pub(super) use keybindings::{BINDINGS, by_area, key_caps};
 pub(crate) use keybindings::{command_shortcut, shortcut_label};
 pub(super) use mobile::MobileState;
+#[cfg(test)]
+pub(super) use skills::skill_bucket;
 pub(super) use worktrees::WorktreeScripts;
 
 use super::{Section, SettingsView};
@@ -39,14 +44,14 @@ impl SettingsView {
         match self.section {
             Section::General => self.general_page(cx),
             Section::Diagnostics => self.diagnostics_page(cx),
-            Section::Connections => {
-                // As on the earlier desktop and in the phone app's copy:
-                // Settings → Connections holds both machines and phones.
+            Section::Devices => {
+                // Devices holds machines, herdr machines and phones.
                 let mut page = self.connections_page(cx);
                 page.extend(self.herdr_machines_page(cx));
                 page.extend(self.mobile_page(cx));
                 page
             }
+            Section::Services => self.services_page(cx),
             Section::Appearance => self.appearance_page(window, cx),
             Section::Keybindings => self.keybindings_page(cx),
             Section::Dictation => self.dictation_page(cx),

@@ -2,16 +2,51 @@ use crate::{
     settings::{
         SettingsView,
         management::Target,
-        widgets::{note, secondary_button},
+        widgets::{glass_secondary, note},
     },
     theme::*,
 };
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 impl SettingsView {
-    pub(super) fn mcp_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let project = self.project_picker(cx);
+    /// The page header's project, Refresh and Add MCP server.
+    pub(in crate::settings) fn mcp_header_action(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.section != crate::settings::Section::Mcp {
+            return None;
+        }
         let busy = self.mcp_busy || self.management.as_ref().is_some_and(|e| e.busy);
-        let mut page = vec![
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(self.project_picker(cx))
+                .child(self.refresh_button("refresh-mcp", "Refresh", cx))
+                .child(
+                    crate::glass::button(
+                        "add-mcp",
+                        "Add MCP server",
+                        crate::glass::Button::Primary,
+                    )
+                    .debug_selector(|| "settings-add-mcp".into())
+                    .role(gpui::Role::Button)
+                    .aria_label("Add MCP server")
+                    .when(busy, |d| d.opacity(0.5))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if !busy {
+                            this.open_management(Target::Mcp, window, cx);
+                        }
+                    })),
+                )
+                .into_any_element(),
+        )
+    }
+
+    pub(super) fn mcp_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let busy = self.mcp_busy || self.management.as_ref().is_some_and(|e| e.busy);
+        let header = vec![
             div()
                 .relative()
                 .child(self.reveal_probe("mcp-servers"))
@@ -23,18 +58,12 @@ impl SettingsView {
                 .child(
                     div()
                         .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_3()
-                                .child(
-                                    div()
-                                        .text_size(px(14.))
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .child("MCP connections"),
-                                )
-                                .child(project),
+                            div().flex().flex_wrap().items_center().gap_3().child(
+                                div()
+                                    .text_size(px(13.))
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("MCP connections"),
+                            ),
                         )
                         .child(
                             div()
@@ -45,42 +74,30 @@ impl SettingsView {
                         ),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(self.refresh_button("refresh-mcp", "Refresh", cx))
-                        .child(
-                            secondary_button(
-                                "mcp-show-all",
-                                if self.mcp_show_all {
-                                    "Show available providers"
-                                } else {
-                                    "Show all providers"
-                                },
-                                false,
-                                false,
-                            )
-                            .child(icon("filter", 14.))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.mcp_show_all = !this.mcp_show_all;
-                                cx.notify();
-                            })),
+                    div().flex().items_center().gap_2().child(
+                        glass_secondary(
+                            "mcp-show-all",
+                            if self.mcp_show_all {
+                                "Show available providers"
+                            } else {
+                                "Show all providers"
+                            },
+                            false,
+                            false,
                         )
-                        .child(
-                            secondary_button("add-mcp", "Add MCP server", false, busy)
-                                .debug_selector(|| "settings-add-mcp".into())
-                                .child(icon("plus", 14.))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    if !busy {
-                                        this.open_management(Target::Mcp, window, cx);
-                                    }
-                                })),
-                        ),
+                        .child(icon("filter", 14.))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.mcp_show_all = !this.mcp_show_all;
+                            cx.notify();
+                        })),
+                    ),
                 )
                 .into_any_element(),
         ];
-        page.extend(self.catalog_section(cx));
+        // Gespan's own servers and what runs now come first, then each
+        // provider's connections, and the registry last.
+        let mut page = self.catalog_section(cx);
+        page.extend(header);
         let filter = self.mcp_filter.clone();
         let counts = std::iter::once(("all", "All"))
             .chain(
@@ -156,9 +173,10 @@ impl SettingsView {
                 div()
                     .mt_6()
                     .overflow_hidden()
-                    .rounded_xl()
+                    .rounded(px(14.))
                     .border_1()
-                    .border_color(content(0.1))
+                    .border_color(crate::glass::edge())
+                    .bg(crate::glass::fill())
                     .bg(content(0.03))
                     .children(servers.into_iter().enumerate().map(|(ix, server)| {
                         let mut row = div()
@@ -223,7 +241,7 @@ impl SettingsView {
                         {
                             let login = server.clone();
                             row = row.child(
-                                secondary_button(
+                                glass_secondary(
                                     SharedString::from(format!("mcp-login-{ix}")),
                                     "Sign in",
                                     false,
@@ -258,7 +276,7 @@ impl SettingsView {
                                 ));
                             }
                             row = row.child(
-                                secondary_button(
+                                glass_secondary(
                                     SharedString::from(format!("mcp-remove-{ix}")),
                                     "Remove",
                                     false,
@@ -292,7 +310,7 @@ impl SettingsView {
                         } else {
                             let path = server.path;
                             row = row.child(
-                                secondary_button(
+                                glass_secondary(
                                     SharedString::from(format!("mcp-show-{ix}")),
                                     "Show config",
                                     false,
@@ -308,6 +326,7 @@ impl SettingsView {
             );
         }
         page.push(note("Live connection status is available for Claude Code."));
+        page.extend(self.registry_section(cx));
         page
     }
     pub(crate) fn refresh_mcp_health(&mut self, cx: &mut Context<Self>) {

@@ -5,7 +5,7 @@
     "popular": true,
     "icon": "alert",
     "name": "Find critical bugs",
-    "description": "Analyze recent commits for high-severity correctness bugs and submit safe fixes",
+    "description": "Analyze recent commits for high-severity correctness bugs and submit safe fixes.",
     "trigger": {
       "kind": "time",
       "event": "weekdays",
@@ -21,7 +21,7 @@
     "popular": true,
     "icon": "search",
     "name": "Scan codebase for vulnerabilities",
-    "description": "Review the full repository on a schedule and alert on validated high-impact security issues",
+    "description": "Review the full repository on a schedule and alert on validated high-impact security issues.",
     "trigger": {
       "kind": "time",
       "event": "weekly",
@@ -38,7 +38,7 @@
     "popular": true,
     "icon": "file",
     "name": "Generate docs",
-    "description": "Create and update developer documentation for recently changed or under-documented code",
+    "description": "Create and update developer documentation for recently changed or under-documented code.",
     "trigger": {
       "kind": "time",
       "event": "weekly",
@@ -55,7 +55,7 @@
     "popular": true,
     "icon": "check",
     "name": "Add test coverage",
-    "description": "Review recent changes and add tests for high-risk logic that lacks adequate coverage",
+    "description": "Review recent changes and add tests for high-risk logic that lacks adequate coverage.",
     "trigger": {
       "kind": "time",
       "event": "weekdays",
@@ -70,7 +70,7 @@
     "category": "review",
     "icon": "pr",
     "name": "Review pull requests",
-    "description": "Review pull requests automatically, without changing any files",
+    "description": "Review pull requests automatically, without changing any files.",
     "setup": "review",
     "trigger": {
       "kind": "github",
@@ -84,7 +84,7 @@
     "category": "security",
     "icon": "lock",
     "name": "Audit dependencies",
-    "description": "Check lockfiles and manifests for vulnerable, abandoned, or unexpectedly upgraded packages",
+    "description": "Check lockfiles and manifests for vulnerable, abandoned, or unexpectedly upgraded packages.",
     "trigger": {
       "kind": "time",
       "event": "weekly",
@@ -100,7 +100,7 @@
     "category": "security",
     "icon": "lock",
     "name": "Scan for secrets",
-    "description": "Search the working tree and recent history for committed credentials, tokens, and keys",
+    "description": "Search the working tree and recent history for committed credentials, tokens, and keys.",
     "trigger": {
       "kind": "time",
       "event": "weekly",
@@ -116,7 +116,7 @@
     "category": "incidents",
     "icon": "inbox",
     "name": "Triage GitHub issues",
-    "description": "When a GitHub issue is opened, inspect the repo and add a concrete reproduction or next step",
+    "description": "When a GitHub issue is opened, inspect the repo and add a concrete reproduction or next step.",
     "trigger": {
       "kind": "github",
       "event": "issue_opened"
@@ -129,7 +129,7 @@
     "category": "incidents",
     "icon": "inbox",
     "name": "Triage new issues",
-    "description": "When a Linear issue is created, inspect the repo and add a concrete reproduction or next step",
+    "description": "When a Linear issue is created, inspect the repo and add a concrete reproduction or next step.",
     "trigger": {
       "kind": "linear",
       "event": "issue_created"
@@ -142,7 +142,7 @@
     "category": "incidents",
     "icon": "alert",
     "name": "Watch failing checks",
-    "description": "On a weekday morning, run the project's tests and diagnose anything that is already red",
+    "description": "On a weekday morning, run the project's tests and diagnose anything that is already red.",
     "trigger": {
       "kind": "time",
       "event": "weekdays",
@@ -157,7 +157,7 @@
     "category": "research",
     "icon": "note",
     "name": "Weekly changelog",
-    "description": "Summarize the week's commits into a changelog humans can actually read",
+    "description": "Summarize the week's commits into a changelog humans can actually read.",
     "trigger": {
       "kind": "time",
       "event": "weekly",
@@ -173,7 +173,7 @@
     "category": "environment",
     "icon": "gauge",
     "name": "Repo health check",
-    "description": "Inspect the working tree, stale branches, and obvious project-setup drift on a schedule",
+    "description": "Inspect the working tree, stale branches, and obvious project-setup drift on a schedule.",
     "trigger": {
       "kind": "time",
       "event": "weekly",
@@ -189,7 +189,7 @@
     "category": "environment",
     "icon": "terminal",
     "name": "Environment doctor",
-    "description": "Verify the project still installs and boots from a clean working copy",
+    "description": "Verify the project still installs and boots from a clean working copy.",
     "trigger": {
       "kind": "time",
       "event": "weekly",

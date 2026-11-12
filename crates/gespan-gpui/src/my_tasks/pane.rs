@@ -1,22 +1,24 @@
 //! The right pane: a top bar with where the task comes from, how long it has
-//! waited and "‹ i of N ›"; its history, faded toward the bottom; and the
-//! answer card pinned under it.
+//! waited and "‹ i of N ›"; its history; and the answer card pinned under
+//! it. The pane is translucent glass and GPUI has no mask, so the history
+//! is not faded: any solid fade would show as a band over the glass.
 use super::*;
 use crate::glass::{self, Button, Tone};
 use crate::workspace::project_name;
-use gpui::{AnyElement, Div, linear_color_stop, linear_gradient, px, relative};
+use gpui::{AnyElement, Div, px, relative};
 
 /// Every icon the page draws outside the kind marks, so a test can check
 /// each one exists.
 #[cfg(test)]
 pub(super) const ICONS: &[&str] = &[
-    "external-link",
+    "arrow-up-right",
     "chevron-left",
     "chevron-right",
     "terminal",
     "search",
     "filter",
     "check",
+    "check-bold",
     "clock",
     "chat",
 ];
@@ -80,18 +82,12 @@ pub(super) fn top_bar(project: &str, source: String) -> Div {
         )
 }
 
-/// The wash under the answer card. The history fades into it, so the card
-/// sits on a slightly darker floor with no seam above it.
-fn dock_wash() -> gpui::Hsla {
-    background_base().opacity(if is_light() { 0.5 } else { 0.4 })
-}
-
 /// The ghost button that opens the request where it was asked.
 pub(super) fn open_button(label: &'static str) -> gpui::Stateful<Div> {
     glass::button("my-tasks-open-source", label, Button::Ghost)
         .debug_selector(|| "my-tasks-open-source".into())
         .h(px(30.))
-        .child(icon("external-link", 13.))
+        .child(icon("arrow-up-right", 13.))
 }
 
 impl MyTasks {
@@ -165,7 +161,7 @@ impl MyTasks {
             return self.empty_pane(banner);
         };
         let open_label = match task.source {
-            Source::Session(_) => "Open session",
+            Source::Session(_) => "Open thread",
             Source::FlowRun(_) => "Open run",
             Source::Pilot { .. } => "Open chat",
             Source::DraftReview { .. } => "Open draft",
@@ -187,18 +183,6 @@ impl MyTasks {
                 ));
         let history = self.history(&task, cx);
         let card = self.card(&task, cx);
-        // The history fades out above the card, so the ask is the focus.
-        let fade = div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .h(px(40.))
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(background_base().opacity(0.), 0.),
-                linear_color_stop(dock_wash(), 1.),
-            ));
         div()
             .flex_1()
             .min_w_0()
@@ -207,25 +191,14 @@ impl MyTasks {
             .flex_col()
             .child(bar)
             .children(banner)
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(history)
-                    .child(fade),
-            )
+            .child(div().flex_1().min_h_0().flex().flex_col().child(history))
             .child(
                 div()
                     .id("my-tasks-card-dock")
                     .flex_shrink_0()
                     .max_h(relative(CARD_MAX_HEIGHT))
                     .overflow_y_scroll()
-                    .bg(dock_wash())
                     .px(px(24.))
-                    .pt(px(8.))
                     .pb(px(24.))
                     .flex()
                     .justify_center()

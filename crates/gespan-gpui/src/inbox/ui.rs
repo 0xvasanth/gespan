@@ -2,9 +2,8 @@ use super::*;
 use crate::glass;
 use crate::popover::{Align, Anchor, popover};
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, CursorStyle, Div, FontWeight, Hsla,
-    MouseButton, Pixels, Role, SharedString, Stateful, Window, canvas, div, list, prelude::*, px,
-    rgb,
+    AnyElement, ClipboardItem, CursorStyle, Div, FontWeight, Hsla, MouseButton, Pixels, Role,
+    SharedString, Stateful, Window, canvas, div, list, prelude::*, px, rgb,
 };
 
 pub(super) fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
@@ -91,14 +90,6 @@ fn plain_action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> 
         .cursor_pointer()
         .child(label)
 }
-/// The green of the tick that confirms a copy.
-const COPIED: Hsla = Hsla {
-    h: 0.396,
-    s: 0.72,
-    l: 0.56,
-    a: 1.,
-};
-const COPIED_POP: Duration = Duration::from_millis(260);
 
 fn icon_action(id: impl Into<SharedString>, label: &str, name: &'static str) -> Stateful<Div> {
     icon_action_ink(id, label, name, content(0.7))
@@ -359,6 +350,48 @@ fn toggle(list: &mut Vec<String>, key: String) {
         list.push(key);
     }
 }
+/// The list's view: everything, pull requests asking for your review
+/// (GitHub), or what is assigned to you.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum View {
+    All,
+    ReviewRequested,
+    Assigned,
+}
+impl View {
+    fn id(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::ReviewRequested => "review-requested",
+            Self::Assigned => "assigned",
+        }
+    }
+}
+/// The views a source offers: only GitHub can search for review requests.
+fn view_options(source: &str) -> Vec<(View, &'static str)> {
+    let mut views = vec![(View::All, "All")];
+    if source == "github" {
+        views.push((View::ReviewRequested, "Review requested"));
+    }
+    views.push((
+        View::Assigned,
+        if matches!(source, "gitlab" | "azuredevops") {
+            "Needs my attention"
+        } else {
+            "Assigned"
+        },
+    ));
+    views
+}
+fn current_view(state: &ViewState) -> View {
+    if state.filters.review_requested && state.source == "github" {
+        View::ReviewRequested
+    } else if state.filters.assigned_to_me {
+        View::Assigned
+    } else {
+        View::All
+    }
+}
 /// Rows under their group label, groups in the order their first row comes,
 /// rows in list order within each group.
 fn group_rows(rows: Vec<(String, Item)>) -> Vec<(String, Vec<Item>)> {
@@ -382,7 +415,7 @@ fn row_status(item: &Item, checks: Option<&Checks>) -> (String, glass::Tone) {
         }
         if counts.pending > 0 {
             return (
-                format!("Running {}/{total}", total - counts.pending),
+                format!("{}/{total}", total - counts.pending),
                 glass::Tone::Running,
             );
         }
@@ -412,6 +445,39 @@ fn short_age(iso: &str) -> String {
         m => format!("{}y", m / (60 * 24 * 365)),
     }
 }
+/// The document's status pill: the item's kind and state, green while open.
+fn document_status(item: &Item) -> Div {
+    let tone = document_tone(item);
+    let ink = tone.ink();
+    div()
+        .flex_none()
+        .h(px(22.))
+        .pl(px(8.))
+        .pr(px(9.))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .rounded_full()
+        .bg(ink.opacity(0.10))
+        .border_1()
+        .border_color(ink.opacity(0.2))
+        .text_size(px(11.5))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(ink)
+        .child(icon(status_icon(item), 12.).text_color(ink))
+        .child(item.status())
+}
+/// "vasanth · opened 14m ago", or just the age when the author is unknown.
+fn opened_line(author: &str, created_at: &str) -> String {
+    let age = short_age(created_at);
+    match (author.is_empty(), age.as_str()) {
+        (_, "") => author.to_string(),
+        (true, "now") => "opened just now".into(),
+        (true, age) => format!("opened {age} ago"),
+        (false, "now") => format!("{author} · opened just now"),
+        (false, age) => format!("{author} · opened {age} ago"),
+    }
+}
 /// The document's status pill: open work reads green, closed red.
 fn document_tone(item: &Item) -> glass::Tone {
     match item.status() {
@@ -423,7 +489,65 @@ fn document_tone(item: &Item) -> glass::Tone {
 /// How long a finished check took, else what state it is in.
 fn check_time(check: &model::Check) -> String {
     model::ci_repair::check_duration(check.started_at.as_deref(), check.completed_at.as_deref())
-        .unwrap_or_else(|| model::ci_repair::state_label(&check.state).to_lowercase())
+        .unwrap_or_else(|| match check.state.as_str() {
+            "pending" => "running".into(),
+            state => model::ci_repair::state_label(state).to_lowercase(),
+        })
+}
+/// The checks card's order: failures first, the rest as they arrived.
+fn card_order(checks: &[model::Check]) -> Vec<model::Check> {
+    let mut rows = checks.to_vec();
+    rows.sort_by_key(|check| !failed_check(&check.state));
+    rows
+}
+/// A row's second line: its reference, then why it is here, else who
+/// opened it; issues say so.
+fn row_meta(item: &Item) -> String {
+    let mut parts = vec![item.reference()];
+    if item.kind != "pr" && !model::is_tracker(&item.provider) {
+        parts.push("issue".into());
+    }
+    let attention = attention_label(&item.attention_reason);
+    if !attention.is_empty() {
+        parts.push(attention);
+    } else if !item.author.is_empty() {
+        parts.push(item.author.clone());
+    }
+    parts.join(" · ")
+}
+/// The checks card's heading pill: failures counted, else running or passing.
+fn checks_overall(checks: &Checks) -> (String, glass::Tone) {
+    let counts = model::ci_repair::Counts::checks(&checks.checks);
+    if counts.fail > 0 {
+        (format!("{} failed", counts.fail), glass::Tone::Bad)
+    } else if counts.pending > 0 {
+        ("Running".into(), glass::Tone::Running)
+    } else if checks.checks.is_empty() {
+        ("None".into(), glass::Tone::Muted)
+    } else if counts.pass + counts.skipping == checks.checks.len() {
+        ("Passing".into(), glass::Tone::Ok)
+    } else {
+        ("Finished".into(), glass::Tone::Muted)
+    }
+}
+/// The reviewers card's rows and heading pill: who is asked, and the
+/// review decision. `None` when the provider gave neither.
+/// Who is asked to review, and the review decision as a pill.
+type Reviewers = (Vec<String>, Option<(String, glass::Tone)>);
+fn reviewers(details: &Details) -> Option<Reviewers> {
+    let decision = match details.review_decision.trim().to_uppercase().as_str() {
+        "" => None,
+        "APPROVED" => Some((review_label("APPROVED"), glass::Tone::Ok)),
+        "CHANGES_REQUESTED" => Some((review_label("CHANGES_REQUESTED"), glass::Tone::Bad)),
+        other => Some((review_label(other), glass::Tone::Waiting)),
+    };
+    let requested = details
+        .review_requests
+        .iter()
+        .map(|login| login.trim().to_string())
+        .filter(|login| !login.is_empty())
+        .collect::<Vec<_>>();
+    (!requested.is_empty() || decision.is_some()).then_some((requested, decision))
 }
 fn files_label(files: usize) -> String {
     format!("{files} file{}", if files == 1 { "" } else { "s" })
@@ -503,6 +627,7 @@ impl Inbox {
         let items = self.visible_items(cx);
         let add_connection = div()
             .id("inbox-add-connection")
+            .debug_selector(|| "inbox-add-connection".into())
             .role(Role::Button)
             .aria_label("Add connection")
             .relative()
@@ -521,14 +646,56 @@ impl Inbox {
             .child(self.connection_anchor.probe())
             .child(icon("plus", 14.))
             .on_click(cx.listener(|this, _, _, cx| {
-                this.connections_open = !this.connections_open;
                 this.filters_open = false;
-                cx.notify();
+                cx.emit(super::Event::OpenConnections);
             }));
+        let tools = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .when(!connected.is_empty(), |d| {
+                d.child(
+                    icon_button("inbox-filter", "Filter inbox", "filter")
+                        .relative()
+                        .child(self.filter_anchor.probe())
+                        .when(self.filters_open, |d| d.bg(content(0.1)))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.filters_open = !this.filters_open;
+                            this.connections_open = false;
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    icon_button("inbox-read-all", "Mark all as read", "check-2").on_click(
+                        cx.listener(|this, _, _, cx| {
+                            for item in &this.snapshot.items {
+                                if item.provider == this.state.source {
+                                    this.state.seen.mark(item);
+                                }
+                            }
+                            this.save();
+                            cx.notify();
+                        }),
+                    ),
+                )
+                .child(
+                    icon_button(
+                        "inbox-refresh",
+                        "Refresh",
+                        if self.loading { "loader" } else { "refresh-cw" },
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh(cx);
+                        this.load_detail(false, cx);
+                    })),
+                )
+            })
+            .child(add_connection);
         let header = div()
             .flex()
             .items_start()
-            .gap(px(10.))
+            .gap(px(8.))
             .child(
                 glass::page_header(
                     "Inbox",
@@ -537,89 +704,103 @@ impl Inbox {
                 .flex_1()
                 .min_w_0(),
             )
-            .child(add_connection);
-        let sources = (!connected.is_empty()).then(|| {
-            glass::segmented()
-                .id("inbox-sources")
-                .role(Role::TabList)
-                .aria_label("Inbox source")
-                .self_start()
-                .max_w_full()
-                .overflow_x_scroll()
-                .children(connected.iter().map(|provider| {
-                    let source = provider.to_string();
-                    let (total, unread) =
-                        self.snapshot.items.iter().fold((0, 0), |(n, u), item| {
-                            if item.provider == *provider {
-                                (n + 1, u + usize::from(self.state.seen.unseen(item)))
-                            } else {
-                                (n, u)
-                            }
-                        });
-                    let selected = self.state.source == *provider;
-                    glass::segment(
-                        SharedString::from(format!("inbox-source-{provider}")),
-                        model::provider_label(provider),
-                        selected,
+            .child(tools);
+        let view = current_view(&self.state);
+        let review_count = self
+            .snapshot
+            .items
+            .iter()
+            .filter(|item| {
+                item.provider == self.state.source
+                    && item
+                        .attention_reason
+                        .eq_ignore_ascii_case("review_requested")
+            })
+            .count();
+        let views =
+            (!connected.is_empty()).then(|| {
+                let shown = self
+                    .snapshot
+                    .items
+                    .iter()
+                    .filter(|item| item.provider == self.state.source)
+                    .count();
+                glass::segmented()
+                    .id("inbox-views")
+                    .role(Role::TabList)
+                    .aria_label("Inbox view")
+                    .self_start()
+                    .children(view_options(&self.state.source).into_iter().map(
+                        |(option, label)| {
+                            let selected = view == option;
+                            let count = match option {
+                                View::All if selected => Some((shown, false)),
+                                View::ReviewRequested => Some((review_count, true)),
+                                _ => None,
+                            };
+                            glass::segment(
+                                SharedString::from(format!("inbox-view-{}", option.id())),
+                                label,
+                                selected,
+                            )
+                            .debug_selector(move || format!("inbox-view-{}", option.id()))
+                            .role(Role::Tab)
+                            .aria_label(label)
+                            .aria_selected(selected)
+                            .when_some(count.filter(|(n, _)| *n > 0), |d, (n, hot)| {
+                                d.child(glass::count(n, hot))
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_view(option, cx)))
+                        },
+                    ))
+            });
+        let source_pill = (!connected.is_empty()).then(|| {
+            let next = connected
+                .iter()
+                .skip_while(|provider| **provider != self.state.source)
+                .nth(1)
+                .or(connected.first())
+                .map(|provider| provider.to_string());
+            let many = connected.len() > 1;
+            div()
+                .id("inbox-source")
+                .debug_selector(|| "inbox-source".into())
+                .role(Role::Button)
+                .aria_label(format!(
+                    "Source: {}",
+                    model::provider_label(&self.state.source)
+                ))
+                .flex_none()
+                .h(px(20.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .rounded_full()
+                .bg(glass::fill())
+                .border_1()
+                .border_color(glass::edge())
+                .text_size(px(11.))
+                .text_color(content(0.75))
+                .when(many, |d| {
+                    d.cursor_pointer()
+                        .hover(|s| s.text_color(content(1.)))
+                        .child(icon("chevron-down", 10.))
+                })
+                .child(model::provider_label(&self.state.source))
+                .when(many, |d| d.flex_row_reverse())
+                .when_some(next.filter(|_| many), |d, next| {
+                    d.on_click(
+                        cx.listener(move |this, _, _, cx| this.change_source(next.clone(), cx)),
                     )
-                    .role(Role::Tab)
-                    .aria_label(model::provider_label(provider))
-                    .aria_selected(selected)
-                    .when(total > 0, |d| d.child(glass::count(total, unread > 0)))
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.change_source(source.clone(), cx)),
-                    )
-                }))
+                })
         });
-        let tools = div()
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .child(
-                glass::field()
-                    .flex_1()
-                    .min_w_0()
-                    .mr(px(4.))
-                    .child(icon("search", 13.).text_color(content(0.55)))
-                    .child(div().flex_1().min_w_0().child(self.search.clone())),
-            )
-            .child(
-                icon_button("inbox-filter", "Filter inbox", "filter")
-                    .relative()
-                    .child(self.filter_anchor.probe())
-                    .when(self.filters_open || self.filters_active(), |d| {
-                        d.bg(content(0.1))
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.filters_open = !this.filters_open;
-                        this.connections_open = false;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                icon_button("inbox-read-all", "Mark all as read", "check-2").on_click(cx.listener(
-                    |this, _, _, cx| {
-                        for item in &this.snapshot.items {
-                            if item.provider == this.state.source {
-                                this.state.seen.mark(item);
-                            }
-                        }
-                        this.save();
-                        cx.notify();
-                    },
-                )),
-            )
-            .child(
-                icon_button(
-                    "inbox-refresh",
-                    "Refresh",
-                    if self.loading { "loader" } else { "refresh-cw" },
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.refresh(cx);
-                    this.load_detail(false, cx);
-                })),
-            );
+        let search = (!connected.is_empty()).then(|| {
+            glass::field()
+                .child(icon("search", 14.).text_color(content(0.55)))
+                .child(div().flex_1().min_w_0().child(self.search.clone()))
+                .children(source_pill)
+        });
         let no_connection = connected.is_empty() && !self.loading;
         let empty = if no_connection {
             "Add a connection to start using the Inbox.".into()
@@ -679,8 +860,8 @@ impl Inbox {
                     .flex_col()
                     .gap(px(14.))
                     .child(header)
-                    .children(sources)
-                    .when(!connected.is_empty(), |d| d.child(tools)),
+                    .children(views)
+                    .children(search),
             )
             .child(
                 div()
@@ -743,8 +924,6 @@ impl Inbox {
         let key = item.key();
         let active = self.selected.as_ref() == Some(&key);
         let unread = self.state.seen.unseen(&item);
-        let sessions = self.related_sessions(&item).len();
-        let attention = attention_label(&item.attention_reason);
         let checks = if active { self.checks.as_ref() } else { None };
         let (status, tone) = row_status(&item, checks);
         let ink = status_color(&item);
@@ -793,8 +972,10 @@ impl Inbox {
                         .bg(accent_color()),
                 )
             })
-            .child(
+            .child(if item.author.is_empty() {
+                let mark = format!("inbox-mark-{key}");
                 div()
+                    .debug_selector(move || mark)
                     .flex_none()
                     .size(px(22.))
                     .rounded_full()
@@ -802,8 +983,15 @@ impl Inbox {
                     .items_center()
                     .justify_center()
                     .bg(ink.opacity(0.16))
-                    .child(icon(status_icon(&item), 12.).text_color(ink)),
-            )
+                    .child(provider_mark(&item.provider).size(px(12.)))
+                    .into_any_element()
+            } else {
+                let initials = format!("inbox-initials-{key}");
+                div()
+                    .debug_selector(move || initials)
+                    .child(super::menu::initials_avatar(&item.author))
+                    .into_any_element()
+            })
             .child(
                 div()
                     .flex_1()
@@ -821,7 +1009,7 @@ impl Inbox {
                             } else {
                                 FontWeight::NORMAL
                             })
-                            .text_color(content(if unread { 1. } else { 0.78 }))
+                            .text_color(content(if unread { 1. } else { 0.62 }))
                             .child(item.title.clone()),
                     )
                     .child(
@@ -831,27 +1019,7 @@ impl Inbox {
                             .gap(px(8.))
                             .text_size(px(11.5))
                             .text_color(content(0.5))
-                            .child(div().min_w_0().flex_1().truncate().child(
-                                if attention.is_empty() {
-                                    item.reference()
-                                } else {
-                                    format!("{} · {attention}", item.reference())
-                                },
-                            ))
-                            .when(sessions > 0, |d| {
-                                d.child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(px(2.))
-                                        .text_color(accent_color())
-                                        .child(
-                                            icon("message-multiple", 12.)
-                                                .text_color(accent_color()),
-                                        )
-                                        .child(sessions.to_string()),
-                                )
-                            })
+                            .child(div().min_w_0().flex_1().truncate().child(row_meta(&item)))
                             .child(div().flex_none().child(short_age(&item.updated_at))),
                     ),
             )
@@ -906,16 +1074,6 @@ impl Inbox {
         };
         let is_pr = item.kind == "pr";
         let details = self.details.clone().unwrap_or_default();
-        let assignees = item
-            .assignees
-            .iter()
-            .filter(|person| {
-                !person
-                    .login
-                    .trim()
-                    .eq_ignore_ascii_case(details.author.trim())
-            })
-            .collect::<Vec<_>>();
         let base_ref = if details.base_ref_name.is_empty() {
             self.thread
                 .as_ref()
@@ -946,26 +1104,35 @@ impl Inbox {
         } else {
             item.team_name.clone()
         };
-        let open_external = glass::button(
-            "inbox-open-external",
-            format!(
-                "{} {}",
-                if is_pr { "Review on" } else { "Open in" },
-                model::provider_label(&item.provider)
-            ),
-            glass::Button::Glass,
-        )
-        .h(px(30.))
-        .role(Role::Button)
-        .when(item.url.is_empty(), |d| d.opacity(0.4))
-        .on_click({
-            let url = item.url.clone();
-            move |_, _, cx| {
-                if !url.is_empty() {
-                    cx.open_url(&url);
-                }
-            }
-        });
+        let more = div()
+            .id("inbox-more")
+            .debug_selector(|| "inbox-more".into())
+            .role(Role::Button)
+            .aria_label("More actions")
+            .relative()
+            .flex_none()
+            .size(px(32.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(9.))
+            .bg(if is_light() {
+                content(0.06)
+            } else {
+                white(0.12)
+            })
+            .border_1()
+            .border_color(if is_light() {
+                content(0.12)
+            } else {
+                white(0.18)
+            })
+            .text_color(content(0.9))
+            .cursor_pointer()
+            .hover(|s| s.bg(content(0.16)))
+            .child(self.action_anchor.probe())
+            .child(icon("more-horizontal", 16.))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_menu(cx)));
         let start_session = (!is_pr).then(|| {
             glass::button(
                 "inbox-send-agent",
@@ -984,19 +1151,33 @@ impl Inbox {
                 }
             }))
         });
+        let choose_project = (!is_pr && item.project_path.is_empty()).then(|| {
+            icon_action(
+                "inbox-choose-project",
+                &self.project_label(&self.start_project.to_string_lossy()),
+                "folder",
+            )
+            .relative()
+            .h(px(30.))
+            .bg(glass::fill())
+            .border_1()
+            .border_color(glass::edge())
+            .child(icon("chevron-down", 12.))
+            .child(self.project_anchor.probe())
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.project_picker = !this.project_picker;
+                cx.notify();
+            }))
+        });
         let place_line = div()
             .min_w_0()
             .flex_1()
             .flex()
             .items_center()
             .gap(px(8.))
-            .text_size(px(12.5))
+            .text_size(px(13.))
             .text_color(content(0.62))
-            .child(
-                glass::status(item.status(), document_tone(&item))
-                    .debug_selector(|| "inbox-document-status".into()),
-            )
-            .child(provider_mark(&item.provider))
+            .child(document_status(&item).debug_selector(|| "inbox-document-status".into()))
             .child(div().min_w_0().truncate().child(if place.is_empty() {
                 format!("{kind} {}", item.reference())
             } else {
@@ -1004,29 +1185,21 @@ impl Inbox {
             }))
             .when(!base_ref.is_empty() && !head_ref.is_empty(), |d| {
                 let branch = head_ref.to_owned();
-                d.child(div().text_color(content(0.4)).child("·"))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .font_family(crate::fonts::monospace())
-                            .text_size(px(11.5))
-                            .child(format!("{head_ref} → {base_ref}")),
-                    )
-                    .child(
-                        icon_button("inbox-copy-branch", "Copy branch name", "response-copy")
-                            .size(px(18.))
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(branch.clone()))
-                            }),
-                    )
-            })
-            .when(!item.attention_reason.is_empty(), |d| {
-                d.child(
+                d.child(div().text_color(content(0.45)).child("·")).child(
                     div()
-                        .flex_none()
-                        .text_color(accent_color())
-                        .child(attention_label(&item.attention_reason)),
+                        .id("inbox-copy-branch")
+                        .role(Role::Button)
+                        .aria_label("Copy branch name")
+                        .min_w_0()
+                        .truncate()
+                        .cursor_pointer()
+                        .font_family(crate::fonts::monospace())
+                        .text_size(px(11.5))
+                        .hover(|s| s.text_color(content(1.)))
+                        .child(format!("{head_ref} → {base_ref}"))
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(branch.clone()))
+                        }),
                 )
             });
         let diff_pill = self.diff.as_ref().map(|diff| {
@@ -1071,6 +1244,7 @@ impl Inbox {
             .unwrap_or(0);
         let tabs = is_pr.then(|| {
             div()
+                .mt(px(4.))
                 .flex()
                 .items_center()
                 .gap(px(10.))
@@ -1078,12 +1252,12 @@ impl Inbox {
                     glass::segmented()
                         .id("inbox-pr-tabs")
                         .role(Role::TabList)
-                        .aria_label("Pull request details")
+                        .aria_label("Pull request view")
                         .children(
                             [
-                                (Tab::Summary, "Summary"),
-                                (Tab::Code, "Code"),
+                                (Tab::Summary, "Overview"),
                                 (Tab::Checks, "Checks"),
+                                (Tab::Code, "Files"),
                             ]
                             .into_iter()
                             .filter(|(tab, _)| *tab != Tab::Checks || item.provider == "github")
@@ -1103,6 +1277,7 @@ impl Inbox {
                                     label,
                                     self.tab == tab,
                                 )
+                                .debug_selector(move || format!("inbox-tab-{label}"))
                                 .role(Role::Tab)
                                 .aria_label(label)
                                 .aria_selected(self.tab == tab)
@@ -1118,6 +1293,11 @@ impl Inbox {
                     |d| d.child(self.diff_context_switch(cx)),
                 )
         });
+        let author = if details.author.is_empty() {
+            item.author.clone()
+        } else {
+            details.author.clone()
+        };
         let title = div()
             .w_full()
             .flex_shrink_0()
@@ -1139,8 +1319,9 @@ impl Inbox {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(open_external)
-                            .children(start_session),
+                            .children(choose_project)
+                            .children(start_session)
+                            .child(more),
                     ),
             )
             .child(
@@ -1159,50 +1340,37 @@ impl Inbox {
                     .items_center()
                     .gap(px(8.))
                     .overflow_hidden()
-                    .text_size(px(12.5))
+                    .text_size(px(13.))
                     .text_color(content(0.62))
-                    .when(!details.author.is_empty(), |d| {
-                        d.child(avatar::person(
-                            &item.provider,
-                            &details.author,
-                            &details.author_avatar_url,
-                            20.,
-                            window,
-                            cx,
-                        ))
-                    })
-                    .when(!assignees.is_empty(), |d| {
-                        d.child("·").children(assignees.iter().map(|person| {
+                    .when(!author.is_empty(), |d| {
+                        d.child(if details.author_avatar_url.is_empty() {
+                            menu::initials_avatar(&author)
+                        } else {
                             avatar::person(
                                 &item.provider,
-                                &person.login,
-                                &person.avatar_url,
-                                20.,
+                                &author,
+                                &details.author_avatar_url,
+                                22.,
                                 window,
                                 cx,
                             )
-                        }))
+                            .into_any_element()
+                        })
                     })
-                    .when(
-                        item.assignees.is_empty()
-                            && matches!(
-                                item.provider.as_str(),
-                                "github" | "gitlab" | "azuredevops"
-                            ),
-                        |d| d.child("·").child("Unassigned"),
-                    )
-                    .when(!item.created_at.is_empty(), |d| {
-                        d.child("·")
-                            .child(format!("opened {}", relative_time(&item.created_at)))
-                    })
-                    .when(!item.updated_at.is_empty(), |d| {
-                        d.child("·")
-                            .child(format!("updated {}", relative_time(&item.updated_at)))
-                    })
-                    .when(!details.review_decision.is_empty(), |d| {
-                        d.child("·").child(review_label(&details.review_decision))
-                    })
-                    .children(diff_pill.map(|pill| pill.ml(px(6.)))),
+                    .child(opened_line(&author, &item.created_at))
+                    .children(diff_pill.map(|pill| pill.ml(px(6.))))
+                    .children(self.run_pill_view(&item, cx))
+                    .when_some(self.action_notice.clone(), |d, notice| {
+                        d.child(
+                            div()
+                                .debug_selector(|| "inbox-action-notice".into())
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.))
+                                .text_color(content(0.55))
+                                .child(notice),
+                        )
+                    }),
             )
             .when(!self.related_sessions(&item).is_empty(), |d| {
                 d.child(
@@ -1233,41 +1401,15 @@ impl Inbox {
                         })),
                 )
             })
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(8.))
-                    .when(!is_pr && item.project_path.is_empty(), |d| {
-                        d.child(
-                            icon_action(
-                                "inbox-choose-project",
-                                &self.project_label(&self.start_project.to_string_lossy()),
-                                "folder",
-                            )
-                            .relative()
-                            .bg(glass::fill())
-                            .border_1()
-                            .border_color(glass::edge())
-                            .child(icon("chevron-down", 12.))
-                            .child(self.project_anchor.probe())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.project_picker = !this.project_picker;
-                                cx.notify();
-                            })),
-                        )
-                    })
-                    .when(is_pr && item.provider == "github", |d| {
-                        d.child(self.pr_actions(&item, cx))
-                    })
-                    .child(self.copy_link_button(&item, cx)),
-            )
             .children(tabs)
             .when(!is_pr, |d| d.pb(px(10.)));
         let body = match self.tab {
             Tab::Summary => {
-                let side = self.checks_card(&item, cx);
+                let side = [self.checks_card(&item, cx), self.reviewers_card(&item)]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+                let side = (!side.is_empty()).then_some(side);
                 div()
                     .min_h_0()
                     .min_w_0()
@@ -1277,7 +1419,7 @@ impl Inbox {
                     .pt(px(18.))
                     .px(px(16.))
                     .child(self.summary_view(&item, window, cx))
-                    .children(side.map(|card| {
+                    .children(side.map(|cards| {
                         div()
                             .flex_none()
                             .w(px(300.))
@@ -1285,7 +1427,7 @@ impl Inbox {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
-                            .child(card)
+                            .children(cards)
                     }))
                     .into_any_element()
             }
@@ -1301,7 +1443,7 @@ impl Inbox {
             .pr(px(8.))
             .pl(px(14.))
             .rounded(px(14.))
-            .child(icon("message-square", 15.).text_color(accent_color()))
+            .child(icon("message-square", 15.).text_color(rgb(0xc0affc)))
             .child(
                 div()
                     .flex_1()
@@ -1309,7 +1451,22 @@ impl Inbox {
                     .truncate()
                     .text_size(px(13.))
                     .text_color(content(0.55))
-                    .child(format!("Ask about this {}", kind.to_lowercase())),
+                    .child(format!("Ask about this {}…", kind.to_lowercase())),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(24.))
+                    .px(px(9.))
+                    .flex()
+                    .items_center()
+                    .rounded_full()
+                    .bg(glass::fill())
+                    .border_1()
+                    .border_color(glass::edge())
+                    .text_size(px(11.5))
+                    .text_color(content(0.75))
+                    .child(self.ask_agent(&item, cx)),
             )
             .child(
                 glass::button("inbox-ask", "Ask", glass::Button::Primary)
@@ -1339,6 +1496,67 @@ impl Inbox {
             .into_any_element()
     }
 
+    /// The agent an Ask about `item` talks to: the new-session choice for
+    /// its project, as the Shell starts it.
+    fn ask_agent(&self, item: &Item, cx: &App) -> &'static str {
+        let fallback = crate::settings::Preferences::default();
+        let preferences = cx
+            .try_global::<crate::settings::Preferences>()
+            .unwrap_or(&fallback);
+        crate::installed_providers::new_session_choice(
+            preferences,
+            (!item.project_path.is_empty()).then_some(item.project_path.as_str()),
+            cx,
+        )
+        .0
+        .label()
+    }
+
+    /// Who is asked to review, under the checks; hidden when the provider
+    /// says nothing about reviews.
+    fn reviewers_card(&self, item: &Item) -> Option<AnyElement> {
+        if item.kind != "pr" {
+            return None;
+        }
+        let (requested, decision) = reviewers(self.details.as_ref()?)?;
+        Some(
+            glass::card()
+                .debug_selector(|| "inbox-reviewers-card".into())
+                .px(px(14.))
+                .py(px(12.))
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .child(glass::eyebrow("Reviewers"))
+                        .children(decision.map(|(label, tone)| {
+                            div().ml_auto().child(glass::status(label, tone).h(px(20.)))
+                        })),
+                )
+                .children(requested.into_iter().map(|login| {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(super::menu::initials_avatar(&login))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.5))
+                                .text_color(content(0.62))
+                                .child(login),
+                        )
+                        .child(glass::status("Requested", glass::Tone::Waiting).h(px(20.)))
+                }))
+                .into_any_element(),
+        )
+    }
+
     /// The Summary's side card: how the checks stand and the first few of
     /// them, failures first, for GitHub pull requests whose checks loaded.
     fn checks_card(&self, item: &Item, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1347,9 +1565,13 @@ impl Inbox {
             return None;
         }
         let checks = self.checks.as_ref()?;
-        let rows = model::ci_repair::sort_checks(&checks.checks);
-        let (overall, tone) = row_status(item, Some(checks));
+        let rows = card_order(&checks.checks);
+        let (overall, tone) = checks_overall(checks);
         let rest = rows.len().saturating_sub(SHOWN);
+        let rest_queued = rows
+            .iter()
+            .skip(SHOWN)
+            .all(|check| check.state == "pending");
         Some(
             glass::card()
                 .debug_selector(|| "inbox-checks-card".into())
@@ -1419,164 +1641,16 @@ impl Inbox {
                             .text_size(px(12.5))
                             .text_color(content(0.62))
                             .hover(|s| s.text_color(content(1.)))
-                            .child(format!("{rest} more"))
+                            .child(if rest_queued {
+                                format!("{rest} more queued")
+                            } else {
+                                format!("{rest} more")
+                            })
                             .on_click(cx.listener(|this, _, _, cx| this.set_tab(Tab::Checks, cx))),
                     )
                 })
                 .into_any_element(),
         )
-    }
-
-    /// Copy link, which turns into a green tick reading "Copied link" for a
-    /// moment once the address is on the clipboard.
-    fn copy_link_button(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
-        let copied = self
-            .copied_link
-            .as_ref()
-            .filter(|(url, _)| *url == item.url)
-            .map(|(_, press)| *press);
-        let url = item.url.clone();
-        let on_click = cx.listener(move |this, _, _, cx| this.copy_link(url.clone(), cx));
-        let button = match copied {
-            Some(press) => icon_action_with(
-                "inbox-copy-link",
-                "Copied link",
-                action_icon("check", COPIED).with_animation(
-                    ("inbox-copied-tick", press),
-                    Animation::new(COPIED_POP).with_easing(|t| 1. - (1. - t).powi(3)),
-                    |svg, t| svg.size(px(14. * (0.5 + 0.5 * t))).opacity(t),
-                ),
-                COPIED,
-            )
-            .text_color(content(1.)),
-            None => icon_action("inbox-copy-link", "Copy link", "response-copy")
-                .when(item.url.is_empty(), |d| d.opacity(0.4)),
-        };
-        button.on_click(on_click).into_any_element()
-    }
-    fn pr_actions(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
-        let open = item.state.eq_ignore_ascii_case("open");
-        let selected = self.merge_action.clone();
-        let merge_label = match selected.as_str() {
-            "squash" => "Squash and merge",
-            "rebase" => "Rebase and merge",
-            _ => "Merge pull request",
-        };
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(8.))
-            .when(open && !item.draft, |d| {
-                d.child(
-                    div()
-                        .relative()
-                        .h(px(28.))
-                        .flex()
-                        .items_stretch()
-                        .rounded(px(6.))
-                        .bg(content(1.))
-                        .text_color(shell_fill())
-                        .child(self.action_anchor.probe())
-                        .child(
-                            icon_action_ink(
-                                "inbox-pr-merge",
-                                merge_label,
-                                "git-merge",
-                                shell_fill(),
-                            )
-                            .px(px(12.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(shell_fill())
-                            .when(self.acting, |d| d.opacity(0.4))
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    if !this.acting {
-                                        this.confirm_action = Some(selected.clone());
-                                        this.action_error = None;
-                                        this.action_notice = None;
-                                        cx.notify();
-                                    }
-                                },
-                            )),
-                        )
-                        .child(
-                            div()
-                                .id("inbox-merge-options")
-                                .role(Role::Button)
-                                .aria_label("Merge options")
-                                .h_full()
-                                .w(px(28.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .border_l_1()
-                                .border_color(shell_fill().opacity(0.2))
-                                .cursor_pointer()
-                                .child(icon("chevron-down", 12.).text_color(shell_fill()))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if !this.acting {
-                                        this.action_menu = !this.action_menu;
-                                        cx.notify();
-                                    }
-                                })),
-                        ),
-                )
-            })
-            .children(
-                [
-                    (open && item.draft, "ready", "Ready for review"),
-                    (open && !item.draft, "draft", "Convert to draft"),
-                    (open, "close", "Close pull request"),
-                    (
-                        item.state.eq_ignore_ascii_case("closed"),
-                        "reopen",
-                        "Reopen pull request",
-                    ),
-                ]
-                .into_iter()
-                .filter(|(show, _, _)| *show)
-                .map(|(_, action_name, label)| {
-                    let anchor_ix = match action_name {
-                        "ready" => 0,
-                        "draft" => 1,
-                        "close" => 2,
-                        _ => 3,
-                    };
-                    icon_action(
-                        format!("inbox-pr-{action_name}"),
-                        label,
-                        match action_name {
-                            "draft" => "git-pull-request-draft",
-                            "close" => "git-pull-request-closed",
-                            _ => "git-pull-request",
-                        },
-                    )
-                    .relative()
-                    .child(self.pr_action_anchors[anchor_ix].probe())
-                    .border_1()
-                    .border_color(content(0.15))
-                    .px(px(12.))
-                    .when(self.acting, |d| d.opacity(0.4))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.acting {
-                            this.confirm_action = Some(action_name.into());
-                            this.action_error = None;
-                            this.action_notice = None;
-                            cx.notify();
-                        }
-                    }))
-                }),
-            )
-            .when_some(self.action_notice.clone(), |d, notice| {
-                d.child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(content(0.55))
-                        .child(notice),
-                )
-            })
-            .into_any_element()
     }
 
     fn comment_card(
@@ -2433,6 +2507,14 @@ impl Inbox {
         toggle(&mut self.state.hidden_linear_teams, id);
         self.filters_changed(true, cx);
     }
+    fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
+        if current_view(&self.state) == view {
+            return;
+        }
+        self.state.filters.review_requested = view == View::ReviewRequested;
+        self.state.filters.assigned_to_me = view == View::Assigned;
+        self.filters_changed(true, cx);
+    }
     fn filters_changed(&mut self, refetch: bool, cx: &mut Context<Self>) {
         self.save();
         if let Some(item) = self.visible_items(cx).first() {
@@ -2462,6 +2544,7 @@ impl Inbox {
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 this.state.filters.assigned_to_me = !this.state.filters.assigned_to_me;
+                this.state.filters.review_requested = false;
                 this.filters_changed(true, cx);
             }))
             .into_any_element(),
@@ -2918,88 +3001,6 @@ impl Inbox {
         .into_any_element()
     }
 
-    fn action_menu_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        let weak = cx.entity().downgrade();
-        popover(
-            "inbox-action-menu",
-            Anchor::Slot(self.action_anchor.clone()),
-        )
-        .width(272.)
-        .padding(4.)
-        .on_dismiss(move |_, cx| {
-            let _ = weak.update(cx, |this, cx| {
-                this.action_menu = false;
-                cx.notify();
-            });
-        })
-        .children(
-            [
-                (
-                    "merge",
-                    "Create a merge commit",
-                    "Add every commit to the base branch.",
-                ),
-                (
-                    "squash",
-                    "Squash and merge",
-                    "Combine the commits into one.",
-                ),
-                (
-                    "rebase",
-                    "Rebase and merge",
-                    "Add the commits without a merge commit.",
-                ),
-            ]
-            .into_iter()
-            .map(|(name, label, description)| {
-                div()
-                    .id(format!("inbox-merge-{name}"))
-                    .role(Role::MenuItemRadio)
-                    .aria_label(label)
-                    .w_full()
-                    .px(px(8.))
-                    .py(px(8.))
-                    .rounded(px(8.))
-                    .flex()
-                    .items_start()
-                    .gap(px(8.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(content(0.08)))
-                    .child(div().mt(px(4.)).size(px(6.)).rounded_full().bg(
-                        if self.merge_action == name {
-                            accent_color()
-                        } else {
-                            content(0.2)
-                        },
-                    ))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(content(0.9))
-                                    .child(label),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(2.))
-                                    .text_size(px(11.))
-                                    .line_height(px(15.))
-                                    .text_color(content(0.45))
-                                    .child(description),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.merge_action = name.into();
-                        this.action_menu = false;
-                        cx.notify();
-                    }))
-            }),
-        )
-        .into_any_element()
-    }
     fn action_confirmation(&self, cx: &mut Context<Self>) -> AnyElement {
         let action_name = self.confirm_action.clone().unwrap_or_default();
         let details = self.details.clone().unwrap_or_default();
@@ -3063,15 +3064,10 @@ impl Inbox {
                 "Converting…",
             ),
         };
-        let anchor = match action_name.as_str() {
-            "ready" => self.pr_action_anchors[0].clone(),
-            "draft" => self.pr_action_anchors[1].clone(),
-            "close" => self.pr_action_anchors[2].clone(),
-            "reopen" => self.pr_action_anchors[3].clone(),
-            _ => self.action_anchor.clone(),
-        };
+        let anchor = self.action_anchor.clone();
         let weak = cx.entity().downgrade();
         popover("inbox-pr-confirmation", Anchor::Slot(anchor))
+            .align(Align::End)
             .width(320.)
             .gap(5.)
             .padding(12.)
@@ -3280,7 +3276,6 @@ mod tests {
                     .size_full()
                     .flex()
                     .flex_col()
-                    .child(inbox.pr_actions(&self.item, cx))
                     .child(inbox.summary_view(&self.item, window, cx))
             })
         }
@@ -3727,7 +3722,7 @@ mod glass_view_tests {
         // Running counts every settled check as done, skipped and cancelled too.
         assert_eq!(
             pill(&["pass", "pending", "skipping", "pending", "cancel"]),
-            ("Running 3/5".to_string(), glass::Tone::Running)
+            ("3/5".to_string(), glass::Tone::Running)
         );
         // Passed and skipped only: passing.
         assert_eq!(
@@ -3761,6 +3756,126 @@ mod glass_view_tests {
             row_status(&draft, None),
             ("Draft".to_string(), glass::Tone::Muted)
         );
+    }
+
+    #[test]
+    fn only_github_offers_the_review_requested_view() {
+        let ids = |source: &str| {
+            view_options(source)
+                .into_iter()
+                .map(|(view, label)| (view.id(), label))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids("github"),
+            [
+                ("all", "All"),
+                ("review-requested", "Review requested"),
+                ("assigned", "Assigned")
+            ]
+        );
+        assert_eq!(ids("linear"), [("all", "All"), ("assigned", "Assigned")]);
+        assert_eq!(
+            ids("gitlab"),
+            [("all", "All"), ("assigned", "Needs my attention")]
+        );
+        // A review view saved on GitHub reads as All on a source without it.
+        let mut state = ViewState::default();
+        state.filters.review_requested = true;
+        assert_eq!(current_view(&state), View::ReviewRequested);
+        state.source = "linear".into();
+        assert_eq!(current_view(&state), View::All);
+        state.filters.assigned_to_me = true;
+        assert_eq!(current_view(&state), View::Assigned);
+    }
+
+    #[test]
+    fn reviewers_show_who_is_asked_and_the_decision_and_hide_without_either() {
+        assert!(reviewers(&Details::default()).is_none());
+        let asked = Details {
+            review_requests: vec!["cubic".into(), " ".into(), "Core".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            reviewers(&asked),
+            Some((vec!["cubic".to_string(), "Core".to_string()], None))
+        );
+        let tone = |decision: &str| {
+            reviewers(&Details {
+                review_decision: decision.into(),
+                ..Default::default()
+            })
+            .and_then(|(_, decision)| decision)
+        };
+        assert_eq!(tone("APPROVED"), Some(("Approved".into(), glass::Tone::Ok)));
+        assert_eq!(
+            tone("CHANGES_REQUESTED"),
+            Some(("Changes requested".into(), glass::Tone::Bad))
+        );
+        assert_eq!(
+            tone("REVIEW_REQUIRED"),
+            Some(("Review required".into(), glass::Tone::Waiting))
+        );
+    }
+
+    #[test]
+    fn rows_say_why_they_are_here_else_who_opened_them() {
+        let base = pr("acme/web", 470, "Bump");
+        assert_eq!(row_meta(&base), "#470");
+        let by = Item {
+            author: "dependabot".into(),
+            ..base.clone()
+        };
+        assert_eq!(row_meta(&by), "#470 · dependabot");
+        // A reason wins over the author.
+        let asked = Item {
+            attention_reason: "review_requested".into(),
+            ..by.clone()
+        };
+        assert_eq!(row_meta(&asked), "#470 · Review requested");
+        let issue = Item {
+            kind: "issue".into(),
+            attention_reason: "assigned".into(),
+            ..base.clone()
+        };
+        assert_eq!(row_meta(&issue), "#470 · issue · Assigned to you");
+        // A tracker's issue needs no "issue".
+        let linear = Item {
+            provider: "linear".into(),
+            kind: "issue".into(),
+            identifier: "ENG-7".into(),
+            ..Default::default()
+        };
+        assert_eq!(row_meta(&linear), "ENG-7");
+        // The checks card keeps arrival order behind any failure.
+        let order = card_order(&checks(&["pass", "pending", "fail", "pass"]).checks)
+            .into_iter()
+            .map(|check| check.state)
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["fail", "pass", "pending", "pass"]);
+    }
+
+    #[test]
+    fn the_checks_card_and_meta_line_read_like_the_design() {
+        assert_eq!(
+            checks_overall(&checks(&["pass", "pending"])),
+            ("Running".to_string(), glass::Tone::Running)
+        );
+        assert_eq!(
+            checks_overall(&checks(&["pass", "fail", "fail"])),
+            ("2 failed".to_string(), glass::Tone::Bad)
+        );
+        assert_eq!(
+            checks_overall(&checks(&["pass", "skipping"])),
+            ("Passing".to_string(), glass::Tone::Ok)
+        );
+        assert_eq!(check_time(&check("e2e", "pending")), "running");
+        assert_eq!(check_time(&check("lint", "fail")), "failed");
+        let ago = (chrono::Utc::now() - chrono::Duration::minutes(14)).to_rfc3339();
+        assert_eq!(opened_line("vasanth", &ago), "vasanth · opened 14m ago");
+        // Without an author, or a time, the line keeps what it knows.
+        assert_eq!(opened_line("", &ago), "opened 14m ago");
+        assert_eq!(opened_line("vasanth", ""), "vasanth");
     }
 
     #[test]
@@ -3840,7 +3955,10 @@ mod glass_view_tests {
 
     #[gpui::test]
     fn connected_rows_sit_under_their_repository_in_order(cx: &mut TestAppContext) {
-        let web1 = pr("acme/web", 1, "First web change");
+        let web1 = Item {
+            author: "vasanth".into(),
+            ..pr("acme/web", 1, "First web change")
+        };
         let api = pr("acme/api", 2, "An api change");
         let web3 = pr("acme/web", 3, "Second web change");
         let keys = [web1.key(), api.key(), web3.key()];
@@ -3884,6 +4002,22 @@ mod glass_view_tests {
                 .is_none()
         );
         assert!(visual.debug_bounds("inbox-empty-list").is_none());
+        // An author shows as initials; without one, the provider's mark.
+        assert!(
+            visual
+                .debug_bounds(leak(format!("inbox-initials-{}", keys[0])))
+                .is_some()
+        );
+        assert!(
+            visual
+                .debug_bounds(leak(format!("inbox-mark-{}", keys[1])))
+                .is_some()
+        );
+        assert!(
+            visual
+                .debug_bounds(leak(format!("inbox-initials-{}", keys[1])))
+                .is_none()
+        );
         // With nothing selected, the document side asks for a selection.
         assert!(visual.debug_bounds("inbox-empty-detail").is_some());
     }
@@ -3915,12 +4049,33 @@ mod glass_view_tests {
         // The selected row's pill reads its checks once they are loaded.
         let row_pill = Box::leak(format!("inbox-row-status-{key}").into_boxed_str());
         assert!(visual.debug_bounds(row_pill).is_some());
+        assert!(visual.debug_bounds("inbox-reviewers-card").is_none());
         // Four checks show; the other two are a link to the Checks tab.
         let more = visual.debug_bounds("inbox-checks-card-more").unwrap();
         visual.simulate_click(more.center(), Default::default());
         visual.run_until_parked();
         let tab = window.update(cx, |inbox, _, _| inbox.tab).unwrap();
         assert!(tab == Tab::Checks);
+    }
+
+    #[gpui::test]
+    fn requested_reviewers_get_their_card_under_the_checks(cx: &mut TestAppContext) {
+        let item = pr("acme/web", 9, "Change");
+        let window = open(cx, move |inbox| {
+            connect(inbox);
+            inbox.selected = Some(item.key());
+            inbox.snapshot.items = vec![item];
+            inbox.details = Some(Details {
+                review_requests: vec!["cubic".into()],
+                ..Default::default()
+            });
+            inbox.checks = Some(checks(&["pass"]));
+        });
+        let mut visual = visual(window, cx);
+        let checks = visual.debug_bounds("inbox-checks-card").unwrap();
+        let reviewers = visual.debug_bounds("inbox-reviewers-card").unwrap();
+        assert!(reviewers.origin.y >= checks.origin.y + checks.size.height);
+        assert_eq!(reviewers.origin.x, checks.origin.x);
     }
 
     #[gpui::test]

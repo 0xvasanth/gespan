@@ -491,6 +491,8 @@ fn catalog_window_of(
         })
         .unwrap();
     let mut visual = VisualTestContext::from_window(window.into(), cx);
+    // Tall enough that every catalogue control stays on screen to click.
+    visual.simulate_resize(size(px(1200.), px(1600.)));
     settle(&mut visual);
     (window, visual)
 }

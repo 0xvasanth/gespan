@@ -95,16 +95,31 @@ pub(super) fn toggle(id: impl Into<gpui::ElementId>, on: bool) -> gpui::Stateful
         } else {
             "Enable automation"
         })
-        .w(px(28.))
-        .h(px(16.))
+        .cursor_pointer()
+        .w(px(30.))
+        .h(px(18.))
         .flex_shrink_0()
         .rounded_full()
         .px(px(2.))
         .flex()
         .items_center()
         .when(on, |d| d.bg(accent_color()).justify_end())
-        .when(!on, |d| d.bg(content(0.2)))
-        .child(div().size(px(12.)).rounded_full().bg(rgb(0xffffff)))
+        .when(!on, |d| {
+            d.bg(if is_light() {
+                content(0.2)
+            } else {
+                white(0.14)
+            })
+        })
+        .child(
+            div()
+                .size(px(14.))
+                .rounded_full()
+                .bg(rgb(0xffffff))
+                .shadow(vec![
+                    gpui::BoxShadow::new(px(0.), px(1.), black(0.4)).blur_radius(px(3.)),
+                ]),
+        )
 }
 fn options(values: &[(&str, &str)]) -> Vec<(String, String)> {
     values

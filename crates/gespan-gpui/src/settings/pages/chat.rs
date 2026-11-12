@@ -1,6 +1,7 @@
 //! ChatPage.
 use crate::settings::SettingsView;
-use gpui::{AnyElement, Context};
+use crate::theme::content;
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 impl SettingsView {
     pub(super) fn chat_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -11,14 +12,7 @@ impl SettingsView {
                 true,
                 "Transcript layout",
                 Some("Show prompts at full width or as right-aligned chat bubbles.".into()),
-                vec![self.segmented(
-                    "transcript-layout",
-                    "Transcript layout",
-                    &p.transcript_layout,
-                    &[("full", "Full width"), ("chat", "Chat")],
-                    cx,
-                    |this, v, cx| this.update(cx, |p| p.transcript_layout = v.into()),
-                )],
+                vec![self.transcript_layouts(&p.transcript_layout, cx)],
             ),
             self.row(
                 Some("anchor-prompts"),
@@ -202,5 +196,68 @@ impl SettingsView {
             self.group(None, false, "Code review", None, None, review),
             self.group(None, false, "Extras", None, None, extras),
         ]
+    }
+}
+
+impl SettingsView {
+    /// Full width and Chat as small transcripts: your prompt tinted across
+    /// the column, or as a bubble on the right.
+    fn transcript_layouts(&self, value: &str, cx: &mut Context<Self>) -> AnyElement {
+        let line = |width: f32, alpha: f32| {
+            div()
+                .h(px(6.))
+                .w(gpui::relative(width))
+                .rounded(px(3.))
+                .bg(content(alpha))
+        };
+        let mine = || crate::theme::user_bubble_fill();
+        div()
+            .id("segmented-transcript-layout")
+            .debug_selector(|| "settings-segmented-transcript-layout".into())
+            .role(gpui::Role::RadioGroup)
+            .aria_label("Transcript layout")
+            .flex()
+            .gap(px(14.))
+            .children(
+                [("full", "Full width"), ("chat", "Chat")].map(|(option, label)| {
+                    let on = value == option;
+                    let preview =
+                        div()
+                            .w(px(112.))
+                            .h(px(72.))
+                            .rounded(px(10.))
+                            .p(px(8.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .bg(content(0.04))
+                            .map(|d| {
+                                if option == "chat" {
+                                    d.child(div().flex().justify_end().child(
+                                        div().w(px(56.)).h(px(9.)).rounded(px(5.)).bg(mine()),
+                                    ))
+                                } else {
+                                    d.child(line(1., 0.).h(px(8.)).bg(mine()))
+                                }
+                            })
+                            .child(line(0.92, 0.14))
+                            .child(line(0.7, 0.1))
+                            .child(line(0.85, 0.1));
+                    crate::settings::widgets::picture_option(
+                        SharedString::from(format!("segmented-transcript-layout-{option}")),
+                        preview,
+                        label,
+                        on,
+                    )
+                    .debug_selector(move || format!("settings-transcript-layout-{option}"))
+                    .role(gpui::Role::RadioButton)
+                    .aria_label(label)
+                    .aria_selected(on)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.update(cx, |p| p.transcript_layout = option.into())
+                    }))
+                }),
+            )
+            .into_any_element()
     }
 }

@@ -4,7 +4,7 @@ use crate::{
     input::{self, Input},
     settings::{
         Section, SettingsView,
-        widgets::{primary_button, red, secondary_button},
+        widgets::{glass_secondary, red},
     },
     theme::*,
 };
@@ -180,6 +180,25 @@ impl SettingsView {
                                 }),
                         )
                         .child(div().min_w_0().child(spec.label))
+                        // A pill only for what is true now: on this device,
+                        // or coming down.
+                        .when(running.is_some(), |d| {
+                            d.child(crate::glass::status(
+                                "Downloading",
+                                crate::glass::Tone::Running,
+                            ))
+                        })
+                        .when(
+                            running.is_none() && matches!(status, ModelStatus::Ready),
+                            |d| {
+                                d.child(
+                                    crate::glass::status("Ready", crate::glass::Tone::Ok)
+                                        .debug_selector(move || {
+                                            format!("dictation-ready-{}", spec.id)
+                                        }),
+                                )
+                            },
+                        )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if this.prefs.dictation_model != spec.id {
                                 this.update(cx, |p| p.dictation_model = spec.id.into());
@@ -200,7 +219,7 @@ impl SettingsView {
                                     ),
                                 ))
                                 .into_any_element(),
-                            secondary_button(
+                            glass_secondary(
                                 SharedString::from(format!("dictation-cancel-{}", spec.id)),
                                 "Cancel",
                                 false,
@@ -213,7 +232,7 @@ impl SettingsView {
                             .into_any_element(),
                         ],
                         (None, ModelStatus::Ready) => vec![
-                            secondary_button(
+                            glass_secondary(
                                 SharedString::from(format!("dictation-delete-{}", spec.id)),
                                 "Delete",
                                 false,
@@ -232,13 +251,15 @@ impl SettingsView {
                                 "Download"
                             };
                             vec![
-                                primary_button(
+                                crate::glass::button(
                                     SharedString::from(format!("dictation-download-{}", spec.id)),
                                     text,
-                                    false,
+                                    crate::glass::Button::Glass,
                                 )
                                 .debug_selector(move || format!("dictation-download-{}", spec.id))
-                                .child(text)
+                                .role(Role::Button)
+                                .aria_label(text)
+                                .h(px(28.))
                                 .on_click(
                                     cx.listener(move |this, _, _, cx| {
                                         this.download_model(spec, cx)
@@ -260,11 +281,12 @@ impl SettingsView {
         }
         let error = self.dictation.error.clone();
         let model_group = div()
+            .debug_selector(|| "dictation-model-group".into())
             .flex()
             .flex_col()
             .child(self.group(
                 Some("dictation-model"),
-                true,
+                false,
                 "Speech model",
                 Some("Downloaded once to this device, and recognition runs here too.".into()),
                 None,
@@ -284,10 +306,20 @@ impl SettingsView {
             .into_any_element();
         let words = self.dictation.words.clone().map(|words| {
             div()
-                .px_3()
-                .py_2()
-                .text_size(px(12.))
-                .child(words)
+                .p(px(12.))
+                .child(
+                    div()
+                        .debug_selector(|| "dictation-words-field".into())
+                        .px(px(10.))
+                        .py(px(8.))
+                        .rounded(px(10.))
+                        .bg(if is_light() { white(0.7) } else { black(0.35) })
+                        .border_1()
+                        .border_color(crate::glass::edge())
+                        .font_family(crate::fonts::monospace())
+                        .text_size(px(12.))
+                        .child(words),
+                )
                 .into_any_element()
         });
         let shortcut = crate::settings::command_shortcut(&self.prefs, DICTATE_COMMAND)
@@ -295,15 +327,32 @@ impl SettingsView {
         let shortcut_row = self.row(
             Some("dictation-shortcut"),
             true,
-            "Shortcut",
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .size(px(32.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(9.))
+                        .bg(content(0.07))
+                        .border_1()
+                        .border_color(crate::glass::edge())
+                        .child(icon("mic-01", 16.).text_color(content(0.8))),
+                )
+                .child("Shortcut"),
             Some("In the composer, tap to start and tap again to stop, or hold to talk and release to stop. Change it under Keybindings.".into()),
             vec![
                 div()
                     .debug_selector(|| "dictation-shortcut-keys".into())
-                    .rounded_md()
+                    .rounded(px(5.))
                     .border_1()
-                    .border_color(content(0.1))
-                    .bg(content(0.05))
+                    .border_color(crate::glass::edge())
+                    .bg(content(0.07))
                     .px_2()
                     .py(px(2.))
                     .text_size(px(12.))
@@ -312,7 +361,9 @@ impl SettingsView {
                     .into_any_element(),
             ],
         );
+        // The shortcut first: it's how dictation starts.
         vec![
+            self.group(None, true, "Shortcut", None, None, vec![shortcut_row]),
             model_group,
             self.group(
                 Some("dictation-words"),
@@ -323,14 +374,10 @@ impl SettingsView {
                 words.into_iter().collect(),
             ),
             div()
-                .pt_8()
-                .child(shortcut_row)
-                .into_any_element(),
-            div()
-                .pt_8()
+                .px(px(4.))
                 .text_size(px(11.))
                 .line_height(px(17.875))
-                .text_color(content(0.4))
+                .text_color(content(0.45))
                 .font_weight(FontWeight::NORMAL)
                 .child(ATTRIBUTION)
                 .into_any_element(),

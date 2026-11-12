@@ -8,7 +8,13 @@ pub(crate) enum Section {
     #[default]
     General,
     Diagnostics,
-    Connections,
+    /// Your machines, herdr machines and phones. Saved as `connections`
+    /// before Connections came to mean services, so that still opens here.
+    #[serde(alias = "connections")]
+    Devices,
+    /// Connected services: code hosting and issue trackers. Shown as
+    /// Connections.
+    Services,
     Appearance,
     Keybindings,
     Dictation,
@@ -22,18 +28,18 @@ pub(crate) enum Section {
     Worktrees,
 }
 
-pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
+pub(crate) const GROUPS: [(&str, &[Section]); 4] = [
     (
         "App",
         &[
             Section::General,
-            Section::Diagnostics,
-            Section::Connections,
             Section::Appearance,
             Section::Keybindings,
             Section::Dictation,
+            Section::Diagnostics,
         ],
     ),
+    ("Connect", &[Section::Services, Section::Devices]),
     (
         "Agents",
         &[
@@ -51,13 +57,15 @@ pub(crate) const GROUPS: [(&str, &[Section]); 3] = [
 ];
 
 impl Section {
-    pub(crate) const ALL: [Section; 14] = [
+    /// In the rail's order.
+    pub(crate) const ALL: [Section; 15] = [
         Section::General,
-        Section::Diagnostics,
-        Section::Connections,
         Section::Appearance,
         Section::Keybindings,
         Section::Dictation,
+        Section::Diagnostics,
+        Section::Services,
+        Section::Devices,
         Section::Chat,
         Section::Providers,
         Section::Mcp,
@@ -71,7 +79,8 @@ impl Section {
         match self {
             Section::General => "general",
             Section::Diagnostics => "diagnostics",
-            Section::Connections => "connections",
+            Section::Devices => "devices",
+            Section::Services => "services",
             Section::Appearance => "appearance",
             Section::Keybindings => "keybindings",
             Section::Dictation => "dictation",
@@ -89,7 +98,8 @@ impl Section {
         match self {
             Section::General => "General",
             Section::Diagnostics => "Diagnostics",
-            Section::Connections => "Connections",
+            Section::Devices => "Devices",
+            Section::Services => "Connections",
             Section::Appearance => "Appearance",
             Section::Keybindings => "Keybindings",
             Section::Dictation => "Dictation",
@@ -106,7 +116,7 @@ impl Section {
     /// Pages drawn in the glass presentation: a glass card per group,
     /// segmented tracks, accent sliders. A page joins by adding itself here.
     pub(crate) fn glass(self) -> bool {
-        matches!(self, Section::General | Section::Appearance)
+        true
     }
     pub(crate) fn description(self) -> &'static str {
         match self {
@@ -116,9 +126,12 @@ impl Section {
             Section::Diagnostics => {
                 "Report a problem, your logs, and the failures counted on this machine."
             }
-            Section::Connections => "Connect your machines and run agents remotely through SSH.",
+            Section::Devices => {
+                "Your machines over SSH, herdr machines that run agents, and the phones you pair."
+            }
+            Section::Services => "Your connected services. Add more from the catalogue.",
             Section::Appearance => {
-                "Theme, color, glass and layout. Changes apply as you make them."
+                "Theme, colour, glass and layout. Changes apply as you make them."
             }
             Section::Keybindings => {
                 "Every shortcut the workspace handles, from the app menu and the key handler."
@@ -137,9 +150,7 @@ impl Section {
             Section::Skills => {
                 "Discover and manage file skills from project, personal, and harness folders."
             }
-            Section::Inbox => {
-                "Manage Inbox services and notification preferences for each project."
-            }
+            Section::Inbox => "Notification preferences for each project.",
             Section::Archive => "Projects and conversations you have archived.",
             Section::Worktrees => "Manage additional worktrees for each project.",
         }
@@ -150,8 +161,11 @@ impl Section {
             Section::Diagnostics => {
                 "diagnostics crash report issue bug email github logs folder copy failures counters errors"
             }
-            Section::Connections => {
-                "ssh remote host machine server environment always on herdr machines remote agents"
+            Section::Devices => {
+                "ssh remote host machine server environment always on herdr machines remote agents phone mobile connections"
+            }
+            Section::Services => {
+                "github gitlab linear jira plane atlassian azure devops connect token integration services"
             }
             Section::Appearance => {
                 "theme dark light color accent glass blur zoom scale wallpaper sidebar tint translucency workspace style"
@@ -171,9 +185,7 @@ impl Section {
                 "browser chrome edge brave chromium web page tabs cdp built-in in-app sign in upload"
             }
             Section::Skills => "skill instructions prompt",
-            Section::Inbox => {
-                "github gitlab linear jira atlassian azure devops connect token integration"
-            }
+            Section::Inbox => "notifications mute projects categories",
             Section::Archive => "archived restore delete hidden",
             Section::Worktrees => "git branch worktree working copy project create delete",
         }
@@ -182,7 +194,8 @@ impl Section {
         match self {
             Section::General => "sliders",
             Section::Diagnostics => "bug",
-            Section::Connections => "internet",
+            Section::Devices => "smart-phone",
+            Section::Services => "link-01",
             Section::Appearance => "palette",
             Section::Keybindings => "keyboard",
             Section::Dictation => "mic-01",
@@ -202,25 +215,25 @@ impl Section {
 pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     (
         "remote-machines",
-        Section::Connections,
+        Section::Devices,
         "Your machines",
         "ssh remote connect host server environment",
     ),
     (
         "herdr-machines",
-        Section::Connections,
+        Section::Devices,
         "herdr machines",
         "herdr remote agents machines ssh multiplexer upgrade",
     ),
     (
         "mobile-access",
-        Section::Connections,
+        Section::Devices,
         "Your phones",
         "phone iphone android mobile app pair qr code device revoke remove testflight",
     ),
     (
         "mobile-remote",
-        Section::Connections,
+        Section::Devices,
         "Connect away from home",
         "router port upnp nat remote address public hostname vpn wifi",
     ),
@@ -576,31 +589,31 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     ),
     (
         "github",
-        Section::Inbox,
+        Section::Services,
         "GitHub",
         "gh cli connect pull request sign in",
     ),
     (
         "gitlab",
-        Section::Inbox,
+        Section::Services,
         "GitLab",
         "token self-managed merge request connect",
     ),
     (
         "azuredevops",
-        Section::Inbox,
+        Section::Services,
         "ADO",
         "azure devops boards repos pull request pat organization connect",
     ),
     (
         "jira",
-        Section::Inbox,
+        Section::Services,
         "Jira",
         "atlassian cloud site email api token issues projects connect",
     ),
     (
         "linear",
-        Section::Inbox,
+        Section::Services,
         "Linear",
         "api key issues teams connect",
     ),
@@ -703,16 +716,40 @@ mod tests {
     }
 
     #[test]
-    fn settings_section_count_is_14() {
-        assert_eq!(Section::ALL.len(), 14);
+    fn the_rail_groups_every_section_as_designed() {
+        assert_eq!(Section::ALL.len(), 15);
         let grouped: Vec<Section> = GROUPS.iter().flat_map(|(_, s)| s.iter().copied()).collect();
-        assert_eq!(grouped.len(), Section::ALL.len());
-        for section in Section::ALL {
-            assert!(grouped.contains(&section), "{section:?} has no rail group");
-        }
-        let (group, app) = GROUPS[0];
-        assert_eq!(group, "App");
-        assert_eq!(app.last(), Some(&Section::Dictation));
+        assert_eq!(grouped, Section::ALL, "ALL follows the rail, each once");
+        let names: Vec<&str> = GROUPS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(names, ["App", "Connect", "Agents", "Workspace"]);
+        assert_eq!(
+            GROUPS[0].1,
+            [
+                Section::General,
+                Section::Appearance,
+                Section::Keybindings,
+                Section::Dictation,
+                Section::Diagnostics
+            ]
+        );
+        assert_eq!(GROUPS[1].1, [Section::Services, Section::Devices]);
+        assert_eq!(
+            GROUPS[2].1,
+            [
+                Section::Chat,
+                Section::Providers,
+                Section::Mcp,
+                Section::Browser,
+                Section::Skills
+            ]
+        );
+        assert_eq!(
+            GROUPS[3].1,
+            [Section::Inbox, Section::Archive, Section::Worktrees]
+        );
+        // Services are called Connections; machines and phones are Devices.
+        assert_eq!(Section::Services.label(), "Connections");
+        assert_eq!(Section::Devices.label(), "Devices");
         for query in ["dictation", "microphone", "parakeet", "microphone speech"] {
             assert!(
                 search(query, "")
@@ -817,6 +854,28 @@ mod tests {
     }
 
     #[test]
+    fn a_remembered_connections_section_opens_devices() {
+        let old: Section = serde_json::from_str("\"connections\"").unwrap();
+        assert_eq!(old, Section::Devices);
+        assert_eq!(
+            serde_json::to_string(&Section::Devices).unwrap(),
+            "\"devices\""
+        );
+        let services: Section = serde_json::from_str("\"services\"").unwrap();
+        assert_eq!(services, Section::Services);
+        // Machines and phones are found under Devices, services under
+        // Connections.
+        let section = |id| INDEX.iter().find(|e| e.0 == id).map(|e| e.1);
+        assert_eq!(section("remote-machines"), Some(Section::Devices));
+        assert_eq!(section("mobile-access"), Some(Section::Devices));
+        for id in ["github", "gitlab", "azuredevops", "jira", "linear"] {
+            assert_eq!(section(id), Some(Section::Services), "{id}");
+        }
+        assert!(Section::Devices.description().contains("herdr"));
+        assert!(Section::Devices.description().contains("phones"));
+    }
+
+    #[test]
     fn section_copy_names_what_each_page_now_holds() {
         assert_eq!(
             Section::General.description(),
@@ -824,7 +883,7 @@ mod tests {
         );
         assert_eq!(
             Section::Appearance.description(),
-            "Theme, color, glass and layout. Changes apply as you make them."
+            "Theme, colour, glass and layout. Changes apply as you make them."
         );
         assert!(!Section::General.keywords().contains("rail"));
         assert!(!Section::Appearance.keywords().contains("rail"));

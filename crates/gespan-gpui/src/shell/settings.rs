@@ -277,14 +277,14 @@ impl Shell {
         window.focus(&view.focus_handle(cx), cx);
         this_update(self, cx);
     }
-    /// The Inbox page shows each connection, which the Inbox reads.
+    /// Inbox and Connections show each connection, which the Inbox reads.
     fn load_inbox_for_settings(
         &mut self,
         section: Section,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if section != Section::Inbox {
+        if !matches!(section, Section::Inbox | Section::Services) {
             return;
         }
         let first = self.inbox.is_none();
@@ -770,7 +770,7 @@ mod tests {
         let (window, _, _) = window(cx);
         window
             .update(cx, |shell, w, cx| {
-                shell.open_settings(Section::Connections, w, cx)
+                shell.open_settings(Section::Devices, w, cx)
             })
             .unwrap();
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
@@ -903,6 +903,41 @@ mod tests {
             .unwrap();
     }
     #[gpui::test]
+    fn find_inside_settings_focuses_the_settings_search(cx: &mut TestAppContext) {
+        cx.update(super::super::bind_keys);
+        let (window, _, _) = window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_keystrokes("secondary-,");
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("settings-search-shortcut").is_some());
+        window
+            .update(visual, |shell, w, cx| {
+                assert!(
+                    !shell
+                        .settings
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .search_focused(w, cx)
+                )
+            })
+            .unwrap();
+        visual.simulate_keystrokes("secondary-f");
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, w, cx| {
+                assert!(
+                    shell
+                        .settings
+                        .as_ref()
+                        .unwrap()
+                        .read(cx)
+                        .search_focused(w, cx)
+                )
+            })
+            .unwrap();
+    }
+    #[gpui::test]
     fn settings_replace_native_rail_and_tabs_and_return_to_the_same_session(
         cx: &mut TestAppContext,
     ) {
@@ -934,11 +969,12 @@ mod tests {
         assert!(visual.debug_bounds("sidebar-content").is_none());
         for (section, selector) in Section::ALL.into_iter().zip([
             "settings-nav-general",
-            "settings-nav-diagnostics",
-            "settings-nav-connections",
             "settings-nav-appearance",
             "settings-nav-keybindings",
             "settings-nav-dictation",
+            "settings-nav-diagnostics",
+            "settings-nav-services",
+            "settings-nav-devices",
             "settings-nav-chat",
             "settings-nav-providers",
             "settings-nav-mcp",

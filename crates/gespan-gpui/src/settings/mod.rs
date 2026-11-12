@@ -104,6 +104,8 @@ impl PartialEq for SettingsContext {
             && self.mobile_invite == other.mobile_invite
     }
 }
+gpui::actions!(settings, [FocusSettingsSearch]);
+
 pub(crate) enum SettingsEvent {
     WhatsNew,
     CheckAppUpdates,
@@ -315,6 +317,18 @@ pub(crate) struct SettingsView {
     skill_surface: AnchorSlot,
     skill_filter: Entity<Input>,
     skill_query: String,
+    /// Settings › Connections: the list's filter, and the Add connection
+    /// picker's search, chip and whether it is open.
+    services_filter: Entity<Input>,
+    services_query: String,
+    services_search: Entity<Input>,
+    services_search_query: String,
+    services_picker: bool,
+    services_category: Option<&'static str>,
+    /// Settings › Inbox: the project search and the All/Muted/Custom filter.
+    inbox_filter: Entity<Input>,
+    inbox_query: String,
+    inbox_show: &'static str,
     accent_custom: Entity<Input>,
     accent_custom_open: bool,
     accent_anchor: AnchorSlot,
@@ -347,8 +361,13 @@ impl SettingsView {
             input
         });
         let keybinding_filter = cx.new(|cx| {
-            let mut input = Input::field("Filter keybindings", "Filter", content(0.35), cx);
-            input.set_font_size(12.);
+            let mut input = Input::field(
+                "Filter keybindings",
+                "Filter by command, key or when",
+                content(0.35),
+                cx,
+            );
+            input.set_font_size(12.5);
             input
         });
         let accent_custom = cx.new(|cx| {
@@ -361,9 +380,46 @@ impl SettingsView {
             input.set_font_size(12.);
             input
         });
+        let services_filter = cx.new(|cx| {
+            let mut input = Input::field(
+                "Filter your connections",
+                "Filter your connections",
+                content(0.35),
+                cx,
+            );
+            input.set_font_size(12.5);
+            input
+        });
+        let services_search = cx.new(|cx| {
+            let mut input = Input::field(
+                "Search connectors",
+                "Search by name or what it does",
+                content(0.35),
+                cx,
+            );
+            input.set_font_size(13.);
+            input
+        });
+        let inbox_filter = cx.new(|cx| {
+            let mut input = Input::field("Search projects", "Search projects", content(0.35), cx);
+            input.set_font_size(12.5);
+            input
+        });
         let mut subscriptions = vec![
+            cx.subscribe(&inbox_filter, |this, input, _: &input::Changed, cx| {
+                this.inbox_query = input.read(cx).content.to_string();
+                cx.notify();
+            }),
             cx.subscribe(&skill_filter, |this, input, _: &input::Changed, cx| {
                 this.skill_query = input.read(cx).content.to_string();
+                cx.notify();
+            }),
+            cx.subscribe(&services_filter, |this, input, _: &input::Changed, cx| {
+                this.services_query = input.read(cx).content.to_string();
+                cx.notify();
+            }),
+            cx.subscribe(&services_search, |this, input, _: &input::Changed, cx| {
+                this.services_search_query = input.read(cx).content.to_string();
                 cx.notify();
             }),
             cx.subscribe(&search, |this, input, _: &input::Changed, cx| {
@@ -479,6 +535,15 @@ impl SettingsView {
             skill_documents: HashMap::new(),
             skill_surface: AnchorSlot::default(),
             skill_filter,
+            services_filter,
+            services_query: String::new(),
+            services_search,
+            services_search_query: String::new(),
+            services_picker: false,
+            services_category: None,
+            inbox_filter,
+            inbox_query: String::new(),
+            inbox_show: "all",
             skill_query: String::new(),
             accent_custom,
             accent_custom_open: false,
@@ -648,6 +713,12 @@ impl SettingsView {
             self.close_management(window, cx);
             return true;
         }
+        if self.services_picker {
+            self.services_picker = false;
+            window.focus(&self.focus, cx);
+            cx.notify();
+            return true;
+        }
         if self.skill_preview.take().is_some() {
             window.focus(&self.skill_filter.read(cx).focus_handle(cx), cx);
             cx.notify();
@@ -662,6 +733,10 @@ impl SettingsView {
         cx.emit(SettingsEvent::Changed(Box::new(self.prefs.clone())));
         cx.notify();
     }
+    #[cfg(test)]
+    pub(crate) fn search_focused(&self, window: &Window, cx: &App) -> bool {
+        self.search.read(cx).focus_handle(cx).is_focused(window)
+    }
     /// Appearance's preview card: Restore defaults.
     fn restore_defaults(&mut self, cx: &mut Context<Self>) {
         self.accent_custom_open = false;
@@ -673,11 +748,15 @@ impl SettingsView {
             self.select_section(result.section, cx);
             cx.emit(SettingsEvent::Section(result.section));
         }
-        self.revealed = result.setting.map(str::to_owned);
-        self.pending_scroll = self.revealed.is_some();
         self.search_query.clear();
         self.search
             .update(cx, |input, cx| input.set_text(String::new(), cx));
+        self.reveal(result.setting.map(str::to_owned), cx);
+    }
+    /// Scroll a row or group into view and flash it for 1.8s.
+    fn reveal(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        self.revealed = id;
+        self.pending_scroll = self.revealed.is_some();
         self._reveal = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(1800))
@@ -830,6 +909,26 @@ impl SettingsView {
                             .text_color(content(0.45)),
                     )
                     .child(div().min_w_0().flex_1().child(self.search.clone()))
+                    .when(in_nav && self.search_query.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .debug_selector(|| "settings-search-shortcut".into())
+                                .flex_shrink_0()
+                                .px(px(5.))
+                                .py(px(1.))
+                                .rounded(px(4.))
+                                .border_1()
+                                .border_color(crate::glass::edge())
+                                .font_family(crate::fonts::monospace())
+                                .text_size(px(10.5))
+                                .text_color(content(0.55))
+                                .child(if cfg!(target_os = "macos") {
+                                    "⌘F"
+                                } else {
+                                    "Ctrl+F"
+                                }),
+                        )
+                    })
                     .when(!self.search_query.is_empty(), |d| {
                         d.child(
                             div()
@@ -997,19 +1096,21 @@ pub(crate) fn nav(
             .aria_label(label)
             .aria_selected(active)
             .w_full()
+            .h(px(30.))
             .flex()
             .items_center()
-            .gap_2()
-            .rounded_md()
-            .px_2()
-            .py(px(6.))
+            .gap(px(10.))
+            .rounded(px(8.))
+            .px(px(10.))
             .cursor_pointer()
             .map(|d| {
                 if active {
-                    d.bg(content(0.1)).text_color(content(1.))
+                    d.bg(content(0.11)).text_color(content(1.)).shadow(vec![
+                        gpui::BoxShadow::new(px(0.), px(1.), white(0.08)).inset(),
+                    ])
                 } else {
-                    d.text_color(content(0.5))
-                        .hover(|s| s.bg(content(0.05)).text_color(content(1.)))
+                    d.text_color(content(0.8))
+                        .hover(|s| s.bg(crate::glass::hover_fill()).text_color(content(1.)))
                 }
             })
             .child(
@@ -1017,17 +1118,16 @@ pub(crate) fn nav(
                     .path(path)
                     .size(px(16.))
                     .flex_shrink_0()
-                    .opacity(0.7)
-                    .text_color(if active { content(1.) } else { content(0.5) }),
+                    .opacity(0.8)
+                    .text_color(if active { content(1.) } else { content(0.62) }),
             )
             .child(
                 div()
                     .min_w_0()
                     .flex_1()
                     .truncate()
-                    .text_size(px(14.))
-                    .line_height(px(17.5))
-                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_size(px(13.))
+                    .line_height(px(17.))
                     .child(label),
             )
     };
@@ -1095,9 +1195,8 @@ pub(crate) fn nav(
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
-                .gap_5()
-                .px_2()
-                .py_3()
+                .px(px(10.))
+                .pb_3()
                 .children(model::GROUPS.iter().map(|(group, sections)| {
                     div()
                         .flex()
@@ -1105,12 +1204,13 @@ pub(crate) fn nav(
                         .gap_px()
                         .child(
                             div()
-                                .px_2()
-                                .pb_1()
-                                .text_size(px(12.))
-                                .line_height(px(16.))
+                                .px(px(10.))
+                                .pt(px(14.))
+                                .pb(px(6.))
+                                .text_size(px(11.))
+                                .line_height(px(14.))
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(content(0.35))
+                                .text_color(content(0.55))
                                 .child(*group),
                         )
                         .children(sections.iter().map(|&item| {
@@ -1143,6 +1243,10 @@ impl Render for SettingsView {
         self.notification_window_state(window, cx);
         self.connections_window_state(window, cx);
         let page = self.page(window, cx);
+        let header_action = self
+            .services_action(cx)
+            .or_else(|| self.mcp_header_action(cx));
+        let services_picker = self.services_picker_overlay(cx);
         let inbox_dialog = self
             .ctx
             .inbox
@@ -1166,6 +1270,9 @@ impl Render for SettingsView {
                 &self.focus
             })
             .key_context("SettingsView")
+            .on_action(cx.listener(|this, _: &FocusSettingsSearch, window, cx| {
+                window.focus(&this.search.focus_handle(cx), cx);
+            }))
             .size_full()
             .min_w_0()
             .min_h_0()
@@ -1201,21 +1308,39 @@ impl Render for SettingsView {
                             div()
                                 .mx_auto()
                                 .w_full()
-                                .max_w(px(860.))
                                 .flex()
                                 .flex_col()
-                                .gap(px(22.))
                                 .map(|d| {
-                                    if narrow {
-                                        d.px_5().pt_6().pb(px(40.))
+                                    if self.section == Section::Services {
+                                        // Connections spans the pane: a
+                                        // list, not a column of settings.
+                                        d.gap(px(14.)).px(px(28.)).pt(px(24.)).pb(px(40.))
+                                    } else if narrow {
+                                        d.max_w(px(860.)).gap(px(22.)).px_5().pt_6().pb(px(40.))
                                     } else {
-                                        d.px_8().pt(px(28.)).pb(px(40.))
+                                        d.max_w(px(860.))
+                                            .gap(px(22.))
+                                            .px_8()
+                                            .pt(px(28.))
+                                            .pb(px(40.))
                                     }
                                 })
-                                .child(widgets::glass_page_header(
-                                    self.section.label(),
-                                    self.section.description(),
-                                ))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_end()
+                                        .gap(px(16.))
+                                        .child(
+                                            div().min_w_0().flex_1().child(
+                                                widgets::glass_page_header(
+                                                    self.section.label(),
+                                                    self.services_description()
+                                                        .unwrap_or(self.section.description()),
+                                                ),
+                                            ),
+                                        )
+                                        .children(header_action),
+                                )
                                 .children(page)
                         } else {
                             div()
@@ -1238,6 +1363,7 @@ impl Render for SettingsView {
                         .into_any_element(),
                 ]
             })
+            .children(services_picker)
             .children(self.management_overlay(window, cx))
             .children(self.notification_overlay(cx))
             .children(inbox_dialog)

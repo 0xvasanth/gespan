@@ -410,6 +410,53 @@ pub(crate) const BINDINGS: &[Binding] = &[
         fixed: false,
     },
 ];
+/// Bindings by the area their command names (`App: Settings` is App), in
+/// the order areas first appear.
+pub(in crate::settings) fn by_area(rows: &[Binding]) -> Vec<(&'static str, Vec<Binding>)> {
+    let mut areas: Vec<(&'static str, Vec<Binding>)> = Vec::new();
+    for row in rows {
+        let area = row
+            .command
+            .split_once(": ")
+            .map_or("Other", |(area, _)| area);
+        match areas.iter_mut().find(|(a, _)| *a == area) {
+            Some((_, list)) => list.push(*row),
+            None => areas.push((area, vec![*row])),
+        }
+    }
+    areas
+}
+
+/// A shortcut's keys, one cap each: macOS's modifier glyphs stand alone,
+/// other platforms join keys with `+`.
+pub(in crate::settings) fn key_caps(label: &str) -> Vec<String> {
+    if !label.contains(|c| "⌘⇧⌥⌃".contains(c)) && label.contains('+') && label.len() > 1 {
+        // `Ctrl++` is Ctrl and the plus key.
+        let (head, plus) = match label.strip_suffix("++") {
+            Some(head) => (head, true),
+            None => (label, false),
+        };
+        let mut caps: Vec<String> = head.split('+').map(str::to_owned).collect();
+        if plus {
+            caps.push("+".into());
+        }
+        return caps;
+    }
+    let mut caps = Vec::new();
+    let mut rest = String::new();
+    for ch in label.chars() {
+        if "⌘⇧⌥⌃".contains(ch) {
+            caps.push(ch.to_string());
+        } else {
+            rest.push(ch);
+        }
+    }
+    if !rest.is_empty() {
+        caps.push(rest);
+    }
+    caps
+}
+
 pub(super) fn quick_composer_label(p: &Preferences) -> String {
     p.keybindings
         .get("App: Quick Composer")
@@ -484,188 +531,296 @@ impl SettingsView {
             })
             .copied()
             .collect();
-        let action = div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(content(0.4))
-                    .child(format!(
-                        "{} {}",
-                        rows.len(),
-                        if rows.len() == 1 {
-                            "binding"
-                        } else {
-                            "bindings"
-                        }
-                    )),
-            )
-            .child(
-                div()
-                    .h(px(28.))
-                    .w(px(176.))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(content(0.1))
-                    .px_2()
-                    .child(icon("search-01", 14.))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .child(self.keybinding_filter.clone()),
-                    ),
-            )
+        let areas = by_area(&rows);
+        let count = div()
+            .text_size(px(11.5))
+            .text_color(content(0.55))
+            .child(format!(
+                "{} {}",
+                rows.len(),
+                if rows.len() == 1 {
+                    "binding"
+                } else {
+                    "bindings"
+                }
+            ))
             .into_any_element();
-        let mut children = vec![
+        let filter = crate::glass::field()
+            .h(px(36.))
+            .debug_selector(|| "settings-keybinding-filter".into())
+            .child(icon("search-01", 14.).text_color(content(0.5)))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .child(self.keybinding_filter.clone()),
+            );
+        let chips = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(6.))
+            .children(areas.iter().map(|(area, rows)| {
+                let area: &'static str = area;
+                crate::glass::chip(
+                    gpui::SharedString::from(format!("keybinding-area-{area}")),
+                    area,
+                    false,
+                )
+                .debug_selector(move || format!("settings-keybinding-jump-{area}"))
+                .role(Role::Button)
+                .aria_label(format!("Jump to {area}"))
+                .child(crate::glass::count(rows.len(), false))
+                .on_click(cx.listener(move |this, _, _, cx| this.reveal(Some(area.to_owned()), cx)))
+            }));
+        let mut page = vec![self.glass_group(
+            None,
+            "Shortcuts",
+            Some(
+                "Click a shortcut to record new keys. Press Delete while recording to disable it."
+                    .into(),
+            ),
+            Some(count),
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(filter)
+                    .when(!areas.is_empty(), |d| d.child(chips))
+                    .into_any_element(),
+            ),
+            if rows.is_empty() {
+                vec![super::super::widgets::note("No matching bindings")]
+            } else {
+                Vec::new()
+            },
+        )];
+        if !areas.is_empty() {
+            page.push(
+                div()
+                    .px_4()
+                    .flex()
+                    .gap(px(16.))
+                    .text_size(px(11.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(content(0.55))
+                    .child(div().min_w_0().flex_1().child("COMMAND"))
+                    .child(div().w(px(200.)).flex_shrink_0().child("KEYBINDING"))
+                    .child(div().w(px(200.)).flex_shrink_0().child("WHEN"))
+                    .into_any_element(),
+            );
+        }
+        let error = self.recording_error.clone();
+        for (area, rows) in areas {
+            let cards: Vec<AnyElement> = rows
+                .iter()
+                .enumerate()
+                .map(|(ix, row)| self.binding_row(ix == 0, *row, error.clone(), cx))
+                .collect();
+            page.push(
+                self.glass_group(
+                    Some(area),
+                    div().flex().items_baseline().gap_1().child(area).child(
+                        div()
+                            .text_size(px(11.5))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(content(0.55))
+                            .child(rows.len().to_string()),
+                    ),
+                    None,
+                    None,
+                    None,
+                    cards,
+                ),
+            );
+        }
+        // A failure with nothing recording, such as a shortcut that couldn't
+        // be saved, still shows.
+        if let Some(error) = error.filter(|_| self.recording.is_none()) {
+            page.push(
+                div()
+                    .px_4()
+                    .text_size(px(11.5))
+                    .text_color(gpui::rgb(0xf87171))
+                    .child(error)
+                    .into_any_element(),
+            );
+        }
+        page
+    }
+
+    /// One binding: the command without its area, its keys as caps (or
+    /// Record…, or Disabled), reset once changed, and when it applies.
+    fn binding_row(
+        &self,
+        first: bool,
+        row: Binding,
+        error: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let command = row.command;
+        let name = command.split_once(": ").map_or(command, |(_, name)| name);
+        let recording = self.recording.as_deref() == Some(command);
+        let modified = self.prefs.keybindings.contains_key(command);
+        let disabled = self.prefs.keybindings.get(command) == Some(&None);
+        let keys: AnyElement = if recording {
             div()
                 .flex()
                 .items_center()
-                .border_b_1()
-                .border_color(content(0.1))
-                .bg(content(0.05))
-                .px_4()
-                .py_2()
-                .text_size(px(11.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(content(0.4))
-                .child(div().min_w_0().flex_1().child("COMMAND"))
-                .child(div().w(px(160.)).flex_shrink_0().child("KEYBINDING"))
-                .child(div().w(px(112.)).flex_shrink_0().child("WHEN"))
-                .into_any_element(),
-        ];
-        if rows.is_empty() {
-            children.push(super::super::widgets::note("No matching bindings"));
-        }
-        for row in rows {
-            let command = row.command;
-            let recording = self.recording.as_deref() == Some(command);
-            let modified = self.prefs.keybindings.contains_key(command);
-            let disabled = self.prefs.keybindings.get(command) == Some(&None);
-            let label = if recording {
-                if self.recording_preview.is_empty() {
-                    "Record…".into()
+                .gap(px(6.))
+                .text_color(accent_color())
+                .child(div().size(px(6.)).rounded_full().bg(accent_color()))
+                .child(if self.recording_preview.is_empty() {
+                    "Record…".to_owned()
                 } else {
                     self.recording_preview.clone()
-                }
-            } else {
-                self.binding_label(&row)
-            };
-            children.push(
+                })
+                .into_any_element()
+        } else if disabled {
+            div()
+                .text_color(content(0.45))
+                .child("Disabled")
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(3.))
+                .children(key_caps(&self.binding_label(&row)).into_iter().map(|cap| {
+                    div()
+                        .h(px(20.))
+                        .min_w(px(20.))
+                        .px(px(5.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(5.))
+                        .bg(content(0.07))
+                        .border_1()
+                        .border_color(crate::glass::edge())
+                        .text_color(content(if row.fixed { 0.6 } else { 0.9 }))
+                        .child(cap)
+                }))
+                .into_any_element()
+        };
+        div()
+            .min_h(px(40.))
+            .px_4()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .when(!first, |d| {
+                d.border_t_1().border_color(crate::glass::hairline())
+            })
+            .when(recording, |d| d.bg(crate::glass::selected_fill()))
+            .text_size(px(12.5))
+            .child(
                 div()
-                    .h(px(44.))
-                    .flex()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(content(0.05))
-                    .px_4()
-                    .text_size(px(12.))
+                    .min_w_0()
+                    .flex_1()
+                    .py(px(9.))
                     .child(
                         div()
-                            .min_w_0()
-                            .flex_1()
-                            .truncate()
-                            .text_color(content(if disabled { 0.45 } else { 1. }))
-                            .child(command),
-                    )
-                    .child(
-                        div()
-                            .w(px(160.))
-                            .flex_shrink_0()
                             .flex()
                             .items_center()
-                            .gap(px(2.))
+                            .gap_2()
                             .child(
                                 div()
-                                    .id(gpui::SharedString::from(format!("shortcut-{command}")))
-                                    .debug_selector(move || format!("shortcut-{command}"))
-                                    .role(if row.fixed { Role::Label } else { Role::Button })
-                                    .aria_label(format!("Change {command} shortcut"))
-                                    .h(px(24.))
-                                    .w(px(112.))
-                                    .flex()
-                                    .items_center()
                                     .truncate()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(if recording {
-                                        accent_color()
-                                    } else {
-                                        content(0.15)
-                                    })
-                                    .px(px(6.))
-                                    .font_family(crate::fonts::monospace())
-                                    .text_size(px(11.))
-                                    .text_color(content(if disabled {
-                                        0.35
-                                    } else if row.fixed {
-                                        0.6
-                                    } else {
-                                        0.8
-                                    }))
-                                    .child(label)
-                                    .when(!row.fixed, |d| {
-                                        d.cursor_pointer().hover(|s| s.bg(content(0.1))).on_click(
-                                            cx.listener(move |this, _, window, cx| {
-                                                this.recording = Some(command.into());
-                                                this.recording_preview.clear();
-                                                this.recording_error = None;
-                                                window.focus(&this.recorder_focus, cx);
-                                                cx.notify();
-                                            }),
-                                        )
-                                    }),
+                                    .text_color(content(if disabled { 0.45 } else { 1. }))
+                                    .child(name),
                             )
                             .when(modified, |d| {
                                 d.child(
                                     div()
-                                        .id(gpui::SharedString::from(format!("reset-{command}")))
-                                        .debug_selector(move || format!("reset-shortcut-{command}"))
-                                        .role(Role::Button)
-                                        .aria_label(format!("Reset {command} shortcut"))
-                                        .p_1()
-                                        .rounded_md()
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(content(0.1)))
-                                        .child(icon("rotate-ccw", 14.))
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.update(cx, |p| {
-                                                p.keybindings.remove(command);
-                                            })
-                                        })),
+                                        .debug_selector(move || {
+                                            format!("modified-shortcut-{command}")
+                                        })
+                                        .size(px(6.))
+                                        .rounded_full()
+                                        .bg(accent_color()),
                                 )
                             }),
                     )
+                    .when_some(error.filter(|_| recording), |d, error| {
+                        d.child(
+                            div()
+                                .mt(px(2.))
+                                .text_size(px(11.5))
+                                .text_color(gpui::rgb(0xf87171))
+                                .child(error),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .w(px(200.))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
                     .child(
                         div()
-                            .w(px(112.))
-                            .flex_shrink_0()
-                            .truncate()
+                            .id(gpui::SharedString::from(format!("shortcut-{command}")))
+                            .debug_selector(move || format!("shortcut-{command}"))
+                            .role(if row.fixed { Role::Label } else { Role::Button })
+                            .aria_label(format!("Change {command} shortcut"))
+                            .min_h(px(26.))
+                            .px(px(4.))
+                            .flex()
+                            .items_center()
+                            .rounded(px(7.))
+                            .border_1()
+                            .border_color(if recording {
+                                accent_color()
+                            } else {
+                                gpui::transparent_black()
+                            })
                             .font_family(crate::fonts::monospace())
                             .text_size(px(11.))
-                            .text_color(content(0.4))
-                            .child(row.when),
+                            .child(keys)
+                            .when(!row.fixed, |d| {
+                                d.cursor_pointer()
+                                    .hover(|s| s.bg(crate::glass::hover_fill()))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.recording = Some(command.into());
+                                        this.recording_preview.clear();
+                                        this.recording_error = None;
+                                        window.focus(&this.recorder_focus, cx);
+                                        cx.notify();
+                                    }))
+                            }),
                     )
-                    .into_any_element(),
-            );
-        }
-        if let Some(error) = &self.recording_error {
-            children.push(
+                    .when(modified, |d| {
+                        d.child(
+                            div()
+                                .id(gpui::SharedString::from(format!("reset-{command}")))
+                                .debug_selector(move || format!("reset-shortcut-{command}"))
+                                .role(Role::Button)
+                                .aria_label(format!("Reset {command} shortcut"))
+                                .p_1()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(content(0.1)))
+                                .child(icon("rotate-ccw", 14.))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.update(cx, |p| {
+                                        p.keybindings.remove(command);
+                                    })
+                                })),
+                        )
+                    }),
+            )
+            .child(
                 div()
-                    .px_4()
-                    .py_2()
-                    .text_size(px(11.))
-                    .text_color(gpui::rgb(0xf87171))
-                    .child(error.clone())
-                    .into_any_element(),
-            );
-        }
-        vec![self.group(None,true,"Shortcuts",Some("Click a shortcut to record new keys. Press Delete while recording to disable it.".into()),Some(action),children)]
+                    .w(px(200.))
+                    .flex_shrink_0()
+                    .truncate()
+                    .text_size(px(11.5))
+                    .text_color(content(0.55))
+                    .child(row.when),
+            )
+            .into_any_element()
     }
     fn binding_label(&self, row: &Binding) -> String {
         command_shortcut(&self.prefs, row.command).unwrap_or_else(|| "Disabled".into())

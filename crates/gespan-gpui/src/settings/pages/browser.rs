@@ -8,12 +8,12 @@
 use crate::{
     settings::{
         SettingsView,
-        widgets::{note, red, secondary_button},
+        widgets::{glass_secondary, note, red},
     },
     theme::*,
 };
 use gespan_core::browser::{AccessMode, BrowserSettings, BrowserState, view};
-use gpui::{AnyElement, Context, FontWeight, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
 
 /// The group's description: what the browser is and where it shows.
 pub(super) const DESCRIPTION: &str = "Agents open their own tabs in Gespan's built-in browser, shown beside the thread. It keeps its own profile in Gespan's data folder, so sites you sign in to there stay signed in. Links you click in a thread open here too; with the switch on, agents use the same sign-ins and can work in the tabs you opened from that thread.";
@@ -54,7 +54,7 @@ fn problem_actions(state: &BrowserState, cx: &mut Context<SettingsView>) -> Vec<
         return Vec::new();
     }
     vec![
-        secondary_button("browser-retry", "Retry", false, false)
+        glass_secondary("browser-retry", "Retry", false, false)
             .debug_selector(|| "settings-browser-retry".into())
             .child("Retry")
             .on_click(cx.listener(|_, _, _, cx| {
@@ -68,25 +68,40 @@ fn problem_actions(state: &BrowserState, cx: &mut Context<SettingsView>) -> Vec<
 }
 
 /// The switch's label and its Beta badge.
-fn switch_label() -> AnyElement {
+/// Agents can use the browser right now: the switch is on and it is
+/// connected. Starting up, idle and every problem state say nothing.
+fn ready(state: &BrowserState) -> bool {
+    state.toggle_on && state.connection.state == gespan_core::browser::ConnectionState::Connected
+}
+
+/// The switch's label; `ready` adds the pill that says agents can use the
+/// browser now, shown only while it is connected.
+fn switch_label(ready: bool) -> AnyElement {
     div()
         .flex()
         .items_center()
         .gap_2()
-        .child("Let agents use the browser")
         .child(
             div()
-                .debug_selector(|| "settings-browser-beta".into())
-                .rounded(px(4.))
+                .size(px(32.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(9.))
+                .bg(content(0.07))
                 .border_1()
-                .border_color(accent_color())
-                .px(px(5.))
-                .text_size(px(10.))
-                .line_height(px(14.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(accent_color())
-                .child("Beta"),
+                .border_color(crate::glass::edge())
+                .child(icon("globe", 16.).text_color(content(0.8))),
         )
+        .child("Let agents use the browser")
+        .when(ready, |d| {
+            d.child(
+                crate::glass::status("Ready", crate::glass::Tone::Ok)
+                    .debug_selector(|| "settings-browser-ready".into()),
+            )
+        })
+        .child(crate::glass::beta("Beta").debug_selector(|| "settings-browser-beta".into()))
         .into_any_element()
 }
 
@@ -153,7 +168,7 @@ impl SettingsView {
         let mut rows = vec![self.row(
             Some("browser-toggle"),
             true,
-            switch_label(),
+            switch_label(ready(state)),
             Some(SWITCH_HELP.into()),
             vec![self.toggle(
                 "browser-toggle",
@@ -245,25 +260,30 @@ impl SettingsView {
             true,
             "Upload folders",
             Some("Agents can upload files from the thread's project folder and from these folders.".into()),
-            vec![secondary_button("browser-add-roots", "Add folder…", false, false)
-                .child("Add folder…")
+            vec![crate::glass::button("browser-add-roots", "Add folder…", crate::glass::Button::Glass)
+                .role(gpui::Role::Button)
+                .aria_label("Add folder…")
+                .h(px(30.))
+                .child(icon("plus", 14.).text_color(content(0.7)))
                 .on_click(cx.listener(|this, _, _, cx| this.pick_upload_roots(cx)))
                 .into_any_element()],
         )];
         if !settings.upload_roots.is_empty() {
             rows.push(
                 div()
-                    .px_4()
-                    .pb_3()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
                     .children(settings.upload_roots.iter().map(|root| {
                         let remove = root.clone();
                         div()
+                            .px_4()
+                            .py(px(9.))
+                            .border_t_1()
+                            .border_color(crate::glass::hairline())
                             .flex()
                             .items_center()
                             .gap_2()
+                            .child(icon("folder", 14.).text_color(content(0.55)))
                             .child(
                                 div()
                                     .min_w_0()
@@ -275,7 +295,7 @@ impl SettingsView {
                                     .child(root.clone()),
                             )
                             .child(
-                                secondary_button(
+                                glass_secondary(
                                     SharedString::from(format!("browser-remove-root-{root}")),
                                     format!("Remove {root}"),
                                     false,
@@ -582,6 +602,29 @@ mod tests {
                  this computer. Install Chrome, Edge, Brave, Vivaldi, Opera or Arc, then try again."
             )
         );
+    }
+
+    /// Ready is claimed only while the browser is actually connected.
+    #[gpui::test]
+    fn ready_shows_only_while_connected(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, mut visual) = page(host_on(dir.path()), cx);
+        let mut state = state(&mut visual);
+        state.toggle_on = true;
+        for other in [
+            ConnectionState::Off,
+            ConnectionState::Idle,
+            ConnectionState::Discovering,
+            ConnectionState::Disconnected,
+            ConnectionState::StalePort,
+        ] {
+            state.connection.state = other;
+            assert!(!ready(&state), "{other:?}");
+        }
+        state.connection.state = ConnectionState::Connected;
+        assert!(ready(&state));
+        state.toggle_on = false;
+        assert!(!ready(&state), "switched off");
     }
 
     /// What the page says describes only the in-app browser.

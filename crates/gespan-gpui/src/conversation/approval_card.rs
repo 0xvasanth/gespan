@@ -51,6 +51,21 @@ impl Card {
         }
     }
 
+    /// The command, when the request is a shell command and nothing else
+    /// needs showing: no alert, MCP server or other arguments.
+    pub(crate) fn lone_command(&self) -> Option<&str> {
+        match &self.view.body {
+            Body::Command(text)
+                if self.alerts.is_empty()
+                    && self.view.mcp.is_none()
+                    && self.view.fields.is_empty() =>
+            {
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.view.summary.is_none()
             && self.view.mcp.is_none()
