@@ -426,3 +426,399 @@ fn a_tab_in_another_project_names_its_branch(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+fn click(visual: &mut gpui::VisualTestContext, name: String) {
+    let at = visual
+        .debug_bounds(selector(name.clone()))
+        .unwrap_or_else(|| panic!("{name} drawn"));
+    visual.simulate_mouse_move(at.center(), None, Default::default());
+    settle(visual);
+    let at = visual.debug_bounds(selector(name)).unwrap();
+    visual.simulate_click(at.center(), Default::default());
+    settle(visual);
+}
+
+#[gpui::test]
+fn clicking_a_peeked_tab_switches_project(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    hover(visual, "tab-group-chip-another-project".into());
+    click(visual, format!("title-tab-{other}"));
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.workspace.project, "/work/another-project");
+            assert_eq!(shell.workspace.active, Some(other));
+            assert_eq!(shell.strip_peek, None);
+        })
+        .unwrap();
+    assert!(
+        drawn(visual, format!("title-tab-{other}")),
+        "now the open group"
+    );
+    assert!(drawn(visual, "tab-group-chip-gespan".into()));
+    assert!(
+        !drawn(visual, format!("title-tab-{here}")),
+        "the old group collapses"
+    );
+    assert!(drawn(visual, "tab-group-count-gespan".into()));
+}
+
+#[gpui::test]
+fn clicking_a_chip_switches_project(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, _) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    click(visual, "tab-group-chip-another-project".into());
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.workspace.project, "/work/another-project");
+            assert_eq!(shell.workspace.active, Some(other), "its last tab");
+            assert_eq!(shell.strip_peek, None);
+        })
+        .unwrap();
+    assert!(!drawn(visual, "tab-group-count-another-project".into()));
+}
+
+#[gpui::test]
+fn closing_the_active_group_opens_the_nearest_tab(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    window
+        .update(cx, |shell, w, cx| {
+            assert_eq!(shell.workspace.active, Some(here));
+            shell.close_group("/work/gespan", w, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.workspace.active, Some(other), "the tab to its left");
+            assert_eq!(shell.workspace.project, "/work/another-project");
+            assert!(!shell.workspace.tabs.contains(&here));
+            assert!(
+                !shell
+                    .global_strip_tabs(cx)
+                    .contains(&TitleTab::Session(here))
+            );
+            let sessions = locked(&shell.store).unwrap().sessions().unwrap();
+            let closed = sessions.iter().find(|s| s.id == here).expect("kept");
+            assert!(!closed.archived, "closing a tab never archives its chat");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn closing_a_group_prefers_the_tab_to_its_right(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    let third = window
+        .update(cx, |shell, _, cx| {
+            add_background_tab(shell, "/work/third-project", cx)
+        })
+        .unwrap();
+    window
+        .update(cx, |shell, w, cx| {
+            shell.close_group("/work/gespan", w, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.workspace.active, Some(third));
+            assert_eq!(shell.workspace.project, "/work/third-project");
+            assert!(!shell.workspace.tabs.contains(&here));
+            assert!(
+                shell
+                    .global_strip_tabs(cx)
+                    .contains(&TitleTab::Session(other))
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn closing_a_collapsed_group_from_its_chip_leaves_the_current_tab(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    click(visual, "close-tab-group-another-project".into());
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.workspace.project, "/work/gespan", "no switch");
+            assert_eq!(shell.workspace.active, Some(here));
+            assert!(!shell.workspace.tabs.contains(&other));
+        })
+        .unwrap();
+    assert!(!drawn(visual, "tab-group-another-project".into()));
+}
+
+#[gpui::test]
+fn closing_a_group_keeps_its_pins(cx: &mut TestAppContext) {
+    let (window, _, here) = window(cx);
+    let pinned = window.update(cx, add_session).unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, w, cx| {
+            shell.toggle_pin_tab(TitleTab::Session(pinned), cx);
+            shell.close_group("/work/gespan", w, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, _| {
+            assert!(
+                shell
+                    .workspace
+                    .title_order
+                    .contains(&TitleTab::Session(pinned))
+            );
+            assert_eq!(shell.workspace.pinned_tabs, [TitleTab::Session(pinned)]);
+            assert!(!shell.workspace.tabs.contains(&here));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn crowded_strip_scrolls_instead_of_squeezing(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(900.), px(700.)));
+    let ids = window
+        .update(visual, |shell, _, cx| {
+            (0..20)
+                .map(|_| add_background_tab(shell, "/work/gespan", cx))
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    settle(visual);
+    for id in ids.iter().chain([&here]) {
+        let tab = visual
+            .debug_bounds(selector(format!("title-tab-{id}")))
+            .unwrap_or_else(|| panic!("tab {id} drawn"));
+        assert!(
+            tab.size.width >= px(SELECTED_TAB_MIN_WIDTH),
+            "tab {id} squeezed to {:?}",
+            tab.size.width
+        );
+    }
+    let max = window
+        .update(visual, |shell, _, _| shell.tab_scroll.max_offset().x)
+        .unwrap();
+    assert!(max > px(0.), "the strip scrolls");
+    // A plain vertical wheel scrolls the strip sideways.
+    let before = window
+        .update(visual, |shell, _, _| shell.tab_scroll.offset().x)
+        .unwrap();
+    let strip = visual.debug_bounds("title-tab-strip").unwrap();
+    visual.simulate_event(gpui::ScrollWheelEvent {
+        position: strip.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(120.))),
+        modifiers: Default::default(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    visual.simulate_event(gpui::ScrollWheelEvent {
+        position: strip.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(-120.))),
+        modifiers: Default::default(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    settle(visual);
+    let after = window
+        .update(visual, |shell, _, _| shell.tab_scroll.offset().x)
+        .unwrap();
+    assert_ne!(before, after, "the wheel moved the strip");
+}
+
+#[gpui::test]
+fn the_active_tab_scrolls_into_view(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(900.), px(700.)));
+    let ids = window
+        .update(visual, |shell, _, cx| {
+            (0..20)
+                .map(|_| add_background_tab(shell, "/work/gespan", cx))
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    settle(visual);
+    let in_view = |visual: &mut gpui::VisualTestContext, id: i64| {
+        let tab = visual
+            .debug_bounds(selector(format!("title-tab-{id}")))
+            .unwrap();
+        let view = window
+            .update(visual, |shell, _, _| shell.tab_scroll.bounds())
+            .unwrap();
+        tab.left() >= view.left() && tab.right() <= view.right()
+    };
+    let last = *ids.last().unwrap();
+    assert!(!in_view(visual, last), "starts past the edge");
+    window
+        .update(visual, |shell, w, cx| shell.open(last, w, cx))
+        .unwrap();
+    settle(visual);
+    settle(visual);
+    assert!(
+        in_view(visual, last),
+        "the last tab, inside its group, shows"
+    );
+    window
+        .update(visual, |shell, w, cx| shell.open(here, w, cx))
+        .unwrap();
+    settle(visual);
+    settle(visual);
+    assert!(in_view(visual, here), "and back to the first");
+}
+
+#[gpui::test]
+fn moving_from_one_chip_to_the_next_keeps_the_next_peeked(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, _) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(2400.), px(700.)));
+    let (wide, third) = window
+        .update(visual, |shell, _, cx| {
+            let wide: Vec<i64> = (0..3)
+                .map(|_| add_background_tab(shell, "/work/another-project", cx))
+                .collect();
+            (wide, add_background_tab(shell, "/work/third-project", cx))
+        })
+        .unwrap();
+    settle(visual);
+    hover(visual, "tab-group-chip-another-project".into());
+    for id in wide.iter().chain([&other]) {
+        assert!(drawn(visual, format!("title-tab-{id}")));
+    }
+    let chip = visual.debug_bounds("tab-group-chip-third-project").unwrap();
+    hover(visual, "tab-group-chip-third-project".into());
+    // Settle again, so any hover change the new layout causes has landed.
+    settle(visual);
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.strip_peek.as_deref(), Some("/work/third-project"));
+        })
+        .unwrap();
+    assert!(drawn(visual, format!("title-tab-{third}")));
+    assert!(
+        !drawn(visual, format!("title-tab-{other}")),
+        "the first closed"
+    );
+    let held = visual.debug_bounds("tab-group-chip-third-project").unwrap();
+    assert_eq!(held.left(), chip.left(), "the chip stays under the pointer");
+    assert!(held.contains(&chip.center()));
+}
+
+#[gpui::test]
+fn pilot_tabs_in_a_worktree_carry_a_label(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, _) = window(cx);
+    let pilot = window
+        .update(cx, |shell, w, cx| {
+            let manager = shell.pilot_manager();
+            manager.update(cx, |m, cx| m.create(Vec::new(), w, cx));
+            manager.read(cx).active.clone().unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, cx| {
+            let tab = shell.pilot_tab(pilot.clone());
+            let at = shell
+                .workspace
+                .title_order
+                .iter()
+                .position(|t| *t == tab)
+                .unwrap();
+            shell.workspace.title_order[at] = TitleTab::Pilot {
+                id: pilot.clone(),
+                project: "/work/gespan".into(),
+                worktree: "/work/gespan-pilot-fix".into(),
+            };
+            shell.invalidate_chrome(cx);
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    let tab = visual
+        .debug_bounds(selector(format!("pilot-title-tab-{pilot}")))
+        .expect("pilot tab drawn");
+    let label = visual
+        .debug_bounds(selector(format!("title-tab-worktree-{pilot}")))
+        .expect("worktree label");
+    assert!(tab.left() <= label.left() && label.right() <= tab.right());
+}
+
+#[gpui::test]
+fn a_pinned_session_of_another_project_switches_to_it(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, _) = window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.toggle_pin_tab(TitleTab::Session(other), cx)
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    click(visual, "pinned-tab-0".into());
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.workspace.project, "/work/another-project");
+            assert_eq!(shell.workspace.active, Some(other));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_pinned_pilot_of_another_project_switches_to_it(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, here) = window(cx);
+    let pilot = window
+        .update(cx, |shell, w, cx| {
+            shell.select_project("/work/another-project".into(), w, cx);
+            let manager = shell.pilot_manager();
+            manager.update(cx, |m, cx| m.create(Vec::new(), w, cx));
+            manager.read(cx).active.clone().unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let tab = window
+        .update(cx, |shell, w, cx| {
+            let tab = shell.pilot_tab(pilot.clone());
+            assert!(shell.workspace.title_order.contains(&tab));
+            shell.select_project("/work/gespan".into(), w, cx);
+            shell.toggle_pin_tab(tab.clone(), cx);
+            tab
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, _, _| {
+            assert_eq!(shell.workspace.project, "/work/gespan");
+            assert_eq!(shell.workspace.active, Some(here));
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    click(visual, "pinned-tab-0".into());
+    window
+        .update(visual, |shell, _, cx| {
+            assert_eq!(shell.workspace.project, "/work/another-project");
+            assert_eq!(
+                shell.pilot_manager().read(cx).active.as_deref(),
+                Some(pilot.as_str())
+            );
+            assert_eq!(shell.active_title_tab(cx), Some(tab.clone()));
+            let pilots = shell
+                .workspace
+                .title_order
+                .iter()
+                .filter(|t| matches!(t, TitleTab::Pilot { id, .. } if *id == pilot))
+                .count();
+            assert_eq!(pilots, 1, "no second tab for the same Pilot");
+        })
+        .unwrap();
+}

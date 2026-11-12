@@ -19,6 +19,13 @@ const COUNT_TEXT: f32 = 11.;
 const COUNT_PAD: f32 = 5.;
 const SPINNER: f32 = 12.;
 
+/// One of the strip's direct children: a loose tab, or a project's group box.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum StripChild {
+    Tab(TitleTab),
+    Group(String),
+}
+
 /// Bounds of the tabs drawn inside groups, as last laid out.
 pub(super) type GroupTabBounds = std::rc::Rc<std::cell::RefCell<HashMap<TitleTab, Bounds<Pixels>>>>;
 
@@ -49,7 +56,7 @@ fn tint(color: u32, alpha: f32) -> Hsla {
 }
 
 /// The small branch label a tab in a worktree carries after its title.
-pub(super) fn worktree_badge(id: i64, label: String) -> AnyElement {
+pub(super) fn worktree_badge(id: String, label: String) -> AnyElement {
     div()
         .debug_selector(move || format!("title-tab-worktree-{id}"))
         .flex_shrink_0()
@@ -100,9 +107,12 @@ impl Shell {
 
     /// Each group's chip width, by project. A chip is sized to its name
     /// (up to a cap), plus the count and spinner it shows while collapsed.
+    /// `resting` sizes every group but the current one collapsed, as if
+    /// nothing peeked.
     pub(super) fn group_chip_widths(
         &self,
         entries: &[StripEntry<TitleTab>],
+        resting: bool,
         window: &Window,
         cx: &App,
     ) -> HashMap<String, f32> {
@@ -116,7 +126,8 @@ impl Shell {
                         + CHIP_GAP
                         + text_width(&label, CHIP_TEXT, gpui::FontWeight::SEMIBOLD, window)
                             .min(CHIP_LABEL_MAX);
-                    if !self.group_expanded(project) {
+                    let current = path_key(project) == path_key(&self.workspace.project);
+                    if !self.group_expanded(project) || (resting && !current) {
                         width += CHIP_GAP
                             + 2. * COUNT_PAD
                             + text_width(
@@ -155,14 +166,19 @@ impl Shell {
     ) -> AnyElement {
         let appearance = self.appearance(project);
         let label = appearance.label(project);
+        let label_for_close = label.clone();
         let color = appearance.color(project);
         let name = crate::workspace::project_name(project);
         let running = !expanded && self.group_running(tabs, cx);
         let current = path_key(project) == path_key(&self.workspace.project);
-        let peek = project.to_owned();
-        let (count_name, running_name, chip_name) = (name.clone(), name.clone(), name);
+        let (peek, open, close) = (project.to_owned(), project.to_owned(), project.to_owned());
+        let hover_group = SharedString::from(format!("tab-group-chip-{project}"));
+        let (count_name, running_name, close_name, chip_name) =
+            (name.clone(), name.clone(), name.clone(), name);
         div()
             .id(SharedString::from(format!("tab-group-chip-{project}")))
+            .group(hover_group.clone())
+            .relative()
             .debug_selector(move || format!("tab-group-chip-{chip_name}"))
             .role(Role::Button)
             .aria_label(format!("{label}, {} tabs", tabs.len()))
@@ -191,6 +207,10 @@ impl Shell {
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(content(0.95))
                     .truncate()
+                    // The close button takes the label's tail on hover.
+                    .when(expanded, |d| {
+                        d.group_hover(hover_group.clone(), |s| s.pr(px(16.)))
+                    })
                     .child(label),
             )
             .when(!expanded, |d| {
@@ -204,6 +224,7 @@ impl Shell {
                         .text_size(px(COUNT_TEXT))
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(content(0.75))
+                        .group_hover(hover_group.clone(), |s| s.opacity(0.))
                         .child(tabs.len().to_string()),
                 )
             })
@@ -219,11 +240,43 @@ impl Shell {
                         )),
                 )
             })
-            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                if *hovered && !current && this.strip_peek.as_ref() != Some(&peek) {
-                    this.strip_peek = Some(peek.clone());
-                    this.tabs_frame.update(cx, |_, cx| cx.notify());
+            .child(
+                div()
+                    .id(SharedString::from(format!("close-tab-group-{project}")))
+                    .debug_selector(move || format!("close-tab-group-{close_name}"))
+                    .role(Role::Button)
+                    .aria_label(format!("Close {label_for_close} tabs"))
+                    .absolute()
+                    .right(px(4.))
+                    .top(px((TAB_PLATE_HEIGHT - 20.) / 2.))
+                    .size(px(20.))
+                    .rounded_sm()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .opacity(0.)
+                    .group_hover(hover_group, |s| s.opacity(1.))
+                    .hover(|s| s.bg(content(0.1)))
+                    .child(icon("close", 12.))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.close_group(&close, window, cx);
+                    })),
+            )
+            // Only real pointer motion peeks: a chip sliding under a still
+            // pointer as the strip lays out again does not.
+            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                if !current {
+                    this.peek_group(&peek, cx);
                 }
+            }))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.strip_peek = None;
+                if !current {
+                    this.select_project(open.clone(), window, cx);
+                }
+                this.tabs_frame.update(cx, |_, cx| cx.notify());
             }))
             .into_any_element()
     }
@@ -252,6 +305,7 @@ impl Shell {
             .chain(children.iter().map(|(key, _)| Some(key.clone())))
             .collect();
         let store = self.group_tab_bounds.clone();
+        let hold = self.peek_holds.get(project).copied();
         div()
             .on_children_prepainted(move |bounds, _, _| {
                 let mut store = store.borrow_mut();
@@ -265,6 +319,7 @@ impl Shell {
             .debug_selector(move || format!("tab-group-{name}"))
             .role(Role::Group)
             .flex_shrink_0()
+            .when_some(hold, |d, width| d.min_w(px(width)))
             .h(px(TITLE_BAR_HEIGHT))
             .relative()
             .px(px(GROUP_INSET))
@@ -313,7 +368,7 @@ impl Shell {
         slots: Vec<(TitleTab, AnyElement)>,
         chips: &HashMap<String, f32>,
         cx: &mut Context<Self>,
-    ) -> Vec<(Option<TitleTab>, AnyElement)> {
+    ) -> Vec<(StripChild, AnyElement)> {
         let mut home: HashMap<TitleTab, usize> = HashMap::new();
         let mut groups: HashMap<&str, usize> = HashMap::new();
         for (ix, entry) in entries.iter().enumerate() {
@@ -344,7 +399,7 @@ impl Shell {
                     buckets[ix].push((tab, element));
                     last = Some(ix);
                 }
-                None => stray.push((Some(tab), element)),
+                None => stray.push((StripChild::Tab(tab), element)),
             }
         }
         self.group_tab_bounds.borrow_mut().clear();
@@ -352,15 +407,99 @@ impl Shell {
         for (entry, bucket) in entries.iter().zip(buckets) {
             match entry {
                 StripEntry::Loose(_) => {
-                    out.extend(bucket.into_iter().map(|(tab, e)| (Some(tab), e)));
+                    out.extend(bucket.into_iter().map(|(tab, e)| (StripChild::Tab(tab), e)));
                 }
                 StripEntry::Group { project, tabs } => {
                     let width = chips.get(project).copied().unwrap_or(0.);
-                    out.push((None, self.group_box(project, tabs, bucket, width, cx)));
+                    out.push((
+                        StripChild::Group(project.clone()),
+                        self.group_box(project, tabs, bucket, width, cx),
+                    ));
                 }
             }
         }
         out
+    }
+
+    /// Opens `project`'s group in place while the pointer rests on its
+    /// chip. Groups left of it that close keep their open width until the
+    /// peek ends, so the chip doesn't slide out from under the pointer.
+    pub(super) fn peek_group(&mut self, project: &str, cx: &mut Context<Self>) {
+        if self.strip_peek.as_deref() == Some(project) {
+            return;
+        }
+        let place = |p: &str| {
+            self.strip_children
+                .iter()
+                .position(|child| matches!(child, StripChild::Group(g) if g == p))
+        };
+        let at = place(project);
+        let left_of_it = |p: &str| matches!((place(p), at), (Some(p), Some(at)) if p < at);
+        let mut holds = std::mem::take(&mut self.peek_holds);
+        holds.retain(|p, _| left_of_it(p));
+        if let Some(shown) = self.drawn_peek.clone().filter(|p| left_of_it(p))
+            && let Some(bounds) = self.group_box_bounds(&shown)
+        {
+            let width = bounds
+                .size
+                .width
+                .as_f32()
+                .max(holds.get(&shown).copied().unwrap_or(0.));
+            holds.insert(shown, width);
+        }
+        self.peek_holds = holds;
+        self.strip_peek = Some(project.to_owned());
+        self.tabs_frame.update(cx, |_, cx| cx.notify());
+    }
+
+    /// Closes every tab in `project`'s group, pins aside, by the usual
+    /// closing rules. When the active tab goes with them, the nearest tab
+    /// to the right of the group opens, else the one to its left.
+    pub(super) fn close_group(
+        &mut self,
+        project: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let strip = self.global_strip_tabs(cx);
+        let inside = |tab: &TitleTab| {
+            self.tab_project(tab, cx)
+                .is_some_and(|p| path_key(&p) == path_key(project))
+        };
+        let closing: Vec<TitleTab> = strip.iter().filter(|tab| inside(tab)).cloned().collect();
+        let (Some(first), Some(last)) = (
+            strip.iter().position(&inside),
+            strip.iter().rposition(&inside),
+        ) else {
+            return;
+        };
+        let next = strip[last + 1..]
+            .iter()
+            .chain(strip[..first].iter().rev())
+            .find(|tab| !inside(tab))
+            .cloned();
+        if self.strip_peek.as_deref() == Some(project) {
+            self.strip_peek = None;
+        }
+        self.close_title_tabs(&closing, next, window, cx);
+    }
+
+    /// Where `project`'s group box was last drawn.
+    fn group_box_bounds(&self, project: &str) -> Option<Bounds<Pixels>> {
+        let ix = self
+            .strip_children
+            .iter()
+            .position(|child| matches!(child, StripChild::Group(p) if p == project))?;
+        self.drawn_bounds(ix)
+    }
+
+    /// A direct child's bounds as drawn, after the strip's scroll.
+    fn drawn_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        let offset = self.tab_scroll.offset();
+        self.tab_scroll.bounds_for_item(ix).map(|b| Bounds {
+            origin: gpui::point(b.origin.x + offset.x, b.origin.y),
+            size: b.size,
+        })
     }
 
     /// Where `tab` was last drawn in the strip, loose or inside a group.
@@ -368,9 +507,9 @@ impl Shell {
         match self
             .strip_children
             .iter()
-            .position(|key| key.as_ref() == Some(tab))
+            .position(|child| *child == StripChild::Tab(tab.clone()))
         {
-            Some(ix) => self.tab_scroll.bounds_for_item(ix),
+            Some(ix) => self.drawn_bounds(ix),
             None => self.group_tab_bounds.borrow().get(tab).copied(),
         }
     }

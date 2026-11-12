@@ -1527,7 +1527,15 @@ impl Pilots {
             })
             .into_any_element()
     }
-    pub(crate) fn title_tab(&self, id: &str, width: f32, cx: &Context<Self>) -> Option<AnyElement> {
+    /// The Pilot's title tab; `worktree` is the branch label it carries
+    /// after its name when it runs outside its project folder.
+    pub(crate) fn title_tab(
+        &self,
+        id: &str,
+        width: f32,
+        worktree: Option<AnyElement>,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
         self.roster.get(id).map(|pilot| {
             let id = pilot.id.clone();
             let close = id.clone();
@@ -1570,7 +1578,8 @@ impl Pilots {
                                 .text_color(content(if active { 1. } else { 0.5 }))
                                 .group_hover(group.clone(), |s| s.text_color(content(1.)))
                                 .child(crate::tab_label::tab_label(pilot.label())),
-                        ),
+                        )
+                        .children(worktree),
                 )
                 .child(
                     div()

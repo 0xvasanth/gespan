@@ -46,7 +46,15 @@ impl Shell {
         if std::mem::take(&mut self.skip_tab_click) {
             return;
         }
-        self.open_title_tab(&self.pilot_tab(id.into()), window, cx);
+        // A Pilot tab of a peeking group belongs to that project, not this one.
+        let peeked = self.strip_peek.as_ref().and_then(|project| {
+            self.workspace.title_order.iter().find(|tab| {
+                matches!(tab, TitleTab::Pilot { id: pilot, project: p, .. }
+                    if pilot == id && path_key(p) == path_key(project))
+            })
+        });
+        let tab = peeked.cloned().unwrap_or_else(|| self.pilot_tab(id.into()));
+        self.open_title_tab(&tab, window, cx);
     }
     pub(super) fn tab_scope(&self) -> String {
         format!(
@@ -269,6 +277,8 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Opening a tab ends any peek; its group is the open one now.
+        self.strip_peek = None;
         match tab {
             TitleTab::App(view) => match view {
                 app_views::AppView::MyTasks => self.open_my_tasks(window, cx),
@@ -291,12 +301,48 @@ impl Shell {
                     review.update(cx, |r, cx| r.focus_active(window, cx));
                 }
             }
-            TitleTab::Pilot { id, .. } => {
+            TitleTab::Pilot {
+                id,
+                project,
+                worktree,
+            } => {
+                self.enter_pilot_scope(project, worktree);
                 if let Some(pilots) = self.pilots.clone() {
                     pilots.update(cx, |m, cx| m.open(id, window, cx));
                 }
             }
         }
+    }
+
+    /// Switches to the project and worktree a Pilot tab belongs to, so
+    /// opening it lands in its own group, as a chat tab does.
+    fn enter_pilot_scope(&mut self, project: &str, worktree: &str) {
+        if path_key(project) == path_key(&self.workspace.project)
+            && path_key(worktree) == path_key(self.working_copy())
+        {
+            return;
+        }
+        self.workspace.project = project.to_owned();
+        self.workspace.collapsed.remove(project);
+        if path_key(worktree) == path_key(project) {
+            self.worktree_focus.remove(project);
+        } else {
+            let branch = crate::git_cache::get(project).and_then(|git| {
+                git.worktrees
+                    .into_iter()
+                    .find(|tree| path_key(&tree.path) == path_key(worktree))
+                    .and_then(|tree| tree.branch)
+            });
+            self.worktree_focus.insert(
+                project.to_owned(),
+                crate::worktree_switcher::WorktreeFocus {
+                    path: worktree.to_owned(),
+                    branch,
+                },
+            );
+        }
+        // The Pilot takes the window; the old project's chat is not active.
+        self.workspace.active = None;
     }
 
     pub(super) fn restore_scope_tab(
@@ -409,9 +455,20 @@ impl Shell {
         let pins_left = before
             .iter()
             .any(|tab| !closing.contains(tab) && self.workspace.pinned_tabs.contains(tab));
-        let next = if replace && pins_left && !strip_left {
+        // Closing a whole group may name a tab of another project to open.
+        let elsewhere = preferred.clone().filter(|tab| {
+            !before.contains(tab)
+                && !closing.contains(tab)
+                && self.workspace.title_order.contains(tab)
+                && self.tab_drawable(tab, cx)
+        });
+        let next = if !replace {
             None
-        } else if replace {
+        } else if elsewhere.is_some() {
+            elsewhere
+        } else if pins_left && !strip_left {
+            None
+        } else {
             preferred
                 .filter(|tab| before.contains(tab) && !closing.contains(tab))
                 .or_else(|| {
@@ -423,8 +480,6 @@ impl Shell {
                         .find(|tab| !closing.contains(*tab))
                         .cloned()
                 })
-        } else {
-            None
         };
         self.navigation_revision += 1;
         self.close_menu(cx);

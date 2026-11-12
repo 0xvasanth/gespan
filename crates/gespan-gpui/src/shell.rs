@@ -818,10 +818,16 @@ pub(crate) struct Shell {
     /// The collapsed project group shown open while the pointer is on it:
     /// its project folder.
     strip_peek: Option<String>,
-    /// The strip's direct children as last drawn: a loose tab's key, or
-    /// None for a group's box.
-    strip_children: Vec<Option<TitleTab>>,
+    /// The strip's direct children as last drawn: loose tabs and group boxes.
+    strip_children: Vec<tab_groups::StripChild>,
     group_tab_bounds: tab_groups::GroupTabBounds,
+    /// The peek drawn last frame, so the next peek knows which group closed.
+    drawn_peek: Option<String>,
+    /// Groups left of the peeking one held at the width they had open, so
+    /// the peeking chip stays under the pointer: project to box width.
+    peek_holds: HashMap<String, f32>,
+    /// Set when the active tab changes; cleared once it is in view.
+    reveal_tab: std::rc::Rc<std::cell::Cell<bool>>,
     /// Tab animations: opening and closing title tabs, with each tab's last label.
     title_tab_motion: crate::tab_motion::TabMotion<TitleTab, ()>,
     /// Tab animations: the selected tab before the last switch, the one now
@@ -1255,6 +1261,9 @@ impl Shell {
             strip_peek: None,
             strip_children: Vec::new(),
             group_tab_bounds: Default::default(),
+            drawn_peek: None,
+            peek_holds: HashMap::new(),
+            reveal_tab: Default::default(),
             title_tab_motion: Default::default(),
             title_tab_selection: (None, None, std::time::Instant::now()),
             session_hover: None,
@@ -2138,14 +2147,9 @@ impl Shell {
         self.notify_sidebar(cx);
         self.tabs_frame.update(cx, |_, cx| cx.notify());
     }
-    fn reveal_active_tab(&self, cx: &App) {
-        if let Some(ix) = self
-            .visible_tabs(cx)
-            .iter()
-            .position(|tab| Some(tab) == self.active_title_tab(cx).as_ref())
-        {
-            self.tab_scroll.scroll_to_item(ix);
-        }
+    /// Scrolls the strip to the active tab once it is next laid out.
+    fn reveal_active_tab(&self, _cx: &App) {
+        self.reveal_tab.set(true);
     }
     /// The git root is the active session's worktree or folder.
     fn sync_git(&mut self, cx: &mut Context<Self>) {
@@ -8133,11 +8137,18 @@ impl Shell {
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let strip_width = self.tabs_width(window, cx);
+        // Holds only keep a peeking chip in place; with no peek they let go.
+        if self.strip_peek.is_none() {
+            self.peek_holds.clear();
+        }
+        self.drawn_peek = self.strip_peek.clone();
         // Every project's tabs, grouped; collapsed groups draw only a chip.
         let entries = self.strip_entries(cx);
         let tabs = self.drawn_strip_tabs(&entries);
-        let chips = self.group_chip_widths(&entries, window, cx);
-        let group_room = Self::group_room(&chips);
+        let chips = self.group_chip_widths(&entries, false, window, cx);
+        // Tabs share the strip as if no group peeked: a peek pushes the rest
+        // along instead of squeezing it, and the strip scrolls.
+        let group_room = Self::group_room(&self.group_chip_widths(&entries, true, window, cx));
         // Drags and drops count the current scope's tabs, as shortcuts do.
         let strip = self.strip_tabs(cx);
         let strip_ix: Vec<Option<usize>> = tabs
@@ -8163,6 +8174,22 @@ impl Shell {
                 crate::tab_motion::Slot::Live { .. } => None,
             })
             .collect();
+        // Tabs of groups other than the current project's, open while they
+        // peek or easing shut, take no share of the strip.
+        let away: HashSet<TitleTab> = slots
+            .iter()
+            .map(|s| match s {
+                crate::tab_motion::Slot::Live { key, .. }
+                | crate::tab_motion::Slot::Closing { key, .. } => key,
+            })
+            .filter(|key| {
+                self.tab_project(key, cx).is_some_and(|project| {
+                    gespan_core::files::path_key(&project)
+                        != gespan_core::files::path_key(&self.workspace.project)
+                })
+            })
+            .cloned()
+            .collect();
         let (dock, dock_width) = self
             .pinned_dock(&closing, window, cx)
             .map_or((None, 0.), |(dock, w)| (Some(dock), w));
@@ -8173,15 +8200,22 @@ impl Shell {
         let share: f32 = slots
             .iter()
             .map(|s| match s {
-                crate::tab_motion::Slot::Live { open, .. }
-                | crate::tab_motion::Slot::Closing { open, .. } => *open,
+                crate::tab_motion::Slot::Live { key, open }
+                | crate::tab_motion::Slot::Closing { key, open, .. } => {
+                    if away.contains(key) {
+                        0.
+                    } else {
+                        *open
+                    }
+                }
             })
             .sum();
         let avail = viewport - STRIP_PAD - STRIP_NEW_TAB - group_room - share * 2.;
         let width = if share <= 0. {
             TITLE_TAB_MAX_WIDTH
         } else {
-            (avail / share).clamp(0., TITLE_TAB_MAX_WIDTH)
+            // Past the floor the strip scrolls instead of squeezing.
+            (avail / share).clamp(SELECTED_TAB_MIN_WIDTH, TITLE_TAB_MAX_WIDTH)
         };
         // The selected tab keeps a wider share; the others split the rest.
         let selected = self.active_title_tab(cx);
@@ -8242,7 +8276,9 @@ impl Shell {
             .map(|s| match s {
                 crate::tab_motion::Slot::Live { key, open }
                 | crate::tab_motion::Slot::Closing { key, open, .. } => {
-                    if *open >= 1. {
+                    if away.contains(key) {
+                        0.
+                    } else if *open >= 1. {
                         base_width(key) + 2.
                     } else {
                         let (w, give) = slot_size(key, *open);
@@ -8260,7 +8296,11 @@ impl Shell {
             let settled: Vec<&TitleTab> = slots
                 .iter()
                 .filter_map(|s| match s {
-                    crate::tab_motion::Slot::Live { key, open } if *open >= 1. => Some(key),
+                    crate::tab_motion::Slot::Live { key, open }
+                        if *open >= 1. && !away.contains(key) =>
+                    {
+                        Some(key)
+                    }
                     _ => None,
                 })
                 .collect();
@@ -8418,7 +8458,9 @@ impl Shell {
                                 worktree.filter(|_| {
                                     tab_width(&TitleTab::Session(id)) >= TAB_CLOSE_MIN_WIDTH
                                 }),
-                                |d, label| d.child(tab_groups::worktree_badge(id, label)),
+                                |d, label| {
+                                    d.child(tab_groups::worktree_badge(id.to_string(), label))
+                                },
                             ),
                     )
                     .when(close, |d| {
@@ -8553,7 +8595,12 @@ impl Shell {
                 TitleTab::Pilot { id, .. } => {
                     let manager = self.pilots.clone()?;
                     let w = tab_width(tab);
-                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, cx))?;
+                    // A Pilot in a worktree names it, as a chat tab does.
+                    let worktree = self
+                        .tab_worktree_label(tab, cx)
+                        .filter(|_| w >= TAB_CLOSE_MIN_WIDTH)
+                        .map(|label| tab_groups::worktree_badge(id.clone(), label));
+                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, worktree, cx))?;
                     let drag_id = tab.clone();
                     let menu_id = id.clone();
                     let dragging = dragged.as_ref() == Some(tab);
@@ -8664,7 +8711,59 @@ impl Shell {
             .grouped_strip(&entries, elements, &chips, cx)
             .into_iter()
             .unzip();
+        // The active tab's slot among the strip's direct children, when loose.
+        let active_child = selected.as_ref().and_then(|tab| {
+            keys.iter()
+                .position(|key| *key == tab_groups::StripChild::Tab(tab.clone()))
+        });
         self.strip_children = keys;
+        let reveal = {
+            let reveal = self.reveal_tab.clone();
+            let scroll = self.tab_scroll.clone();
+            let grouped = self.group_tab_bounds.clone();
+            let frame = self.tabs_frame.clone();
+            let active = selected.clone();
+            let settling = moving || opening || switching;
+            move |_: Vec<Bounds<Pixels>>, _: &mut Window, cx: &mut App| {
+                if !reveal.get() {
+                    return;
+                }
+                let offset = scroll.offset();
+                // Where the tab is drawn now, after this frame's scroll.
+                let bounds = match active_child {
+                    Some(ix) => scroll.bounds_for_item(ix).map(|b| Bounds {
+                        origin: gpui::point(b.origin.x + offset.x, b.origin.y),
+                        size: b.size,
+                    }),
+                    None => active
+                        .as_ref()
+                        .and_then(|tab| grouped.borrow().get(tab).copied()),
+                };
+                let Some(bounds) = bounds else {
+                    if !settling {
+                        reveal.set(false);
+                    }
+                    return;
+                };
+                let view = scroll.bounds();
+                let shift = if bounds.left() < view.left() || bounds.size.width > view.size.width {
+                    view.left() - bounds.left()
+                } else if bounds.right() > view.right() {
+                    view.right() - bounds.right()
+                } else {
+                    px(0.)
+                };
+                let target = (offset.x + shift).clamp(-scroll.max_offset().x, px(0.));
+                if (target - offset.x).abs() > px(0.5) {
+                    // Laid out already; the next frame draws it in view.
+                    scroll.set_offset(gpui::point(target, offset.y));
+                    let frame = frame.clone();
+                    cx.defer(move |cx| frame.update(cx, |_, cx| cx.notify()));
+                } else if !settling {
+                    reveal.set(false);
+                }
+            }
+        };
         div()
             .id("title-tab-strip")
             .debug_selector(|| "title-tab-strip".into())
@@ -8678,11 +8777,13 @@ impl Shell {
             .children(dock)
             .child(
                 div()
+                    .on_children_prepainted(reveal)
                     .id("session-tabs")
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_hidden()
+                    // A full strip scrolls sideways; a plain wheel does too.
+                    .overflow_x_scroll()
                     .track_scroll(&self.tab_scroll)
                     .flex()
                     .items_center()
@@ -11352,7 +11453,8 @@ mod tests {
         window
             .update(cx, |shell, _, cx| {
                 shell.workspace.preferences.tab_animations = true;
-                for _ in 0..12 {
+                // Crowded, but every tab still fits above the scroll floor.
+                for _ in 0..5 {
                     shell.create(Kind::Codex, cx);
                 }
             })
@@ -11413,19 +11515,19 @@ mod tests {
             cx.debug_bounds(Box::leak(format!("title-tab-{id}").into_boxed_str()))
                 .unwrap()
         };
-        assert_eq!(
-            bounds(cx, selected).size.width,
-            px(SELECTED_TAB_MIN_WIDTH),
-            "the selected tab shrinks only down to its floor"
-        );
-        assert!(bounds(cx, other).size.width < px(SELECTED_TAB_MIN_WIDTH));
+        // The tabs shrink together, never below the scroll floor.
+        let width = bounds(cx, other).size.width;
+        assert!(width < px(TITLE_TAB_MAX_WIDTH), "crowded");
+        assert!(width >= px(SELECTED_TAB_MIN_WIDTH));
+        assert!((bounds(cx, selected).size.width - width).abs() <= px(1.));
         let close = |cx: &mut gpui::VisualTestContext, id: i64| {
             cx.debug_bounds(Box::leak(format!("close-title-tab-{id}").into_boxed_str()))
         };
         assert!(close(cx, selected).is_some(), "the selected tab can close");
-        if bounds(cx, other).size.width < px(TAB_CLOSE_MIN_WIDTH) {
-            assert!(close(cx, other).is_none(), "a collapsed tab only selects");
-        }
+        assert!(
+            close(cx, other).is_some(),
+            "so can the others above the floor"
+        );
         window
             .update(cx, |shell, _, cx| {
                 assert_eq!(shell.tab_scroll.max_offset().x, px(0.), "nothing scrolls");
@@ -12316,7 +12418,7 @@ mod tests {
         assert_eq!(transcript.read_with(visual, |t, _| t.render_passes), before);
     }
     #[gpui::test]
-    fn many_blank_tabs_fit_without_creating_sidebar_conversations(cx: &mut TestAppContext) {
+    fn many_blank_tabs_scroll_without_creating_sidebar_conversations(cx: &mut TestAppContext) {
         let (window, _, _) = window(cx);
         window
             .update(cx, |shell, _, cx| {
@@ -12338,19 +12440,8 @@ mod tests {
         cx.run_until_parked();
         window
             .update(cx, |shell, w, cx| {
-                // The tabs share the strip instead of scrolling it.
-                assert_eq!(
-                    shell.tab_scroll.max_offset().x,
-                    px(0.),
-                    "viewport {:?}, strip {:?}, children {}, first {:?}, last {:?}",
-                    w.viewport_size(),
-                    shell.tab_scroll.bounds(),
-                    shell.tab_scroll.children_count(),
-                    shell.tab_scroll.bounds_for_item(0),
-                    shell
-                        .tab_scroll
-                        .bounds_for_item(shell.workspace.tabs.len() - 1)
-                );
+                // Past the floor, the strip scrolls instead of squeezing.
+                assert!(shell.tab_scroll.max_offset().x > px(0.));
                 let id = shell.workspace.active.unwrap();
                 let anchor = Anchor::Point(gpui::point(px(400.), px(30.)));
                 shell.open_menu(MenuTarget::Tab(id), anchor, w, cx);
