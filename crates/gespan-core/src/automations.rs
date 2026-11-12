@@ -319,6 +319,8 @@ pub(crate) fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+pub const REVIEW_PILOT_ERROR: &str = "A pull request review automation can't wake a Pilot.";
+
 fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
     validate_id(&input.id, "automation")?;
     if input.name.trim().is_empty() || input.name.len() > MAX_NAME {
@@ -355,6 +357,9 @@ fn validate_upsert(input: &AutomationUpsert, now: i64) -> Result<(), String> {
         if pilot_id.len() > MAX_PILOT_ID || validate_id(pilot_id, "Pilot").is_err() {
             return Err("Choose a Pilot for this automation.".into());
         }
+    }
+    if input.review_results.is_some() && matches!(input.action, AutomationAction::Pilot { .. }) {
+        return Err(REVIEW_PILOT_ERROR.into());
     }
     if !matches!(
         input.trigger_kind.as_str(),
@@ -3661,6 +3666,24 @@ mod tests {
         };
         draft.sync_triggers(now_millis());
         draft
+    }
+
+    #[test]
+    fn a_review_automation_cannot_wake_a_pilot() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&directory.path().join("sessions.sqlite")).unwrap();
+        let mut draft = waking("pilot-1");
+        draft.review_results = Some(crate::review_policy::ReviewResults::Post);
+        assert_eq!(
+            service.upsert(draft).unwrap_err(),
+            "A pull request review automation can't wake a Pilot."
+        );
+        // Either half alone is fine.
+        let mut review = waking("pilot-1");
+        review.action = AutomationAction::Session;
+        review.review_results = Some(crate::review_policy::ReviewResults::Draft);
+        assert!(service.upsert(review).is_ok());
+        assert!(service.upsert(waking("pilot-1")).is_ok());
     }
 
     #[test]

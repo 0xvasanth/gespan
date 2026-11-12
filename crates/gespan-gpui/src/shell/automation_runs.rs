@@ -395,6 +395,19 @@ impl Shell {
         reveal: bool,
         cx: &mut Context<Self>,
     ) {
+        if let Some(error) = review_pilot_block(&due.automation) {
+            tracing::warn!(
+                automation = %due.run.automation_id,
+                run = %due.run.id,
+                "review automation set to wake a Pilot was not run"
+            );
+            self.update_automation_run(due.run.id.clone(), "failed", None, Some(error.into()), cx);
+            if reveal {
+                self.error = Some(error.into());
+                cx.notify();
+            }
+            return;
+        }
         if let AutomationAction::Pilot { pilot_id } = &due.automation.action {
             let pilot_id = pilot_id.clone();
             self.wake_pilot(due, &pilot_id, reveal, cx);
@@ -488,11 +501,8 @@ impl Shell {
             .model_settings
             .get("thinking")
             .and_then(|value| value.parse().ok());
-        settings.access = gespan_core::agent::AccessMode::from_id(&automation.runtime_mode);
         settings.review = review_launch(automation, &due.run);
-        if settings.review.is_some() {
-            settings.access = gespan_core::agent::AccessMode::ReadOnly;
-        }
+        settings.access = launch_access(automation, settings.review.as_ref());
         WorktreeChoice::from_mode(&automation.workspace_mode, &automation.worktree_cwd)
             .apply(&mut settings);
         let store = self.store.clone();
@@ -965,6 +975,26 @@ fn review_launch(
     })
 }
 
+/// Why a run cannot be delivered, for a review automation saved with a Pilot
+/// action before saving refused that: a Pilot would not carry the policy.
+fn review_pilot_block(automation: &automations::Automation) -> Option<&'static str> {
+    (automation.review_results.is_some()
+        && matches!(automation.action, AutomationAction::Pilot { .. }))
+    .then_some(automations::REVIEW_PILOT_ERROR)
+}
+
+/// A review run is read-only whatever run mode the automation was edited to.
+fn launch_access(
+    automation: &automations::Automation,
+    review: Option<&gespan_core::review_policy::ReviewPolicy>,
+) -> gespan_core::agent::AccessMode {
+    if review.is_some() {
+        gespan_core::agent::AccessMode::ReadOnly
+    } else {
+        gespan_core::agent::AccessMode::from_id(&automation.runtime_mode)
+    }
+}
+
 /// The prompt a review run is given: any prefetched pull request first, the
 /// policy's instruction last.
 fn review_prompt(
@@ -1110,6 +1140,43 @@ mod tests {
             review_prompt("Review it", &policy, None),
             format!("Review it\n\n{instruction}")
         );
+    }
+
+    #[test]
+    fn review_runs_carry_a_pilot_block_for_rows_saved_before_validation() {
+        use gespan_core::review_policy::ReviewResults;
+        let mut automation = review_automation("claude", Some(ReviewResults::Post));
+        automation.action = AutomationAction::Pilot {
+            pilot_id: "pilot-1".into(),
+        };
+        assert_eq!(
+            review_pilot_block(&automation),
+            Some("A pull request review automation can't wake a Pilot.")
+        );
+        automation.review_results = None;
+        assert_eq!(review_pilot_block(&automation), None);
+        let session = review_automation("claude", Some(ReviewResults::Post));
+        assert_eq!(review_pilot_block(&session), None);
+    }
+
+    #[test]
+    fn review_runs_carry_read_only_access_whatever_the_run_mode() {
+        use gespan_core::agent::AccessMode;
+        use gespan_core::review_policy::ReviewResults;
+        let mut review = review_automation("claude", Some(ReviewResults::Gespan));
+        review.runtime_mode = "full-access".into();
+        let policy = review_launch(&review, &review_run(None));
+        assert_eq!(
+            launch_access(&review, policy.as_ref()),
+            AccessMode::ReadOnly
+        );
+        let mut plain = review_automation("claude", None);
+        plain.runtime_mode = "full-access".into();
+        assert_eq!(
+            launch_access(&plain, None),
+            AccessMode::from_id("full-access")
+        );
+        assert_ne!(AccessMode::from_id("full-access"), AccessMode::ReadOnly);
     }
 
     #[test]
