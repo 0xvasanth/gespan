@@ -384,3 +384,54 @@ fn source_text_is_redacted_capped_and_blank_means_absent() {
         .iter()
         .any(|x| x.id == blank.id));
 }
+
+#[test]
+fn revise_pending_rewrites_redacted_capped_text_in_place() {
+    let (_d, s) = open();
+    let e = s
+        .propose(user_sourced(new(Kind::Decision, repo(), "Use tabs")), 10)
+        .unwrap();
+    let revised = s
+        .revise_pending(
+            e.id,
+            Edit {
+                title: "Use tabs".into(),
+                text: "Tabs, key sk-abc123 never".into(),
+                why: "x".repeat(1_500),
+            },
+        )
+        .unwrap();
+    assert_eq!(revised.id, e.id);
+    assert_eq!(revised.status, Status::Pending);
+    assert_eq!(revised.text, "Tabs, key [redacted] never");
+    assert_eq!(revised.why.chars().count(), 1_000);
+    assert_eq!(s.pending().unwrap().len(), 1, "no new row");
+    let hits = s.search(&repo(), "redacted", 5).unwrap();
+    assert_eq!(hits.len(), 1, "the search index follows the rewrite");
+}
+
+#[test]
+fn revise_pending_refuses_active_missing_and_empty_why() {
+    let (_d, s) = open();
+    let e = s
+        .propose(new(Kind::Decision, repo(), "Use tabs"), 10)
+        .unwrap();
+    let edit = |why: &str| Edit {
+        title: "t".into(),
+        text: "t".into(),
+        why: why.into(),
+    };
+    assert!(matches!(
+        s.revise_pending(e.id, edit("  ")),
+        Err(Error::MissingWhy)
+    ));
+    assert!(matches!(
+        s.revise_pending(999, edit("w")),
+        Err(Error::NotFound(999))
+    ));
+    s.approve(e.id, None, false, &[], 20).unwrap();
+    assert!(matches!(
+        s.revise_pending(e.id, edit("w")),
+        Err(Error::NotPending(_))
+    ));
+}

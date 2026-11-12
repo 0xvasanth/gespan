@@ -157,6 +157,29 @@ impl Store {
         Ok(out)
     }
 
+    /// Rewrite a pending entry's title, text and why in place (redacted and
+    /// capped like a new one). Anything but a pending entry is refused.
+    pub fn revise_pending(&self, id: i64, edit: Edit) -> Result<Entry, Error> {
+        if edit.why.trim().is_empty() {
+            return Err(Error::MissingWhy);
+        }
+        let (title, text, why) = (
+            self.clean(&edit.title),
+            self.clean(&edit.text),
+            self.clean(&edit.why),
+        );
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE entries SET title = ?1, text = ?2, why = ?3 \
+             WHERE id = ?4 AND status = 'pending'",
+            params![title, text, why, id],
+        )?;
+        if n == 0 {
+            return Err(missing_or(&conn, id, Error::NotPending(id))?);
+        }
+        load(&conn, id)?.ok_or(Error::NotFound(id))
+    }
+
     pub fn reject(&self, id: i64, now_ms: i64) -> Result<(), Error> {
         let conn = self.conn();
         let n = conn.execute(
