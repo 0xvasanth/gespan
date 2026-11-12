@@ -1,5 +1,5 @@
 //! Preset colors from workspaceThemes.ts, including surface tints and accents.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct Palette {
     pub surface: u32,
     pub panel: u32,
@@ -208,6 +208,9 @@ pub(crate) const PALETTES: &[(&str, &str, Palette, Palette)] = &[
     ),
 ];
 pub(crate) fn palette(id: &str, light: bool) -> Palette {
-    let row = PALETTES.iter().find(|r| r.0 == id).unwrap_or(&PALETTES[0]);
-    if light { row.3 } else { row.2 }
+    match PALETTES.iter().find(|r| r.0 == id).or(PALETTES.first()) {
+        Some(row) if light => row.3,
+        Some(row) => row.2,
+        None => Palette::default(),
+    }
 }
