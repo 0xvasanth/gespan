@@ -1,5 +1,5 @@
 mod accounts;
-mod approval_card;
+pub(crate) mod approval_card;
 mod approvals;
 mod attachment_drop;
 mod background_tasks;
@@ -471,6 +471,70 @@ impl Conversation {
     }
     pub(crate) fn needs_approval(&self) -> bool {
         !self.approvals.is_empty() || !self.questions.is_empty()
+    }
+    /// Shows a provider question and routes its answer back to the provider.
+    pub(crate) fn add_question(
+        &mut self,
+        request: gespan_core::agent::Question,
+        cx: &mut Context<Self>,
+    ) {
+        let card = cx.new(|cx| crate::questions::QuestionCard::new(request, cx));
+        let events = cx.subscribe(&card, |this, _, reply: &crate::questions::Answered, cx| {
+            if this
+                .questions
+                .front()
+                .is_none_or(|(card, _)| card.read(cx).id() != reply.id)
+            {
+                return;
+            }
+            let before = this.needs_approval();
+            let decision = reply
+                .answers
+                .clone()
+                .map_or(Decision::Deny, Decision::Answer);
+            if this.controls.as_ref().is_none_or(|controls| {
+                controls
+                    .send(Control {
+                        id: reply.id.clone(),
+                        decision,
+                    })
+                    .is_err()
+            }) {
+                this.status = "The provider is no longer waiting for this answer".into();
+                cx.notify();
+                return;
+            }
+            if let Some((card, _)) = this.questions.pop_front() {
+                this.question_overlay.release(card, cx);
+            }
+            this.status = if !this.approvals.is_empty() {
+                "Waiting for approval"
+            } else if !this.questions.is_empty() {
+                "Waiting for your answer"
+            } else {
+                "Working…"
+            }
+            .into();
+            if before != this.needs_approval() {
+                cx.emit(SessionChanged);
+            }
+            cx.notify();
+        });
+        let keep_open = cx.subscribe(
+            &card,
+            |this, _, request: &crate::questions::KeptOpen, cx| {
+                if let Some(controls) = &this.controls {
+                    let _ = controls.send(Control {
+                        id: request.id.clone(),
+                        decision: Decision::KeepOpen,
+                    });
+                }
+                cx.emit(SessionChanged);
+                cx.notify();
+            },
+        );
+        self.questions.push_back((card, vec![events, keep_open]));
+        self.status = "Waiting for your answer".into();
     }
     #[cfg(test)]
     pub(crate) fn set_approvals_for_test(&mut self, approvals: Vec<Approval>) {
@@ -1753,69 +1817,7 @@ impl Conversation {
                             this.questions.retain(|(card, _)| card.read(cx).id() != id);
                         }
                         for request in update.questions.into_iter().filter(|_| !stopping) {
-                            let card =
-                                cx.new(|cx| crate::questions::QuestionCard::new(request, cx));
-                            let events = cx.subscribe(
-                                &card,
-                                |this, _, reply: &crate::questions::Answered, cx| {
-                                    if this
-                                        .questions
-                                        .front()
-                                        .is_none_or(|(card, _)| card.read(cx).id() != reply.id)
-                                    {
-                                        return;
-                                    }
-                                    let before = this.needs_approval();
-                                    let decision = reply
-                                        .answers
-                                        .clone()
-                                        .map_or(Decision::Deny, Decision::Answer);
-                                    if this.controls.as_ref().is_none_or(|controls| {
-                                        controls
-                                            .send(Control {
-                                                id: reply.id.clone(),
-                                                decision,
-                                            })
-                                            .is_err()
-                                    }) {
-                                        this.status =
-                                            "The provider is no longer waiting for this answer"
-                                                .into();
-                                        cx.notify();
-                                        return;
-                                    }
-                                    if let Some((card, _)) = this.questions.pop_front() {
-                                        this.question_overlay.release(card, cx);
-                                    }
-                                    this.status = if !this.approvals.is_empty() {
-                                        "Waiting for approval"
-                                    } else if !this.questions.is_empty() {
-                                        "Waiting for your answer"
-                                    } else {
-                                        "Working…"
-                                    }
-                                    .into();
-                                    if before != this.needs_approval() {
-                                        cx.emit(SessionChanged);
-                                    }
-                                    cx.notify();
-                                },
-                            );
-                            let keep_open = cx.subscribe(
-                                &card,
-                                |this, _, request: &crate::questions::KeptOpen, cx| {
-                                    if let Some(controls) = &this.controls {
-                                        let _ = controls.send(Control {
-                                            id: request.id.clone(),
-                                            decision: Decision::KeepOpen,
-                                        });
-                                    }
-                                    cx.emit(SessionChanged);
-                                    cx.notify();
-                                },
-                            );
-                            this.questions.push_back((card, vec![events, keep_open]));
-                            this.status = "Waiting for your answer".into();
+                            this.add_question(request, cx);
                         }
                         if !finished && !this.approvals.is_empty() {
                             this.status = "Waiting for approval".into();

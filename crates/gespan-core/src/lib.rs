@@ -48,6 +48,7 @@ pub mod session_groups;
 pub mod session_import;
 pub mod session_title;
 pub mod store;
+pub mod tasks;
 #[cfg(all(test, unix))]
 pub(crate) mod test_exec;
 pub mod ticket_bridge;

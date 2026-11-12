@@ -561,3 +561,11 @@ impl Pilots {
         cx.notify();
     }
 }
+
+impl Pilots {
+    /// The user picked `text` from a Pilot's choices card, from outside its chat.
+    pub(crate) fn choose(&mut self, pilot: &str, text: &str, cx: &mut Context<Self>) {
+        let value = json!({ "type": "choice", "text": text });
+        self.card_action(pilot, &value, cx);
+    }
+}

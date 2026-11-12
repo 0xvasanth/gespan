@@ -30,6 +30,9 @@ mod live_agents;
 mod menu_bar;
 mod mobile_host;
 mod multi_window;
+mod my_tasks;
+#[cfg(test)]
+mod my_tasks_tests;
 #[cfg(test)]
 mod new_worktree_chat_tests;
 mod notifications;
@@ -768,6 +771,16 @@ pub(crate) struct Shell {
     flows: Option<Entity<crate::flows::FlowsView>>,
     board: Option<Entity<crate::board::BoardView>>,
     runs: Option<Entity<crate::runs::Runs>>,
+    my_tasks: Option<Entity<crate::my_tasks::MyTasks>>,
+    /// When each open task was first seen, by key, in milliseconds.
+    my_task_seen: HashMap<String, u64>,
+    /// Turns of history each task shows, once the user loaded more.
+    my_task_turns: HashMap<String, usize>,
+    my_tasks_events: Option<Subscription>,
+    /// Tasks answered from the page whose source has not caught up yet.
+    my_task_sent: HashSet<String>,
+    /// The last Flow approvals read, for a tick whose store is busy.
+    my_task_flows: Vec<crate::my_tasks::TaskItem>,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -1193,6 +1206,12 @@ impl Shell {
             flows: None,
             board: None,
             runs: None,
+            my_tasks: None,
+            my_task_seen: HashMap::new(),
+            my_task_turns: HashMap::new(),
+            my_tasks_events: None,
+            my_task_sent: HashSet::new(),
+            my_task_flows: Vec::new(),
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
@@ -5580,7 +5599,6 @@ impl Shell {
                         .h(px(TITLE_BAR_HEIGHT)),
                 ),
             )
-            .children(self.waiting_button(cx))
             .child(if classic {
                 // The toggle holds the window's corner (classic_body); the
                 // strip keeps only the part an open panel leaves uncovered.
@@ -8077,7 +8095,6 @@ impl Shell {
         (window.viewport_size().width.as_f32()
             - lead
             - trailing
-            - self.waiting_room()
             - (client_controls_width(window) - self.window_controls))
             .max(0.)
     }
@@ -9003,7 +9020,7 @@ impl Render for Shell {
                 view.set_expand_labels(expand, cx);
             });
         }
-        self.sync_notices(window, cx);
+        self.sync_notices(cx);
         div()
             .id("gespan-workspace")
             .relative()

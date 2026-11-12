@@ -493,7 +493,11 @@ impl Shell {
             });
             let result = work.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok(()) => this.refresh_flows_view(cx),
+                Ok(()) => {
+                    this.refresh_flows_view(cx);
+                    // The run may have started or stopped waiting for approval.
+                    this.refresh_my_tasks(cx);
+                }
                 Err(error) => {
                     this.error = Some(format!("Could not save Flow run: {error}"));
                     cx.notify();
