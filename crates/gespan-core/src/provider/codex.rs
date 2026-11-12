@@ -199,7 +199,11 @@ impl Protocol {
                     {
                         params["sandboxPolicy"]["networkAccess"] = true.into();
                     }
-                    params["approvalPolicy"] = "never".into();
+                    if self.request.settings.review.is_some() {
+                        params["sandboxPolicy"]["networkAccess"] = true.into();
+                    } else {
+                        params["approvalPolicy"] = "never".into();
+                    }
                 }
                 if let Some(model) = self
                     .request
@@ -364,10 +368,15 @@ impl Protocol {
                     && (method.ends_with("/requestApproval")
                         || matches!(method, "execCommandApproval" | "applyPatchApproval")) =>
             {
+                let argv = p["command"]
+                    .as_array()
+                    .and_then(|a| a.iter().map(|x| x.as_str()).collect::<Option<Vec<_>>>())
+                    .and_then(|a| shlex::try_join(a).ok());
                 let detail = p["command"]
                     .as_str()
-                    .or(p["reason"].as_str())
                     .map(str::to_owned)
+                    .or(argv)
+                    .or_else(|| p["reason"].as_str().map(str::to_owned))
                     .unwrap_or_default();
                 self.approval(
                     v["id"].clone(),
