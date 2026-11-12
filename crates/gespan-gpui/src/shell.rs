@@ -1,6 +1,9 @@
 mod accounts;
 pub(crate) mod action_runs;
 mod actions;
+mod agents_panel;
+#[cfg(test)]
+mod agents_panel_tests;
 mod app_commands;
 mod app_views;
 mod automation_runs;
@@ -26,7 +29,6 @@ mod import_sessions;
 mod in_flight;
 mod inbox_ask;
 mod layout;
-mod live_agents;
 mod menu_bar;
 mod mobile_host;
 mod multi_window;
@@ -693,11 +695,11 @@ pub(crate) struct Shell {
     tab_marks: HashMap<i64, Entity<SessionMark>>,
     /// The Machines section's agent marks, by machine id and terminal id.
     machine_marks: HashMap<(String, String), Entity<SessionMark>>,
-    /// The live agents card's spinners, apart from the sidebar rows' marks.
-    live_marks: HashMap<i64, Entity<SessionMark>>,
-    live_agents_expanded: bool,
-    /// Repaints the live agents card's elapsed times once a second.
-    live_tick: Option<gpui::Task<()>>,
+    /// The sidebar's Agents panel is open above its footer.
+    agents_open: bool,
+    /// Repaints the open Agents panel's running times once a second.
+    agents_tick: Option<gpui::Task<()>>,
+    agents_scroll: ScrollHandle,
     busy_sessions: HashSet<i64>,
     hold: hold::HoldCoordinator,
     /// Held per Settings → Keep screen awake; released on drop at quit.
@@ -1150,9 +1152,9 @@ impl Shell {
             session_marks: HashMap::new(),
             tab_marks: HashMap::new(),
             machine_marks: HashMap::new(),
-            live_marks: HashMap::new(),
-            live_agents_expanded: false,
-            live_tick: None,
+            agents_open: false,
+            agents_tick: None,
+            agents_scroll: ScrollHandle::new(),
             busy_sessions: HashSet::new(),
             hold: Default::default(),
             keep_awake: gespan_keep_awake::KeepAwake::new(),
@@ -7159,7 +7161,7 @@ impl Shell {
             );
         }
         self.refresh_sidebar_structure(cx);
-        let live_agents = self.live_agents_preview(cx);
+        let agents = self.agents_footer(cx);
         div()
             .id("gespan-sidebar")
             .debug_selector(|| "sidebar-content".into())
@@ -7188,8 +7190,8 @@ impl Shell {
                         .flex()
                         .flex_col()
                         .child(self.virtual_sidebar(cx))
-                        .children(live_agents)
-                        .child(self.app_update_footer(cx)),
+                        .child(self.app_update_footer(cx))
+                        .children(agents),
                 ),
             )
             .child(self.project_spaces(cx))
@@ -9281,6 +9283,9 @@ impl Render for Shell {
             }))
             .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
                 if this.cancel_space_drag(cx) {
+                    return;
+                }
+                if this.close_agents_panel(cx) {
                     return;
                 }
                 if this.remote_project_picker.is_some() {
