@@ -1,11 +1,13 @@
 //! The Answered and Decisions tabs: every request answered or withdrawn,
 //! kept in the database with the answer, and the decisions saved from them.
 use super::card::answer as button;
-use super::list::{kind_icon, waited};
+use super::list::{group_label, kind_status, row_line, row_title, task_row, tile, waited};
+use super::pane::{open_button, top_bar};
 use super::*;
+use crate::glass::{self, Button};
 use crate::workspace::project_name;
 use gespan_core::tasks::{SavedDecision, Status, TaskRecord};
-use gpui::{AnyElement, Div, FontWeight, Role, SharedString, px};
+use gpui::{AnyElement, Div, FontWeight, SharedString, px};
 use serde_json::Value;
 
 /// Which list the page shows.
@@ -37,11 +39,7 @@ pub(super) fn ago(now: u64, at: u64) -> String {
 }
 
 fn caption(text: impl Into<SharedString>) -> Div {
-    div()
-        .text_size(px(10.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(content(0.4))
-        .child(text.into())
+    glass::eyebrow(text)
 }
 
 /// The options a question item offered, with the ones picked marked.
@@ -242,72 +240,6 @@ impl MyTasks {
         }
     }
 
-    pub(super) fn tab_pills(&self, cx: &mut Context<Self>) -> AnyElement {
-        let pill = |tab: Tab, id: &'static str, label: &'static str, count: Option<usize>| {
-            let on = self.tab == tab;
-            div()
-                .id(id)
-                .debug_selector(move || id.into())
-                .role(Role::Tab)
-                .aria_selected(on)
-                .cursor_pointer()
-                .h(px(28.))
-                .px(px(10.))
-                .rounded(px(6.))
-                .when(on, |d| d.bg(content(0.1)))
-                .hover(|s| s.bg(content(0.06)))
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .text_size(px(12.))
-                .child(label)
-                .when_some(count, |d, count| {
-                    d.child(div().text_color(content(0.5)).child(count.to_string()))
-                })
-                .on_click(cx.listener(move |this, _, _, cx| this.set_tab(tab, cx)))
-        };
-        div()
-            .h(px(40.))
-            .flex_shrink_0()
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .border_b_1()
-            .border_color(content(0.07))
-            .child(pill(
-                Tab::Waiting,
-                "my-tasks-tab-waiting",
-                "Waiting",
-                Some(self.tasks.len()),
-            ))
-            .child(pill(
-                Tab::Answered,
-                "my-tasks-tab-answered",
-                "Answered",
-                None,
-            ))
-            .child(pill(
-                Tab::Decisions,
-                "my-tasks-tab-decisions",
-                "Decisions",
-                Some(self.decisions.len()),
-            ))
-            .into_any_element()
-    }
-
-    fn group_header(project: &str, count: usize) -> AnyElement {
-        div()
-            .px(px(8.))
-            .pt(px(10.))
-            .pb(px(4.))
-            .text_size(px(10.))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(content(0.4))
-            .child(format!("{} \u{b7} {count}", project_name(project)).to_uppercase())
-            .into_any_element()
-    }
-
     /// Rows grouped by project, in the order their first row comes.
     fn grouped<T>(items: Vec<T>, project: impl Fn(&T) -> &str) -> Vec<(String, Vec<T>)> {
         let mut groups: Vec<(String, Vec<T>)> = Vec::new();
@@ -321,21 +253,13 @@ impl MyTasks {
         groups
     }
 
-    fn list_row(id: String, on: bool) -> gpui::Stateful<Div> {
-        let selector = id.clone();
-        div()
-            .id(SharedString::from(id))
-            .debug_selector(move || selector.clone())
-            .role(Role::ListBoxOption)
-            .aria_selected(on)
-            .cursor_pointer()
-            .p(px(8.))
-            .rounded(px(8.))
-            .flex()
-            .items_center()
-            .gap(px(10.))
-            .when(on, |d| d.bg(content(0.1)))
-            .hover(|s| s.bg(content(0.06)))
+    /// A project's label over its rows, with how many there are.
+    fn group_header(project: &str, count: usize, first: bool) -> AnyElement {
+        group_label(
+            format!("my-tasks-group-{project}"),
+            format!("{} \u{b7} {count}", project_name(project)),
+            first,
+        )
     }
 
     pub(super) fn past_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -343,49 +267,42 @@ impl MyTasks {
         let selected = self.selected_past(&shown).map(|t| t.key.clone());
         let now = self.now_ms;
         let mut rows = Vec::new();
-        for (project, tasks) in Self::grouped(shown, |t| &t.project) {
-            rows.push(Self::group_header(&project, tasks.len()));
+        for (ix, (project, tasks)) in Self::grouped(shown, |t| &t.project).into_iter().enumerate() {
+            rows.push(Self::group_header(&project, tasks.len(), ix == 0));
             for task in tasks {
                 let key = task.key.clone();
-                let answer = match task.status {
-                    Status::Answered => {
-                        format!("You: {}", task.answer.as_deref().unwrap_or_default())
-                    }
-                    _ => "Not answered".into(),
+                let (answer, tone) = match task.status {
+                    Status::Answered => (
+                        format!("You: {}", task.answer.as_deref().unwrap_or_default()),
+                        glass::Tone::Ok,
+                    ),
+                    _ => ("Not answered".into(), glass::Tone::Muted),
                 };
+                let (word, _) = kind_status(task.kind);
+                let ago = waited(now.saturating_sub(task.closed_at.unwrap_or(now)));
                 rows.push(
-                    Self::list_row(
+                    task_row(
                         format!("my-tasks-past-{}", task.key),
                         selected.as_ref() == Some(&task.key),
                     )
                     .aria_label(SharedString::from(task.headline.clone()))
-                    .child(icon(kind_icon(task.kind), 13.).text_color(content(0.6)))
+                    .child(tile(task.kind, 32.))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .flex()
                             .flex_col()
+                            .gap(px(3.))
+                            .child(row_title(task.headline.clone(), Some((ago, content(0.45)))))
+                            .child(row_line(answer))
                             .child(
                                 div()
-                                    .text_size(px(13.))
-                                    .truncate()
-                                    .child(task.headline.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(content(0.55))
-                                    .truncate()
-                                    .child(answer),
+                                    .mt(px(4.))
+                                    .flex()
+                                    .gap(px(6.))
+                                    .child(glass::status(word, tone)),
                             ),
-                    )
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_size(px(11.))
-                            .text_color(content(0.45))
-                            .child(waited(now.saturating_sub(task.closed_at.unwrap_or(now)))),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.select_past(key.clone(), cx)))
                     .into_any_element(),
@@ -399,8 +316,10 @@ impl MyTasks {
         let shown = self.visible_decisions(cx);
         let selected = self.selected_decision(&shown).map(|d| d.id);
         let mut rows = Vec::new();
-        for (project, decisions) in Self::grouped(shown, |d| &d.project) {
-            rows.push(Self::group_header(&project, decisions.len()));
+        for (ix, (project, decisions)) in
+            Self::grouped(shown, |d| &d.project).into_iter().enumerate()
+        {
+            rows.push(Self::group_header(&project, decisions.len(), ix == 0));
             for decision in decisions {
                 let id = decision.id;
                 let meta = match decision.sources.len() {
@@ -409,7 +328,7 @@ impl MyTasks {
                     n => format!("From {n} answers"),
                 };
                 rows.push(
-                    Self::list_row(format!("my-tasks-decision-{id}"), selected == Some(id))
+                    task_row(format!("my-tasks-decision-{id}"), selected == Some(id))
                         .aria_label(SharedString::from(decision.statement.clone()))
                         .child(
                             div()
@@ -417,18 +336,9 @@ impl MyTasks {
                                 .min_w_0()
                                 .flex()
                                 .flex_col()
-                                .child(
-                                    div()
-                                        .text_size(px(13.))
-                                        .truncate()
-                                        .child(decision.statement.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(12.))
-                                        .text_color(content(0.55))
-                                        .child(meta),
-                                ),
+                                .gap(px(3.))
+                                .child(row_title(decision.statement.clone(), None))
+                                .child(row_line(meta)),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| this.select_decision(id, cx)))
                         .into_any_element(),
@@ -444,30 +354,23 @@ impl MyTasks {
         let writing = self.writing == Some(Writing::Remember(record.key.clone()));
         let key = record.key.clone();
         let text = record.suggested_statement();
-        div()
+        glass::card()
             .debug_selector(|| "my-tasks-remember".into())
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .p(px(12.))
-            .rounded(px(10.))
-            .bg(content(0.05))
-            .border_1()
-            .border_color(content(0.08))
+            .gap(px(10.))
+            .p(px(14.))
             .child(div().text_size(px(13.)).child(format!(
                 "Remember this for {}?",
                 project_name(&record.project)
             )))
             .when(writing, |d| {
                 d.child(
-                    div()
+                    glass::field()
                         .debug_selector(|| "my-tasks-statement".into())
-                        .px(px(10.))
-                        .py(px(8.))
-                        .rounded(px(8.))
-                        .bg(black(0.3))
+                        .h(px(36.))
                         .text_size(px(14.))
-                        .child(self.statement.clone()),
+                        .child(div().flex_1().min_w_0().child(self.statement.clone())),
                 )
             })
             .child(
@@ -480,7 +383,7 @@ impl MyTasks {
                             "my-tasks-save-decision",
                             "my-tasks-save-decision".into(),
                             "Save as decision",
-                            true,
+                            Button::Primary,
                         )
                         .on_click(cx.listener(move |this, _, _, cx| this.save_decision(&key, cx)))
                     } else {
@@ -489,7 +392,7 @@ impl MyTasks {
                             "my-tasks-remember-start",
                             "my-tasks-remember-start".into(),
                             "Save as decision",
-                            true,
+                            Button::Primary,
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.start_writing(Writing::Remember(key.clone()), text.clone(), cx)
@@ -501,7 +404,7 @@ impl MyTasks {
                                 "my-tasks-just-once",
                                 "my-tasks-just-once".into(),
                                 "Just this once",
-                                false,
+                                Button::Ghost,
                             )
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
@@ -525,8 +428,8 @@ impl MyTasks {
         Some(
             div()
                 .flex_shrink_0()
-                .px(px(16.))
-                .pt(px(12.))
+                .px(px(24.))
+                .pt(px(14.))
                 .flex()
                 .flex_col()
                 .gap(px(6.))
@@ -550,11 +453,15 @@ impl MyTasks {
         let request = &record.request;
         let mono = |text: String| {
             div()
-                .p(px(10.))
-                .rounded(px(8.))
-                .bg(black(0.3))
+                .px(px(12.))
+                .py(px(10.))
+                .rounded(px(10.))
+                .bg(black(if is_light() { 0.05 } else { 0.35 }))
+                .border_1()
+                .border_color(glass::edge())
                 .font_family(".SystemUIFont")
                 .text_size(px(12.))
+                .line_height(px(19.))
                 .child(text)
                 .into_any_element()
         };
@@ -643,65 +550,43 @@ impl MyTasks {
         }
     }
 
-    fn pane_bar(&self, crumb: String, open: Option<Source>, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .h(px(40.))
-            .flex_shrink_0()
-            .pl(px(20.))
-            .pr(px(12.))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .border_b_1()
-            .border_color(content(0.07))
-            .text_size(px(12.))
-            .text_color(content(0.55))
-            .child(div().flex_1().min_w_0().truncate().child(crumb))
-            .when_some(open, |d, source| {
-                d.child(
-                    div()
-                        .id("my-tasks-open-source")
-                        .debug_selector(|| "my-tasks-open-source".into())
-                        .cursor_pointer()
-                        .h(px(26.))
-                        .px(px(10.))
-                        .rounded(px(6.))
-                        .bg(content(0.06))
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        .text_color(content(0.9))
-                        .hover(|s| s.bg(content(0.1)))
-                        .child("Open")
-                        .child(icon("external-link", 11.))
-                        .on_click(
-                            cx.listener(move |_, _, _, cx| cx.emit(Event::Open(source.clone()))),
-                        ),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn empty_pane(text: &'static str) -> AnyElement {
+    /// A detail pane: the top bar over one glass card, centred.
+    fn detail(id: &'static str, bar: gpui::Div, card: gpui::Div) -> AnyElement {
         div()
             .flex_1()
+            .min_w_0()
+            .h_full()
             .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(14.))
-            .text_color(content(0.5))
-            .child(text)
+            .flex_col()
+            .child(bar)
+            .child(
+                div()
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(24.))
+                    .py(px(28.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(
+                        card.w_full()
+                            .max_w(px(720.))
+                            .p(px(18.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.)),
+                    ),
+            )
             .into_any_element()
     }
 
     pub(super) fn past_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let shown = self.visible_past(cx);
         let Some(record) = self.selected_past(&shown).cloned() else {
-            return Self::empty_pane(if self.past.is_empty() {
-                "Nothing answered yet."
-            } else {
-                "No answers match the search or filters."
-            });
+            return self.empty_pane(None);
         };
         let now = self.now_ms;
         let closed = record.closed_at.unwrap_or(record.asked_at);
@@ -717,102 +602,86 @@ impl MyTasks {
         });
         let body = Self::request_body(&record);
         let remember = record.can_remember().then(|| self.remember(&record, cx));
-        let crumb = format!(
-            "{}  \u{203a}  {}",
-            project_name(&record.project),
-            record.source_label
-        );
-        let bar = self.pane_bar(crumb, Source::from_origin(&record.origin), cx);
-        div()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .child(bar)
+        let open = Source::from_origin(&record.origin);
+        let bar =
+            top_bar(&record.project, record.source_label.clone())
+                .child(div().flex_1())
+                .when_some(open, |d, source| {
+                    d.child(open_button("Open").on_click(
+                        cx.listener(move |_, _, _, cx| cx.emit(Event::Open(source.clone()))),
+                    ))
+                });
+        let card = glass::card_strong()
             .child(
                 div()
-                    .id("my-tasks-past-detail")
-                    .debug_selector(|| "my-tasks-past-detail".into())
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p(px(20.))
                     .flex()
-                    .flex_col()
-                    .gap(px(12.))
+                    .items_center()
+                    .gap(px(10.))
+                    .child(tile(record.kind, 28.))
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .child(icon(kind_icon(record.kind), 16.))
-                            .child(
-                                div()
-                                    .text_size(px(16.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(record.headline.clone()),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(content(0.5))
-                            .child(format!(
-                                "{} \u{b7} asked {} \u{b7} closed {}",
-                                record.kind.label().trim_end_matches('s'),
-                                ago(now, record.asked_at),
-                                ago(now, closed)
-                            )),
-                    )
-                    .children(body)
-                    .child(
-                        div()
-                            .debug_selector(|| "my-tasks-past-answer".into())
-                            .text_size(px(14.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(content(if record.status == Status::Answered {
-                                1.
-                            } else {
-                                0.5
-                            }))
-                            .child(outcome),
-                    )
-                    .when_some(saved, |d, (id, statement)| {
-                        d.child(
-                            div()
-                                .id("my-tasks-view-decision")
-                                .debug_selector(|| "my-tasks-view-decision".into())
-                                .cursor_pointer()
-                                .text_size(px(13.))
-                                .text_color(content(0.7))
-                                .hover(|s| s.text_color(content(1.)))
-                                .child(format!("Saved as a decision: {statement}"))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.decision_selected = Some(id);
-                                    this.set_tab(Tab::Decisions, cx);
-                                })),
-                        )
-                    })
-                    .children(remember)
-                    .children(self.error.clone().map(|error| {
-                        div()
-                            .text_size(px(12.))
-                            .text_color(gpui::rgb(0xff6b6b))
-                            .child(error)
-                    })),
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(17.))
+                            .line_height(px(24.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(record.headline.clone()),
+                    ),
             )
-            .into_any_element()
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(content(0.55))
+                    .child(format!(
+                        "{} \u{b7} asked {} \u{b7} closed {}",
+                        record.kind.label().trim_end_matches('s'),
+                        ago(now, record.asked_at),
+                        ago(now, closed)
+                    )),
+            )
+            .children(body)
+            .child(
+                div()
+                    .debug_selector(|| "my-tasks-past-answer".into())
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(content(if record.status == Status::Answered {
+                        1.
+                    } else {
+                        0.5
+                    }))
+                    .child(outcome),
+            )
+            .when_some(saved, |d, (id, statement)| {
+                d.child(
+                    div()
+                        .id("my-tasks-view-decision")
+                        .debug_selector(|| "my-tasks-view-decision".into())
+                        .cursor_pointer()
+                        .text_size(px(13.))
+                        .text_color(content(0.7))
+                        .hover(|s| s.text_color(content(1.)))
+                        .child(format!("Saved as a decision: {statement}"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.decision_selected = Some(id);
+                            this.set_tab(Tab::Decisions, cx);
+                        })),
+                )
+            })
+            .children(remember)
+            .children(self.error.clone().map(|error| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(gpui::rgb(0xff6b6b))
+                    .child(error)
+            }));
+        Self::detail("my-tasks-past-detail", bar, card)
     }
 
     pub(super) fn decision_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let shown = self.visible_decisions(cx);
         let Some(decision) = self.selected_decision(&shown).cloned() else {
-            return Self::empty_pane(if self.decisions.is_empty() {
-                "No decisions yet. Answer a question, then save it as a decision."
-            } else {
-                "No decisions match the search or filters."
-            });
+            return self.empty_pane(None);
         };
         let id = decision.id;
         let now = self.now_ms;
@@ -832,8 +701,10 @@ impl MyTasks {
                     .flex_col()
                     .gap(px(2.))
                     .p(px(10.))
-                    .rounded(px(8.))
-                    .bg(content(0.04))
+                    .rounded(px(10.))
+                    .bg(glass::fill())
+                    .border_1()
+                    .border_color(glass::edge())
                     .child(div().text_size(px(13.)).child(source.headline.clone()))
                     .child(
                         div()
@@ -857,11 +728,7 @@ impl MyTasks {
                     .into_any_element()
             })
             .collect();
-        let bar = self.pane_bar(
-            format!("{}  \u{203a}  Decision", project_name(&decision.project)),
-            None,
-            cx,
-        );
+        let bar = top_bar(&decision.project, "Decision".into());
         let actions = if editing {
             div()
                 .flex()
@@ -871,7 +738,7 @@ impl MyTasks {
                         "my-tasks-edit-save",
                         "my-tasks-edit-save".into(),
                         "Save",
-                        true,
+                        Button::Primary,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let text = this.statement.read(cx).content.to_string();
@@ -886,7 +753,7 @@ impl MyTasks {
                         "my-tasks-edit-cancel",
                         "my-tasks-edit-cancel".into(),
                         "Cancel",
-                        false,
+                        Button::Ghost,
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.writing = None;
@@ -902,7 +769,7 @@ impl MyTasks {
                         "my-tasks-edit-decision",
                         "my-tasks-edit-decision".into(),
                         "Edit",
-                        false,
+                        Button::Glass,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.start_writing(Writing::Edit(id), statement.clone(), cx)
@@ -913,75 +780,54 @@ impl MyTasks {
                         "my-tasks-archive-decision",
                         "my-tasks-archive-decision".into(),
                         "Archive",
-                        false,
+                        Button::Ghost,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.change_decision(move |store, now| store.archive_decision(id, now), cx);
                     })),
                 )
         };
-        div()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_col()
-            .child(bar)
+        let card = glass::card_strong()
+            .child(caption(project_name(&decision.project)))
+            .child(if editing {
+                glass::field()
+                    .debug_selector(|| "my-tasks-statement".into())
+                    .h(px(40.))
+                    .text_size(px(16.))
+                    .child(div().flex_1().min_w_0().child(self.statement.clone()))
+            } else {
+                div()
+                    .debug_selector(|| "my-tasks-decision-statement".into())
+                    .text_size(px(18.))
+                    .line_height(px(26.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(decision.statement.clone())
+            })
+            .when(!decision.why.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(content(0.7))
+                        .child(decision.why.clone()),
+                )
+            })
             .child(
                 div()
-                    .id("my-tasks-decision-detail")
-                    .debug_selector(|| "my-tasks-decision-detail".into())
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p(px(20.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(12.))
-                    .child(caption(project_name(&decision.project).to_uppercase()))
-                    .child(if editing {
-                        div()
-                            .debug_selector(|| "my-tasks-statement".into())
-                            .px(px(10.))
-                            .py(px(8.))
-                            .rounded(px(8.))
-                            .bg(black(0.3))
-                            .text_size(px(16.))
-                            .child(self.statement.clone())
-                    } else {
-                        div()
-                            .debug_selector(|| "my-tasks-decision-statement".into())
-                            .text_size(px(18.))
-                            .line_height(px(26.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(decision.statement.clone())
-                    })
-                    .when(!decision.why.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(content(0.7))
-                                .child(decision.why.clone()),
-                        )
-                    })
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(content(0.5))
-                            .child(changed),
-                    )
-                    .child(actions)
-                    .when(!sources.is_empty(), |d| {
-                        d.child(caption("HOW YOU GOT HERE").mt(px(8.)))
-                            .children(sources)
-                    })
-                    .children(self.error.clone().map(|error| {
-                        div()
-                            .text_size(px(12.))
-                            .text_color(gpui::rgb(0xff6b6b))
-                            .child(error)
-                    })),
+                    .text_size(px(12.))
+                    .text_color(content(0.5))
+                    .child(changed),
             )
-            .into_any_element()
+            .child(actions)
+            .when(!sources.is_empty(), |d| {
+                d.child(caption("How you got here").mt(px(8.)))
+                    .children(sources)
+            })
+            .children(self.error.clone().map(|error| {
+                div()
+                    .text_size(px(12.))
+                    .text_color(gpui::rgb(0xff6b6b))
+                    .child(error)
+            }));
+        Self::detail("my-tasks-decision-detail", bar, card)
     }
 }

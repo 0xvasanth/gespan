@@ -1,39 +1,61 @@
-//! The task card pinned under the history: what is asked, the answer controls
-//! on the left, and "‹ i of N ›" on the right.
+//! The answer card pinned under the history: one strong glass card with what
+//! is asked, the request itself, and the answers in three weights.
 use super::*;
 use crate::conversation::approval_card::Card;
+use crate::glass::{self, Button};
 use gpui::{AnyElement, Div, ElementId, FontWeight, SharedString, Stateful, px};
 
+/// An answer button in one of the glass weights.
 pub(super) fn answer(
     id: impl Into<ElementId>,
     selector: String,
     label: impl Into<SharedString>,
-    primary: bool,
+    weight: Button,
 ) -> Stateful<Div> {
-    div()
-        .id(id)
-        .debug_selector(move || selector.clone())
-        .cursor_pointer()
-        .h(px(32.))
-        .px(px(14.))
-        .rounded(px(6.))
-        .flex()
-        .items_center()
-        .text_size(px(13.))
-        .when(primary, |d| {
-            d.bg(content(0.92))
-                .text_color(black(0.9))
-                .font_weight(FontWeight::MEDIUM)
-        })
-        .when(!primary, |d| {
-            d.bg(content(0.1)).hover(|s| s.bg(content(0.14)))
-        })
-        .child(label.into())
+    glass::button(id, label, weight).debug_selector(move || selector.clone())
+}
+
+/// A tool approval's answers, in order: allowing once is the main answer,
+/// allowing for the session the secondary one, denying the quiet way out.
+pub(super) fn approval_answers(
+    can_remember: bool,
+) -> Vec<(&'static str, &'static str, Button, Decision)> {
+    let mut answers = vec![(
+        "my-tasks-allow",
+        "Allow once",
+        Button::Primary,
+        Decision::Allow,
+    )];
+    if can_remember {
+        answers.push((
+            "my-tasks-allow-session",
+            "Allow for this session",
+            Button::Glass,
+            Decision::Session,
+        ));
+    }
+    answers.push(("my-tasks-deny", "Deny", Button::Ghost, Decision::Deny));
+    answers
+}
+
+/// A Flow approval's answers: approving is the main one; rejecting the quiet
+/// one. The flag is whether the answer approves.
+pub(super) const FLOW_ANSWERS: [(&str, &str, Button, bool); 2] = [
+    ("my-tasks-flow-approve", "Approve", Button::Primary, true),
+    ("my-tasks-flow-reject", "Reject", Button::Ghost, false),
+];
+
+/// A Pilot choice's options: the first leads, the rest are glass.
+pub(super) fn choice_weight(ix: usize) -> Button {
+    if ix == 0 {
+        Button::Primary
+    } else {
+        Button::Glass
+    }
 }
 
 impl MyTasks {
     pub(super) fn card(&mut self, task: &TaskItem, cx: &mut Context<Self>) -> AnyElement {
-        let wait = super::list::waited(self.now_ms.saturating_sub(task.since_ms));
         let mut buttons: Vec<AnyElement> = Vec::new();
         let mut body: Vec<AnyElement> = Vec::new();
         match &task.body {
@@ -45,10 +67,10 @@ impl MyTasks {
                 if !card.is_empty() {
                     body.push(card.render(true));
                 }
-                let decide =
-                    |id: &'static str, label: &'static str, primary, decision: Decision| {
-                        let request = approval.id.clone();
-                        answer(id, id.into(), label, primary)
+                for (id, label, weight, decision) in approval_answers(approval.can_remember) {
+                    let request = approval.id.clone();
+                    buttons.push(
+                        answer(id, id.into(), label, weight)
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(Event::Decide {
                                     session,
@@ -56,25 +78,10 @@ impl MyTasks {
                                     decision: decision.clone(),
                                 })
                             }))
-                            .into_any_element()
-                    };
-                buttons.push(decide(
-                    "my-tasks-allow",
-                    "Allow once",
-                    true,
-                    Decision::Allow,
-                ));
-                if approval.can_remember {
-                    buttons.push(decide(
-                        "my-tasks-allow-session",
-                        "Allow for this session",
-                        false,
-                        Decision::Session,
-                    ));
+                            .into_any_element(),
+                    );
                 }
-                buttons.push(decide("my-tasks-deny", "Deny", false, Decision::Deny));
             }
-            // The session's own card: its controls answer the session directly.
             // The session's own card: its controls answer the session directly.
             // Its chat is never on screen with this page: opening the page
             // closes an open Pilot, and opening a chat replaces the page.
@@ -94,25 +101,16 @@ impl MyTasks {
                     );
                 }
                 body.push(
-                    div()
+                    glass::field()
                         .debug_selector(|| "my-tasks-flow-note".into())
-                        .h(px(34.))
-                        .px(px(10.))
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(content(0.14))
-                        .flex()
-                        .items_center()
-                        .child(self.note.clone())
+                        .h(px(36.))
+                        .child(div().flex_1().min_w_0().child(self.note.clone()))
                         .into_any_element(),
                 );
-                for (id, label, approved) in [
-                    ("my-tasks-flow-approve", "Approve", true),
-                    ("my-tasks-flow-reject", "Reject", false),
-                ] {
+                for (id, label, weight, approved) in FLOW_ANSWERS {
                     let run = run.clone();
                     buttons.push(
-                        answer(id, id.into(), label, approved)
+                        answer(id, id.into(), label, weight)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let note = this.note.read(cx).content.to_string();
                                 cx.emit(Event::FlowDecide {
@@ -138,7 +136,7 @@ impl MyTasks {
                             ("my-tasks-choice", ix),
                             format!("my-tasks-choice-{ix}"),
                             option.clone(),
-                            ix == 0,
+                            choice_weight(ix),
                         )
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(Event::Choose {
@@ -152,112 +150,100 @@ impl MyTasks {
                 }
             }
         }
-        let shown = self.visible(cx).len();
-        let switcher = (shown > 1).then(|| {
-            let step = |id: &'static str, label: &'static str, glyph: &'static str, by: isize| {
-                div()
-                    .id(id)
-                    .debug_selector(move || id.into())
-                    .role(gpui::Role::Button)
-                    .aria_label(label)
-                    .cursor_pointer()
-                    .size(px(28.))
-                    .rounded(px(6.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .hover(|s| s.bg(content(0.1)))
-                    .child(icon(glyph, 14.))
-                    .on_click(cx.listener(move |this, _, _, cx| this.step(by, cx)))
-            };
-            div()
-                .flex_shrink_0()
-                .p(px(2.))
-                .rounded(px(8.))
-                .bg(content(0.06))
-                .flex()
-                .items_center()
-                .gap(px(2.))
-                .child(step("my-tasks-prev", "Previous task", "chevron-left", -1))
-                .child(
-                    div()
-                        .debug_selector(|| "my-tasks-position".into())
-                        .min_w(px(40.))
-                        .flex()
-                        .justify_center()
-                        .text_size(px(12.))
-                        .text_color(content(0.55))
-                        .child(self.position(cx)),
-                )
-                .child(step("my-tasks-next", "Next task", "chevron-right", 1))
-        });
-        div()
+        glass::card_strong()
             .id("my-tasks-card")
             .debug_selector(|| "my-tasks-card".into())
-            .relative()
-            .overflow_hidden()
-            .rounded(px(12.))
-            .border_1()
-            .border_color(content(0.1))
-            .shadow_lg()
-            .child(crate::notifications::surface::backdrop(12.))
+            .w_full()
+            .max_w(px(720.))
+            .p(px(18.))
+            .flex()
+            .flex_col()
+            .gap(px(14.))
             .child(
                 div()
-                    .relative()
-                    .p(px(16.))
                     .flex()
-                    .flex_col()
-                    .gap(px(12.))
+                    .items_start()
+                    .gap(px(10.))
+                    .child(super::list::tile(task.kind, 28.))
                     .child(
                         div()
-                            .flex()
-                            .items_start()
-                            .gap(px(12.))
-                            .child(
-                                div()
-                                    .size(px(34.))
-                                    .flex_shrink_0()
-                                    .rounded(px(8.))
-                                    .bg(content(0.08))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(icon(super::list::kind_icon(task.kind), 16.)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .text_size(px(16.))
-                                            .line_height(px(23.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(task.headline.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(content(0.55))
-                                            .child(format!("{} \u{b7} {wait}", task.who)),
-                                    ),
-                            ),
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(17.))
+                            .line_height(px(28.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(task.headline.clone()),
                     )
-                    .children(body)
                     .child(
                         div()
-                            .flex()
-                            .flex_wrap()
-                            .items_center()
-                            .gap(px(8.))
-                            .children(buttons)
-                            .child(div().flex_1())
-                            .children(switcher),
+                            .flex_shrink_0()
+                            .pt(px(6.))
+                            .text_size(px(11.5))
+                            .text_color(content(0.45))
+                            .child(task.who.clone()),
                     ),
             )
+            .children(body)
+            .when(!buttons.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(8.))
+                        .children(buttons),
+                )
+            })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each answer's label with its weight.
+    fn weights<'a, T>(answers: &'a [(&'a str, &'a str, Button, T)]) -> Vec<(&'a str, Button)> {
+        answers
+            .iter()
+            .map(|(_, label, weight, _)| (*label, *weight))
+            .collect()
+    }
+
+    #[test]
+    fn allowing_once_leads_an_approval_and_deny_is_the_quiet_answer() {
+        let answers = approval_answers(true);
+        assert!(
+            weights(&answers)
+                == [
+                    ("Allow once", Button::Primary),
+                    ("Allow for this session", Button::Glass),
+                    ("Deny", Button::Ghost),
+                ]
+        );
+        assert!(matches!(answers[0].3, Decision::Allow));
+        assert!(matches!(answers[2].3, Decision::Deny));
+    }
+
+    #[test]
+    fn a_tool_that_cannot_be_remembered_offers_no_session_answer() {
+        let answers = approval_answers(false);
+        assert!(weights(&answers) == [("Allow once", Button::Primary), ("Deny", Button::Ghost)]);
+    }
+
+    #[test]
+    fn approve_leads_a_flow_step_and_reject_is_the_quiet_answer() {
+        assert!(
+            weights(&FLOW_ANSWERS) == [("Approve", Button::Primary), ("Reject", Button::Ghost)]
+        );
+        // The flag the page sends must match the word on the button.
+        assert!(FLOW_ANSWERS[0].3 && !FLOW_ANSWERS[1].3);
+    }
+
+    #[test]
+    fn only_a_pilot_choice_first_option_is_primary() {
+        assert!(choice_weight(0) == Button::Primary);
+        assert!(choice_weight(1) == Button::Glass);
+        assert!(choice_weight(4) == Button::Glass);
     }
 }

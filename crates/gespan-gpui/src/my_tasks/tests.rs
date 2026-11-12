@@ -86,7 +86,7 @@ fn selected(window: WindowHandle<MyTasks>, visual: &mut VisualTestContext) -> Op
 }
 
 #[gpui::test]
-fn rows_are_grouped_by_project_with_the_longest_wait_first(cx: &mut TestAppContext) {
+fn rows_are_grouped_by_age_with_the_longest_wait_first(cx: &mut TestAppContext) {
     let (window, mut visual) = page(cx);
     show(
         window,
@@ -94,16 +94,159 @@ fn rows_are_grouped_by_project_with_the_longest_wait_first(cx: &mut TestAppConte
         vec![
             task("a", Kind::Question, "/work/web", 5),
             task("b", Kind::Approval, "/work/api", 90),
-            task("c", Kind::FlowApproval, "/work/web", 30),
+            task("c", Kind::FlowApproval, "/work/web", 600),
+            task("d", Kind::Question, "/work/api", 20),
         ],
     );
-    // The project waiting longest leads; inside it, the longest wait first.
-    assert!(
-        top(&mut visual, "my-tasks-group-/work/api") < top(&mut visual, "my-tasks-group-/work/web")
+    // The age groups follow the filter's WAITING choices, oldest first, and
+    // each holds only the rows of its age, longest wait first.
+    let order = [
+        "my-tasks-group-8h",
+        "my-tasks-row-c",
+        "my-tasks-group-1h",
+        "my-tasks-row-b",
+        "my-tasks-group-recent",
+        "my-tasks-row-d",
+        "my-tasks-row-a",
+    ];
+    for pair in order.windows(2) {
+        assert!(
+            top(&mut visual, pair[0]) < top(&mut visual, pair[1]),
+            "{} sits above {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    assert_eq!(selected(window, &mut visual).as_deref(), Some("c"));
+}
+
+#[gpui::test]
+fn an_age_group_with_no_tasks_has_no_label(cx: &mut TestAppContext) {
+    let (window, mut visual) = page(cx);
+    show(
+        window,
+        &mut visual,
+        vec![
+            task("a", Kind::Question, "/work/web", 5),
+            task("b", Kind::Approval, "/work/api", 90),
+        ],
     );
-    assert!(top(&mut visual, "my-tasks-row-b") < top(&mut visual, "my-tasks-group-/work/web"));
-    assert!(top(&mut visual, "my-tasks-row-c") < top(&mut visual, "my-tasks-row-a"));
+    assert!(visual.debug_bounds("my-tasks-group-1h").is_some());
+    assert!(visual.debug_bounds("my-tasks-group-recent").is_some());
+    assert!(visual.debug_bounds("my-tasks-group-8h").is_none());
+}
+
+#[test]
+fn ages_split_where_the_wait_filter_does() {
+    use super::list::age_group;
+    assert_eq!(age_group(59 * MINUTE).0, "recent");
+    assert_eq!(age_group(60 * MINUTE).0, "1h");
+    assert_eq!(age_group(8 * 60 * MINUTE - 1).0, "1h");
+    assert_eq!(age_group(8 * 60 * MINUTE).0, "8h");
+}
+
+#[test]
+fn the_pane_spells_the_wait_out_to_the_minute() {
+    use super::list::waited_long;
+    assert_eq!(waited_long(30_000), "just now");
+    assert_eq!(waited_long(12 * MINUTE), "12m");
+    assert_eq!(waited_long(120 * MINUTE), "2h");
+    assert_eq!(waited_long(134 * MINUTE), "2h 14m");
+    assert_eq!(waited_long(24 * 60 * MINUTE), "1d");
+    assert_eq!(waited_long(27 * 60 * MINUTE + 59 * MINUTE), "1d 3h");
+}
+
+#[gpui::test]
+fn the_waiting_segment_counts_every_task_even_when_filtered(cx: &mut TestAppContext) {
+    let (window, mut visual) = page(cx);
+    assert!(visual.debug_bounds("my-tasks-count-waiting-0").is_some());
+    show(
+        window,
+        &mut visual,
+        vec![
+            task("a", Kind::Question, "/work/web", 5),
+            task("b", Kind::Approval, "/work/api", 90),
+            task("c", Kind::FlowApproval, "/work/web", 600),
+        ],
+    );
+    assert!(visual.debug_bounds("my-tasks-count-waiting-3").is_some());
+    click(&mut visual, "my-tasks-filter");
+    click(&mut visual, "my-tasks-filter-project-/work/api");
+    // The count is what waits on you, not what the filter shows.
+    assert!(visual.debug_bounds("my-tasks-count-waiting-3").is_some());
+}
+
+#[gpui::test]
+fn the_top_bar_shows_the_wait_and_steps_through_the_tasks(cx: &mut TestAppContext) {
+    let (window, mut visual) = page(cx);
+    show(
+        window,
+        &mut visual,
+        vec![task("a", Kind::FlowApproval, "/work/web", 134)],
+    );
+    assert!(visual.debug_bounds("my-tasks-waited").is_some());
+    // One task has nowhere to step to.
+    assert!(visual.debug_bounds("my-tasks-next").is_none());
+    show(
+        window,
+        &mut visual,
+        vec![
+            task("a", Kind::FlowApproval, "/work/web", 134),
+            task("b", Kind::FlowApproval, "/work/web", 5),
+        ],
+    );
+    // The stepper sits in the bar, above the history, not on the card.
+    let card = top(&mut visual, "my-tasks-card");
+    assert!(top(&mut visual, "my-tasks-next") < top(&mut visual, "my-tasks-history"));
+    assert!(top(&mut visual, "my-tasks-position") < card);
+    click(&mut visual, "my-tasks-next");
     assert_eq!(selected(window, &mut visual).as_deref(), Some("b"));
+}
+
+#[gpui::test]
+fn every_tab_shows_its_empty_state_when_it_has_nothing(cx: &mut TestAppContext) {
+    let (_, mut visual) = page(cx);
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    for tab in [
+        "my-tasks-tab-waiting",
+        "my-tasks-tab-answered",
+        "my-tasks-tab-decisions",
+    ] {
+        click(&mut visual, tab);
+        assert!(
+            visual.debug_bounds("my-tasks-empty").is_some(),
+            "{tab} shows its empty state"
+        );
+        assert!(visual.debug_bounds("my-tasks-card").is_none());
+    }
+}
+
+#[test]
+fn each_tab_says_why_it_is_empty() {
+    use super::pane::empty_copy;
+    let title = |tab, has_any| empty_copy(tab, has_any).1;
+    assert_eq!(title(Tab::Waiting, false), "You're all caught up.");
+    assert_eq!(title(Tab::Waiting, true), "No task is selected.");
+    assert_eq!(title(Tab::Answered, false), "Nothing answered yet.");
+    assert_eq!(
+        title(Tab::Answered, true),
+        "No answers match the search or filters."
+    );
+    assert_eq!(title(Tab::Decisions, false), "No decisions yet.");
+    assert_eq!(
+        title(Tab::Decisions, true),
+        "No decisions match the search or filters."
+    );
+    // A first-run pane says what will land there; a filtered one says how
+    // to get everything back.
+    assert_eq!(
+        empty_copy(Tab::Decisions, false).2,
+        "Answer a question, then save it as a decision."
+    );
+    for tab in [Tab::Waiting, Tab::Answered, Tab::Decisions] {
+        assert_ne!(empty_copy(tab, false).2, empty_copy(tab, true).2);
+    }
 }
 
 #[gpui::test]
