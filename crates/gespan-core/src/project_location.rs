@@ -232,9 +232,11 @@ mod tests {
             .conn()
             .execute(
                 "INSERT INTO sessions(id,cwd,harness,model,runtime_mode,title,blocks_json,
-                 created_at,updated_at,has_user_message)
+                 created_at,updated_at,has_user_message,model_settings,archived,pinned,
+                 worktree_removed,is_draft,queued_messages_json,sidebar_hidden)
                  VALUES(?1,?2,'codex','codex:model-one','auto-accept-edits','Saved chat',
-                 '[{\"id\":\"prompt\",\"role\":\"user\",\"text\":\"Hello\"}]',100,200,1)",
+                 '[{\"id\":\"prompt\",\"role\":\"user\",\"text\":\"Hello\"}]',100,200,1,
+                 '{}',0,0,0,0,'[]',0)",
                 rusqlite::params![id, cwd],
             )
             .unwrap();

@@ -1,7 +1,6 @@
-use crate::ops::{
-    clean_text, db, get_card, log_activity, log_edit, new_id, touch, write_tx, NewActivity,
-};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex, Row};
+use crate::models::SubtaskRow;
+use crate::ops::{clean_text, get_card_in, log_activity, log_edit, new_id, touch, NewActivity};
 use serde::Serialize;
 
 const MAX_SUBTASK: usize = 500;
@@ -16,109 +15,125 @@ pub struct Subtask {
     pub position: i64,
 }
 
-fn subtask_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Subtask> {
+impl From<SubtaskRow> for Subtask {
+    fn from(row: SubtaskRow) -> Self {
+        Subtask {
+            id: row.id,
+            card_id: row.card_id,
+            title: row.title,
+            done: row.done,
+            position: row.position,
+        }
+    }
+}
+
+fn subtask_from_row(r: &Row) -> Result<Subtask, String> {
     Ok(Subtask {
         id: r.get(0)?,
         card_id: r.get(1)?,
         title: r.get(2)?,
-        done: r.get::<_, i64>(3)? != 0,
+        done: r.get(3)?,
         position: r.get(4)?,
     })
 }
 
-pub(crate) fn get_subtask(conn: &Connection, subtask_id: &str) -> Result<Option<Subtask>, String> {
-    conn.query_row(
-        "SELECT id, card_id, title, done, position FROM board_subtasks WHERE id = ?1",
-        [subtask_id],
-        subtask_from_row,
+pub(crate) async fn get_subtask(
+    ex: &mut Ex<'_>,
+    subtask_id: &str,
+) -> Result<Option<Subtask>, String> {
+    Ok(SubtaskRow::filter_by_id(subtask_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .map(Subtask::from))
+}
+
+pub(crate) async fn list_subtasks_in(
+    ex: &mut Ex<'_>,
+    card_id: &str,
+) -> Result<Vec<Subtask>, String> {
+    query(
+        ex,
+        "SELECT id, card_id, title, done, position FROM board_subtasks
+         WHERE card_id = ?1 ORDER BY position, rowid",
+        args![card_id],
     )
-    .optional()
-    .map_err(db)
+    .await?
+    .iter()
+    .map(subtask_from_row)
+    .collect()
 }
 
-pub fn list_subtasks(conn: &Connection, card_id: &str) -> Result<Vec<Subtask>, String> {
-    let mut statement = conn
-        .prepare(
-            "SELECT id, card_id, title, done, position FROM board_subtasks
-             WHERE card_id = ?1 ORDER BY position, rowid",
-        )
-        .map_err(db)?;
-    let rows = statement
-        .query_map([card_id], subtask_from_row)
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    rows
+pub fn list_subtasks(conn: &Conn, card_id: &str) -> Result<Vec<Subtask>, String> {
+    with_db!(conn, |ex| list_subtasks_in(ex, card_id).await)
 }
 
-pub fn add_subtask(conn: &Connection, card_id: &str, title: &str) -> Result<Subtask, String> {
+pub fn add_subtask(conn: &Conn, card_id: &str, title: &str) -> Result<Subtask, String> {
     let title = clean_text(title, "Subtask", MAX_SUBTASK)?;
-    let tx = write_tx(conn)?;
-    let card = get_card(&tx, card_id)?;
-    let position: i64 = tx
-        .query_row(
+    with_tx!(conn, |ex| {
+        let card = get_card_in(ex, card_id).await?;
+        let position: i64 = query_value(
+            ex,
             "SELECT COALESCE(MAX(position) + 1, 0) FROM board_subtasks WHERE card_id = ?1",
-            [card_id],
-            |r| r.get(0),
+            args![card_id],
         )
-        .map_err(db)?;
-    let subtask = Subtask {
-        id: new_id(),
-        card_id: card_id.to_string(),
-        title,
-        done: false,
-        position,
-    };
-    tx.execute(
-        "INSERT INTO board_subtasks (id, card_id, title, done, position)
-         VALUES (?1, ?2, ?3, 0, ?4)",
-        params![subtask.id, subtask.card_id, subtask.title, subtask.position],
-    )
-    .map_err(db)?;
-    touch(&tx, card_id)?;
-    log_edit(
-        &tx,
-        &card.board_id,
-        card_id,
-        &format!("subtask added: {}", subtask.title),
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(subtask)
+        .await?;
+        let subtask: Subtask = SubtaskRow::create()
+            .id(new_id())
+            .card_id(card_id)
+            .title(title)
+            .done(false)
+            .position(position)
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .into();
+        touch(ex, card_id).await?;
+        log_edit(
+            ex,
+            &card.board_id,
+            card_id,
+            &format!("subtask added: {}", subtask.title),
+        )
+        .await?;
+        Ok(subtask)
+    })
 }
 
 /// Returns the owning board id.
-pub fn toggle_subtask(conn: &Connection, subtask_id: &str, done: bool) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let Some(subtask) = get_subtask(&tx, subtask_id)? else {
-        return Err("Subtask not found".into());
-    };
-    let board_id = toggle_subtask_in(&tx, &subtask, done, "user")?;
-    tx.commit().map_err(db)?;
-    Ok(board_id)
+pub fn toggle_subtask(conn: &Conn, subtask_id: &str, done: bool) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let Some(subtask) = get_subtask(ex, subtask_id).await? else {
+            return Err("Subtask not found".into());
+        };
+        toggle_subtask_in(ex, &subtask, done, "user").await
+    })
 }
 
 /// Sets `subtask` done or not inside the caller's write transaction, logging
 /// the change as `actor`. Setting the state it already has changes nothing.
 /// Returns the owning board id.
-pub(crate) fn toggle_subtask_in(
-    tx: &Transaction<'_>,
+pub(crate) async fn toggle_subtask_in(
+    ex: &mut Ex<'_>,
     subtask: &Subtask,
     done: bool,
     actor: &str,
 ) -> Result<String, String> {
-    let card = get_card(tx, &subtask.card_id)?;
+    let card = get_card_in(ex, &subtask.card_id).await?;
     if subtask.done == done {
         return Ok(card.board_id);
     }
-    tx.execute(
-        "UPDATE board_subtasks SET done = ?1 WHERE id = ?2",
-        params![i64::from(done), subtask.id],
-    )
-    .map_err(db)?;
-    touch(tx, &card.id)?;
+    SubtaskRow::filter_by_id(&subtask.id)
+        .update()
+        .done(done)
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    touch(ex, &card.id).await?;
     let verb = if done { "done" } else { "reopened" };
     log_activity(
-        tx,
+        ex,
         NewActivity {
             board_id: &card.board_id,
             card_id: Some(&card.id),
@@ -128,84 +143,92 @@ pub(crate) fn toggle_subtask_in(
             to_column: None,
             detail: Some(&format!("subtask {verb}: {}", subtask.title)),
         },
-    )?;
+    )
+    .await?;
     Ok(card.board_id)
 }
 
 /// Deleting a subtask that is already gone is a quiet no-op. Returns the
 /// owning board id when there was something to delete.
-pub fn delete_subtask(conn: &Connection, subtask_id: &str) -> Result<Option<String>, String> {
-    let tx = write_tx(conn)?;
-    let Some(subtask) = get_subtask(&tx, subtask_id)? else {
-        return Ok(None);
-    };
-    let card = get_card(&tx, &subtask.card_id)?;
-    tx.execute("DELETE FROM board_subtasks WHERE id = ?1", [subtask_id])
-        .map_err(db)?;
-    renumber_subtasks(&tx, &card.id)?;
-    touch(&tx, &card.id)?;
-    log_edit(
-        &tx,
-        &card.board_id,
-        &card.id,
-        &format!("subtask deleted: {}", subtask.title),
-    )?;
-    tx.commit().map_err(db)?;
-    Ok(Some(card.board_id))
+pub fn delete_subtask(conn: &Conn, subtask_id: &str) -> Result<Option<String>, String> {
+    with_tx!(conn, |ex| {
+        let Some(subtask) = get_subtask(ex, subtask_id).await? else {
+            return Ok(None);
+        };
+        let card = get_card_in(ex, &subtask.card_id).await?;
+        SubtaskRow::filter_by_id(subtask_id)
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        renumber_subtasks(ex, &card.id).await?;
+        touch(ex, &card.id).await?;
+        log_edit(
+            ex,
+            &card.board_id,
+            &card.id,
+            &format!("subtask deleted: {}", subtask.title),
+        )
+        .await?;
+        Ok(Some(card.board_id))
+    })
 }
 
 /// Rewrites a card's subtask positions to 0..n-1 in their current order.
-fn renumber_subtasks(tx: &Transaction<'_>, card_id: &str) -> Result<(), String> {
-    for (position, subtask) in list_subtasks(tx, card_id)?.iter().enumerate() {
+async fn renumber_subtasks(ex: &mut Ex<'_>, card_id: &str) -> Result<(), String> {
+    for (position, subtask) in list_subtasks_in(ex, card_id).await?.iter().enumerate() {
         if subtask.position != position as i64 {
-            tx.execute(
-                "UPDATE board_subtasks SET position = ?1 WHERE id = ?2",
-                params![position as i64, subtask.id],
-            )
-            .map_err(db)?;
+            set_position(ex, &subtask.id, position).await?;
         }
     }
     Ok(())
 }
 
+async fn set_position(ex: &mut Ex<'_>, subtask_id: &str, position: usize) -> Result<(), String> {
+    execute(
+        ex,
+        "UPDATE board_subtasks SET position = ?1 WHERE id = ?2",
+        args![position as i64, subtask_id],
+    )
+    .await
+    .map(drop)
+}
+
 /// Moves a subtask to `index` among its card's subtasks (clamped to the end)
 /// and rewrites positions to 0..n-1. Moving to where it already is changes
 /// nothing and logs nothing. Returns the owning board id.
-pub fn move_subtask(conn: &Connection, subtask_id: &str, index: usize) -> Result<String, String> {
-    let tx = write_tx(conn)?;
-    let Some(subtask) = get_subtask(&tx, subtask_id)? else {
-        return Err("Subtask not found".into());
-    };
-    let card = get_card(&tx, &subtask.card_id)?;
-    let current = list_subtasks(&tx, &card.id)?;
-    let contiguous = current
-        .iter()
-        .enumerate()
-        .all(|(i, s)| s.position == i as i64);
-    let mut ids: Vec<String> = current.into_iter().map(|s| s.id).collect();
-    let old_index = ids.iter().position(|id| id == subtask_id);
-    ids.retain(|id| id != subtask_id);
-    let new_index = index.min(ids.len());
-    ids.insert(new_index, subtask_id.to_string());
-    if old_index == Some(new_index) && contiguous {
-        return Ok(card.board_id);
-    }
-    for (position, id) in ids.iter().enumerate() {
-        tx.execute(
-            "UPDATE board_subtasks SET position = ?1 WHERE id = ?2",
-            params![position as i64, id],
-        )
-        .map_err(db)?;
-    }
-    if old_index != Some(new_index) {
-        touch(&tx, &card.id)?;
-        log_edit(
-            &tx,
-            &card.board_id,
-            &card.id,
-            &format!("subtask moved: {}", subtask.title),
-        )?;
-    }
-    tx.commit().map_err(db)?;
-    Ok(card.board_id)
+pub fn move_subtask(conn: &Conn, subtask_id: &str, index: usize) -> Result<String, String> {
+    with_tx!(conn, |ex| {
+        let Some(subtask) = get_subtask(ex, subtask_id).await? else {
+            return Err("Subtask not found".into());
+        };
+        let card = get_card_in(ex, &subtask.card_id).await?;
+        let current = list_subtasks_in(ex, &card.id).await?;
+        let contiguous = current
+            .iter()
+            .enumerate()
+            .all(|(i, s)| s.position == i as i64);
+        let mut ids: Vec<String> = current.into_iter().map(|s| s.id).collect();
+        let old_index = ids.iter().position(|id| id == subtask_id);
+        ids.retain(|id| id != subtask_id);
+        let new_index = index.min(ids.len());
+        ids.insert(new_index, subtask_id.to_string());
+        if old_index == Some(new_index) && contiguous {
+            return Ok(card.board_id);
+        }
+        for (position, id) in ids.iter().enumerate() {
+            set_position(ex, id, position).await?;
+        }
+        if old_index != Some(new_index) {
+            touch(ex, &card.id).await?;
+            log_edit(
+                ex,
+                &card.board_id,
+                &card.id,
+                &format!("subtask moved: {}", subtask.title),
+            )
+            .await?;
+        }
+        Ok(card.board_id)
+    })
 }

@@ -435,7 +435,7 @@ fn spike_store() -> (tempfile::TempDir, GraphStore) {
     let c = store.connection();
     for i in 1..=7 {
         c.execute(
-            "INSERT INTO graph_nodes (id, kind, key, label, created_at, updated_at) VALUES (?1, 'file', 'n' || ?1, 'n' || ?1, 0, 0)",
+            "INSERT INTO graph_nodes (id, kind, key, label, props_json, created_at, updated_at) VALUES (?1, 'file', 'n' || ?1, 'n' || ?1, '{}', 0, 0)",
             [i],
         )
         .unwrap();
@@ -451,8 +451,8 @@ fn spike_store() -> (tempfile::TempDir, GraphStore) {
         (8, 2, 5, 50, None),
     ] {
         c.execute(
-            "INSERT INTO graph_edges (id, src, dst, kind, valid_from, valid_from_basis, valid_to, source, scope, created_at)
-             VALUES (?1, ?2, ?3, 'touched', ?4, 'native', ?5, 'backfill:blocks', 'structural', ?4)",
+            "INSERT INTO graph_edges (id, src, dst, kind, props_json, valid_from, valid_from_basis, valid_to, source, scope, created_at)
+             VALUES (?1, ?2, ?3, 'touched', '{}', ?4, 'native', ?5, 'backfill:blocks', 'structural', ?4)",
             rusqlite::params![id, s, d, from, to],
         )
         .unwrap();
@@ -570,7 +570,7 @@ fn reachable_as_of_and_bad_inputs() {
                 .unwrap(),
         )
     };
-    assert_eq!(at(AsOf::At(ts(9))), vec![]);
+    assert_eq!(at(AsOf::At(ts(9))), Vec::<(i64, u8)>::new());
     assert_eq!(at(AsOf::At(ts(19))), vec![(a.0, 1)]);
     assert_eq!(at(AsOf::At(ts(20))), vec![(b.0, 1)]);
     assert_eq!(at(AsOf::Now), vec![(b.0, 1)]);

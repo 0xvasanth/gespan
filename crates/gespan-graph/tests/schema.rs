@@ -26,20 +26,35 @@ fn index_sql(conn: &Connection, name: &str) -> String {
     .unwrap()
 }
 
-fn stored_version(conn: &Connection) -> i64 {
-    conn.query_row("SELECT version FROM graph_schema", [], |row| row.get(0))
-        .unwrap()
+/// The graph migrations recorded in the file, by name.
+fn applied(conn: &Connection) -> Vec<String> {
+    let mut stmt = conn
+        .prepare("SELECT name FROM __toasty_migrations ORDER BY id")
+        .unwrap();
+    let rows = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
+    rows.map(Result::unwrap).collect()
+}
+
+fn known_migrations() -> Vec<String> {
+    let mut names: Vec<String> = gespan_graph::schema::migrations()
+        .migrations()
+        .iter()
+        .map(|m| m.name().to_string())
+        .collect();
+    names.sort();
+    names
 }
 
 #[test]
-fn fresh_open_creates_v1() {
+fn fresh_open_creates_the_tables_indexes_and_constraints() {
     let (_dir, store, _path) = temp_store();
     let conn = store.connection();
-    assert_eq!(stored_version(conn), 1);
-    assert_eq!(gespan_graph::schema::VERSION, 1);
+    let mut recorded = applied(conn);
+    recorded.sort();
+    assert!(!recorded.is_empty());
+    assert_eq!(recorded, known_migrations(), "every migration is applied");
 
     let tables: BTreeSet<String> = [
-        "graph_schema",
         "graph_nodes",
         "graph_edges",
         "graph_scopes",
@@ -49,10 +64,11 @@ fn fresh_open_creates_v1() {
     .into_iter()
     .map(String::from)
     .collect();
-    assert_eq!(names(conn, "table"), tables);
+    assert_eq!(names(conn, "table"), tables, "no version table");
 
     // Named indexes only; SQLite's own autoindexes are `sqlite_autoindex_*`.
     let indexes: BTreeSet<String> = [
+        "graph_nodes_kind_key",
         "graph_edges_open_uq",
         "graph_edges_scope_open",
         "graph_edges_scope",
@@ -86,29 +102,40 @@ fn fresh_open_creates_v1() {
     let uq = index_sql(conn, "graph_edges_open_uq");
     assert!(uq.starts_with("CREATE UNIQUE INDEX"), "{uq}");
     assert!(uq.contains("(kind, src, dst, source, scope)"), "{uq}");
+    let nodes_uq = index_sql(conn, "graph_nodes_kind_key");
+    assert!(nodes_uq.starts_with("CREATE UNIQUE INDEX"), "{nodes_uq}");
     // The as-of indexes lead with the endpoint then valid_from DESC, so a
     // capped as-of read walks newest first and stops (spec §4.1).
     assert!(
         index_sql(conn, "graph_edges_out_all").contains("(src, valid_from DESC, dst, valid_to)")
     );
     assert!(index_sql(conn, "graph_edges_in_all").contains("(dst, valid_from DESC, src, valid_to)"));
+
+    // Every constraint trigger is in place, and no other.
+    let expected: BTreeSet<String> = gespan_graph::schema::constraints()
+        .iter()
+        .filter_map(|sql| sql.strip_prefix("CREATE TRIGGER IF NOT EXISTS "))
+        .map(|rest| rest.split_whitespace().next().unwrap().to_string())
+        .collect();
+    assert_eq!(expected.len(), 17);
+    assert_eq!(names(conn, "trigger"), expected);
 }
 
 #[test]
-fn reopen_keeps_rows_and_version() {
+fn reopen_keeps_rows_and_applies_nothing_again() {
     let (_dir, store, path) = temp_store();
     store
         .connection()
         .execute(
-            "INSERT INTO graph_nodes (kind, key, label, created_at, updated_at) VALUES ('project', 'p', 'P', ?1, ?1)",
+            "INSERT INTO graph_nodes (kind, key, label, props_json, created_at, updated_at) VALUES ('project', 'p', 'P', '{}', ?1, ?1)",
             [BASE],
         )
         .unwrap();
+    let before = applied(store.connection());
     drop(store);
 
     let store = GraphStore::open(&path).unwrap();
     let conn = store.connection();
-    assert_eq!(stored_version(conn), 1);
     let label: String = conn
         .query_row(
             "SELECT label FROM graph_nodes WHERE kind = 'project' AND key = 'p'",
@@ -117,35 +144,53 @@ fn reopen_keeps_rows_and_version() {
         )
         .unwrap();
     assert_eq!(label, "P");
-    let versions: i64 = conn
-        .query_row("SELECT count(*) FROM graph_schema", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(versions, 1, "a reopen must not stack version rows");
+    assert_eq!(
+        applied(conn),
+        before,
+        "a reopen must not apply or record a migration again"
+    );
+    // Reopening ran the constraints again; they are idempotent.
+    assert_eq!(names(conn, "trigger").len(), 17);
 }
 
 #[test]
-fn newer_schema_is_refused_untouched() {
+fn a_file_with_an_unknown_migration_is_refused_untouched() {
     let (_dir, store, path) = temp_store();
-    store
-        .connection()
-        .execute("UPDATE graph_schema SET version = 2", [])
-        .unwrap();
     drop(store);
+    // A newer build's migration, recorded the way Toasty records one. The
+    // plain connection is the file's only one, so closing it folds the WAL
+    // back into the file.
+    let conn = Connection::open(&path).unwrap();
+    conn.execute(
+        "INSERT INTO __toasty_migrations (id, name, applied_at) VALUES (?1, ?2, datetime('now'))",
+        params![4_242_424_242_i64, "0002_from_a_newer_build.sql"],
+    )
+    .unwrap();
+    drop(conn);
     let before = fs::read(&path).unwrap();
 
     match GraphStore::open(&path) {
-        Err(GraphError::NewerSchema {
-            found: 2,
-            supported: 1,
-        }) => {}
-        Err(other) => panic!("expected NewerSchema, got {other:?}"),
-        Ok(_) => panic!("a newer schema must be refused"),
+        Err(GraphError::UnknownMigrations(names)) => {
+            assert_eq!(names, vec!["0002_from_a_newer_build.sql".to_string()]);
+        }
+        Err(other) => panic!("expected UnknownMigrations, got {other:?}"),
+        Ok(_) => panic!("a file from a newer build must be refused"),
     }
     assert_eq!(
         fs::read(&path).unwrap(),
         before,
         "the file must be left byte-for-byte"
     );
+
+    // Without the stranger, the same file opens again.
+    let conn = Connection::open(&path).unwrap();
+    conn.execute(
+        "DELETE FROM __toasty_migrations WHERE name = '0002_from_a_newer_build.sql'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    assert!(GraphStore::open(&path).is_ok());
 }
 
 #[test]
@@ -177,7 +222,7 @@ fn open_refuses_non_database_and_missing_dir() {
 
 fn insert_node(conn: &Connection, kind: &str, key: &str) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO graph_nodes (kind, key, label, created_at, updated_at) VALUES (?1, ?2, ?2, ?3, ?3)",
+        "INSERT INTO graph_nodes (kind, key, label, props_json, created_at, updated_at) VALUES (?1, ?2, ?2, '{}', ?3, ?3)",
         params![kind, key, BASE],
     )?;
     Ok(conn.last_insert_rowid())
@@ -191,8 +236,8 @@ fn insert_edge(
     scope: &str,
 ) -> rusqlite::Result<usize> {
     conn.execute(
-        "INSERT INTO graph_edges (src, dst, kind, valid_from, valid_from_basis, valid_to, source, scope, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'backfill:blocks', ?7, ?4)",
+        "INSERT INTO graph_edges (src, dst, kind, props_json, valid_from, valid_from_basis, valid_to, source, scope, created_at)
+         VALUES (?1, ?2, ?3, '{}', ?4, ?5, ?6, 'backfill:blocks', ?7, ?4)",
         params![src, dst, kind, valid.0, basis, valid.1, scope],
     )
 }
@@ -270,19 +315,19 @@ fn sql_checks_reject_bad_rows() {
     );
 }
 
-/// The quoted values inside `CHECK (<column> IN (...))` in a table's DDL.
-fn check_list(conn: &Connection, table: &str, column: &str) -> BTreeSet<String> {
+/// The quoted values inside `NEW.<column> IN (...)` in a check trigger.
+fn check_list(conn: &Connection, trigger: &str, column: &str) -> BTreeSet<String> {
     let sql: String = conn
         .query_row(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            [table],
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
+            [trigger],
             |r| r.get(0),
         )
         .unwrap();
-    let marker = format!("CHECK ({column} IN (");
+    let marker = format!("NEW.{column} IN (");
     let start = sql
         .find(&marker)
-        .unwrap_or_else(|| panic!("{table}.{column} has no CHECK list"))
+        .unwrap_or_else(|| panic!("{trigger} has no {column} list"))
         + marker.len();
     let end = start + sql[start..].find(')').unwrap();
     sql[start..end]
@@ -292,7 +337,7 @@ fn check_list(conn: &Connection, table: &str, column: &str) -> BTreeSet<String> 
 }
 
 #[test]
-fn kind_lists_match_ddl_checks() {
+fn kind_lists_match_the_check_triggers() {
     let (_dir, store, _path) = temp_store();
     let conn = store.connection();
     let nodes: BTreeSet<String> = NodeKind::ALL
@@ -305,13 +350,28 @@ fn kind_lists_match_ddl_checks() {
         .collect();
     assert_eq!(nodes.len(), 14);
     assert_eq!(edges.len(), 15);
-    assert_eq!(check_list(conn, "graph_nodes", "kind"), nodes);
-    assert_eq!(check_list(conn, "graph_edges", "kind"), edges);
+    for event in ["insert", "update"] {
+        assert_eq!(
+            check_list(conn, &format!("graph_nodes_kind_{event}"), "kind"),
+            nodes
+        );
+        assert_eq!(
+            check_list(conn, &format!("graph_edges_kind_{event}"), "kind"),
+            edges
+        );
+    }
     let basis: BTreeSet<String> = ["native", "owner_created", "observed_by"]
         .into_iter()
         .map(String::from)
         .collect();
-    assert_eq!(check_list(conn, "graph_edges", "valid_from_basis"), basis);
+    assert_eq!(
+        check_list(conn, "graph_edges_basis_insert", "valid_from_basis"),
+        basis
+    );
+    // Every listed kind is accepted, not just named.
+    for (i, kind) in nodes.iter().enumerate() {
+        insert_node(conn, kind, &format!("k{i}")).unwrap();
+    }
 }
 
 #[test]
@@ -378,6 +438,87 @@ fn graph_file_is_0600() {
     let (_dir, _store, path) = temp_store();
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "graph.db mode {mode:o}");
+}
+
+/// What the hand-made schema's `CHECK`s and `REFERENCES ... ON DELETE
+/// CASCADE` did, now triggers: updates are checked like inserts, an edge
+/// must name existing nodes, deleting a node deletes its edges, and a run's
+/// status is one of four.
+#[test]
+fn constraint_triggers_check_updates_references_and_cascade() {
+    let (_dir, store, _path) = temp_store();
+    let conn = store.connection();
+    let s = insert_node(conn, "session", "s").unwrap();
+    let f = insert_node(conn, "file", "f").unwrap();
+    let p = insert_node(conn, "project", "p").unwrap();
+    insert_edge(conn, ("touched", s, f), "native", (BASE, None), "session:s").unwrap();
+    let edge = conn.last_insert_rowid();
+    insert_edge(
+        conn,
+        ("in_project", f, p),
+        "native",
+        (BASE, None),
+        "structural",
+    )
+    .unwrap();
+
+    let update = |sql: &str| conn.execute(sql, [edge]);
+    assert!(is_constraint(update(
+        "UPDATE graph_edges SET kind = 'frobs' WHERE id = ?1"
+    )));
+    assert!(is_constraint(update(
+        "UPDATE graph_edges SET valid_from_basis = 'guess' WHERE id = ?1"
+    )));
+    assert!(is_constraint(update(
+        "UPDATE graph_edges SET valid_to = valid_from - 1 WHERE id = ?1"
+    )));
+    assert!(is_constraint(update(
+        "UPDATE graph_edges SET dst = src WHERE id = ?1"
+    )));
+    assert!(is_constraint(conn.execute(
+        "UPDATE graph_nodes SET kind = 'widget' WHERE id = ?1",
+        [s]
+    )));
+    // Closing the edge at its start is fine.
+    assert_eq!(
+        update("UPDATE graph_edges SET valid_to = valid_from WHERE id = ?1").unwrap(),
+        1
+    );
+
+    // References: no edge to or from a node that isn't there.
+    for (src, dst) in [(s, 9_999), (9_999, f)] {
+        assert!(is_constraint(insert_edge(
+            conn,
+            ("touched", src, dst),
+            "native",
+            (BASE, None),
+            "session:s"
+        )));
+    }
+    assert!(is_constraint(update(
+        "UPDATE graph_edges SET src = 9999 WHERE id = ?1"
+    )));
+
+    // Deleting a node deletes every edge touching it, in either direction.
+    let edges = || -> i64 {
+        conn.query_row("SELECT count(*) FROM graph_edges", [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(edges(), 2);
+    conn.execute("DELETE FROM graph_nodes WHERE id = ?1", [f])
+        .unwrap();
+    assert_eq!(edges(), 0, "both of f's edges went with it");
+
+    let run = |status: &str| {
+        conn.execute(
+            "INSERT INTO graph_runs (started_at, observed_at, status) VALUES (?1, ?1, ?2)",
+            params![BASE, status],
+        )
+    };
+    assert!(is_constraint(run("paused")));
+    for status in ["running", "completed", "cancelled", "failed"] {
+        assert_eq!(run(status).unwrap(), 1, "{status}");
+    }
 }
 
 #[test]

@@ -1,5 +1,6 @@
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::{params, Connection};
+use rusqlite::params;
 use std::collections::HashSet;
 
 const HOUR: i64 = 3_600_000;
@@ -7,20 +8,17 @@ const DAY: i64 = 24 * HOUR;
 /// 2026-10-26 00:00 UTC.
 const MIDNIGHT_UTC: i64 = 1_793_404_800_000;
 
-fn fresh() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn fresh() -> Fixture {
+    testing::fresh()
 }
 
-fn count(conn: &Connection, sql: &str) -> i64 {
-    conn.query_row(sql, [], |row| row.get(0)).unwrap()
+fn count(conn: &Fixture, sql: &str) -> i64 {
+    conn.raw().query_row(sql, [], |row| row.get(0)).unwrap()
 }
 
 /// A board with its default columns (Backlog, In Progress, Review, Done) and
 /// the given cards in Backlog, in order.
-fn board_with_cards(conn: &Connection, titles: &[&str]) -> (Board, Vec<Column>, Vec<Card>) {
+fn board_with_cards(conn: &Fixture, titles: &[&str]) -> (Board, Vec<Column>, Vec<Card>) {
     let board = create_board(conn, "Work").unwrap();
     let columns = get_board(conn, &board.id).unwrap().columns;
     let cards = titles
@@ -46,12 +44,12 @@ fn row(field: &str, op: Op, values: &[&str]) -> FilterRow {
     }
 }
 
-fn run(conn: &Connection, board: &Board, spec: &ViewSpec) -> Vec<String> {
+fn run(conn: &Fixture, board: &Board, spec: &ViewSpec) -> Vec<String> {
     run_at(conn, board, spec, MIDNIGHT_UTC, &fixed(0), &HashSet::new())
 }
 
 fn run_at(
-    conn: &Connection,
+    conn: &Fixture,
     board: &Board,
     spec: &ViewSpec,
     now_ms: i64,
@@ -79,12 +77,13 @@ fn ids(cards: &[&Card]) -> Vec<String> {
     cards.iter().map(|card| card.id.clone()).collect()
 }
 
-fn set_times(conn: &Connection, card: &Card, created_at: i64, updated_at: i64) {
-    conn.execute(
-        "UPDATE board_cards SET created_at = ?1, updated_at = ?2 WHERE id = ?3",
-        params![created_at, updated_at, card.id],
-    )
-    .unwrap();
+fn set_times(conn: &Fixture, card: &Card, created_at: i64, updated_at: i64) {
+    conn.raw()
+        .execute(
+            "UPDATE board_cards SET created_at = ?1, updated_at = ?2 WHERE id = ?3",
+            params![created_at, updated_at, card.id],
+        )
+        .unwrap();
 }
 
 #[test]
@@ -589,17 +588,19 @@ fn linked_none_counts_a_link_kept_only_in_the_legacy_card_columns() {
     let (board, _, cards) = board_with_cards(&conn, &["legacy", "half", "ticket", "plain"]);
     // An older build wrote the link only into the card's own columns, after
     // the v3 migration had copied them.
-    conn.execute(
-        "UPDATE board_cards SET link_kind = 'session', link_id = 's-9' WHERE id = ?1",
-        params![cards[0].id],
-    )
-    .unwrap();
+    conn.raw()
+        .execute(
+            "UPDATE board_cards SET link_kind = 'session', link_id = 's-9' WHERE id = ?1",
+            params![cards[0].id],
+        )
+        .unwrap();
     // A kind without an id is no link.
-    conn.execute(
-        "UPDATE board_cards SET link_kind = 'session', link_id = NULL WHERE id = ?1",
-        params![cards[1].id],
-    )
-    .unwrap();
+    conn.raw()
+        .execute(
+            "UPDATE board_cards SET link_kind = 'session', link_id = NULL WHERE id = ?1",
+            params![cards[1].id],
+        )
+        .unwrap();
     set_ticket(
         &conn,
         &cards[2].id,
@@ -847,7 +848,7 @@ fn views_crud_and_reorder() {
     assert_eq!(first.board_id, board.id);
     let second = create_view(&conn, &board.id, "Urgent", "{}", "{}").unwrap();
     let third = create_view(&conn, &board.id, "Table", "{}", r#"{"layout":"table"}"#).unwrap();
-    let names = |conn: &Connection| -> Vec<(String, i64)> {
+    let names = |conn: &Fixture| -> Vec<(String, i64)> {
         list_views(conn, &board.id)
             .unwrap()
             .into_iter()
@@ -908,31 +909,32 @@ fn views_crud_and_reorder() {
 
 #[test]
 fn v4_migration_is_idempotent_and_keeps_v3_data() {
-    let path = tempfile::NamedTempFile::new().unwrap();
-    let conn = Connection::open(path.path()).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
+    let conn = fresh();
     let (board, _, cards) = board_with_cards(&conn, &["keep"]);
     let label = create_label(&conn, &board.id, "Bug", "e5534b").unwrap();
     set_card_labels(&conn, &cards[0].id, std::slice::from_ref(&label.id)).unwrap();
     set_priority(&conn, &cards[0].id, 3).unwrap();
-    // Turn it back into a v3 database: no views table, version 3, and an old
-    // native label row whose copy was since removed on purpose.
-    conn.execute_batch(
+    // Turn it back into a hand-made v3 database: no views table, version 3,
+    // and an old native label row whose copy was since removed on purpose.
+    conn.raw().execute_batch(
         "DROP TABLE board_views;
-         UPDATE board_schema SET version = 3;
+         DROP TABLE __toasty_migrations;
+         CREATE TABLE board_schema (version INTEGER NOT NULL);
+         INSERT INTO board_schema (version) VALUES (3);
          CREATE TABLE board_native_labels (id TEXT PRIMARY KEY, board_id TEXT NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL);",
     )
     .unwrap();
-    conn.execute(
-        "INSERT INTO board_native_labels VALUES ('l-old', ?1, 'Old', '000000')",
-        [&board.id],
-    )
-    .unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 3);
+    conn.raw()
+        .execute(
+            "INSERT INTO board_native_labels VALUES ('l-old', ?1, 'Old', '000000')",
+            [&board.id],
+        )
+        .unwrap();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), 3);
 
-    ensure_tables(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    // Opening it runs the legacy upgrade, as adoption does.
+    let conn = conn.reopen();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM board_schema"), 1);
     // v3 data is untouched, and the v2 → v3 copy did not run again.
     assert_eq!(card_meta(&conn, &cards[0].id).unwrap().priority, 3);
@@ -943,14 +945,12 @@ fn v4_migration_is_idempotent_and_keeps_v3_data() {
     assert_eq!(list_labels(&conn, &board.id).unwrap().len(), 1);
     let view = create_view(&conn, &board.id, "Mine", "{}", "{}").unwrap();
 
-    ensure_tables(&conn).unwrap();
-    migrate::run(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+    let conn = conn.reopen();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     assert_eq!(list_views(&conn, &board.id).unwrap(), [view]);
 
     // A second connection opening the same file finds the work done.
-    let other = Connection::open(path.path()).unwrap();
-    ensure_tables(&other).unwrap();
+    let other = conn.reopen();
     assert_eq!(count(&other, "SELECT COUNT(*) FROM board_views"), 1);
 }
 
@@ -1080,11 +1080,7 @@ fn card_index_has_start_estimate_fields_in_one_read() {
 
 #[test]
 fn latest_run_events_is_the_newest_run_row_per_card_of_the_board() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("gespan.db");
-    let conn = Connection::open(&path).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
+    let conn = fresh();
     let (board, _, cards) = board_with_cards(&conn, &["buried", "recovered", "waiting", "quiet"]);
     let (elsewhere, _, others) = board_with_cards(&conn, &["other board", "moved here"]);
 
@@ -1117,9 +1113,8 @@ fn latest_run_events_is_the_newest_run_row_per_card_of_the_board() {
     assert_eq!(left_behind.len(), 1);
     assert_eq!(left_behind[&others[0].id], "failed");
 
-    // A read-only connection is enough, and an odd board id is only data.
-    let reader =
-        Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    // Another connection sees the same, and an odd board id is only data.
+    let reader = conn.reopen();
     assert_eq!(latest_run_events(&reader, &board.id).unwrap(), expected);
     assert!(latest_run_events(&reader, "' OR 1=1 --")
         .unwrap()

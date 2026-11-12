@@ -36,13 +36,9 @@ impl Store {
         if let Some(existing) = self.inbox_ask(&context.key)? {
             return Ok(existing);
         }
-        // A shared database older than the column would list the session.
-        if self.shared.is_some() && !self.shared_supports_inbox_ask() {
-            return Err("This Gespan database cannot save Ask conversations yet".into());
-        }
         let raw = serde_json::to_string(context).map_err(|e| e.to_string())?;
         // A session that never got its mark would show up in the sidebar.
-        let tx = super::write_transaction(&self.conn).map_err(|e| e.to_string())?;
+        let tx = self.begin()?;
         let mut session = self.local_create(provider, cwd)?;
         session.title = context.session_title();
         self.title(session.id, &session.title)?;
@@ -56,7 +52,7 @@ impl Store {
                 )
                 .map_err(|e| e.to_string())?;
         }
-        tx.commit().map_err(|e| e.to_string())?;
+        tx.commit()?;
         self.save_agent_settings(session.id, settings)?;
         Ok((session, context.clone()))
     }

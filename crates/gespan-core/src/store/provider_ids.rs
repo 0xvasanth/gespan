@@ -10,18 +10,23 @@ impl Store {
     /// orchestration workers, hidden Pilot and operator conversations, hidden
     /// legacy remote sessions). Sessions without a provider id are left out.
     pub fn provider_session_ids(&self) -> Result<HashSet<(String, String)>, String> {
-        let query = if self.shared.is_some() {
-            "SELECT harness,provider_session_id FROM sessions
-             WHERE provider_session_id IS NOT NULL AND provider_session_id<>''"
+        let (sql, query) = if self.shared.is_some() {
+            (
+                self.sql()?,
+                "SELECT harness,provider_session_id FROM sessions
+                 WHERE provider_session_id IS NOT NULL AND provider_session_id<>''",
+            )
         } else {
-            "SELECT provider,provider_id FROM native_sessions
-             WHERE provider_id IS NOT NULL AND provider_id<>''"
+            (
+                super::db::Sql::Conn(&self.conn),
+                "SELECT provider,provider_id FROM native_sessions
+                 WHERE provider_id IS NOT NULL AND provider_id<>''",
+            )
         };
-        let mut statement = self.conn.prepare(query).map_err(|e| e.to_string())?;
-        let rows = statement
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+        sql.query(query, super::db::args![])?
+            .iter()
+            .map(|row| Ok((row.get(0)?, row.get(1)?)))
+            .collect()
     }
 }
 
@@ -115,12 +120,6 @@ mod tests {
         let worker = store.create("codex", "/project").unwrap();
         store.provider_id(worker.id, "worker-thread").unwrap();
         let original = store.persisted_session_id(worker.id).unwrap();
-        store
-            .conn
-            .execute_batch(
-                "CREATE TABLE orchestration_workers(session_id TEXT PRIMARY KEY, lead_id TEXT NOT NULL)",
-            )
-            .unwrap();
         store
             .conn
             .execute(

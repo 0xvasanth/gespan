@@ -4,13 +4,13 @@
 //! Every scope here (which cards a session may touch) is read from the
 //! database at call time from the session key the app supplies, never from
 //! agent input.
-use crate::comments::{add_comment, list_comments};
-use crate::links::{board_links, ticket_body, title_from_ticket};
-use crate::ops::{cards_for_link, db, get_card, write_tx};
-use crate::settings::{board_settings, check_session_key};
-use crate::subtasks::{get_subtask, list_subtasks, toggle_subtask_in};
+use crate::comments::{add_comment, list_comments_in};
+use crate::db::{args, query, query_value, with_db, with_tx, Conn, Ex};
+use crate::links::{board_links, ticket_body_in, title_from_ticket_in};
+use crate::ops::{cards_for_link, cards_for_link_in, get_card_in};
+use crate::settings::{board_settings, board_settings_in, check_session_key};
+use crate::subtasks::{get_subtask, list_subtasks_in, toggle_subtask_in};
 use crate::Card;
-use rusqlite::{params, Connection};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
@@ -38,11 +38,7 @@ fn cap(text: &str, max: usize) -> String {
 /// reply is trimmed and cut to 4,000 characters; an empty reply writes
 /// nothing. One failing card does not stop the others; the first error is
 /// returned after every card was tried. Returns the ids of the cards written.
-pub fn write_back(
-    conn: &Connection,
-    session_key: &str,
-    summary: &str,
-) -> Result<Vec<String>, String> {
+pub fn write_back(conn: &Conn, session_key: &str, summary: &str) -> Result<Vec<String>, String> {
     check_session_key(session_key)?;
     let author = format!("agent:{session_key}");
     let body = cap(summary.trim(), MAX_WRITE_BACK);
@@ -73,7 +69,7 @@ pub fn write_back(
 /// The board's live cards linked to a running session or Pilot. `running`
 /// holds (`session` | `pilot`, id) pairs; other kinds never count.
 pub fn running_card_ids(
-    conn: &Connection,
+    conn: &Conn,
     board_id: &str,
     running: &[(String, String)],
 ) -> Result<HashSet<String>, String> {
@@ -97,23 +93,22 @@ pub fn running_card_ids(
 /// rename, an unlink and a duplicate), or when any of the card's ticket links
 /// has a snapshot title that is the same text (ignoring case and surrounding
 /// space), since the title is then ticket content.
-fn agent_title(conn: &Connection, card: &Card) -> Result<Option<String>, String> {
-    if title_from_ticket(conn, &card.id)? {
+async fn agent_title(ex: &mut Ex<'_>, card: &Card) -> Result<Option<String>, String> {
+    if title_from_ticket_in(ex, &card.id).await? {
         return Ok(None);
     }
     let title = card.title.trim();
     let wanted = title.to_lowercase();
-    let mut statement = conn
-        .prepare(
-            "SELECT ref FROM board_card_links
-             WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
-        )
-        .map_err(db)?;
-    let tickets = statement
-        .query_map([&card.id], |r| r.get::<_, String>(0))
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db)?;
+    let tickets = query(
+        ex,
+        "SELECT ref FROM board_card_links
+         WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
+        args![&card.id],
+    )
+    .await?
+    .iter()
+    .map(|r| r.get::<String>(0))
+    .collect::<Result<Vec<_>, String>>()?;
     let copied = tickets.iter().any(|json| {
         serde_json::from_str::<Value>(json)
             .ok()
@@ -130,17 +125,21 @@ fn agent_title(conn: &Connection, card: &Card) -> Result<Option<String>, String>
 /// comments are never included: `gespan-core`'s `run_prompt` adds the
 /// description as a marked block, because the text here is sent to the agent
 /// as the user's own.
-pub fn run_prompt(conn: &Connection, card_id: &str) -> Result<String, String> {
-    let card = get_card(conn, card_id)?;
-    let mut sections = vec![match agent_title(conn, &card)? {
+pub fn run_prompt(conn: &Conn, card_id: &str) -> Result<String, String> {
+    with_db!(conn, |ex| run_prompt_in(ex, card_id).await)
+}
+
+async fn run_prompt_in(ex: &mut Ex<'_>, card_id: &str) -> Result<String, String> {
+    let card = get_card_in(ex, card_id).await?;
+    let mut sections = vec![match agent_title(ex, &card).await? {
         Some(title) => format!("Work on board card #{}: {title}", card.number),
         None => format!("Work on board card #{}", card.number),
     }];
     let description = card.body.trim();
-    if !description.is_empty() && ticket_body(conn, card_id)?.is_none() {
+    if !description.is_empty() && ticket_body_in(ex, card_id).await?.is_none() {
         sections.push(description.to_string());
     }
-    let subtasks = list_subtasks(conn, card_id)?;
+    let subtasks = list_subtasks_in(ex, card_id).await?;
     if !subtasks.is_empty() {
         let lines: Vec<String> = subtasks
             .iter()
@@ -148,7 +147,8 @@ pub fn run_prompt(conn: &Connection, card_id: &str) -> Result<String, String> {
             .collect();
         sections.push(format!("Subtasks:\n{}", lines.join("\n")));
     }
-    let comments: Vec<String> = list_comments(conn, card_id)?
+    let comments: Vec<String> = list_comments_in(ex, card_id)
+        .await?
         .into_iter()
         .filter(|comment| comment.author == "user")
         .map(|comment| format!("- {}", comment.body))
@@ -208,8 +208,13 @@ impl CardTool {
 }
 
 /// Whether the live card is linked to the session, read now.
-fn linked_to_session(conn: &Connection, card_id: &str, session_key: &str) -> Result<bool, String> {
-    conn.query_row(
+async fn linked_to_session(
+    ex: &mut Ex<'_>,
+    card_id: &str,
+    session_key: &str,
+) -> Result<bool, String> {
+    query_value(
+        ex,
         "SELECT EXISTS(SELECT 1 FROM board_cards c
            WHERE c.id = ?1
              AND (c.id IN (SELECT card_id FROM board_card_links
@@ -217,75 +222,79 @@ fn linked_to_session(conn: &Connection, card_id: &str, session_key: &str) -> Res
                   OR (c.link_kind = 'session' AND c.link_id = ?2))
              AND NOT EXISTS (SELECT 1 FROM board_card_meta m
                WHERE m.card_id = c.id AND m.archived_at IS NOT NULL))",
-        params![card_id, session_key],
-        |r| r.get(0),
+        args![card_id, session_key],
     )
-    .map_err(db)
+    .await
 }
 
 /// Answers a card tool call for `session_key`. The cards in reach are the
 /// live cards linked to the session right now. A read-only session may list
 /// but not tick; ticking needs the card's board to have write-back on.
 pub fn answer_card(
-    conn: &Connection,
+    conn: &Conn,
     session_key: &str,
     tool: &CardTool,
     read_only: bool,
 ) -> Result<Value, String> {
     check_session_key(session_key)?;
     match tool {
-        CardTool::Subtasks => {
-            // Only boards with write-back on share their cards with agents,
-            // the same scope ticking a subtask has (ruling C6-k).
-            let mut write_back_by_board = std::collections::HashMap::new();
-            let mut cards = Vec::new();
-            for card in cards_for_link(conn, "session", session_key)? {
-                let write_back = match write_back_by_board.get(&card.board_id) {
-                    Some(on) => *on,
-                    None => {
-                        let on = board_settings(conn, &card.board_id)?.write_back;
-                        write_back_by_board.insert(card.board_id.clone(), on);
-                        on
-                    }
-                };
-                if !write_back {
-                    continue;
-                }
-                let subtasks: Vec<Value> = list_subtasks(conn, &card.id)?
-                    .into_iter()
-                    .map(|task| json!({ "id": task.id, "title": task.title, "done": task.done }))
-                    .collect();
-                let mut entry = json!({ "number": card.number, "subtasks": subtasks });
-                if let Some(title) = agent_title(conn, &card)? {
-                    entry["title"] = Value::String(title);
-                }
-                cards.push(entry);
-            }
-            Ok(json!({ "cards": cards }))
-        }
+        CardTool::Subtasks => with_db!(conn, |ex| list_session_cards(ex, session_key).await),
         CardTool::SubtaskDone { subtask_id, done } => {
             if read_only {
                 return Err(READ_ONLY.into());
             }
-            let tx = write_tx(conn)?;
-            let Some(subtask) = get_subtask(&tx, subtask_id)? else {
-                return Err(NOT_LINKED.into());
-            };
-            if !linked_to_session(&tx, &subtask.card_id, session_key)? {
-                return Err(NOT_LINKED.into());
-            }
-            let card = get_card(&tx, &subtask.card_id)?;
-            if !board_settings(&tx, &card.board_id)?.write_back {
-                return Err(WRITE_BACK_OFF.into());
-            }
-            let actor = format!("agent:{session_key}");
-            let board_id = toggle_subtask_in(&tx, &subtask, *done, &actor)?;
-            tx.commit().map_err(db)?;
-            Ok(json!({
-                "boardId": board_id,
-                "cardNumber": card.number,
-                "subtask": { "id": subtask.id, "title": subtask.title, "done": *done },
-            }))
+            let done = *done;
+            with_tx!(conn, |ex| {
+                let Some(subtask) = get_subtask(ex, subtask_id).await? else {
+                    return Err(NOT_LINKED.into());
+                };
+                if !linked_to_session(ex, &subtask.card_id, session_key).await? {
+                    return Err(NOT_LINKED.into());
+                }
+                let card = get_card_in(ex, &subtask.card_id).await?;
+                if !board_settings_in(ex, &card.board_id).await?.write_back {
+                    return Err(WRITE_BACK_OFF.into());
+                }
+                let actor = format!("agent:{session_key}");
+                let board_id = toggle_subtask_in(ex, &subtask, done, &actor).await?;
+                Ok(json!({
+                    "boardId": board_id,
+                    "cardNumber": card.number,
+                    "subtask": { "id": subtask.id, "title": subtask.title, "done": done },
+                }))
+            })
         }
     }
+}
+
+/// `card_subtasks`: the subtasks of every live card linked to the session.
+async fn list_session_cards(ex: &mut Ex<'_>, session_key: &str) -> Result<Value, String> {
+    // Only boards with write-back on share their cards with agents,
+    // the same scope ticking a subtask has (ruling C6-k).
+    let mut write_back_by_board = std::collections::HashMap::new();
+    let mut cards = Vec::new();
+    for card in cards_for_link_in(ex, "session", session_key).await? {
+        let write_back = match write_back_by_board.get(&card.board_id) {
+            Some(on) => *on,
+            None => {
+                let on = board_settings_in(ex, &card.board_id).await?.write_back;
+                write_back_by_board.insert(card.board_id.clone(), on);
+                on
+            }
+        };
+        if !write_back {
+            continue;
+        }
+        let subtasks: Vec<Value> = list_subtasks_in(ex, &card.id)
+            .await?
+            .into_iter()
+            .map(|task| json!({ "id": task.id, "title": task.title, "done": task.done }))
+            .collect();
+        let mut entry = json!({ "number": card.number, "subtasks": subtasks });
+        if let Some(title) = agent_title(ex, &card).await? {
+            entry["title"] = Value::String(title);
+        }
+        cards.push(entry);
+    }
+    Ok(json!({ "cards": cards }))
 }

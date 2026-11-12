@@ -387,7 +387,7 @@ fn a_steer_sent_while_the_baseline_records_follows_the_prompt() {
     release.send(()).unwrap();
     let (result, failed) = turn.join().unwrap();
     assert_eq!(result, Ok(()));
-    assert_eq!(failed, [], "the steer was refused");
+    assert!(failed.is_empty(), "the steer was refused: {failed:?}");
     let log = stdin_log(&tmp);
     let users: Vec<_> = log
         .lines()

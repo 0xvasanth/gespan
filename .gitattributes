@@ -12,3 +12,7 @@ crates/gespan-core/src/provider/fixtures/launch_argv.txt text eol=lf
 
 # Compiled into the binary and compared against tool descriptions: identical bytes on every platform.
 crates/gespan-browser/instructions.md text eol=lf
+
+# Toasty migrations: Toasty splits each file into statements on "\n-- #[toasty::breakpoint]\n",
+# so a CRLF checkout (Git's default on Windows) runs the whole file as one statement.
+crates/gespan-core/migrations/** text eol=lf

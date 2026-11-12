@@ -84,7 +84,8 @@ pub fn find_review_automation<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{now_millis, write_automation, Service};
+    use super::super::tests::write_automation;
+    use super::super::{now_millis, Service};
     use super::*;
 
     fn input(which: WhichPrs, results: ReviewResults, repo: Option<&str>) -> ReviewSetupInput {
@@ -183,8 +184,8 @@ mod tests {
         draft.prompt = "Do it".into();
         let saved = service.upsert(draft).unwrap();
         // Rewrite the stored definition the way an older build wrote it.
-        let raw: String = service
-            .conn
+        let raw: String = rusqlite::Connection::open(directory.path().join("sessions.sqlite"))
+            .unwrap()
             .query_row(
                 "SELECT definition_json FROM automations WHERE id = ?1",
                 [&saved.id],
@@ -198,9 +199,9 @@ mod tests {
         // Saving it again must not invent the field either.
         let mut again = loaded[0].clone();
         again.updated_at = now_millis();
-        write_automation(&service.conn, &again).unwrap();
-        let raw: String = service
-            .conn
+        write_automation(&service.db, &again).unwrap();
+        let raw: String = rusqlite::Connection::open(directory.path().join("sessions.sqlite"))
+            .unwrap()
             .query_row(
                 "SELECT definition_json FROM automations WHERE id = ?1",
                 [&saved.id],

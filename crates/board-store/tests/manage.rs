@@ -1,25 +1,22 @@
 //! Label manager and custom-field management (C5-2).
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
-fn fresh() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn fresh() -> Fixture {
+    testing::fresh()
 }
 
-fn count(conn: &Connection, sql: &str) -> i64 {
-    conn.query_row(sql, [], |row| row.get(0)).unwrap()
+fn count(conn: &Fixture, sql: &str) -> i64 {
+    conn.raw().query_row(sql, [], |row| row.get(0)).unwrap()
 }
 
 fn json_of(raw: &str) -> Value {
     serde_json::from_str(raw).unwrap()
 }
 
-fn board_with_cards(conn: &Connection, titles: &[&str]) -> (Board, Vec<Card>) {
+fn board_with_cards(conn: &Fixture, titles: &[&str]) -> (Board, Vec<Card>) {
     let board = create_board(conn, "Work").unwrap();
     let column = get_board(conn, &board.id).unwrap().columns[0].id.clone();
     let cards = titles
@@ -29,7 +26,7 @@ fn board_with_cards(conn: &Connection, titles: &[&str]) -> (Board, Vec<Card>) {
     (board, cards)
 }
 
-fn label_names(conn: &Connection, board: &Board) -> Vec<(String, String, i64)> {
+fn label_names(conn: &Fixture, board: &Board) -> Vec<(String, String, i64)> {
     list_labels(conn, &board.id)
         .unwrap()
         .into_iter()
@@ -37,8 +34,9 @@ fn label_names(conn: &Connection, board: &Board) -> Vec<(String, String, i64)> {
         .collect()
 }
 
-fn card_label_ids(conn: &Connection, card: &Card) -> Vec<String> {
+fn card_label_ids(conn: &Fixture, card: &Card) -> Vec<String> {
     let mut statement = conn
+        .raw()
         .prepare("SELECT label_id FROM board_card_labels WHERE card_id = ?1 ORDER BY label_id")
         .unwrap();
     let ids = statement
@@ -49,7 +47,7 @@ fn card_label_ids(conn: &Connection, card: &Card) -> Vec<String> {
     ids
 }
 
-fn value_of(conn: &Connection, card: &Card, field: &Field) -> Option<String> {
+fn value_of(conn: &Fixture, card: &Card, field: &Field) -> Option<String> {
     field_values(conn, &card.id)
         .unwrap()
         .into_iter()
@@ -57,7 +55,7 @@ fn value_of(conn: &Connection, card: &Card, field: &Field) -> Option<String> {
         .map(|value| value.value_json)
 }
 
-fn view(conn: &Connection, id: &str) -> View {
+fn view(conn: &Fixture, id: &str) -> View {
     list_views(conn, &get_view_board(conn, id))
         .unwrap()
         .into_iter()
@@ -65,16 +63,17 @@ fn view(conn: &Connection, id: &str) -> View {
         .unwrap()
 }
 
-fn get_view_board(conn: &Connection, id: &str) -> String {
-    conn.query_row(
-        "SELECT board_id FROM board_views WHERE id = ?1",
-        [id],
-        |r| r.get(0),
-    )
-    .unwrap()
+fn get_view_board(conn: &Fixture, id: &str) -> String {
+    conn.raw()
+        .query_row(
+            "SELECT board_id FROM board_views WHERE id = ?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
 }
 
-fn run(conn: &Connection, board: &Board, spec: Value) -> Vec<String> {
+fn run(conn: &Fixture, board: &Board, spec: Value) -> Vec<String> {
     let spec: ViewSpec = serde_json::from_value(spec).unwrap();
     query_cards(
         conn,
@@ -193,6 +192,7 @@ fn delete_label_writes_one_activity_row_per_card() {
 
     let rows: Vec<(Option<String>, String)> = {
         let mut statement = conn
+            .raw()
             .prepare(
                 "SELECT card_id, detail FROM board_activity WHERE detail LIKE 'label removed:%'
                  ORDER BY card_id",
@@ -714,11 +714,12 @@ fn delete_field_rewrites_the_boards_own_display_options() {
     let gone = create_field(&conn, &other.id, "Gone", "text", None).unwrap();
     delete_field(&conn, &gone.id).unwrap();
     assert_eq!(board_settings(&conn, &other.id).unwrap().display_json, None);
-    conn.execute(
-        "UPDATE board_settings SET display_json = '{not json' WHERE board_id = ?1",
-        [&board.id],
-    )
-    .unwrap();
+    conn.raw()
+        .execute(
+            "UPDATE board_settings SET display_json = '{not json' WHERE board_id = ?1",
+            [&board.id],
+        )
+        .unwrap();
     delete_field(&conn, &team.id).unwrap();
     assert_eq!(
         board_settings(&conn, &board.id)
@@ -846,14 +847,14 @@ fn field_and_label_positions_stay_contiguous() {
         .iter()
         .map(|name| create_field(&conn, &board.id, name, "text", None).unwrap())
         .collect();
-    let label_order = |conn: &Connection| -> Vec<(String, i64)> {
+    let label_order = |conn: &Fixture| -> Vec<(String, i64)> {
         list_labels(conn, &board.id)
             .unwrap()
             .into_iter()
             .map(|l| (l.name, l.position))
             .collect()
     };
-    let field_order = |conn: &Connection| -> Vec<(String, i64)> {
+    let field_order = |conn: &Fixture| -> Vec<(String, i64)> {
         list_fields(conn, &board.id)
             .unwrap()
             .into_iter()
@@ -1038,7 +1039,7 @@ fn whole_number_values_are_stored_as_integers() {
     set_field_value(&conn, &cards[1].id, &points.id, Some("5")).unwrap();
     assert_eq!(value_of(&conn, &cards[0], &points).as_deref(), Some("5"));
     // A 5.0 written before normalising still counts with 5.
-    conn.execute(
+    conn.raw().execute(
         "INSERT INTO board_card_field_values (card_id, field_id, value_json) VALUES (?1, ?2, '5.0')",
         [&cards[2].id, &points.id],
     )
@@ -1057,11 +1058,12 @@ fn unreadable_stored_options_refuse_a_value_write() {
     let tags = create_field(&conn, &board.id, "Tags", "multi-select", Some(r#"["ui"]"#)).unwrap();
     set_field_value(&conn, &cards[0].id, &size.id, Some(r#""S""#)).unwrap();
     for (field, raw) in [(&size, "not json"), (&tags, r#"{"ui":true}"#)] {
-        conn.execute(
-            "UPDATE board_fields SET options_json = ?1 WHERE id = ?2",
-            [raw, &field.id],
-        )
-        .unwrap();
+        conn.raw()
+            .execute(
+                "UPDATE board_fields SET options_json = ?1 WHERE id = ?2",
+                [raw, &field.id],
+            )
+            .unwrap();
     }
     assert_eq!(
         set_field_value(&conn, &cards[0].id, &size.id, Some(r#""M""#)).unwrap_err(),
@@ -1088,13 +1090,14 @@ fn display(column: &Column) -> (Option<String>, Option<i64>, bool) {
     (column.color.clone(), column.wip_limit, column.collapsed)
 }
 
-fn stored_display(conn: &Connection, column_id: &str) -> (Option<String>, Option<i64>, bool) {
-    conn.query_row(
-        "SELECT color, wip_limit, collapsed FROM board_columns WHERE id = ?1",
-        [column_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0)),
-    )
-    .unwrap()
+fn stored_display(conn: &Fixture, column_id: &str) -> (Option<String>, Option<i64>, bool) {
+    conn.raw()
+        .query_row(
+            "SELECT color, wip_limit, collapsed FROM board_columns WHERE id = ?1",
+            [column_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0)),
+        )
+        .unwrap()
 }
 
 #[test]
@@ -1155,13 +1158,8 @@ fn column_patch_changes_only_named_fields() {
 
 #[test]
 fn collapsing_keeps_a_wip_limit_set_by_the_other_connection() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("sessions.db");
-    let native = Connection::open(&path).unwrap();
-    native.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&native).unwrap();
-    let tauri = Connection::open(&path).unwrap();
-    tauri.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    let native = fresh();
+    let tauri = native.reopen();
 
     let board = create_board(&native, "Work").unwrap();
     let column = get_board(&native, &board.id).unwrap().columns[1].id.clone();

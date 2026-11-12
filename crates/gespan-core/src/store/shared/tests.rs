@@ -1,4 +1,13 @@
 use super::*;
+use rusqlite::params;
+
+fn has_table(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [table],
+        |r| r.get(0),
+    )
+}
 
 /// The tables the old Tauri app created for an indexed Pilot transcript.
 const PILOT_TABLES: &str = include_str!("../../../tests/fixtures/desktop/pilot-tables.sql");
@@ -234,7 +243,6 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("gespan.db");
     let store = Store::open_gespan(&path).unwrap();
-    store.conn.execute_batch("CREATE TABLE orchestration_workers(session_id TEXT PRIMARY KEY, lead_id TEXT NOT NULL)").unwrap();
     for (id, cwd, hidden, user) in [
         ("listed-caller", "/project", false, true),
         ("app-listed-caller-review-task", "/project", true, true),
@@ -247,7 +255,9 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
         ("app-worker-task", "/project", true, true),
         ("inbox", "/project", false, true),
     ] {
-        store.conn.execute("INSERT INTO sessions(id,cwd,harness,model,runtime_mode,title,blocks_json,created_at,updated_at,has_user_message,sidebar_hidden) VALUES(?1,?2,'codex','codex:model','supervised',?1,'not JSON',1,2,?3,?4)", params![id,cwd,user,hidden]).unwrap();
+        store.conn.execute("INSERT INTO sessions(id,cwd,harness,model,runtime_mode,title,blocks_json,created_at,updated_at,has_user_message,sidebar_hidden,
+            model_settings,archived,pinned,worktree_removed,is_draft,queued_messages_json)
+            VALUES(?1,?2,'codex','codex:model','supervised',?1,'not JSON',1,2,?3,?4,'{}',0,0,0,0,'[]')", params![id,cwd,user,hidden]).unwrap();
     }
     store
         .conn
@@ -265,7 +275,7 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
         .query_row("PRAGMA schema_version", [], |r| r.get(0))
         .unwrap();
     drop(store);
-    let original = std::fs::read(&path).unwrap();
+    let original = crate::orm::settled_bytes(&path);
     let store = Store::read_gespan(&path).unwrap();
     let sessions = store.sessions().unwrap();
     let ids: HashSet<_> = sessions
@@ -294,7 +304,8 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
             .unwrap(),
         schema_version
     );
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    drop(store);
+    assert_eq!(crate::orm::settled_bytes(&path), original);
     assert!(!path.with_file_name("gespan.db.gpui.json").exists());
 }
 
@@ -344,31 +355,74 @@ fn search_connections_share_the_same_read_only_preference_snapshot() {
     assert!(reader.create("codex", "/project").is_err());
 }
 
-#[test]
-fn original_desktop_schema_opens_without_schema_or_history_migration() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("gespan.db");
-    let conn = Connection::open(&path).unwrap();
+/// A file the first Tauri release left: eleven `sessions` columns.
+fn desktop_schema_v1(path: &Path) -> Connection {
+    let conn = Connection::open(path).unwrap();
     conn.execute_batch(DESKTOP_SCHEMA_V1).unwrap();
     conn.execute("INSERT INTO sessions VALUES('old-string-id','/project','codex','codex:old','{}','supervised','Old title','thread','[{\"id\":\"u\",\"role\":\"user\",\"text\":\"Old history\"}]',1,2)",[]).unwrap();
-    let version: i64 = conn
-        .query_row("PRAGMA schema_version", [], |r| r.get(0))
-        .unwrap();
+    conn
+}
+
+#[test]
+fn original_desktop_schema_is_adopted_with_every_row_and_a_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    drop(desktop_schema_v1(&path));
     let original = std::fs::read(&path).unwrap();
-    let store = Store::open_gespan(&path).unwrap();
+    let mut store = Store::open_gespan(&path).unwrap();
     let session = store.sessions().unwrap().pop().unwrap();
     assert_eq!(
         store.persisted_session_id(session.id).unwrap(),
         "old-string-id"
     );
+    assert_eq!(session.title, "Old title");
+    assert!(session.has_messages, "a saved history counts as messages");
+    assert!(!session.archived && !session.pinned);
     assert_eq!(store.load(session.id).unwrap().rows[0].text, "Old history");
+    // Gespan owns the file now: every column exists and writes land.
+    assert_eq!(
+        store.agent_settings(session.id).unwrap().unwrap().access,
+        crate::agent::AccessMode::from_id("supervised")
+    );
+    store.set_pinned(&[session.id], true).unwrap();
+    store.set_reminders(&[session.id], 1000).unwrap();
+    assert!(store.sessions().unwrap()[0].pinned);
+    // The file as Tauri left it is kept beside it.
+    let backup = dir.path().join("gespan.db.bak-pre-toasty");
+    let kept = Connection::open(&backup).unwrap();
+    let columns: i64 = kept
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('sessions')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(columns, 11);
+    assert_ne!(std::fs::read(&path).unwrap(), original);
+    assert!(!path.with_file_name("gespan.db.gpui.json").exists());
+}
+
+#[test]
+fn reading_a_file_gespan_has_not_adopted_leaves_it_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let conn = desktop_schema_v1(&path);
+    let version: i64 = conn
+        .query_row("PRAGMA schema_version", [], |r| r.get(0))
+        .unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let store = Store::read_gespan(&path).unwrap();
+    let session = store.sessions().unwrap().pop().unwrap();
+    assert_eq!(store.load(session.id).unwrap().rows[0].text, "Old history");
+    assert!(store.title(session.id, "Must not write").is_err());
+    drop(store);
     assert_eq!(
         conn.query_row("PRAGMA schema_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
         version
     );
     assert_eq!(std::fs::read(&path).unwrap(), original);
-    assert!(!path.with_file_name("gespan.db.gpui.json").exists());
+    assert!(!dir.path().join("gespan.db.bak-pre-toasty").exists());
 }
 
 #[test]
@@ -385,7 +439,7 @@ fn indexed_pilot_history_stays_in_its_desktop_tables_with_block_ids_intact() {
         json!({"id":"pilot-answer","role":"assistant","text":"Original answer"}),
         json!({"id":"pilot-draft","role":"user","text":"Draft","draft":true}),
     ];
-    let tx = store.conn.unchecked_transaction().unwrap();
+    let tx = store.begin().unwrap();
     store.shared_store_blocks(id, &blocks).unwrap();
     tx.commit().unwrap();
     let first_raw: String = store
@@ -446,20 +500,30 @@ fn desktop_open_uses_existing_records_and_does_not_rewrite_the_database() {
     assert!(id.parse::<i64>().is_err());
     assert_eq!(store.sessions().unwrap().len(), 1);
     drop(store);
-    let original = std::fs::read(&path).unwrap();
+    // The Toasty connection closes on its own task, so its last commits may
+    // still be in the WAL: fold them into the file before comparing bytes.
+    let settled = || {
+        Connection::open(&path)
+            .unwrap()
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .unwrap();
+        std::fs::read(&path).unwrap()
+    };
+    let original = settled();
     let store = Store::open_gespan(&path).unwrap();
     assert_eq!(store.sessions().unwrap()[0].id, row.id);
     assert_eq!(store.persisted_session_id(row.id).unwrap(), id);
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(settled(), original);
     assert!(!has_table(&store.conn, "native_sessions").unwrap());
 }
 
 fn saved(store: &Store, blocks: Value) -> (i64, String) {
     let original = "existing-session-uuid";
     store.conn.execute("INSERT INTO sessions(id,cwd,harness,model,model_settings,runtime_mode,title,provider_session_id,
-        blocks_json,created_at,updated_at,has_user_message,provider_account_id)
+        blocks_json,created_at,updated_at,has_user_message,provider_account_id,
+        archived,pinned,worktree_removed,is_draft,queued_messages_json,sidebar_hidden)
         VALUES(?1,'/project','codex','codex:model-one','{\"reasoningEffort\":\"high\",\"futureSetting\":\"keep\"}',
-        'auto-accept-edits','Original title','provider-thread',?2,100,200,1,'account-original')",
+        'auto-accept-edits','Original title','provider-thread',?2,100,200,1,'account-original',0,0,0,0,'[]',0)",
         params![original,blocks.to_string()]).unwrap();
     let session = store
         .sessions()
@@ -760,8 +824,8 @@ fn notes_reminders_search_and_read_only_connections_use_the_same_data() {
         &store,
         json!([{"id":"u","role":"user","text":"A searchable message"}]),
     );
-    store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,source_session_id,source_cwd,created_at,updated_at,artifact_kind)
-        VALUES('existing-note','stable-slug','Note','Body','[\"tag\"]',?1,'/project',1,2,'document')",[&source]).unwrap();
+    store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,source_session_id,source_cwd,created_at,updated_at,artifact_kind,slug_pending,content_kind)
+        VALUES('existing-note','stable-slug','Note','Body','[\"tag\"]',?1,'/project',1,2,'document',0,'note')",[&source]).unwrap();
     let mut note = store.notes().unwrap().pop().unwrap();
     assert_eq!(note.source_session, id);
     note.body = "Edited note".into();
@@ -1292,23 +1356,6 @@ fn a_steer_with_an_earlier_turns_start_still_joins_the_running_turn() {
     .unwrap();
     assert_eq!(turns[&5].joined_turn, Some(3));
     assert_eq!(turns[&5].started_at, None);
-}
-
-#[test]
-fn a_database_without_the_ask_column_refuses_rather_than_listing_the_session() {
-    let mut store = Store::open_gespan(Path::new(":memory:")).unwrap();
-    store.shared.as_mut().unwrap().columns.remove("inbox_ask");
-    let context = crate::inbox::ask::Context {
-        key: "github:github.com:/acme/widgets/pull/1".into(),
-        title: "Item".into(),
-        ..Default::default()
-    };
-    let error = store
-        .open_inbox_ask("codex", "/project", &context, &Default::default())
-        .unwrap_err();
-    assert!(error.contains("Ask"), "{error}");
-    assert!(store.sessions().unwrap().is_empty());
-    assert!(store.inbox_ask(&context.key).unwrap().is_none());
 }
 
 fn bare_shell_session(store: &Store, data: &Path, harness: &str) -> i64 {

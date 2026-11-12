@@ -1,15 +1,17 @@
 //! Session storage. Desktop launches use Gespan's existing schema directly.
 mod app_access;
+pub(crate) mod db;
 mod gespan_import;
 mod in_flight;
 mod inbox_ask;
 mod managed_sessions;
-mod my_tasks;
+pub(crate) mod my_tasks;
 mod notes;
 mod pilots;
 mod provider_ids;
 mod remote;
 mod remote_legacy;
+pub(crate) mod schema;
 pub use remote::{RemoteProject, RemoteSession, RemoteUpload};
 pub(crate) use shared::handle as desktop_session_handle;
 mod session_metadata;
@@ -91,11 +93,72 @@ fn local_session(r: &rusqlite::Row) -> rusqlite::Result<Session> {
 }
 
 pub struct Store {
+    /// For [`Store::open`], the legacy `native_*` tables. For the shared
+    /// store, a plain connection to the same database: a read-only store runs
+    /// its SQL here; a writable one runs everything on [`Self::orm`] and keeps
+    /// this only so tests can arrange rows (and, in memory, to keep the
+    /// database alive).
     conn: Connection,
     path: std::path::PathBuf,
+    /// Where the Toasty database lives: `path`, or for `:memory:` a named
+    /// in-memory database `conn` shares.
+    orm_path: std::path::PathBuf,
     shared: Option<shared::Shared>,
+    /// The database through Toasty (`orm::Kind::Gespan`). The shared store
+    /// opens it with the store; `Store::open` on first use.
+    orm: std::cell::OnceCell<crate::orm::Database>,
+    /// A read-only store on a file Gespan has not adopted yet reads an
+    /// adopted copy kept here, so the file itself is never changed.
+    _snapshot: Option<tempfile::TempDir>,
 }
+
+/// A named in-memory database that every connection opening it shares, so a
+/// store's Toasty database and its plain connection see the same rows.
+fn memory_path() -> std::path::PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!(
+        "file:gespan-memory-{}-{n}?mode=memory&cache=shared",
+        std::process::id()
+    )
+    .into()
+}
+
 impl Store {
+    /// This store's database through Toasty (`orm::Kind::Gespan`), opened,
+    /// adopted and migrated on first use.
+    pub(crate) fn orm(&self) -> Result<&crate::orm::Database, String> {
+        if let Some(database) = self.orm.get() {
+            return Ok(database);
+        }
+        if self.shared.as_ref().is_some_and(|shared| shared.read_only) {
+            return Err("This Gespan store is read-only".into());
+        }
+        let database = crate::orm::open(crate::orm::Kind::Gespan, &self.orm_path)?;
+        Ok(self.orm.get_or_init(|| database))
+    }
+    /// Where this store's SQL runs: the Toasty database, or for a read-only
+    /// store its read-only connection.
+    pub(crate) fn sql(&self) -> Result<db::Sql<'_>, String> {
+        if self.shared.as_ref().is_some_and(|shared| shared.read_only) {
+            Ok(db::Sql::Conn(&self.conn))
+        } else {
+            self.orm().map(db::Sql::Orm)
+        }
+    }
+    /// Where this store's sessions live: the shared tables, or for
+    /// `Store::open` the native ones.
+    pub(crate) fn session_sql(&self) -> Result<db::Sql<'_>, String> {
+        if self.shared.is_some() {
+            self.sql()
+        } else {
+            Ok(db::Sql::Conn(&self.conn))
+        }
+    }
+    /// A write transaction over the tables this store's sessions live in.
+    pub(crate) fn begin(&self) -> Result<db::SqlTx<'_>, String> {
+        self.session_sql()?.begin()
+    }
     pub fn reset_provider_id_if(&self, id: i64, expected: Option<&str>) -> Result<(), String> {
         if self.shared.is_some() {
             return self.shared_reset_provider_id_if(id, expected);
@@ -141,11 +204,21 @@ impl Store {
     }
     /// Legacy prototype fixtures. Desktop launches use open_gespan, including
     /// isolated development launches, so production history needs no conversion.
+    ///
+    /// The `native_*` tables stay on hand-written rusqlite, schema code
+    /// included: only fixtures and tests open them, and nothing ships data in
+    /// them. Notes and My tasks in the same file go through Toasty like the
+    /// shared store's.
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
-        let conn = Connection::open(path).map_err(|e| e.to_string())?;
+        let orm_path = if path == Path::new(":memory:") {
+            memory_path()
+        } else {
+            path.into()
+        };
+        let conn = Connection::open(&orm_path).map_err(|e| e.to_string())?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|e| e.to_string())?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
@@ -218,7 +291,10 @@ impl Store {
         Ok(Self {
             conn,
             path: path.into(),
+            orm_path,
             shared: None,
+            orm: Default::default(),
+            _snapshot: None,
         })
     }
     /// The selected desktop or isolated-development database.
@@ -656,7 +732,10 @@ impl Store {
         Ok(Some(Self {
             conn,
             path: self.path.clone(),
+            orm_path: self.orm_path.clone(),
             shared: None,
+            orm: Default::default(),
+            _snapshot: None,
         }))
     }
     /// Stream saved message bodies without loading conversations into the UI.

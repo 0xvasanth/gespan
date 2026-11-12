@@ -1,12 +1,9 @@
 //! Board schema v8: `board_settings.run_in_worktree` and `run_worktree_choice`.
+use gespan_board_store::testing::{self, Fixture};
 use gespan_board_store::*;
-use rusqlite::Connection;
 
-fn fresh() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    ensure_tables(&conn).unwrap();
-    conn
+fn fresh() -> Fixture {
+    testing::fresh()
 }
 
 #[test]
@@ -24,17 +21,20 @@ fn a_board_from_before_v8_keeps_running_in_place() {
     let conn = fresh();
     let with_row = create_board(&conn, "With settings").unwrap();
     let without_row = create_board(&conn, "Without settings").unwrap();
-    conn.execute_batch(&format!(
-        "ALTER TABLE board_settings DROP COLUMN run_in_worktree;
+    conn.raw()
+        .execute_batch(&format!(
+            "ALTER TABLE board_settings DROP COLUMN run_in_worktree;
          ALTER TABLE board_settings DROP COLUMN run_worktree_choice;
          DELETE FROM board_settings WHERE board_id = '{}';
-         UPDATE board_schema SET version = 7;",
-        without_row.id
-    ))
-    .unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), 7);
-    ensure_tables(&conn).unwrap();
-    assert_eq!(migrate::version(&conn).unwrap(), SCHEMA_VERSION);
+         DROP TABLE __toasty_migrations;
+         CREATE TABLE board_schema (version INTEGER NOT NULL);
+         INSERT INTO board_schema (version) VALUES (7);",
+            without_row.id
+        ))
+        .unwrap();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), 7);
+    let conn = conn.reopen();
+    assert_eq!(migrate::version(conn.raw()).unwrap(), SCHEMA_VERSION);
     for board in [&with_row, &without_row] {
         let settings = board_settings(&conn, &board.id).unwrap();
         assert!(!settings.run_in_worktree, "{}", board.name);

@@ -187,14 +187,11 @@ mod tests {
                 .unwrap();
         }
         // Any activity write for the broken card aborts, so its move fails.
-        service
-            .conn
-            .execute_batch(&format!(
-                "CREATE TEMP TRIGGER refuse BEFORE INSERT ON board_activity \
-                 WHEN NEW.card_id = '{}' BEGIN SELECT RAISE(ABORT, 'refused'); END;",
-                broken.id
-            ))
-            .unwrap();
+        service.execute_on_own_connection(&format!(
+            "CREATE TEMP TRIGGER refuse BEFORE INSERT ON board_activity \
+             WHEN NEW.card_id = '{}' BEGIN SELECT RAISE(ABORT, 'refused'); END",
+            broken.id
+        ));
         let error =
             on_linked_work(&mut service, "session", "s-1", LinkedWorkEvent::Started).unwrap_err();
         assert!(error.contains("refused"), "{error}");

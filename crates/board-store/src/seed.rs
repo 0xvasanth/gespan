@@ -1,9 +1,9 @@
 //! A deterministic large board for performance tests and manual scale checks
 //! (`examples/seed_board.rs`). Not part of either app's behaviour.
-use crate::ops::{db, new_id, write_tx, LIVE};
+use crate::db::{args, err, execute, query, query_opt, query_value, with_tx, Conn, Ex};
+use crate::models::{FieldRow, LabelRow};
+use crate::ops::{new_id, LIVE};
 use crate::validate_id;
-use rusqlite::{params, OptionalExtension};
-use rusqlite::{Connection, Transaction};
 
 /// 2026-10-26 00:00 UTC. Every seeded timestamp is an offset from it, so two
 /// seeds hold the same data.
@@ -62,66 +62,30 @@ pub struct SeedReport {
 ///   option `n % 4`; field 1 (and every odd field) is text holding "Note {n}";
 /// - every `link_every`-th card has a `session` link `seed-{n}`;
 /// - activity rows cycle started / completed / failed.
-pub fn seed_board(
-    conn: &Connection,
+pub fn seed_board(conn: &Conn, board_id: &str, spec: &SeedSpec) -> Result<SeedReport, String> {
+    validate_id(board_id, "board")?;
+    with_tx!(conn, |ex| seed_board_in(ex, board_id, spec).await)
+}
+
+async fn seed_board_in(
+    ex: &mut Ex<'_>,
     board_id: &str,
     spec: &SeedSpec,
 ) -> Result<SeedReport, String> {
-    validate_id(board_id, "board")?;
-    let tx = write_tx(conn)?;
-    let card_seq: i64 = tx
-        .query_row(
-            "SELECT card_seq FROM boards WHERE id = ?1",
-            [board_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(db)?
-        .ok_or_else(|| "Board not found".to_string())?;
-    let columns = board_columns(&tx, board_id)?;
+    let card_seq: i64 = query_opt(
+        ex,
+        "SELECT card_seq FROM boards WHERE id = ?1",
+        args![board_id],
+    )
+    .await?
+    .ok_or_else(|| "Board not found".to_string())?
+    .get(0)?;
+    let columns = board_columns(ex, board_id).await?;
     if columns.is_empty() && spec.cards > 0 {
         return Err("Board has no columns".into());
     }
-    let label_ids = seed_labels(&tx, board_id, spec.labels)?;
-    let fields = seed_fields(&tx, board_id, spec.fields)?;
-
-    let mut card = tx
-        .prepare(
-            "INSERT INTO board_cards
-               (id, board_id, column_id, number, title, body, position, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, ?7)",
-        )
-        .map_err(db)?;
-    let mut meta = tx
-        .prepare("INSERT INTO board_card_meta (card_id, priority, due_at) VALUES (?1, ?2, ?3)")
-        .map_err(db)?;
-    let mut label = tx
-        .prepare("INSERT INTO board_card_labels (card_id, label_id) VALUES (?1, ?2)")
-        .map_err(db)?;
-    let mut value = tx
-        .prepare(
-            "INSERT INTO board_card_field_values (card_id, field_id, value_json)
-             VALUES (?1, ?2, ?3)",
-        )
-        .map_err(db)?;
-    let mut link = tx
-        .prepare(
-            "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
-             VALUES (?1, 'session', ?2, NULL, ?3)",
-        )
-        .map_err(db)?;
-    let mut activity = tx
-        .prepare(
-            "INSERT INTO board_activity (id, board_id, card_id, kind, actor, created_at)
-             VALUES (?1, ?2, ?3, ?4, 'system', ?5)",
-        )
-        .map_err(db)?;
-    let mut subtask = tx
-        .prepare(
-            "INSERT INTO board_subtasks (id, card_id, title, done, position)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-        )
-        .map_err(db)?;
+    let label_ids = seed_labels(ex, board_id, spec.labels).await?;
+    let fields = seed_fields(ex, board_id, spec.fields).await?;
 
     let mut next_position: Vec<i64> = columns.iter().map(|(_, live)| *live).collect();
     let mut card_ids = Vec::with_capacity(spec.cards);
@@ -129,24 +93,38 @@ pub fn seed_board(
         let id = new_id();
         let at = (n - 1) % columns.len();
         let created_at = SEED_EPOCH_MS + n as i64 * 1_000;
-        card.execute(params![
-            id,
-            board_id,
-            columns[at].0,
-            card_seq + n as i64,
-            format!("Card {n}"),
-            next_position[at],
-            created_at,
-        ])
-        .map_err(db)?;
+        execute(
+            ex,
+            "INSERT INTO board_cards
+               (id, board_id, column_id, number, title, body, position, created_at, updated_at,
+                title_from_ticket, body_from_ticket)
+             VALUES (?1, ?2, ?3, ?4, ?5, '', ?6, ?7, ?7, 0, 0)",
+            args![
+                &id,
+                board_id,
+                &columns[at].0,
+                card_seq + n as i64,
+                format!("Card {n}"),
+                next_position[at],
+                created_at
+            ],
+        )
+        .await?;
         next_position[at] += 1;
         let due_at = (n % 7 == 0).then(|| SEED_EPOCH_MS + ((n / 7) % 30) as i64 * DAY_MS);
-        meta.execute(params![id, (n % 5) as i64, due_at])
-            .map_err(db)?;
+        execute(
+            ex,
+            "INSERT INTO board_card_meta (card_id, priority, due_at) VALUES (?1, ?2, ?3)",
+            args![&id, (n % 5) as i64, due_at],
+        )
+        .await?;
         if !label_ids.is_empty() {
-            label
-                .execute(params![id, label_ids[n % label_ids.len()]])
-                .map_err(db)?;
+            execute(
+                ex,
+                "INSERT INTO board_card_labels (card_id, label_id) VALUES (?1, ?2)",
+                args![&id, &label_ids[n % label_ids.len()]],
+            )
+            .await?;
         }
         for (field_id, is_select) in &fields {
             let json = if *is_select {
@@ -154,45 +132,61 @@ pub fn seed_board(
             } else {
                 serde_json::Value::from(format!("Note {n}"))
             };
-            value
-                .execute(params![id, field_id, json.to_string()])
-                .map_err(db)?;
+            execute(
+                ex,
+                "INSERT INTO board_card_field_values (card_id, field_id, value_json)
+                 VALUES (?1, ?2, ?3)",
+                args![&id, field_id, json.to_string()],
+            )
+            .await?;
         }
         if spec.link_every > 0 && n % spec.link_every == 0 {
-            link.execute(params![id, format!("seed-{n}"), created_at])
-                .map_err(db)?;
+            execute(
+                ex,
+                "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
+                 VALUES (?1, 'session', ?2, NULL, ?3)",
+                args![&id, format!("seed-{n}"), created_at],
+            )
+            .await?;
         }
         for j in 0..spec.activity_per_card {
-            activity
-                .execute(params![
+            execute(
+                ex,
+                "INSERT INTO board_activity (id, board_id, card_id, kind, actor, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'system', ?5)",
+                args![
                     new_id(),
                     board_id,
-                    id,
+                    &id,
                     RUN_KINDS[(n + j) % RUN_KINDS.len()],
-                    created_at + 1 + j as i64,
-                ])
-                .map_err(db)?;
+                    created_at + 1 + j as i64
+                ],
+            )
+            .await?;
         }
         for j in 0..spec.subtasks_per_card {
-            subtask
-                .execute(params![
+            execute(
+                ex,
+                "INSERT INTO board_subtasks (id, card_id, title, done, position)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                args![
                     new_id(),
-                    id,
+                    &id,
                     format!("Subtask {}", j + 1),
-                    (j % 2 == 0) as i64,
-                    j as i64,
-                ])
-                .map_err(db)?;
+                    j % 2 == 0,
+                    j as i64
+                ],
+            )
+            .await?;
         }
         card_ids.push(id);
     }
-    drop((card, meta, label, value, link, activity, subtask));
-    tx.execute(
+    execute(
+        ex,
         "UPDATE boards SET card_seq = card_seq + ?1 WHERE id = ?2",
-        params![spec.cards as i64, board_id],
+        args![spec.cards as i64, board_id],
     )
-    .map_err(db)?;
-    tx.commit().map_err(db)?;
+    .await?;
     Ok(SeedReport {
         board_id: board_id.to_string(),
         card_ids,
@@ -203,81 +197,80 @@ pub fn seed_board(
 }
 
 /// The board's columns in order, each with its live card count.
-fn board_columns(tx: &Transaction<'_>, board_id: &str) -> Result<Vec<(String, i64)>, String> {
-    let mut statement = tx
-        .prepare(&format!(
+async fn board_columns(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<(String, i64)>, String> {
+    query(
+        ex,
+        &format!(
             "SELECT col.id, (SELECT COUNT(*) FROM board_cards
                              WHERE column_id = col.id AND {LIVE})
              FROM board_columns col WHERE col.board_id = ?1
              ORDER BY col.position, col.rowid"
-        ))
-        .map_err(db)?;
-    let rows = statement
-        .query_map([board_id], |r| Ok((r.get(0)?, r.get(1)?)))
-        .map_err(db)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(db);
-    rows
+        ),
+        args![board_id],
+    )
+    .await?
+    .iter()
+    .map(|r| Ok((r.get(0)?, r.get(1)?)))
+    .collect()
 }
 
 /// Labels "Seed {i}" after the board's own, with a fixed palette.
-fn seed_labels(tx: &Transaction<'_>, board_id: &str, count: usize) -> Result<Vec<String>, String> {
-    let start: i64 = tx
-        .query_row(
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM board_labels WHERE board_id = ?1",
-            [board_id],
-            |r| r.get(0),
-        )
-        .map_err(db)?;
+async fn seed_labels(ex: &mut Ex<'_>, board_id: &str, count: usize) -> Result<Vec<String>, String> {
+    let start: i64 = query_value(
+        ex,
+        "SELECT COALESCE(MAX(position) + 1, 0) FROM board_labels WHERE board_id = ?1",
+        args![board_id],
+    )
+    .await?;
     let mut ids = Vec::with_capacity(count);
     for i in 0..count {
         let id = new_id();
-        tx.execute(
-            "INSERT INTO board_labels (id, board_id, name, color, position)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                id,
-                board_id,
-                format!("Seed {}", start + i as i64 + 1),
-                LABEL_COLORS[i % LABEL_COLORS.len()],
-                start + i as i64,
-            ],
-        )
-        .map_err(db)?;
+        LabelRow::create()
+            .id(&id)
+            .board_id(board_id)
+            .name(format!("Seed {}", start + i as i64 + 1))
+            .color(LABEL_COLORS[i % LABEL_COLORS.len()])
+            .position(start + i as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         ids.push(id);
     }
     Ok(ids)
 }
 
 /// Fields after the board's own: even ones select (A B C D), odd ones text.
-fn seed_fields(
-    tx: &Transaction<'_>,
+async fn seed_fields(
+    ex: &mut Ex<'_>,
     board_id: &str,
     count: usize,
 ) -> Result<Vec<(String, bool)>, String> {
-    let start: i64 = tx
-        .query_row(
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM board_fields WHERE board_id = ?1",
-            [board_id],
-            |r| r.get(0),
-        )
-        .map_err(db)?;
+    let start: i64 = query_value(
+        ex,
+        "SELECT COALESCE(MAX(position) + 1, 0) FROM board_fields WHERE board_id = ?1",
+        args![board_id],
+    )
+    .await?;
     let options = serde_json::to_string(&SELECT_OPTIONS).map_err(|e| e.to_string())?;
     let mut fields = Vec::with_capacity(count);
     for i in 0..count {
         let id = new_id();
         let is_select = i % 2 == 0;
         let (name, kind, options) = if is_select {
-            (format!("Stage {}", i + 1), "select", Some(options.as_str()))
+            (format!("Stage {}", i + 1), "select", Some(options.clone()))
         } else {
             (format!("Notes {}", i + 1), "text", None)
         };
-        tx.execute(
-            "INSERT INTO board_fields (id, board_id, name, kind, options_json, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, board_id, name, kind, options, start + i as i64],
-        )
-        .map_err(db)?;
+        FieldRow::create()
+            .id(&id)
+            .board_id(board_id)
+            .name(name)
+            .kind(kind)
+            .options_json(options)
+            .position(start + i as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         fields.push((id, is_select));
     }
     Ok(fields)
