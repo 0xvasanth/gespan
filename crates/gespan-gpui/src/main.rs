@@ -9,6 +9,8 @@ mod app_menu;
 mod arcade;
 mod assets;
 mod automations;
+#[cfg(debug_assertions)]
+mod bench;
 mod board;
 mod browser;
 mod browser_pane;
@@ -485,6 +487,13 @@ fn main() {
             .unwrap_or(std::path::Path::new("."))
             .join("inbox-media"),
     );
+    // `bun run bench` starts from its own seeded chats, never first-run setup.
+    #[cfg(debug_assertions)]
+    if !use_gespan && bench::Mode::from_env().is_some() {
+        bench::seed(&mut db, &cwd).unwrap_or_else(|error| {
+            fatal(echo, 1, &format!("Cannot seed the benchmark data: {error}"))
+        });
+    }
     let saved = db.ui_state().unwrap_or_else(|e| {
         tracing::warn!(error = %e, "cannot read workspace settings");
         None
@@ -617,6 +626,8 @@ fn main() {
         .detach();
         #[cfg(debug_assertions)]
         dev_reload::install(cx);
+        #[cfg(debug_assertions)]
+        bench::install(cx);
         cx.set_global(title_raster);
         image_memory::init(cx);
         #[cfg(target_os = "macos")]

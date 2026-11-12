@@ -56,3 +56,6 @@ Desktop.ini
 
 # Local planning notes from agent skills (plans, specs); never committed
 docs/superpowers/
+
+# `bun run bench` results; the baseline lives in crates/gespan-gpui/bench/
+output/bench/
