@@ -8391,18 +8391,23 @@ fn rule_picker_shows_stay_for_a_deleted_column(cx: &mut TestAppContext) {
 /// Every board_settings column for `board`, as SQL literals, so "nothing was
 /// written" compares the raw row (not a parse of it).
 fn raw_settings_row(f: &Fixture, board: &str) -> String {
-    rusqlite::Connection::open(&f.db)
-        .unwrap()
-        .query_row(
-            "SELECT quote(run_with) || '|' || quote(write_back) || '|' ||
-                    quote(ticket_status_changes) || '|' || quote(auto_move_json) || '|' ||
-                    quote(icon) || '|' || quote(color) || '|' || quote(default_view_id) || '|' ||
-                    quote(display_json) || '|' || quote(priority_json)
-             FROM board_settings WHERE board_id = ?1",
-            [board],
-            |r| r.get(0),
-        )
-        .unwrap()
+    // Every column, by position, so it reads the row whatever a test has
+    // renamed (the settings tests break the row by renaming a column).
+    let conn = rusqlite::Connection::open(&f.db).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT * FROM board_settings WHERE board_id = ?1")
+        .unwrap();
+    let columns = stmt.column_count();
+    stmt.query_row([board], |r| {
+        (0..columns)
+            .map(|i| {
+                r.get::<_, rusqlite::types::Value>(i)
+                    .map(|v| format!("{v:?}"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|cells| cells.join("|"))
+    })
+    .unwrap()
 }
 
 fn raw_layout(f: &Fixture, view: &str) -> String {
@@ -8451,11 +8456,13 @@ fn an_unreadable_settings_row_writes_nothing_and_retry_recovers(cx: &mut TestApp
             },
         )
         .unwrap();
-    // Break the row for real: text in an integer column fails the read.
+    // Break the row for real: a column the read asks for is gone, so it
+    // fails with an error. (A wrong-typed value would panic Toasty's SQLite
+    // driver instead.)
     let raw = rusqlite::Connection::open(&f.db).unwrap();
     raw.execute(
-        "UPDATE board_settings SET run_with = 'garbage' WHERE board_id = ?1",
-        [&board],
+        "ALTER TABLE board_settings RENAME COLUMN run_with TO run_with_lost",
+        [],
     )
     .unwrap();
     assert!(Service::open(&f.db).unwrap().settings(&board).is_err());
@@ -8555,8 +8562,8 @@ fn an_unreadable_settings_row_writes_nothing_and_retry_recovers(cx: &mut TestApp
 
     // Repair the row; Retry shows the stored values and edits save again.
     raw.execute(
-        "UPDATE board_settings SET run_with = 1 WHERE board_id = ?1",
-        [&board],
+        "ALTER TABLE board_settings RENAME COLUMN run_with_lost TO run_with",
+        [],
     )
     .unwrap();
     click(visual, "settings-retry");
@@ -8594,14 +8601,11 @@ fn a_failed_template_list_still_lets_the_switcher_create_a_blank_board(cx: &mut 
     let f = with_board(cx);
     let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
     let today = column_names(&f, visual);
-    // A saved template whose name is a blob: listing templates fails.
+    // The templates table is gone: listing templates fails with an error.
+    // (A wrong-typed value would panic Toasty's SQLite driver instead.)
     rusqlite::Connection::open(&f.db)
         .unwrap()
-        .execute(
-            "INSERT INTO board_templates (id, name, spec_json, created_at)
-             VALUES ('broken', X'00ff', '{}', 0)",
-            [],
-        )
+        .execute("DROP TABLE board_templates", [])
         .unwrap();
     assert!(Service::open(&f.db).unwrap().templates().is_err());
     let before = boards(&f).len();
