@@ -1,0 +1,27 @@
+crates/gespan-core/src/store/shared/tests.rs
+  s_a2c0f0f2f96e87::t_28863d6bd92b62 278,307-308
+.gitattributes
+  s_a2c0f0f2f96e87::t_41d070135ed616 15-18
+crates/gespan-core/src/store/shared/settings.rs
+  s_a2c0f0f2f96e87::t_28863d6bd92b62 176,189
+crates/gespan-core/src/orm.rs
+  s_a2c0f0f2f96e87::t_28863d6bd92b62 160-172
+crates/gespan-core/src/orm/tests.rs
+  s_a2c0f0f2f96e87::t_41d070135ed616 696-725
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34652f5e66bc41cd2ad2e26d97163196424bb5f7",
+  "prompts": {},
+  "sessions": {
+    "s_a2c0f0f2f96e87": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "987e0157-6296-4913-9c4e-307a37978b74",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
