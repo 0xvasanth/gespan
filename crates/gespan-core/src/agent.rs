@@ -113,6 +113,9 @@ pub struct Settings {
     /// What this turn's agent may reach through the tool endpoint.
     #[serde(skip)]
     pub mount: Option<crate::tool_servers::Mount>,
+    /// The review policy this turn runs under, when it is a review.
+    #[serde(skip)]
+    pub review: Option<crate::review_policy::ReviewPolicy>,
     /// Accounts for an orchestration planning turn's model catalog.
     #[serde(skip)]
     pub orchestration_profiles: Vec<(crate::provider::Kind, crate::accounts::Profile)>,

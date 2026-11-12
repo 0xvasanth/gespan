@@ -1,6 +1,7 @@
 //! Native provider transports, ported from Gespan's TS adapters.
 //! Blocking work belongs to a worker; never call `run` from a render/input handler.
 use crate::agent::{AccessMode, Approval, Control, Decision, Settings, TurnMetrics};
+use crate::review_policy::{self, Verdict};
 use crate::tool::{ToolCall, ToolState};
 use crate::{process, transcript::snapshot_remainder};
 use serde_json::{json, Value};
@@ -529,6 +530,16 @@ impl Protocol {
             severity: None,
         }
     }
+    /// The review policy's answer for this permission request, or `None` when
+    /// no policy applies. Only Claude's Bash tool is covered so far.
+    fn review_verdict(&self, kind: &str, request: &Value) -> Option<Verdict> {
+        let policy = self.request.settings.review.as_ref()?;
+        if kind == "claude" && request["tool_name"] == "Bash" {
+            let command = request["input"]["command"].as_str()?;
+            return Some(review_policy::verdict(policy, command));
+        }
+        None
+    }
     fn approval(
         &mut self,
         wire: Value,
@@ -577,9 +588,31 @@ impl Protocol {
             && request["input"]["command"]
                 .as_str()
                 .is_some_and(claude::read_only::allowed);
+        let review = self.review_verdict(kind, &request);
         self.approvals
             .insert(id.clone(), (wire, kind.into(), request));
-        if read_only_query {
+        match review {
+            Some(Verdict::Allow) => {
+                return self.respond(
+                    Control {
+                        id,
+                        decision: Decision::Allow,
+                    },
+                    stdin,
+                );
+            }
+            Some(Verdict::Deny) => {
+                return self.respond(
+                    Control {
+                        id,
+                        decision: Decision::Deny,
+                    },
+                    stdin,
+                );
+            }
+            _ => {}
+        }
+        if read_only_query && review.is_none() {
             return self.respond(
                 Control {
                     id,
@@ -588,7 +621,7 @@ impl Protocol {
                 stdin,
             );
         }
-        if self.request.settings.plan || read_only {
+        if self.request.settings.plan || (read_only && review != Some(Verdict::Ask)) {
             return self.respond(
                 Control {
                     id,
@@ -2139,6 +2172,63 @@ cat >/dev/null"#,
         assert!(
             p.approvals.is_empty(),
             "every answered request is forgotten"
+        );
+    }
+    #[test]
+    fn claude_review_policy_decides_bash() {
+        use crate::review_policy::{ReviewPolicy, ReviewResults, ReviewTarget};
+        let with = |results, review: bool| {
+            let mut p = protocol(Kind::Claude);
+            p.request.settings.access = AccessMode::ReadOnly;
+            p.request.settings.review = review.then(|| ReviewPolicy {
+                results,
+                target: Some(ReviewTarget {
+                    repo: "acme/app".into(),
+                    number: 7,
+                }),
+            });
+            p
+        };
+        let read = "gh pr diff 7 -R acme/app";
+        let post = "gh pr review 7 -R acme/app --comment -b \"x\"";
+        let merge = "gh pr merge 7 -R acme/app";
+        for results in [
+            ReviewResults::Gespan,
+            ReviewResults::Draft,
+            ReviewResults::Post,
+        ] {
+            let mut p = with(results, true);
+            let (events, response) = claude_bash(&mut p, read);
+            assert!(events.is_empty(), "{results:?}: {events:?}");
+            assert_eq!(response["behavior"], "allow", "{results:?}");
+            let (events, response) = claude_bash(&mut p, merge);
+            assert!(events.is_empty(), "{results:?}: {events:?}");
+            assert_eq!(response["behavior"], "deny", "{results:?}");
+        }
+        let mut p = with(ReviewResults::Draft, true);
+        let (events, response) = claude_bash(&mut p, post);
+        assert_eq!(response, Value::Null, "draft waits for the user");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, Event::Approval(_)))
+                .count(),
+            1
+        );
+        let mut p = with(ReviewResults::Post, true);
+        let (events, response) = claude_bash(&mut p, post);
+        assert!(events.is_empty());
+        assert_eq!(response["behavior"], "allow");
+        let mut p = with(ReviewResults::Gespan, true);
+        let (events, response) = claude_bash(&mut p, post);
+        assert!(events.is_empty());
+        assert_eq!(response["behavior"], "deny");
+        let mut p = with(ReviewResults::Gespan, false);
+        let (events, response) = claude_bash(&mut p, read);
+        assert!(events.is_empty());
+        assert_eq!(
+            response["behavior"], "deny",
+            "no policy: read-only denies gh"
         );
     }
     #[test]
