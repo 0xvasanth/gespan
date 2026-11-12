@@ -315,6 +315,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
 /// that Linux tests get from server decorations.
 #[cfg(target_os = "windows")]
 const WINDOWS_CONTROLS: bool = cfg!(not(test));
+/// How often idle title tabs are looked for after launch.
+const IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 pub(crate) fn client_controls_width(window: &Window) -> f32 {
     #[cfg(target_os = "linux")]
@@ -841,6 +843,8 @@ pub(crate) struct Shell {
     folder_picker: Option<session_folders::Open>,
     pending_folder: Option<(i64, AnchorSlot)>,
     _session_clock: gpui::Task<()>,
+    /// Closes idle title tabs at launch and every `IDLE_CHECK` after.
+    idle_clock: Option<gpui::Task<()>>,
     notes: Option<Entity<Notes>>,
     /// The sidebar's Notes count; `None` until the store has answered.
     inbox: Option<Entity<crate::inbox::Inbox>>,
@@ -1110,7 +1114,8 @@ impl Shell {
             }
         });
         let metadata: Vec<_> = summaries.iter().map(|s| (s.id, s.cwd.clone())).collect();
-        let workspace = Workspace::restore(saved.as_deref(), &metadata, &cwd);
+        let mut workspace = Workspace::restore(saved.as_deref(), &metadata, &cwd);
+        workspace.start_tab_clocks(title_tabs::unix_now());
         gespan_core::cli::initialize(&workspace.preferences.binary_paths);
         for (project, saved) in &workspace.actions {
             actions::publish_personal(project, saved);
@@ -1296,6 +1301,7 @@ impl Shell {
             folder_picker: None,
             pending_folder: None,
             _session_clock: session_clock,
+            idle_clock: None,
             notes: None,
             inbox: None,
             automations: None,
@@ -4736,6 +4742,9 @@ impl Shell {
         }
         self.workspace.worktree_focus = self.worktree_focus.clone();
         self.workspace.normalize_title_order();
+        if let Some(tab) = self.active_title_tab(cx) {
+            self.note_tab_focus(&tab);
+        }
         self.group_title_order(cx);
         self.sync_git(cx);
         self.update_chat_visibility(cx);
@@ -9292,6 +9301,17 @@ impl Render for Shell {
                     cx.notify();
                 }));
             self.start_native_notifications(cx);
+            self.idle_clock = Some(cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    let closed = this.update_in(cx, |this, window, cx| {
+                        this.close_idle_tabs(title_tabs::unix_now(), window, cx);
+                    });
+                    if closed.is_err() {
+                        break;
+                    }
+                    cx.background_executor().timer(IDLE_CHECK).await;
+                }
+            }));
             #[cfg(windows)]
             if !self.secondary {
                 self.start_tray(window, cx);

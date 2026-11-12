@@ -104,6 +104,25 @@ fn save_scope_focus<S: serde::Serializer>(
     s.collect_map(focus.iter().filter(|(_, tab)| tab.saved()))
 }
 
+/// JSON maps need string keys, so focus times are saved as `[tab, secs]` pairs.
+fn save_focused_at<S: serde::Serializer>(
+    times: &HashMap<TitleTab, i64>,
+    s: S,
+) -> Result<S::Ok, S::Error> {
+    s.collect_seq(times.iter().filter(|(tab, _)| tab.saved()))
+}
+
+/// Pairs that no longer parse are dropped on their own, like `lenient_tabs`.
+fn lenient_focused_at<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<HashMap<TitleTab, i64>, D::Error> {
+    let entries = Vec::<serde_json::Value>::deserialize(d)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| serde_json::from_value(entry).ok())
+        .collect())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub(crate) struct Workspace {
@@ -120,6 +139,13 @@ pub(crate) struct Workspace {
         deserialize_with = "lenient_focus"
     )]
     pub scope_focus: HashMap<String, TitleTab>,
+    /// When each title tab was last focused, in unix seconds. Tabs idle for
+    /// `strip_groups::IDLE_AFTER_SECS` leave the strip.
+    #[serde(
+        serialize_with = "save_focused_at",
+        deserialize_with = "lenient_focused_at"
+    )]
+    pub tab_focused_at: HashMap<TitleTab, i64>,
     /// Sidebar narrowing belongs to this run. Reopen on the full project,
     /// while saved conversations retain their own execution directories.
     #[serde(skip)]
@@ -203,6 +229,7 @@ impl Workspace {
             tabs: Vec::new(),
             title_order: Vec::new(),
             scope_focus: HashMap::new(),
+            tab_focused_at: HashMap::new(),
             worktree_focus: HashMap::new(),
             tab_workspaces: HashMap::new(),
             active: None,
@@ -239,6 +266,7 @@ impl Workspace {
         self.tabs = own.tabs;
         self.title_order = own.title_order;
         self.scope_focus = own.scope_focus;
+        self.tab_focused_at = own.tab_focused_at;
         self.worktree_focus = own.worktree_focus;
         self.tab_workspaces = own.tab_workspaces;
         self.active = own.active;
@@ -483,6 +511,7 @@ impl Default for Workspace {
             title_order: Vec::new(),
             pinned_tabs: Vec::new(),
             scope_focus: HashMap::new(),
+            tab_focused_at: HashMap::new(),
             worktree_focus: HashMap::new(),
             tab_workspaces: HashMap::new(),
             active: None,
@@ -1215,6 +1244,15 @@ impl Workspace {
             }
         }
         self.prune_pinned_tabs();
+        let order = &self.title_order;
+        self.tab_focused_at.retain(|tab, _| order.contains(tab));
+    }
+    /// Tabs with no focus time (saved before times were kept, or rekeyed)
+    /// start their clock at `now`, so they are never closed on sight.
+    pub fn start_tab_clocks(&mut self, now: i64) {
+        for tab in &self.title_order {
+            self.tab_focused_at.entry(tab.clone()).or_insert(now);
+        }
     }
     /// Pins follow their tabs: a tab that left the strip is no longer pinned.
     pub fn prune_pinned_tabs(&mut self) {

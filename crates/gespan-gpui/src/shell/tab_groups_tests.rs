@@ -1377,3 +1377,267 @@ fn dragging_in_a_scrolled_strip_lands_where_dropped(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// Seconds past the idle limit, so a tab focused this long ago is idle.
+const LONG_AGO: i64 = crate::strip_groups::IDLE_AFTER_SECS + 1;
+
+fn now() -> i64 {
+    super::title_tabs::unix_now()
+}
+
+#[gpui::test]
+fn idle_tab_leaves_the_strip_but_stays_in_the_sidebar(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    window
+        .update(cx, |shell, w, cx| {
+            let now = now();
+            let tab = TitleTab::Session(other);
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            let closed = shell.close_idle_tabs(now, w, cx);
+            assert_eq!(closed, std::slice::from_ref(&tab));
+            assert!(!shell.workspace.title_order.contains(&tab));
+            assert!(!shell.workspace.tabs.contains(&other));
+            assert!(!shell.workspace.tab_focused_at.contains_key(&tab));
+            // The chat itself is untouched: still listed, not archived.
+            assert!(shell.session_summaries.contains_key(&other));
+            assert!(!shell.session_metadata(other, cx).summary.archived);
+            assert!(!shell.session_summaries[&other].archived);
+            assert_eq!(shell.workspace.active, Some(here));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn recent_and_active_tabs_stay(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    window
+        .update(cx, |shell, w, cx| {
+            let now = now();
+            assert_eq!(shell.active_title_tab(cx), Some(TitleTab::Session(here)));
+            let focused = &mut shell.workspace.tab_focused_at;
+            focused.insert(TitleTab::Session(here), now - 50_000);
+            focused.insert(TitleTab::Session(other), now - 100);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty());
+            assert_eq!(
+                shell.workspace.title_order,
+                [TitleTab::Session(other), TitleTab::Session(here)]
+            );
+            // Just under the limit is still recent.
+            let limit = crate::strip_groups::IDLE_AFTER_SECS;
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(TitleTab::Session(other), now - limit);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty());
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn pinned_and_unsent_tabs_stay(cx: &mut TestAppContext) {
+    let (window, other, _) = window(cx);
+    window
+        .update(cx, |shell, w, cx| {
+            let now = now();
+            let tab = TitleTab::Session(other);
+            shell.toggle_pin_tab(tab.clone(), cx);
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty(), "pinned");
+            shell.toggle_pin_tab(tab.clone(), cx);
+            shell.sessions[&other].update(cx, |chat, cx| {
+                chat.input
+                    .update(cx, |input, cx| input.set_text("half a thought".into(), cx));
+            });
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty(), "unsent input");
+            shell.sessions[&other].update(cx, |chat, cx| {
+                chat.input
+                    .update(cx, |input, cx| input.set_text("".into(), cx));
+            });
+            assert_eq!(shell.close_idle_tabs(now, w, cx), [tab]);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn busy_split_pane_keeps_its_tab(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    window
+        .update(cx, |shell, w, cx| {
+            let now = now();
+            let beside = add_background_tab(shell, "/work/another-project", cx);
+            shell.ensure_session(beside, cx);
+            shell
+                .workspace
+                .place(beside, other, crate::pane_layout::Edge::Right);
+            shell.workspace.active = Some(here);
+            let key = shell.workspace.tab_of(other).unwrap();
+            assert_eq!(shell.workspace.layout(key).leaf_ids(), [other, beside]);
+            // The tab shows `other`; the pane beside it is the busy one.
+            shell.workspace.focused.insert(key, other);
+            shell.sessions[&beside].update(cx, |chat, _| chat.busy = true);
+            let tab = TitleTab::Session(key);
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty());
+            assert!(shell.workspace.title_order.contains(&tab));
+            shell.sessions[&beside].update(cx, |chat, _| chat.busy = false);
+            assert_eq!(shell.close_idle_tabs(now, w, cx), [tab]);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn tabs_with_terminal_panes_are_kept(cx: &mut TestAppContext) {
+    let (window, other, _) = window(cx);
+    window
+        .update(cx, |shell, w, cx| {
+            let now = now();
+            let terminal = -7;
+            shell.workspace.terminal_panes.insert(
+                terminal,
+                crate::workspace::TerminalPane {
+                    owner: other,
+                    cwd: "/work/another-project".into(),
+                },
+            );
+            shell.workspace.layouts.insert(
+                other,
+                crate::pane_layout::leaf(other).split_pane(
+                    other,
+                    crate::pane_layout::SplitDir::Right,
+                    terminal,
+                ),
+            );
+            let tab = TitleTab::Session(other);
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty());
+            assert!(shell.workspace.title_order.contains(&tab));
+            assert!(shell.workspace.terminal_panes.contains_key(&terminal));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn upgrade_without_focus_times_closes_nothing(cx: &mut TestAppContext) {
+    let store = gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+    let a = store.create("codex", "/work/another-project").unwrap();
+    let b = store.create("claude", "/work/gespan").unwrap();
+    let mut state = crate::workspace::Workspace::default();
+    state.add_project("/work/another-project");
+    state.add_project("/work/gespan");
+    state.open(a.id);
+    state.open(b.id);
+    // A workspace saved before tabs kept focus times.
+    let mut saved = serde_json::to_value(&state).unwrap();
+    saved.as_object_mut().unwrap().remove("tab_focused_at");
+    let saved = saved.to_string();
+    assert!(!saved.contains("tab_focused_at"));
+    let (a_id, b_id) = (a.id, b.id);
+    let store = Arc::new(Mutex::new(store));
+    let before = now();
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |_, cx| {
+            cx.new(|cx| Shell::new(store, vec![b, a], "/work/gespan".into(), Some(saved), cx))
+        })
+        .unwrap()
+    });
+    cx.refresh().unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, w, cx| {
+            let order = shell.workspace.title_order.clone();
+            assert_eq!(order.len(), 2);
+            for tab in &order {
+                let at = shell.workspace.tab_focused_at.get(tab).copied();
+                assert!(at.is_some_and(|at| at >= before), "{tab:?} timed at launch");
+            }
+            assert!(shell.close_idle_tabs(now(), w, cx).is_empty());
+            // Their clock started at launch, so they go once that's long ago.
+            let later = now() + LONG_AGO;
+            let closed = shell.close_idle_tabs(later, w, cx);
+            assert_eq!(closed, [TitleTab::Session(a_id)]);
+            assert_eq!(shell.workspace.title_order, [TitleTab::Session(b_id)]);
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn focus_time_round_trips_through_saved_workspace(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    let saved = window
+        .update(cx, |shell, _, _| {
+            let board = TitleTab::App(app_views::AppView::Board);
+            let flows = TitleTab::App(app_views::AppView::Flows);
+            let focused = &mut shell.workspace.tab_focused_at;
+            focused.insert(TitleTab::Session(other), 1_000);
+            focused.insert(TitleTab::Session(here), 2_000);
+            focused.insert(board.clone(), 3_000);
+            focused.insert(flows.clone(), 4_000);
+            // A time for a tab no longer on the strip is dropped.
+            focused.insert(TitleTab::Session(9_999), 5_000);
+            shell.workspace.title_order.push(board);
+            shell.workspace.title_order.push(flows);
+            shell.workspace.normalize_title_order();
+            assert!(
+                !shell
+                    .workspace
+                    .tab_focused_at
+                    .contains_key(&TitleTab::Session(9_999))
+            );
+            serde_json::to_string(&shell.workspace).unwrap()
+        })
+        .unwrap();
+    let sessions = [
+        (other, "/work/another-project".to_string()),
+        (here, "/work/gespan".to_string()),
+    ];
+    let restored = crate::workspace::Workspace::restore(Some(&saved), &sessions, "/work/gespan");
+    let times: HashMap<TitleTab, i64> = restored.tab_focused_at;
+    assert_eq!(
+        times,
+        HashMap::from([
+            (TitleTab::Session(other), 1_000),
+            (TitleTab::Session(here), 2_000),
+            (TitleTab::App(app_views::AppView::Board), 3_000),
+        ]),
+        "Flows tabs aren't saved, so neither is their time"
+    );
+}
+
+#[gpui::test]
+fn a_group_left_empty_by_cleanup_disappears(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, _) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(drawn(visual, "tab-group-chip-another-project".into()));
+    window
+        .update(visual, |shell, w, cx| {
+            let now = now();
+            let tab = TitleTab::Session(other);
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            assert_eq!(shell.close_idle_tabs(now, w, cx), [tab]);
+        })
+        .unwrap();
+    settle(visual);
+    assert!(!drawn(visual, "tab-group-chip-another-project".into()));
+    assert!(drawn(visual, "tab-group-chip-gespan".into()));
+}

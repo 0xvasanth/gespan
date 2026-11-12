@@ -1,8 +1,15 @@
 //! All title-strip commands operate on the same visible, ordered snapshot.
 use super::*;
-use crate::strip_groups::{StripEntry, entries, make_contiguous};
+use crate::strip_groups::{StripEntry, entries, idle, make_contiguous};
 use crate::workspace::TitleTab;
 use gespan_core::files::path_key;
+
+/// The wall clock in unix seconds, as `Workspace::tab_focused_at` keeps it.
+pub(super) fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
 
 impl Shell {
     /// The workspace keys a tab by one of its sessions. Replacing that session
@@ -21,6 +28,9 @@ impl Shell {
             if selected.as_ref() == Some(&previous) {
                 *selected = Some(next.clone());
             }
+        }
+        if let Some(at) = self.workspace.tab_focused_at.remove(&previous) {
+            self.workspace.tab_focused_at.insert(next.clone(), at);
         }
         let shift = self.tab_shifts.remove(&previous);
         self.tab_shifts.remove(&next);
@@ -545,6 +555,63 @@ impl Shell {
         }
         self.persist(cx);
         cx.notify();
+    }
+
+    /// Records that `tab` is focused now.
+    pub(super) fn note_tab_focus(&mut self, tab: &TitleTab) {
+        self.workspace
+            .tab_focused_at
+            .insert(tab.clone(), unix_now());
+    }
+
+    /// Closes tabs unfocused for `IDLE_AFTER_SECS` from the strip, without
+    /// asking: their chats stay in the sidebar, nothing is archived. Returns
+    /// the closed tabs.
+    pub(super) fn close_idle_tabs(
+        &mut self,
+        now: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<TitleTab> {
+        let active = self.active_title_tab(cx);
+        if let Some(tab) = &active {
+            self.workspace.tab_focused_at.insert(tab.clone(), now);
+        }
+        self.workspace.start_tab_clocks(now);
+        let closing = idle(
+            &self.workspace.title_order,
+            &self.workspace.tab_focused_at,
+            now,
+            |tab| active.as_ref() == Some(tab) || self.idle_keeps(tab, cx),
+        );
+        if !closing.is_empty() {
+            self.finish_close_title_tabs(&closing, None, window, cx);
+        }
+        closing
+    }
+
+    /// A tab the idle cleanup leaves alone: pinned, or any of its panes is a
+    /// terminal (closing one would have to ask), busy, or holds unsent input
+    /// or a saved draft.
+    fn idle_keeps(&self, tab: &TitleTab, cx: &App) -> bool {
+        if self.tab_pinned(tab) {
+            return true;
+        }
+        let TitleTab::Session(key) = tab else {
+            return false;
+        };
+        self.workspace.layout(*key).leaf_ids().iter().any(|id| {
+            self.workspace.terminal_panes.contains_key(id)
+                || self.session_summaries.contains_key(id) && {
+                    let s = self.session_metadata(*id, cx);
+                    s.busy
+                        || s.has_saved_draft()
+                        || self
+                            .sessions
+                            .get(id)
+                            .is_some_and(|v| !v.read(cx).input.read(cx).content.is_empty())
+                }
+        })
     }
 
     /// Moves `tab` to slot `to` among its own kind: a grouped tab among its

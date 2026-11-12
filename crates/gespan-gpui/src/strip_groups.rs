@@ -57,11 +57,9 @@ pub(crate) fn make_contiguous<T: Clone + PartialEq>(
 }
 
 /// A tab untouched this long is idle.
-#[allow(dead_code)]
 pub(crate) const IDLE_AFTER_SECS: i64 = 12 * 60 * 60;
 
 /// Tabs focused more than IDLE_AFTER_SECS before `now`. A tab missing from `focused_at` is not idle.
-#[allow(dead_code)]
 pub(crate) fn idle<T: Clone + Eq + Hash>(
     order: &[T],
     focused_at: &HashMap<T, i64>,
