@@ -452,14 +452,17 @@ impl Shell {
             .collect::<Vec<_>>();
         let tabs = tabs.to_vec();
         self.confirm_close_terminal_panes(&panes, window, cx, move |this, window, cx| {
-            this.finish_close_title_tabs(&tabs, preferred, window, cx);
+            this.finish_close_title_tabs(&tabs, preferred, false, window, cx);
         });
     }
 
+    /// Closes `tabs`. A `sweep` closes only tabs in the background, so it
+    /// leaves menus, drags, hover and focus as they are.
     fn finish_close_title_tabs(
         &mut self,
         tabs: &[TitleTab],
         preferred: Option<TitleTab>,
+        sweep: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -509,12 +512,22 @@ impl Shell {
                 })
         };
         self.navigation_revision += 1;
-        self.close_menu(cx);
-        self.tab_drag = None;
-        self.tab_shifts.clear();
-        self.tab_hover = None;
-        self.tab_scroll_task = None;
-        self.cancel_pane_drag(cx);
+        if sweep {
+            self.tab_shifts.retain(|tab, _| !closing.contains(tab));
+            if self
+                .tab_hover
+                .is_some_and(|id| closing.contains(&TitleTab::Session(id)))
+            {
+                self.tab_hover = None;
+            }
+        } else {
+            self.close_menu(cx);
+            self.tab_drag = None;
+            self.tab_shifts.clear();
+            self.tab_hover = None;
+            self.tab_scroll_task = None;
+            self.cancel_pane_drag(cx);
+        }
         let session_active = self.workspace.active;
         let threads = self.shown_threads();
         for tab in &closing {
@@ -556,7 +569,11 @@ impl Shell {
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.leave_closed_dictation(cx);
-        if self.workspace.active.is_none() && !self.pilot_active(cx) && !self.app_view_open() {
+        if !sweep
+            && self.workspace.active.is_none()
+            && !self.pilot_active(cx)
+            && !self.app_view_open()
+        {
             self.focus_active(window, cx);
         }
         self.persist(cx);
@@ -572,13 +589,17 @@ impl Shell {
 
     /// Closes tabs unfocused for `IDLE_AFTER_SECS` from the strip, without
     /// asking: their chats stay in the sidebar, nothing is archived. Returns
-    /// the closed tabs.
+    /// the closed tabs. While a tab or pane drag or a menu is open it closes
+    /// nothing; the next tick tries again.
     pub(super) fn close_idle_tabs(
         &mut self,
         now: i64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<TitleTab> {
+        if self.tab_drag.is_some() || self.pane_drag.is_some() || self.menu.is_some() {
+            return Vec::new();
+        }
         let active = self.active_title_tab(cx);
         if let Some(tab) = &active {
             self.workspace.tab_focused_at.insert(tab.clone(), now);
@@ -591,31 +612,38 @@ impl Shell {
             |tab| active.as_ref() == Some(tab) || self.idle_keeps(tab, cx),
         );
         if !closing.is_empty() {
-            self.finish_close_title_tabs(&closing, None, window, cx);
+            self.finish_close_title_tabs(&closing, None, true, window, cx);
         }
         closing
     }
 
     /// A tab the idle cleanup leaves alone: pinned, a Pilot whose chat is
     /// running, or a chat tab with any pane that is a terminal (closing one
-    /// would have to ask), busy, or holds unsent input or a saved draft.
+    /// would have to ask), a running Pilot, a file pane with unsaved edits,
+    /// or a chat that is busy or holds unsent input or a saved draft.
     fn idle_keeps(&self, tab: &TitleTab, cx: &App) -> bool {
         if self.tab_pinned(tab) {
             return true;
         }
         let key = match tab {
             TitleTab::Session(key) => key,
-            TitleTab::Pilot { id, .. } => {
-                return self.pilots.as_ref().is_some_and(|m| {
-                    m.read(cx)
-                        .chat_for(id)
-                        .is_some_and(|chat| chat.read(cx).busy)
-                });
-            }
+            TitleTab::Pilot { id, .. } => return self.pilot_busy(id, cx),
             TitleTab::App(_) => return false,
         };
         self.workspace.layout(*key).leaf_ids().iter().any(|id| {
             self.workspace.terminal_panes.contains_key(id)
+                || self
+                    .workspace
+                    .pilot_panes
+                    .get(id)
+                    .is_some_and(|pilot| match pilot {
+                        TitleTab::Pilot { id, .. } => self.pilot_busy(id, cx),
+                        _ => false,
+                    })
+                || self
+                    .reviews
+                    .get(id)
+                    .is_some_and(|review| review.read(cx).unsaved_files(cx))
                 || self.session_summaries.contains_key(id) && {
                     let s = self.session_metadata(*id, cx);
                     s.busy
@@ -625,6 +653,15 @@ impl Shell {
                             .get(id)
                             .is_some_and(|v| !v.read(cx).input.read(cx).content.is_empty())
                 }
+        })
+    }
+
+    /// Whether Pilot `id`'s chat is running.
+    fn pilot_busy(&self, id: &str, cx: &App) -> bool {
+        self.pilots.as_ref().is_some_and(|m| {
+            m.read(cx)
+                .chat_for(id)
+                .is_some_and(|chat| chat.read(cx).busy)
         })
     }
 

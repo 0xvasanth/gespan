@@ -1807,3 +1807,136 @@ fn pins_of_another_windows_tabs_stay_out_of_this_deck(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn idle_cleanup_waits_out_a_tab_drag(cx: &mut TestAppContext) {
+    use gpui::Modifiers;
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            add_background_tab(shell, "/work/gespan", cx);
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    let tab = visual
+        .debug_bounds(selector(format!("title-tab-{here}")))
+        .unwrap()
+        .center();
+    visual.simulate_mouse_move(tab, None, Modifiers::default());
+    visual.simulate_mouse_down(tab, MouseButton::Left, Modifiers::default());
+    visual.simulate_mouse_move(
+        tab + gpui::point(px(24.), px(0.)),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    visual.run_until_parked();
+    let idle = TitleTab::Session(other);
+    window
+        .update(visual, |shell, w, cx| {
+            assert!(shell.tab_drag.as_ref().is_some_and(|d| d.active));
+            let now = now();
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(idle.clone(), now - LONG_AGO);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty(), "mid-drag");
+            assert!(shell.workspace.title_order.contains(&idle));
+            assert!(
+                shell.tab_drag.as_ref().is_some_and(|d| d.active),
+                "the drag carries on"
+            );
+        })
+        .unwrap();
+    visual.simulate_mouse_up(
+        tab + gpui::point(px(24.), px(0.)),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    settle(visual);
+    window
+        .update(visual, |shell, w, cx| {
+            assert!(shell.tab_drag.is_none());
+            // The next tick, with the drag over, closes it.
+            assert_eq!(
+                shell.close_idle_tabs(now(), w, cx),
+                std::slice::from_ref(&idle)
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn idle_cleanup_waits_out_an_open_menu_and_keeps_focus(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    let idle = TitleTab::Session(other);
+    window
+        .update(cx, |shell, w, cx| {
+            let anchor = Anchor::Point(gpui::point(px(400.), px(30.)));
+            shell.open_menu(MenuTarget::Tab(here), anchor, w, cx);
+            let now = now();
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(idle.clone(), now - LONG_AGO);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty(), "menu open");
+            assert!(shell.menu_open(&MenuTarget::Tab(here)), "the menu stays");
+            shell.close_menu(cx);
+            let input = shell.sessions[&here].read(cx).input.focus_handle(cx);
+            w.focus(&input, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, w, cx| {
+            let input = shell.sessions[&here].read(cx).input.focus_handle(cx);
+            assert!(input.is_focused(w));
+            assert_eq!(
+                shell.close_idle_tabs(now(), w, cx),
+                std::slice::from_ref(&idle)
+            );
+            assert!(input.is_focused(w), "closing a background tab keeps focus");
+            assert_eq!(shell.workspace.active, Some(here));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn a_busy_pilot_pane_in_a_split_keeps_its_tab(cx: &mut TestAppContext) {
+    let (window, other, here) = window(cx);
+    let (pilot, pilot_tab) = pilot_in(window, "/work/gespan", cx);
+    window
+        .update(cx, |shell, w, cx| {
+            shell.open_title_tab(&TitleTab::Session(here), w, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, w, cx| {
+            let pane = shell
+                .workspace
+                .place_pilot(pilot_tab, other, crate::pane_layout::Edge::Right)
+                .unwrap();
+            shell.workspace.active = Some(here);
+            let key = shell.workspace.tab_of(other).unwrap();
+            assert_eq!(shell.workspace.layout(key).leaf_ids(), [other, pane]);
+            assert_eq!(shell.active_title_tab(cx), Some(TitleTab::Session(here)));
+            let chat = shell.pilot_manager().read(cx).chat_for(&pilot).unwrap();
+            chat.update(cx, |chat, _| chat.busy = true);
+            let now = now();
+            let tab = TitleTab::Session(key);
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            assert!(
+                shell.close_idle_tabs(now, w, cx).is_empty(),
+                "Pilot working"
+            );
+            assert!(shell.workspace.title_order.contains(&tab));
+            chat.update(cx, |chat, _| chat.busy = false);
+            assert_eq!(shell.close_idle_tabs(now, w, cx), [tab]);
+        })
+        .unwrap();
+}
