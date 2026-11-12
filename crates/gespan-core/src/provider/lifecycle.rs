@@ -149,6 +149,14 @@ impl Protocol {
         events: &mut Vec<Event>,
         stdin: &mut impl Write,
     ) -> Result<(), String> {
+        // A review never runs an MCP tool: it is outside the review policy,
+        // so the request is declined without asking anyone.
+        if self.request.settings.review.is_some() {
+            return write_json(
+                stdin,
+                json!({"id":wire,"result":{"action":"decline","content":null,"_meta":null}}),
+            );
+        }
         let confirmation = mcp_confirmation(&request);
         let Some((title, content)) = confirmation else {
             events.push(Event::Status("This MCP server requested a form or browser sign-in that Gespan does not support yet. Complete it in the server's own interface.".into()));
@@ -157,7 +165,9 @@ impl Protocol {
                 json!({"id":wire,"result":{"action":"cancel","content":null,"_meta":null}}),
             );
         };
-        if !self.request.settings.plan && self.request.settings.access == AccessMode::FullAccess {
+        if !self.request.settings.plan
+            && self.request.settings.effective_access() == AccessMode::FullAccess
+        {
             return write_json(
                 stdin,
                 json!({"id":wire,"result":{"action":"accept","content":content,"_meta":null}}),
@@ -363,7 +373,7 @@ pub(super) enum Interrupt {
 impl Protocol {
     pub(super) fn codex_access(&self) -> (Value, &'static str, Value, &'static str) {
         let (mut policy, mut sandbox, mut sandbox_policy, mut reviewer) =
-            self.request.settings.access.codex();
+            self.request.settings.effective_access().codex();
         // A review run never depends on the access mode: every command asks
         // Gespan, nothing is written, and `gh` gets the network.
         if self.request.settings.review.is_some() {

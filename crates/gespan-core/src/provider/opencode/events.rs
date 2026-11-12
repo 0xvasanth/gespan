@@ -469,9 +469,11 @@ impl State {
                         return Ok(events);
                     }
                     let planning = self.protocol.request.settings.plan
-                        || self.protocol.request.settings.access == AccessMode::ReadOnly;
+                        || self.protocol.request.settings.effective_access()
+                            == AccessMode::ReadOnly;
                     if planning
-                        || self.protocol.request.settings.access == AccessMode::FullAccess
+                        || self.protocol.request.settings.effective_access()
+                            == AccessMode::FullAccess
                         || !interactive
                     {
                         let action = action.to_lowercase();
@@ -485,7 +487,8 @@ impl State {
                             !writing && reading
                         } else {
                             interactive
-                                && self.protocol.request.settings.access == AccessMode::FullAccess
+                                && self.protocol.request.settings.effective_access()
+                                    == AccessMode::FullAccess
                         };
                         client.permission(&session, id, allow)?;
                     } else {

@@ -984,7 +984,7 @@ impl Protocol {
                     let mut permission = request.clone();
                     if self.request.settings.review.is_some()
                         || (self.request.kind == Kind::Devin
-                            && self.request.settings.access != AccessMode::FullAccess)
+                            && self.request.settings.effective_access() != AccessMode::FullAccess)
                     {
                         permission["_gespanOneTime"] = true.into();
                     }
@@ -993,8 +993,8 @@ impl Protocol {
                     let read = matches!(kind, Some("read" | "search"));
                     let planning = self.probe
                         || self.request.settings.plan
-                        || self.request.settings.access == AccessMode::ReadOnly;
-                    let access = self.request.settings.access;
+                        || self.request.settings.effective_access() == AccessMode::ReadOnly;
+                    let access = self.request.settings.effective_access();
                     let auto = self.request.kind == Kind::Fx
                         || access == AccessMode::FullAccess
                         || (access == AccessMode::Auto
@@ -3093,14 +3093,10 @@ mod tests {
                     "{access:?} {kind}"
                 );
             }
-            // Reads behave as they do without a review: Supervised still asks.
+            // Reads pass as in any read-only run, whatever the access chip says.
             let (events, mut out) = acp_permission(&mut p, json!({"kind":"read"}));
-            if access == AccessMode::Supervised {
-                assert!(matches!(events.as_slice(), [Event::Approval(_)]));
-            } else {
-                assert!(events.is_empty());
-                assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
-            }
+            assert!(events.is_empty(), "{access:?}");
+            assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
         }
         // Without a review policy a supervised edit still asks.
         let mut p = protocol(Kind::Cursor);
