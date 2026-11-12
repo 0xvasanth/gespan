@@ -378,7 +378,12 @@ impl SettingsView {
                 false,
                 "Blur radius",
                 Some("Background blur behind the window.".into()),
-                vec![self.slider(SliderKind::Blur, p.sidebar_blur.to_string(), opaque, cx)],
+                vec![self.slider(
+                    SliderKind::Blur,
+                    format!("{} px", p.sidebar_blur),
+                    opaque,
+                    cx,
+                )],
             ));
         }
         translucency.push(
@@ -408,7 +413,7 @@ impl SettingsView {
             } else if cfg!(target_os = "linux") && cx.compositor_name() == "X11" {
                 "How much of the desktop shows through Gespan. Requires compositing; configure background blur in your compositor.".into()
             } else {
-                "How much of the desktop shows through Gespan.".into()
+                "How much of the desktop shows through Gespan. Translucency is available in dark mode.".into()
             }),
             None,
             translucency,

@@ -486,6 +486,11 @@ fn the_keybinding_filter_narrows_areas_and_a_chip_jumps_to_one(cx: &mut TestAppC
                 Some("Terminal"),
                 "the area flashes"
             );
+            assert_eq!(
+                view.keybinding_area,
+                Some("Terminal"),
+                "and its chip stays selected"
+            );
         })
         .unwrap();
     window

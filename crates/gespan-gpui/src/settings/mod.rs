@@ -273,6 +273,8 @@ pub(crate) struct SettingsView {
     search_in_nav: Option<bool>,
     keybinding_filter: Entity<Input>,
     keybinding_query: String,
+    /// The area chip last jumped to, drawn selected.
+    keybinding_area: Option<&'static str>,
     /// The Keybindings row recording new keys.
     recording: Option<String>,
     recording_preview: String,
@@ -497,6 +499,7 @@ impl SettingsView {
             search_in_nav: None,
             keybinding_filter,
             keybinding_query: String::new(),
+            keybinding_area: None,
             recording: None,
             recording_preview: String::new(),
             recorder_focus: cx.focus_handle(),

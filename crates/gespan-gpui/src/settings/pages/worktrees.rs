@@ -297,7 +297,37 @@ impl SettingsView {
         let ready = !self.discovery_loading
             && self.discovery.worktrees.error.is_none()
             && !self.discovery.worktrees.main.is_empty();
-        let mut page=vec![div().relative().child(self.reveal_probe("project-worktrees")).flex().items_center().gap_1().child(project).child(glass_secondary("create-settings-worktree","Create worktree",false,!ready).child(icon("plus",12.)).child("Create worktree").on_click(cx.listener(move|this,_,window,cx|{if ready{this.open_management(Target::Worktree,window,cx);}}))).into_any_element(),div().mt_4().flex().items_center().justify_between().gap_3().child(div().min_w_0().flex_1().text_size(px(12.)).line_height(px(18.)).text_color(content(0.5)).child("Sessions can share a worktree. Deleting one keeps its sessions by default and discards uncommitted changes. Its branch and commits are kept unless the branch is merged and you choose to delete it.")).child(self.refresh_button("refresh-settings-worktrees","Refresh",cx)).into_any_element()];
+        let mut page = vec![
+            div()
+                .relative()
+                .child(self.reveal_probe("project-worktrees"))
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(project)
+                .child(
+                    glass_secondary("create-settings-worktree", "Create worktree", false, !ready)
+                        .child(icon("plus", 12.))
+                        .child("Create worktree")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if ready {
+                                this.open_management(Target::Worktree, window, cx);
+                            }
+                        })),
+                )
+                .into_any_element(),
+            {
+                let refresh = self.refresh_button("refresh-settings-worktrees", "Refresh", cx);
+                self.glass_group(
+                None,
+                "Worktrees",
+                Some("Sessions can share a worktree. Deleting one keeps its sessions by default and discards uncommitted changes. Its branch and commits are kept unless the branch is merged and you choose to delete it.".into()),
+                Some(refresh),
+                None,
+                Vec::new(),
+            )
+            },
+        ];
         if self.selected_project.is_empty() {
             page.push(note("Add a project to manage its worktrees."));
         } else if self.discovery_loading {

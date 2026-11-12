@@ -386,6 +386,23 @@ impl SettingsView {
     }
 }
 
+/// A model's pill: only for what is true now, on this device or coming down.
+fn with_pill(line: gpui::Div, id: &'static str, status: ModelStatus, running: bool) -> gpui::Div {
+    if running {
+        line.child(crate::glass::status(
+            "Downloading",
+            crate::glass::Tone::Running,
+        ))
+    } else if matches!(status, ModelStatus::Ready) {
+        line.child(
+            crate::glass::status("Ready", crate::glass::Tone::Ok)
+                .debug_selector(move || format!("dictation-ready-{id}")),
+        )
+    } else {
+        line
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -423,22 +440,5 @@ mod tests {
             status_label(&PARAKEET_V2_EN, ModelStatus::Missing, Some(running)),
             "661 MB · Downloading… 0%"
         );
-    }
-}
-
-/// A model's pill: only for what is true now, on this device or coming down.
-fn with_pill(line: gpui::Div, id: &'static str, status: ModelStatus, running: bool) -> gpui::Div {
-    if running {
-        line.child(crate::glass::status(
-            "Downloading",
-            crate::glass::Tone::Running,
-        ))
-    } else if matches!(status, ModelStatus::Ready) {
-        line.child(
-            crate::glass::status("Ready", crate::glass::Tone::Ok)
-                .debug_selector(move || format!("dictation-ready-{id}")),
-        )
-    } else {
-        line
     }
 }
