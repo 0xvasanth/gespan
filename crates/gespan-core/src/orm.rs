@@ -170,3 +170,22 @@ pub(crate) fn settled_bytes(path: &Path) -> Vec<u8> {
         .unwrap();
     std::fs::read(path).unwrap()
 }
+
+/// Removes a database file a dropped [`Database`] used. Toasty closes the
+/// connection on its own task, and Windows refuses to delete a file that is
+/// still open, so this retries until the file is released (five seconds at
+/// most) instead of failing on the first try.
+#[cfg(test)]
+pub(crate) fn remove_released(path: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match std::fs::remove_file(path) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if std::time::Instant::now() > deadline => {
+                panic!("{} was never released: {error}", path.display())
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+}

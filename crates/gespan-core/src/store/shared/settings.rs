@@ -164,7 +164,7 @@ mod tests {
         let path = dir.path().join("gespan.db");
         drop(Store::open_gespan(&path).unwrap());
         // Exercise a legacy installation, before the sidecar existed.
-        std::fs::remove_file(dir.path().join("gespan.db.gpui.sqlite3")).unwrap();
+        crate::orm::remove_released(&dir.path().join("gespan.db.gpui.sqlite3"));
         let old = dir.path().join("gespan.db.gpui.json");
         let receipt = "large result".repeat(100_000);
         let values = BTreeMap::from([
