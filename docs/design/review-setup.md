@@ -129,7 +129,7 @@ available for remote projects yet" and offers Customize….
 | `gh` not installed | "GitHub CLI isn't installed." Buttons: **Get GitHub CLI** (opens cli.github.com), **Check again** | disabled |
 | Not signed in | "Sign in to GitHub to continue." Button: **Sign in**, which opens a Gespan terminal pane running `gh auth login --web`, then re-checks when that command exits. **Check again** is also shown. | disabled |
 | Connected | "GitHub connected ✓" (with the login when it is cheap to get) | enabled |
-| Project has no GitHub remote | "This project isn't on GitHub." Repository dropdown shows "Choose a repository…" | disabled until a repo is picked |
+| Project has no GitHub remote | "This project isn't on GitHub. Use Customize… to pick repositories." The repository phrase is plain text, not a dropdown, since there is nothing to choose | disabled; Customize… picks repositories |
 
 ### What gets saved
 

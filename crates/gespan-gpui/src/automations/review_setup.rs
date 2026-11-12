@@ -388,7 +388,9 @@ impl Automations {
             Some(Readiness::NotInstalled) => "GitHub CLI isn't installed.",
             Some(Readiness::SignedOut) => "Sign in to GitHub to continue.",
             Some(Readiness::Connected) => "GitHub connected ✓",
-            Some(Readiness::NoGithubRemote) => "This project isn't on GitHub.",
+            Some(Readiness::NoGithubRemote) => {
+                "This project isn't on GitHub. Use Customize… to pick repositories."
+            }
             Some(Readiness::Remote) => "Quick setup isn't available for remote projects yet.",
         }
     }
@@ -473,16 +475,30 @@ impl Automations {
             .text_size(px(16.))
             .line_height(px(26.))
             .text_color(content(0.75));
-        sentence = sentence
-            .children(words("When a pull request in"))
-            .child(self.phrase(
+        // With no repositories there is nothing to choose, so the phrase is
+        // plain text, not a dropdown that opens onto nothing.
+        let repo = if setup.repos.is_empty() {
+            div()
+                .id("review-setup-repo-text")
+                .debug_selector(|| "review-setup-repo-text".into())
+                .px(px(4.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(content(0.6))
+                .child(self.repo_label())
+                .into_any_element()
+        } else {
+            self.phrase(
                 "review-setup-repo",
                 "Repository",
                 self.repo_label(),
                 Some(Choice::SetupRepo),
                 "",
                 cx,
-            ))
+            )
+        };
+        sentence = sentence
+            .children(words("When a pull request in"))
+            .child(repo)
             .child(self.phrase(
                 "review-setup-which",
                 "Which pull requests",
