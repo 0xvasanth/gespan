@@ -15,7 +15,8 @@ let task = database.run(|mut db| async move {
     MyTask::filter_by_key(key).first().exec(&mut db).await
 })?;
 
-// Raw SQL for things Toasty cannot express. Placeholders are ?1, ?2 and so on.
+// Raw SQL only for what Toasty cannot express (see "Toasty 0.11 limits to
+// know"), with a comment saying which. Placeholders are ?1, ?2 and so on.
 let n = database.run(|mut db| async move {
     toasty::sql::statement("UPDATE my_tasks SET status = 'withdrawn' WHERE asked_at < ?1")
         .bind(at)
@@ -41,7 +42,11 @@ call from inside another tokio runtime, but not from inside a future that
 `Store::orm()` opens it on first use. Store code calls
 `self.orm()?.run(...)`.
 
-Store code that needs raw SQL uses `Store::sql()` (`store/db.rs`): `query`,
+Queries use the typed API. `tests/toasty_only.rs` counts every file's raw
+query lines in `QUERIES`: the count can only go down, so a change that moves a
+file's queries to the typed API lowers its number there.
+
+Store code that still needs raw SQL uses `Store::sql()` (`store/db.rs`): `query`,
 `row`, `optional`, `value` and `execute` with `args![...]`, and `begin()`
 for a `BEGIN IMMEDIATE` transaction that the store's other statements join
 (the pool has one connection). Run only raw SQL inside `begin()`: some typed

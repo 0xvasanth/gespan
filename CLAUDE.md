@@ -29,9 +29,22 @@ Gespan SQLite file with rusqlite, and never probe columns at runtime.
   `cargo run --manifest-path crates/gespan-core/Cargo.toml --bin toasty-migrate -- <kind> <name>`.
 - What Toasty's DDL can't express (foreign keys, cascades, CHECKs, partial or
   expression indexes) goes in that kind's constraints, with a test.
-- Queries Toasty can't express run raw through `toasty::sql` on the same database.
-- Two tests guard this in CI: `models_match_the_last_migration` fails when a model
-  changes without a migration, and `tests/toasty_only.rs` fails when production
-  code adds raw schema SQL or opens a database directly.
+- Every query goes through Toasty's typed API: `Model::filter_by_*`, `get_by_*`,
+  `create()`, `update()`, `delete()`, `exec`. Never write a raw `SELECT`,
+  `INSERT`, `UPDATE` or `DELETE` against a Gespan table, whether through
+  `toasty::sql`, `Store::sql()`, board-store's `query_sql` / `execute_sql` or a
+  rusqlite connection.
+- Raw SQL is only for what Toasty 0.11 cannot express: conditional upserts
+  (`ON CONFLICT ... WHERE`), updates that must return a count, CTEs, `json_*`
+  and window functions, and a projection that must stay on a covering index.
+  Run it through `toasty::sql` (`Store::sql()` in store code) on the same
+  database, with a comment on the statement saying which of these it is.
+- Existing raw queries are debt. When you change a file that has them, move its
+  queries to the typed API and lower its number in `QUERIES` in
+  `tests/toasty_only.rs`. Never raise a number or add a file to make that test
+  pass.
+- CI guards this: `models_match_the_last_migration` fails when a model changes
+  without a migration, and `tests/toasty_only.rs` fails when production code
+  adds raw schema SQL, opens a database directly, or adds a raw query line.
 - Only other apps' databases (Cursor, Codex, WebKit, the Tauri importer) stay on
   rusqlite. See `docs/toasty.md`.
