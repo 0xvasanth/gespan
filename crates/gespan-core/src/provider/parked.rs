@@ -285,11 +285,14 @@ pub fn pin_idle_agents(ids: impl IntoIterator<Item = i64>) {
 pub fn idle_agent_pinned(id: i64) -> bool {
     pinned(Some(id))
 }
-/// Resume: held agents get the usual idle period from now, so a resumed
-/// turn can take its agent back even with the warm pool off.
-pub fn unpin_idle_agents() {
-    let unpinned =
-        std::mem::take(&mut *pinned_sessions().lock().unwrap_or_else(|e| e.into_inner()));
+/// Resume: these sessions' held agents get the usual idle period from now,
+/// so a resumed turn can take its agent back even with the warm pool off.
+/// Only the sessions named are unpinned; others stay pinned.
+pub fn unpin_idle_agents(ids: impl IntoIterator<Item = i64>) {
+    let unpinned: std::collections::HashSet<i64> = {
+        let mut pinned = pinned_sessions().lock().unwrap_or_else(|e| e.into_inner());
+        ids.into_iter().filter(|id| pinned.remove(id)).collect()
+    };
     let now = Instant::now();
     for parked in idle_pool().lock().unwrap().iter_mut() {
         if parked.owner.is_some_and(|owner| unpinned.contains(&owner)) {
@@ -1150,7 +1153,7 @@ for line in sys.stdin:
         assert!(parked(held) && alive(held));
 
         // Resume: the usual idle period starts now, even with the pool off.
-        unpin_idle_agents();
+        unpin_idle_agents([42]);
         sweep();
         enforce_idle_limit();
         assert!(parked(held), "a resumed turn can still take it back");
@@ -1172,7 +1175,7 @@ for line in sys.stdin:
         process::owned_by(45, || put(wire, protocol));
         assert!(parked(idle) && alive(idle), "the pinned agent stays");
         assert!(parked(later), "the newer one is kept within the limit");
-        unpin_idle_agents();
+        unpin_idle_agents([44]);
         configure(0);
         idle_pool().lock().unwrap().clear();
 
@@ -1189,8 +1192,26 @@ for line in sys.stdin:
             &request.cwd,
         );
         assert!(!parked(deleted));
-        unpin_idle_agents();
+        unpin_idle_agents([43]);
         idle_pool().lock().unwrap().clear();
+    }
+
+    #[test]
+    fn resume_unpins_only_the_sessions_it_names() {
+        pin_idle_agents([731_101, 731_102]);
+        pin_idle_agents([731_201]);
+        unpin_idle_agents([731_101, 731_102, 731_999]);
+        assert!(!idle_agent_pinned(731_101) && !idle_agent_pinned(731_102));
+        assert!(
+            idle_agent_pinned(731_201),
+            "another hold's pin outlives this resume"
+        );
+        assert!(
+            !idle_agent_pinned(731_999),
+            "unpinning a stranger pins nothing"
+        );
+        unpin_idle_agents([731_201]);
+        assert!(!idle_agent_pinned(731_201));
     }
 
     #[test]
