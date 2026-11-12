@@ -1,0 +1,21 @@
+crates/gespan-gpui/src/settings/glass_tests.rs
+  s_c589f1ba8a8fa6::t_e55d0631b7ba24 664-668
+crates/gespan-gpui/src/settings/pages/providers.rs
+  s_c589f1ba8a8fa6::t_2e79354abc6322 466-468
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ec32f7660998a1cc6b57bcc47db18ac085bc51f4",
+  "prompts": {},
+  "sessions": {
+    "s_c589f1ba8a8fa6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39f78400-f644-4002-b3b7-119922fa07b9",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
