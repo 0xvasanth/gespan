@@ -1,0 +1,31 @@
+crates/gespan-gpui/src/my_tasks/record.rs
+  s_bd25f3678b6a99::t_3c72d8af19a626 82,91-98,119-123,160-166
+  s_bd25f3678b6a99::t_0c6ad77e8e9759 167-168
+crates/gespan-gpui/src/my_tasks/past.rs
+  s_bd25f3678b6a99::t_3c72d8af19a626 630-635,641-649
+  s_bd25f3678b6a99::t_d58621ea60c49d 636-640
+crates/gespan-gpui/src/shell/my_tasks.rs
+  s_bd25f3678b6a99::t_d58621ea60c49d 130-135
+crates/gespan-gpui/src/shell/review_drafts.rs
+  s_bd25f3678b6a99::t_3c72d8af19a626 202-210
+crates/gespan-gpui/src/shell/review_drafts_tests.rs
+  s_bd25f3678b6a99::t_8b95d7767fab51 214-221,231-237
+crates/gespan-core/src/tasks/log.rs
+  s_bd25f3678b6a99::t_28f17e81329000 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19ad25a6de6759d0ca93d8749d9e319af71e14c3",
+  "prompts": {},
+  "sessions": {
+    "s_bd25f3678b6a99": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "22a6401c-007b-4dfb-8498-8b741b394050",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
