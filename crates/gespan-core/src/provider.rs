@@ -609,7 +609,8 @@ impl Protocol {
                 .and_then(|p| serde_json::to_string_pretty(p).ok())
                 .unwrap_or_else(|| "The agent is requesting permission to continue.".into());
         }
-        let read_only = self.request.settings.access == AccessMode::ReadOnly;
+        let access = self.request.settings.effective_access();
+        let read_only = access == AccessMode::ReadOnly;
         let read_only_query = read_only
             && kind == "claude"
             && request["tool_name"] == "Bash"
@@ -662,16 +663,13 @@ impl Protocol {
         let permissions = kind.contains("permissions");
         let ask = review == Some(Verdict::Ask);
         if !ask
-            && (self.request.settings.access == AccessMode::FullAccess
+            && (access == AccessMode::FullAccess
                 || (self.request.kind == Kind::Codex
-                    && self.request.settings.access == AccessMode::AutoAcceptEdits
+                    && access == AccessMode::AutoAcceptEdits
                     && file_change)
                 || (self.request.kind == Kind::Codex
                     && permissions
-                    && matches!(
-                        self.request.settings.access,
-                        AccessMode::Auto | AccessMode::AutoAcceptEdits
-                    )))
+                    && matches!(access, AccessMode::Auto | AccessMode::AutoAcceptEdits)))
         {
             return self.respond(
                 Control {
@@ -775,7 +773,7 @@ impl Protocol {
             // A review's post is approved once, never for the session.
             let session = session && self.request.settings.review.is_none();
             let result = if kind.contains("permissions") {
-                json!({"permissions": if allow { request["permissions"].clone() } else { json!({}) }, "scope":if self.request.settings.access == AccessMode::FullAccess { "session" } else { "turn" }})
+                json!({"permissions": if allow { request["permissions"].clone() } else { json!({}) }, "scope":if self.request.settings.effective_access() == AccessMode::FullAccess { "session" } else { "turn" }})
             } else if kind == "execCommandApproval" || kind == "applyPatchApproval" {
                 json!({"decision":if !allow { "denied" } else if session { "approved_for_session" } else { "approved" }})
             } else {
@@ -2074,19 +2072,97 @@ cat >/dev/null"#,
         assert_eq!(r["result"]["decision"], "accept");
     }
     #[test]
-    fn codex_mcp_elicitations_ignore_the_review_policy() {
+    fn codex_review_declines_mcp_elicitations_without_asking() {
         use crate::review_policy::ReviewResults;
         let elicitation = json!({"id":5,"method":"mcpServer/elicitation/request","params":{
             "mode":"form","message":"Run it?","requestedSchema":{"type":"object","properties":{}}}});
-        let run = |mut p: Protocol| {
+        for access in [
+            AccessMode::ReadOnly,
+            AccessMode::Supervised,
+            AccessMode::FullAccess,
+        ] {
+            let mut p = codex_review_protocol(ReviewResults::Post);
+            p.request.settings.access = access;
             let mut out = Vec::new();
             let events = p.frame(elicitation.clone(), &mut out).unwrap();
-            (format!("{events:?}"), String::from_utf8(out).unwrap())
-        };
+            assert!(events.is_empty(), "{access:?}: {events:?}");
+            let reply: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(reply["id"], 5);
+            assert_eq!(reply["result"]["action"], "decline", "{access:?}");
+            assert!(p.approvals.is_empty());
+        }
+        // Without a review the user is still asked.
         let mut plain = protocol(Kind::Codex);
         plain.request.settings.access = AccessMode::ReadOnly;
-        let reviewed = codex_review_protocol(ReviewResults::Draft);
-        assert_eq!(run(plain), run(reviewed));
+        let mut out = Vec::new();
+        let events = plain.frame(elicitation, &mut out).unwrap();
+        assert!(
+            matches!(events.as_slice(), [Event::Approval(_)]),
+            "{events:?}"
+        );
+        assert!(out.is_empty());
+    }
+    /// Every reply and event a run gives to a fixed set of requests.
+    fn transcript(p: &mut Protocol, frames: &[Value]) -> Vec<String> {
+        frames
+            .iter()
+            .map(|frame| {
+                let mut out = Vec::new();
+                let events = p.frame(frame.clone(), &mut out).unwrap();
+                format!("{events:?} => {}", String::from_utf8_lossy(&out))
+            })
+            .collect()
+    }
+    #[test]
+    fn a_review_answers_the_same_whatever_the_access_chip_says() {
+        use crate::review_policy::ReviewResults;
+        let claude = |tool: &str, input: Value| json!({"type":"control_request","request_id":format!("r-{tool}-{input}"),"request":{"subtype":"can_use_tool","tool_name":tool,"input":input}});
+        let claude_frames = [
+            claude("Bash", json!({"command":"git status"})),
+            claude("Bash", json!({"command":REVIEW_POST})),
+            claude("Bash", json!({"command":"gh pr merge 7 -R acme/app"})),
+            claude("Bash", json!({"command":"rm -rf src"})),
+            claude("Write", json!({"file_path":"x","content":"y"})),
+            claude("Edit", json!({"file_path":"x"})),
+            claude("mcp__github__create_review", json!({})),
+        ];
+        let codex_frames = [
+            json!({"id":11,"method":"item/commandExecution/requestApproval","params":{"command":"gh pr view 7 -R acme/app"}}),
+            json!({"id":12,"method":"item/commandExecution/requestApproval","params":{"command":REVIEW_POST}}),
+            json!({"id":13,"method":"item/commandExecution/requestApproval","params":{"command":"rm -rf src"}}),
+            json!({"id":14,"method":"item/fileChange/requestApproval","params":{"reason":"edit"}}),
+            json!({"id":15,"method":"applyPatchApproval","params":{"reason":"edit"}}),
+            json!({"id":16,"method":"item/permissions/requestApproval","params":{"permissions":{"network":true}}}),
+            json!({"id":17,"method":"mcpServer/elicitation/request","params":{"mode":"form","message":"Run it?","requestedSchema":{"type":"object","properties":{}}}}),
+        ];
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let reference_claude = transcript(
+                &mut review_protocol(results, AccessMode::ReadOnly),
+                &claude_frames,
+            );
+            let mut codex = codex_review_protocol(results);
+            codex.request.settings.access = AccessMode::ReadOnly;
+            let reference_codex = transcript(&mut codex, &codex_frames);
+            for access in [
+                AccessMode::Supervised,
+                AccessMode::AutoAcceptEdits,
+                AccessMode::Auto,
+                AccessMode::FullAccess,
+            ] {
+                assert_eq!(
+                    transcript(&mut review_protocol(results, access), &claude_frames),
+                    reference_claude,
+                    "claude {results:?} {access:?}"
+                );
+                let mut codex = codex_review_protocol(results);
+                codex.request.settings.access = access;
+                assert_eq!(
+                    transcript(&mut codex, &codex_frames),
+                    reference_codex,
+                    "codex {results:?} {access:?}"
+                );
+            }
+        }
     }
     fn replay(kind: Kind, raw: &str) -> Vec<Event> {
         let mut protocol = protocol(kind);
