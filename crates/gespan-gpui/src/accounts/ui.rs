@@ -223,9 +223,12 @@ impl Accounts {
 
     /// Settings › Providers: one agent's accounts, then the button that
     /// adds another where the provider supports more than one.
+    /// `compact` is for a CLI that isn't installed: one quiet line per
+    /// account under its card, without meters.
     pub(crate) fn settings_accounts(
         &mut self,
         kind: Kind,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> (Vec<AnyElement>, Option<AnyElement>) {
         let accounts = self.book.list(kind);
@@ -310,7 +313,7 @@ impl Accounts {
                 .min_h_12()
                 .border_t_1()
                 .border_color(crate::glass::hairline())
-                .pl(px(60.))
+                .pl(px(if compact { 14. } else { 60. }))
                 .pr_4()
                 .py(px(10.))
                 .flex()
@@ -388,7 +391,7 @@ impl Accounts {
                                 ),
                         ),
                 )
-                .child(self.meters(kind, &id))
+                .when(!compact, |d| d.child(self.meters(kind, &id)))
                 .child(controls);
             rows.push(row.into_any_element());
         }
@@ -459,35 +462,43 @@ impl Accounts {
                 } else {
                     used
                 };
+                // As designed: the window and what's left (or used) over a
+                // bar that turns amber, then red, as it runs out.
+                let ink: gpui::Hsla = if used >= 100. {
+                    crate::glass::Tone::Bad.ink()
+                } else if used >= 70. {
+                    crate::glass::Tone::Waiting.ink()
+                } else {
+                    crate::glass::Tone::Ok.ink()
+                };
                 div()
-                    .w(px(64.))
+                    .debug_selector(|| "account-meter".into())
+                    .w(px(118.))
                     .child(
                         div()
                             .flex()
                             .justify_between()
-                            .text_size(px(9.))
-                            .text_color(content(0.4))
+                            .text_size(px(11.))
+                            .text_color(content(0.55))
                             .child(w.label())
-                            .child(format!("{percent:.0}%")),
+                            .child(if self.show_remaining {
+                                format!("{percent:.0}% left")
+                            } else {
+                                format!("{percent:.0}% used")
+                            }),
                     )
                     .child(
                         div()
-                            .mt_1()
-                            .h(px(3.))
+                            .mt(px(5.))
+                            .h(px(4.))
                             .rounded_full()
                             .bg(content(0.08))
                             .child(
                                 div()
                                     .h_full()
-                                    .w(px(64. * percent as f32 / 100.))
+                                    .w(px(118. * percent.clamp(0., 100.) as f32 / 100.))
                                     .rounded_full()
-                                    .bg(if used >= 100. {
-                                        gpui::rgb(0xf87171).into()
-                                    } else if used >= 80. {
-                                        gpui::rgb(0xfbbf24).into()
-                                    } else {
-                                        content(0.55)
-                                    }),
+                                    .bg(ink),
                             ),
                     )
             }))

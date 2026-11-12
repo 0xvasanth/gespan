@@ -131,38 +131,50 @@ impl SettingsView {
             };
             let mut controls: Vec<AnyElement> = Vec::new();
             let default_button = installed.is_some().then(|| {
-                glass_secondary(
-                    SharedString::from(format!("default-provider-{}", kind.id())),
-                    if selected {
-                        "Default"
-                    } else {
-                        "Use by default"
-                    },
-                    false,
-                    selected || selected_model.is_none() || installed.is_none(),
-                )
-                .child(if selected {
-                    "Default"
+                let id = SharedString::from(format!("default-provider-{}", kind.id()));
+                if selected {
+                    // The chosen agent's button reads as a state, tinted, not
+                    // a dimmed control.
+                    div()
+                        .id(id)
+                        .debug_selector(move || format!("settings-default-{}", kind.id()))
+                        .role(gpui::Role::Button)
+                        .aria_label("Default")
+                        .aria_selected(true)
+                        .h(px(28.))
+                        .px(px(11.))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(px(6.))
+                        .rounded(px(8.))
+                        .bg(accent_color().opacity(0.14))
+                        .border_1()
+                        .border_color(accent_color().opacity(0.4))
+                        .text_size(px(12.5))
+                        .text_color(accent_color())
+                        .child(icon("check", 13.).text_color(accent_color()))
+                        .child("Default")
+                        .into_any_element()
                 } else {
-                    "Use by default"
-                })
-                .when(
-                    !selected && selected_model.is_some() && installed.is_some(),
-                    |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            let scope = this.provider_scope.clone();
-                            this.update(cx, |p| {
-                                if scope == "global" {
-                                    p.use_by_default(kind);
-                                } else {
-                                    p.project_providers.entry(scope).or_default().provider =
-                                        Some(kind.id().into());
-                                }
-                            })
-                        }))
-                    },
-                )
-                .into_any_element()
+                    let enabled = selected_model.is_some();
+                    glass_secondary(id, "Use by default", false, !enabled)
+                        .child("Use by default")
+                        .when(enabled, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                let scope = this.provider_scope.clone();
+                                this.update(cx, |p| {
+                                    if scope == "global" {
+                                        p.use_by_default(kind);
+                                    } else {
+                                        p.project_providers.entry(scope).or_default().provider =
+                                            Some(kind.id().into());
+                                    }
+                                })
+                            }))
+                        })
+                        .into_any_element()
+                }
             });
             if let Some(model) = selected_model.as_ref().filter(|_| installed.is_some()) {
                 controls.push(
@@ -256,9 +268,13 @@ impl SettingsView {
                 })
                 .unwrap_or_else(|| kind.unavailable_hint());
             let (accounts, add) = match &center {
-                Some(center) if account_kinds.contains(&kind) => {
-                    center.update(cx, |center, cx| center.settings_accounts(kind, cx))
-                }
+                Some(center) if account_kinds.contains(&kind) => center.update(cx, |center, cx| {
+                    center.settings_accounts(
+                        kind,
+                        installed.is_none() && !self.discovery_loading,
+                        cx,
+                    )
+                }),
                 _ => (Vec::new(), None),
             };
             // Once the check is done, a CLI that isn't there joins the
@@ -287,7 +303,8 @@ impl SettingsView {
         let advanced=vec![
             self.row(Some("idle-agents"),true,"Keep idle agents ready",Some("Keep up to this many idle agents running for faster follow-ups. Uses additional memory.".into()),vec![self.segmented("idle-agents","Keep idle agents ready",&p.idle_agents.to_string(),&[("0","None"),("1","1"),("2","2"),("3","3"),("5","5")],cx,|this,value,cx|if let Ok(value)=value.parse(){this.update(cx,|p|p.idle_agents=value)})]),
             self.row(Some("claude-hooks"),false,"Claude Code hooks",Some("Run your configured Claude Code hooks. Changes apply on the next turn.".into()),vec![self.toggle("claude-hooks","Claude Code hooks",p.claude_hooks,false,cx,|this,on,cx|this.update(cx,|p|p.claude_hooks=on))])];
-        let mut page = vec![self.glass_group(
+        // The header and its agent cards sit close together, as one section.
+        let header = self.glass_group(
             Some("agent-clis"),
             "Agent CLIs",
             Some("Choose available agents and default models for new conversations. Manage sign-ins and choose accounts for each project.".into()),
@@ -302,8 +319,17 @@ impl SettingsView {
             ),
             self.discovery_loading.then(|| note("Checking installed CLIs…")),
             Vec::new(),
-        )];
-        page.extend(clis);
+        );
+        let mut page = vec![
+            div()
+                .debug_selector(|| "settings-agents".into())
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(header)
+                .children(clis)
+                .into_any_element(),
+        ];
         if !missing.is_empty() {
             let count = missing.len();
             page.push(
