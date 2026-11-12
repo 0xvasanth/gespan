@@ -33,11 +33,10 @@ pub(super) fn supervised_args() -> Result<Vec<String>, String> {
     Ok(vec!["--config".into(), path.to_string_lossy().into_owned()])
 }
 
-/// The `--config` arguments for a pull request review: the user's config
-/// with no `allow` rule, so every command goes through Gespan's review policy
-/// instead of being approved by a grant the user made for their own work.
+/// The `--config` arguments for a pull request review, see [`review_config`].
+/// `--config` replaces the user config, so nothing of it is layered on top.
 pub(super) fn review_args() -> Result<Vec<String>, String> {
-    let config = without_allow_rules(read_user_config()?.as_deref())?;
+    let config = review_config(read_user_config()?.as_deref())?;
     let dir = std::env::var_os("GESPAN_NATIVE_DATA_DIR")
         .map(PathBuf::from)
         .or_else(|| dirs_home().map(|home| PathBuf::from(home).join(".cache/gespan-native")))
@@ -649,12 +648,46 @@ pub(crate) fn ask_before_edits(user: Option<&str>) -> Result<String, String> {
     serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
 }
 
-/// [`ask_before_edits`] with `permissions.allow` emptied.
-pub(crate) fn without_allow_rules(user: Option<&str>) -> Result<String, String> {
-    let mut config: Value =
-        serde_json::from_str(&ask_before_edits(user)?).map_err(|e| e.to_string())?;
-    config["permissions"]["allow"] = json!([]);
-    serde_json::to_string_pretty(&config).map_err(|e| e.to_string())
+/// A pull request review's config, built from an allowlist of the user's
+/// keys rather than a copy: the model (`agent.model`), the network `proxy`
+/// and `theme_mode`. Hooks, MCP servers, modes and every allow rule are
+/// dropped, so nothing the user set up for their own work can approve or run
+/// a call without Gespan's review policy. The user's deny rules only ever
+/// narrow what runs, so they are kept.
+pub(crate) fn review_config(user: Option<&str>) -> Result<String, String> {
+    const HELP: &str = "A pull request review needs it to start Devin safely.";
+    let user = match user.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(text) => {
+            let cleaned = strip_jsonc_comments(text).ok_or_else(|| {
+                format!("Devin's config.json has an unterminated comment. {HELP}")
+            })?;
+            serde_json::from_str::<Value>(&cleaned)
+                .map_err(|e| format!("Devin's config.json is not valid JSON ({e}). {HELP}"))?
+        }
+        None => json!({}),
+    };
+    if !user.is_object() {
+        return Err(format!("Devin's config.json is not a JSON object. {HELP}"));
+    }
+    let mut config = serde_json::Map::new();
+    if let Some(model) = user["agent"]["model"].as_str() {
+        config.insert("agent".into(), json!({ "model": model }));
+    }
+    if user["proxy"].is_object() {
+        config.insert("proxy".into(), user["proxy"].clone());
+    }
+    if let Some(theme) = user["theme_mode"].as_str() {
+        config.insert("theme_mode".into(), json!(theme));
+    }
+    let deny: Vec<Value> = user["permissions"]["deny"]
+        .as_array()
+        .map(|rules| rules.iter().filter(|r| r.is_string()).cloned().collect())
+        .unwrap_or_default();
+    config.insert(
+        "permissions".into(),
+        json!({ "allow": [], "deny": deny, "ask": [ASK_EDITS_RULE] }),
+    );
+    serde_json::to_string_pretty(&Value::Object(config)).map_err(|e| e.to_string())
 }
 
 /// Named by content so a running child's file is never rewritten in place.
@@ -791,26 +824,58 @@ mod tests {
     }
 
     #[test]
-    fn a_review_config_drops_every_allow_rule_and_keeps_the_rest() {
+    fn a_review_config_keeps_only_safe_user_keys() {
         let user = r#"{
-            // Grants that would run a command without asking Gespan.
-            "agent": { "model": "swe-2-high" },
+            // Model and proxy are kept; everything that can approve or run
+            // something on its own is dropped.
+            "agent": { "model": "swe-2-high", "auto_approve": true, "mode": "yolo" },
+            "proxy": { "url": "https://proxy.example" },
+            "theme_mode": "dark",
+            "hooks": { "PreToolUse": [{ "command": "approve.sh" }] },
+            "mcpServers": { "github": { "command": "gh-mcp" } },
+            "auto_approve": true,
+            "default_mode": "bypass",
             "permissions": {
                 "allow": ["Exec(gh)", "Exec(git status)"],
                 "deny": ["Write(.env*)"],
-                "ask": ["exec"]
+                "ask": ["exec"],
+                "defaultMode": "bypass"
             }
         }"#;
-        let config = without_allow_rules(Some(user)).unwrap();
+        let config = review_config(Some(user)).unwrap();
         let value: Value = serde_json::from_str(&config).unwrap();
-        assert_eq!(value["agent"]["model"], "swe-2-high");
-        assert_eq!(value["permissions"]["allow"], json!([]));
-        assert_eq!(value["permissions"]["deny"], json!(["Write(.env*)"]));
-        assert_eq!(ask_rules(&config), vec!["exec", ASK_EDITS_RULE]);
-        let empty: Value = serde_json::from_str(&without_allow_rules(None).unwrap()).unwrap();
-        assert_eq!(empty["permissions"]["allow"], json!([]));
-        assert!(without_allow_rules(Some(r#"{"permissions":{"allow":"x"}}"#)).is_ok());
-        assert!(without_allow_rules(Some("{} /* unterminated")).is_err());
+        assert_eq!(
+            value,
+            json!({
+                "agent": { "model": "swe-2-high" },
+                "proxy": { "url": "https://proxy.example" },
+                "theme_mode": "dark",
+                "permissions": {
+                    "allow": [],
+                    "deny": ["Write(.env*)"],
+                    "ask": [ASK_EDITS_RULE]
+                }
+            })
+        );
+        let empty: Value = serde_json::from_str(&review_config(None).unwrap()).unwrap();
+        assert_eq!(
+            empty,
+            json!({"permissions": {"allow": [], "deny": [], "ask": [ASK_EDITS_RULE]}})
+        );
+        // Odd shapes are dropped rather than trusted.
+        let odd: Value = serde_json::from_str(
+            &review_config(Some(
+                r#"{"agent":"x","proxy":[1],"permissions":{"deny":"x"}}"#,
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            odd,
+            json!({"permissions": {"allow": [], "deny": [], "ask": [ASK_EDITS_RULE]}})
+        );
+        assert!(review_config(Some("{} /* unterminated")).is_err());
+        assert!(review_config(Some("[]")).is_err());
     }
 
     #[test]
