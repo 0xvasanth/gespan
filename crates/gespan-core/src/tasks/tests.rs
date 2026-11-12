@@ -319,3 +319,22 @@ fn a_leading_turn_without_a_user_message_counts_as_earlier() {
     assert_eq!(all.turns.len(), 3);
     assert_eq!(kinds(&all.turns[0]), ["tools", "agent"]);
 }
+
+#[test]
+fn a_reply_typed_after_a_choices_card_is_its_answer() {
+    let rows = vec![
+        row("user", "Plan the release"),
+        choices(&["Ship today", "Wait for QA"]),
+        more("assistant", "continued"),
+        row("user", "  Wait for QA, and ping me  "),
+    ];
+    assert_eq!(
+        choice_reply(&rows, 1).as_deref(),
+        Some("Wait for QA, and ping me")
+    );
+    // Still open: nothing written after the card.
+    assert_eq!(choice_reply(&rows[..2], 1), None);
+    // A card at the end of the transcript, or a row past it.
+    assert_eq!(choice_reply(&rows, 3), None);
+    assert_eq!(choice_reply(&rows, 9), None);
+}

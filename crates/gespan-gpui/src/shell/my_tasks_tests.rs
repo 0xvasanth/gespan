@@ -601,3 +601,106 @@ fn open_session_opens_the_tasks_session(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// The task under `key` as the database keeps it.
+fn kept(
+    window: WindowHandle<Shell>,
+    visual: &mut VisualTestContext,
+    key: &str,
+) -> Option<gespan_core::tasks::TaskRecord> {
+    window
+        .read_with(visual, |shell, _| {
+            crate::runtime::locked(&shell.store)
+                .unwrap()
+                .task(key)
+                .unwrap()
+        })
+        .unwrap()
+}
+
+#[gpui::test]
+fn an_approval_answered_on_my_tasks_is_kept_with_its_request_and_answer(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (id, _controls) = waiting_page(window, visual, vec![approval("a1")]);
+    let key = format!("approval:{id}:a1");
+    let open = kept(window, visual, &key).expect("kept once it was seen waiting");
+    assert_eq!(open.status, gespan_core::tasks::Status::Open);
+    assert_eq!(open.request["detail"], "git status");
+    click(visual, "my-tasks-allow");
+    let answered = kept(window, visual, &key).unwrap();
+    assert_eq!(answered.status, gespan_core::tasks::Status::Answered);
+    assert_eq!(answered.answer.as_deref(), Some("Allowed once"));
+    assert_eq!(answered.answer_value, Some(serde_json::json!("allow")));
+    assert_eq!(answered.asked_at, open.asked_at, "the wait start is kept");
+    assert_eq!(answered.origin, format!("session:{id}"));
+}
+
+#[gpui::test]
+fn an_approval_answered_in_its_chat_is_kept_even_before_my_tasks_saw_it(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let id = other_session(window, visual);
+    let (send, _controls) = std::sync::mpsc::channel();
+    window
+        .update(visual, |shell, _, cx| {
+            shell.sessions[&id].update(cx, |view, cx| {
+                view.controls = Some(send);
+                view.set_approvals_for_test(vec![approval("a1")]);
+                // The chat's shelf and the phone both decide through here.
+                view.decide_notification_request("a1", gespan_core::agent::Decision::Session, cx);
+            });
+        })
+        .unwrap();
+    let answered = kept(window, visual, &format!("approval:{id}:a1")).expect("kept");
+    assert_eq!(answered.answer.as_deref(), Some("Allowed for this session"));
+    assert_eq!(answered.headline, "Allow Bash?");
+}
+
+#[gpui::test]
+fn a_question_answer_is_kept_with_every_option_offered(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let id = other_session(window, visual);
+    let (send, _controls) = std::sync::mpsc::channel();
+    window
+        .update(visual, |shell, window, cx| {
+            shell.sessions[&id].update(cx, |view, cx| {
+                view.controls = Some(send);
+                view.add_question(question("q1", "How should fsidCount be kept?"), cx);
+            });
+            shell.open_my_tasks(window, cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    click(visual, "question-option-0-0");
+    if visual.debug_bounds("question-continue").is_some() {
+        click(visual, "question-continue");
+    }
+    let answered = kept(window, visual, &format!("question:{id}:q1")).expect("kept");
+    assert_eq!(answered.status, gespan_core::tasks::Status::Answered);
+    assert_eq!(answered.answer.as_deref(), Some("A"));
+    assert_eq!(answered.headline, "How should fsidCount be kept?");
+    assert_eq!(answered.request["items"][0]["options"][0]["label"], "A");
+    assert!(
+        answered.can_remember(),
+        "a question's answer can become a decision"
+    );
+}
+
+#[gpui::test]
+fn a_request_that_stops_waiting_unanswered_is_kept_as_withdrawn(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let (id, _controls) = waiting_page(window, visual, vec![approval("a1")]);
+    window
+        .update(visual, |shell, _, cx| {
+            // The turn was stopped: the request is gone with no answer.
+            shell.sessions[&id].update(cx, |view, _| view.set_approvals_for_test(vec![]));
+            shell.refresh_my_tasks(cx);
+        })
+        .unwrap();
+    let withdrawn = kept(window, visual, &format!("approval:{id}:a1")).unwrap();
+    assert_eq!(withdrawn.status, gespan_core::tasks::Status::Withdrawn);
+    assert_eq!(withdrawn.answer, None);
+}

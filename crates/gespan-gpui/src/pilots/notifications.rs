@@ -67,6 +67,10 @@ impl Pilots {
 impl Pilots {
     /// Each Pilot chat whose latest card asks the user to choose, with no
     /// reply since: (Pilot id, its chat, the open choice).
+    pub(crate) fn chat_for(&self, pilot: &str) -> Option<Entity<Conversation>> {
+        self.chats.get(pilot).cloned()
+    }
+
     pub(crate) fn open_choices(
         &self,
         cx: &App,

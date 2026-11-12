@@ -16,6 +16,7 @@ mod filter;
 mod history;
 mod list;
 mod pane;
+pub(crate) mod record;
 
 /// Turns of history each "Load earlier" adds.
 pub(crate) const HISTORY_PAGE: usize = 4;

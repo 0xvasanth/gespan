@@ -775,7 +775,9 @@ pub(crate) struct Shell {
     runs: Option<Entity<crate::runs::Runs>>,
     my_tasks: Option<Entity<crate::my_tasks::MyTasks>>,
     /// When each open task was first seen, by key, in milliseconds.
-    my_task_seen: HashMap<String, u64>,
+    /// Each open task as kept in the database, with the time Gespan first
+    /// saw it waiting.
+    my_task_records: HashMap<String, gespan_core::tasks::TaskRecord>,
     /// Turns of history each task shows, once the user loaded more.
     my_task_turns: HashMap<String, usize>,
     my_tasks_events: Option<Subscription>,
@@ -1209,7 +1211,7 @@ impl Shell {
             board: None,
             runs: None,
             my_tasks: None,
-            my_task_seen: HashMap::new(),
+            my_task_records: HashMap::new(),
             my_task_turns: HashMap::new(),
             my_tasks_events: None,
             my_task_sent: HashSet::new(),
