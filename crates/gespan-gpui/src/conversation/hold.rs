@@ -158,6 +158,18 @@ impl Conversation {
         }
         self.resume_from_hold(Reason::Restarted, cx);
     }
+    /// [`Self::resume_from_hold`] for a chat that has only just been opened:
+    /// it waits for the history, so the continuation follows it.
+    pub(crate) fn resume_from_hold_when_ready(&mut self, reason: Reason, cx: &mut Context<Self>) {
+        if !self.history_ready() {
+            self.defer_history_action(
+                move |this, cx| this.resume_from_hold_when_ready(reason, cx),
+                cx,
+            );
+            return;
+        }
+        self.resume_from_hold(reason, cx);
+    }
     /// Continues a held session: its continuation first, then its queue.
     /// Returns whether anything was sent.
     pub(crate) fn resume_from_hold(&mut self, reason: Reason, cx: &mut Context<Self>) -> bool {

@@ -509,6 +509,7 @@ pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
 pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
     let (dark, light) = match label {
         "New thread" => (0x3DD68C, 0x15874F),
+        "My tasks" => (0xFFB900, 0xA86B00),
         "Inbox" => (0x8B95FF, 0x4F5BD5),
         "Notes" => (0xFF7EA8, 0xCC2F66),
         "Search" => (0x5AA9FF, 0x1F6FD6),
@@ -1115,6 +1116,7 @@ mod nav_tint_tests {
             // Keyed by the label the tab draws, so a renamed page can't
             // quietly fall back to plain ink.
             for view in [
+                AppView::MyTasks,
                 AppView::Inbox,
                 AppView::Notes,
                 AppView::Automations,

@@ -62,6 +62,7 @@ mod metal_tests;
 mod mobile;
 mod modal;
 mod model_welcome;
+mod my_tasks;
 mod notes;
 mod notifications;
 mod pane_layout;

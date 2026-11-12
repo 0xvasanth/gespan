@@ -171,7 +171,7 @@ Add an MCP server once and share it with every session. Servers need your approv
 <td width="33%" valign="top">
 <img src="docs/assets/features/editor.svg" width="40" height="40" alt="" />
 <h4>Editor, terminal and actions</h4>
-Edit files, preview Markdown and split terminals next to your sessions. <a href="docs/actions.md">Project actions</a> run your test, build and dev-server commands from the footer.
+Edit files, preview Markdown and split terminals next to your sessions. <a href="docs/actions.md">Project scripts</a> run your test, build and dev-server commands from the footer.
 </td>
 <td width="33%" valign="top">
 <img src="docs/assets/features/inbox.svg" width="40" height="40" alt="" />
@@ -212,14 +212,14 @@ The [changelog](CHANGELOG.md) lists what each release added.
 
 <!-- release:start -->
 The current release is
-[**0.1.2**](https://github.com/0xvasanth/gespan/releases/tag/v0.1.2).
+[**0.1.3**](https://github.com/0xvasanth/gespan/releases/tag/v0.1.3).
 
 | Platform | Download |
 | :-- | :-- |
-| macOS, Apple Silicon | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.1.2/Gespan_0.1.2_aarch64.dmg) |
-| macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.1.2/Gespan_0.1.2_x64.dmg) |
-| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.1.2/Gespan_0.1.2_x64-setup.exe) |
-| Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.1.2/Gespan_0.1.2_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.1.2/gespan_0.1.2_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.1.2/gespan-0.1.2-1.el10.x86_64.rpm) |
+| macOS, Apple Silicon | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.1.3/Gespan_0.1.3_aarch64.dmg) |
+| macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.1.3/Gespan_0.1.3_x64.dmg) |
+| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.1.3/Gespan_0.1.3_x64-setup.exe) |
+| Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.1.3/Gespan_0.1.3_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.1.3/gespan_0.1.3_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.1.3/gespan-0.1.3-1.el10.x86_64.rpm) |
 <!-- release:end -->
 
 Gespan on Windows and Linux is less tested than on macOS.
@@ -257,7 +257,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | :-- | :-- |
 | [Provider setup](docs/providers.md) | Install and log in to each supported agent |
 | [Board](docs/board.md) | Cards, columns and tracker tickets, and starting sessions from them |
-| [Project actions](docs/actions.md) | Test, build and dev-server commands for the footer, the palette and agents |
+| [Project scripts](docs/actions.md) | Test, build and dev-server commands for the footer, the palette and agents |
 | [Linux installation](docs/install.md) | System dependencies and `.deb` / `.rpm` / AppImage packages |
 | [Agent access with `/operator`](docs/agent-access.md) | Let agents open sessions and manage worktrees and notes |
 | [Remote sessions](docs/remote-access.md) | Run agents on another machine over SSH *(experimental)* |

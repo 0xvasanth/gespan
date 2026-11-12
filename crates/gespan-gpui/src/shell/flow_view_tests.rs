@@ -977,3 +977,39 @@ fn flows_view_lists_only_user_flows(cx: &mut TestAppContext) {
         assert!(store.owned_flow("p1", "pilot-flow").unwrap().is_some());
     });
 }
+
+#[gpui::test]
+fn a_waiting_approval_is_approved_from_my_tasks_with_the_note(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    open_with(window, visual, &approval_flow());
+    click(visual, "flow-run-gate1");
+    click(visual, "flow-run-start");
+    let run = view(window, visual).read_with(visual, |view, _| view.open_run().unwrap().0);
+    window
+        .update(visual, |shell, window, cx| {
+            shell.open_my_tasks(window, cx);
+            shell.refresh_my_tasks(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let note = window
+        .read_with(visual, |shell, cx| {
+            shell.my_tasks.as_ref().unwrap().read(cx).note.clone()
+        })
+        .unwrap();
+    set_text(note, "ship it", visual);
+    click(visual, "my-tasks-flow-approve");
+    let visits = with_store(window, visual, |store| store.visits(&run.id).unwrap());
+    assert_eq!(visits[0].status, VisitStatus::Completed);
+    assert_eq!(visits[0].note.as_deref(), Some("ship it"));
+    assert_eq!(
+        visits[0].outputs.clone().unwrap()["approved"],
+        OutputValue::Bool(true)
+    );
+    window
+        .read_with(visual, |shell, cx| {
+            assert_eq!(shell.my_task_count(cx), 0, "the task left once resolved")
+        })
+        .unwrap();
+}

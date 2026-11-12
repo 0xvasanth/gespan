@@ -430,7 +430,15 @@ impl Shell {
                     .map(|(v, _)| v.read(cx).summary.id),
             )
             .collect();
-        let plan = gespan_core::hold::resume_plan(&state, |id| known.contains(&id));
+        // A Pilot's chat not opened since a restart is still known: it loads
+        // when its turn to resume comes.
+        let pilot_chat = |id: i64| {
+            self.pilots
+                .as_ref()
+                .is_some_and(|pilots| pilots.read(cx).is_pilot_chat(id))
+        };
+        let plan =
+            gespan_core::hold::resume_plan(&state, |id| known.contains(&id) || pilot_chat(id));
         // Sessions opened or started during the hold weren't tracked; their
         // held messages go out now too.
         let tracked: HashSet<i64> = state.sessions.iter().map(|s| s.session).collect();
@@ -471,6 +479,9 @@ impl Shell {
             }
             for id in next {
                 let reason = self.hold.reasons.get(&id).copied().unwrap_or(Reason::Idle);
+                if self.resume_unopened_pilot_chat(id, reason, cx) {
+                    continue;
+                }
                 let sent = self.hold_view(id, cx).is_some_and(|view| {
                     self.watch_hold(&view, cx);
                     view.update(cx, |view, cx| view.resume_from_hold(reason, cx))
@@ -497,6 +508,35 @@ impl Shell {
             self.hold.subscriptions.clear();
         }
         self.refresh_hold_marks(cx);
+    }
+    /// A held Pilot chat that nothing has opened since a restart resumes once
+    /// it loads. It is the last stage, so nothing waits for it to start.
+    fn resume_unopened_pilot_chat(
+        &mut self,
+        id: i64,
+        reason: Reason,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(pilots) = self.pilots.clone() else {
+            return false;
+        };
+        let unopened = {
+            let pilots = pilots.read(cx);
+            pilots.is_pilot_chat(id)
+                && !pilots
+                    .hold_views()
+                    .iter()
+                    .any(|(view, _)| view.read(cx).summary.id == id)
+        };
+        if !unopened {
+            return false;
+        }
+        pilots.update(cx, |pilots, cx| pilots.resume_when_loaded(id, reason, cx));
+        self.hold.reasons.remove(&id);
+        if let Some(queue) = self.hold.resume.as_mut() {
+            queue.finished(id);
+        }
+        true
     }
     fn resumed_session_settled(&mut self, id: i64, cx: &mut Context<Self>) {
         if self.hold.reasons.contains_key(&id) {

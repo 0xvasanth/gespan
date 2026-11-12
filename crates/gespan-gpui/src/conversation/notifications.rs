@@ -21,19 +21,9 @@ impl Conversation {
                     request_id: question.id().to_owned(),
                     kind: InputKind::Question,
                     label: question.notification_label().to_owned(),
-                    summary: String::new(),
-                    detail: String::new(),
-                    omitted: String::new(),
-                    alerts: Vec::new(),
-                    needs_review: false,
                 }
             }))
             .collect()
-    }
-
-    /// The host also checks the active tab and pane before suppressing a notice.
-    pub(crate) fn composer_focused(&self, window: &Window, cx: &gpui::App) -> bool {
-        self.input.focus_handle(cx).is_focused(window)
     }
 
     pub(crate) fn notification_reply_body(&self, cx: &gpui::App) -> String {
@@ -92,5 +82,41 @@ impl Conversation {
         cx.emit(SessionChanged);
         cx.notify();
         true
+    }
+}
+
+impl Conversation {
+    /// The approvals waiting in this session, oldest first.
+    pub(crate) fn pending_approvals(&self) -> impl Iterator<Item = &gespan_core::agent::Approval> {
+        self.approvals.iter()
+    }
+
+    /// The question the session will take an answer for now: the front one.
+    pub(crate) fn front_question(&self) -> Option<Entity<crate::questions::QuestionCard>> {
+        self.questions.front().map(|(card, _)| card.clone())
+    }
+
+    /// Every loaded row of the session's history, older pages included.
+    pub(crate) fn history_rows<'a>(&self, cx: &'a gpui::App) -> &'a [gespan_core::transcript::Row] {
+        self.transcript.read(cx).history_rows()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn push_history_for_test(&mut self, role: &str, text: &str, cx: &mut Context<Self>) {
+        let row = gespan_core::transcript::Row {
+            role: role.into(),
+            text: text.into(),
+            first: true,
+            sent_at: Some(1_000),
+        };
+        self.transcript.update(cx, |t, cx| {
+            let at = t.source_rows().len();
+            t.patch(at, vec![row], cx);
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drop_questions_for_test(&mut self) {
+        self.questions.clear();
     }
 }

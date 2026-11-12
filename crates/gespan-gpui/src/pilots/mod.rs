@@ -21,6 +21,7 @@ mod notifications;
 mod overview;
 mod panel_stack;
 mod panels;
+mod quit;
 mod roadmap;
 mod scheduler;
 mod search;
@@ -106,6 +107,8 @@ pub(crate) struct Pilots {
     _clock: Option<gpui::Task<()>>,
     writes: Option<gpui::Task<()>>,
     loading_chats: HashSet<String>,
+    /// What each Pilot's chat does once it loads (see `quit`).
+    on_load: HashMap<String, quit::OnLoad>,
     work: work::Cache,
     pub(crate) error: Option<String>,
     notice_region: AnchorSlot,
@@ -363,6 +366,7 @@ impl Pilots {
             _clock: None,
             writes: None,
             loading_chats: HashSet::new(),
+            on_load: HashMap::new(),
             work: work::Cache::default(),
             error: roster_error,
             notice_region,
@@ -464,6 +468,7 @@ impl Pilots {
             this.reload_files(&id, cx);
         }
         this.file_loose_launches(cx);
+        this.deliver_queued(cx);
         this
     }
     /// Every Pilot-owned conversation Hold must stop: chats (resumed last),
@@ -907,6 +912,7 @@ impl Pilots {
                     crate::conversation::dictation::switched_to(&dictation, cx);
                 }
                 this.chats.insert(id.clone(), view);
+                this.chat_loaded(&id, cx);
                 if let Some(handle) = this.parent_window {
                     let owner = cx.weak_entity();
                     let id = id.clone();

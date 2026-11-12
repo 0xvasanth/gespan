@@ -305,7 +305,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     (
         "action-opens-terminal",
         Section::General,
-        "Show terminal for actions",
+        "Show terminal for scripts",
         "actions commands run script dock background",
     ),
     (

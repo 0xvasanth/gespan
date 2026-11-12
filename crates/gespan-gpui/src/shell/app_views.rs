@@ -13,6 +13,7 @@ impl Shell {
 
     pub(super) fn app_view_label(&self) -> Option<&'static str> {
         self.active_app_view.map(|view| match view {
+            AppView::MyTasks => "My tasks",
             AppView::Inbox => "Inbox",
             AppView::Notes => "Notes",
             AppView::Automations => "Automations",
@@ -224,6 +225,7 @@ impl Shell {
 
     pub(super) fn app_view_body(&self) -> Option<AnyElement> {
         match self.active_app_view? {
+            AppView::MyTasks => self.my_tasks.clone().map(IntoElement::into_any_element),
             AppView::Notes => self.notes.clone().map(IntoElement::into_any_element),
             AppView::Inbox => self.inbox.clone().map(IntoElement::into_any_element),
             AppView::Automations => self.automations.clone().map(IntoElement::into_any_element),
@@ -235,6 +237,7 @@ impl Shell {
 
     pub(super) fn focus_app_view(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let focus = match self.active_app_view {
+            Some(AppView::MyTasks) => self.my_tasks.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Notes) => self.notes.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Inbox) => self.inbox.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Automations) => {
