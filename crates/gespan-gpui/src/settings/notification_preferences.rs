@@ -1169,17 +1169,15 @@ impl SettingsView {
                                                     this.notification_state.custom = None;
                                                 }
                                                 _ => {
+                                                    let error = if parsed.is_some() {
+                                                        "Choose a date and time in the future."
+                                                    } else {
+                                                        "Choose a valid date and time."
+                                                    };
                                                     if let Some(custom) =
                                                         this.notification_state.custom.as_mut()
                                                     {
-                                                        custom.error = Some(
-                                                        if parsed.is_some() {
-                                                            "Choose a date and time in the future."
-                                                        } else {
-                                                            "Choose a valid date and time."
-                                                        }
-                                                        .into(),
-                                                    );
+                                                        custom.error = Some(error.into());
                                                     }
                                                 }
                                             }
