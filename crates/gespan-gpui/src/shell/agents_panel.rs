@@ -179,7 +179,7 @@ pub(super) fn list_height(agents: usize) -> Option<f32> {
 }
 
 /// A running turn's age on its pill: "45s", "6m", "1h 5m".
-pub(super) fn elapsed(ms: u64) -> String {
+pub(crate) fn elapsed(ms: u64) -> String {
     let seconds = ms / 1000;
     if seconds < 60 {
         return format!("{}s", seconds.max(1));
@@ -334,7 +334,12 @@ impl Shell {
         true
     }
 
-    fn open_agent(&mut self, agent: &Agent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_agent(
+        &mut self,
+        agent: &Agent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.agents_open = false;
         match &agent.pilot {
             Some(pilot) => {

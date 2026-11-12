@@ -262,7 +262,7 @@ impl MyTasks {
         cx.notify();
     }
 
-    #[cfg(test)]
+    /// Every task waiting now, for Home and tests.
     pub(crate) fn tasks(&self) -> &[TaskItem] {
         &self.tasks
     }

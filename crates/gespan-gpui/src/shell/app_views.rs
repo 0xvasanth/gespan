@@ -13,6 +13,7 @@ impl Shell {
 
     pub(super) fn app_view_label(&self) -> Option<&'static str> {
         self.active_app_view.map(|view| match view {
+            AppView::Home => "Home",
             AppView::MyTasks => "My tasks",
             AppView::Inbox => "Inbox",
             AppView::Notes => "Notes",
@@ -152,6 +153,11 @@ impl Shell {
         {
             runs.update(cx, |runs, _| runs.hidden());
         }
+        if self.active_app_view == Some(AppView::Home)
+            && let Some(home) = &self.home
+        {
+            home.update(cx, |home, _| home.hidden());
+        }
         self.active_app_view = None;
         self.invalidate_chrome(cx);
     }
@@ -225,6 +231,7 @@ impl Shell {
 
     pub(super) fn app_view_body(&self) -> Option<AnyElement> {
         match self.active_app_view? {
+            AppView::Home => self.home.clone().map(IntoElement::into_any_element),
             AppView::MyTasks => self.my_tasks.clone().map(IntoElement::into_any_element),
             AppView::Notes => self.notes.clone().map(IntoElement::into_any_element),
             AppView::Inbox => self.inbox.clone().map(IntoElement::into_any_element),
@@ -237,6 +244,7 @@ impl Shell {
 
     pub(super) fn focus_app_view(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let focus = match self.active_app_view {
+            Some(AppView::Home) => self.home.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::MyTasks) => self.my_tasks.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Notes) => self.notes.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Inbox) => self.inbox.as_ref().map(|view| view.focus_handle(cx)),
