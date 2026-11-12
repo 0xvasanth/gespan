@@ -733,7 +733,12 @@ impl Protocol {
         let allow = matches!(control.decision, Decision::Allow | Decision::Session);
         let session = matches!(control.decision, Decision::Session);
         if kind == "acp" {
-            return acp::respond(stdin, wire, &request, control.decision);
+            // A review's post is approved once, never for the session.
+            let decision = match control.decision {
+                Decision::Session if self.request.settings.review.is_some() => Decision::Allow,
+                other => other,
+            };
+            return acp::respond(stdin, wire, &request, decision);
         }
         if kind == "codex-mcp" {
             return write_json(
