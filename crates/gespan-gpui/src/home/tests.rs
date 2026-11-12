@@ -339,3 +339,13 @@ fn inbox_items_are_named_by_repo_and_number_else_their_key() {
     assert_eq!(item_reference(&item("", 7, "ENG-7", "Fix")), "ENG-7");
     assert_eq!(item_reference(&item("", 0, "", "Fix login")), "Fix login");
 }
+
+#[test]
+fn dark_brand_tiles_draw_in_ink_so_their_bars_show() {
+    // Claude keeps its orange.
+    assert_eq!(provider_color("claude"), provider_tile("claude").unwrap().0);
+    // Cursor's tile is near black: it would vanish on the dark track.
+    assert_eq!(provider_color("cursor"), content(0.9));
+    // No tile at all (a multicolour logo) is ink too.
+    assert_eq!(provider_color("antigravity"), content(0.9));
+}

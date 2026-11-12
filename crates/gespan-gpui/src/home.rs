@@ -731,9 +731,14 @@ fn running_number() -> Hsla {
     }
 }
 
-/// A provider's swatch: its brand fill, else plain ink.
-fn provider_color(provider: &str) -> Hsla {
-    provider_tile(provider).map_or_else(|| content(0.9), |(top, _)| top)
+/// A provider's swatch: its brand fill, else plain ink. A near-black brand
+/// tile (Cursor, Grok, OpenCode…) takes ink too, or it would vanish on the
+/// dark bar track.
+pub(crate) fn provider_color(provider: &str) -> Hsla {
+    provider_tile(provider)
+        .map(|(top, _)| top)
+        .filter(|top| top.l > 0.3)
+        .unwrap_or_else(|| content(0.9))
 }
 
 impl Home {
