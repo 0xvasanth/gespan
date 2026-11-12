@@ -79,7 +79,7 @@ pub(crate) fn seed(db: &mut Store, cwd: &str) -> Result<(), String> {
         let (title, rows) = if i == 0 {
             ("Bench · long chat", long_chat().rows)
         } else {
-            ("Bench · chat", crate::fixtures::chat().rows)
+            ("Bench · chat", short_chat().rows)
         };
         db.title(session.id, &format!("{title} {}", i + 1))?;
         db.write_rows(session.id, 0, &rows)?;
@@ -98,6 +98,19 @@ fn workspace_state(ids: &[i64], cwd: &str) -> String {
         ..Default::default()
     };
     serde_json::to_string(&state).expect("the workspace serializes")
+}
+
+/// A few turns of the tool-heavy fixture. Each starts with a prompt: a chat
+/// without one opens on the empty new-thread view, which would make tab
+/// switching measure nothing.
+pub(crate) fn short_chat() -> Transcript {
+    let mut t = Transcript::default();
+    for turn in 0..3 {
+        t.begin("user");
+        t.append(&format!("Turn {turn}: run the tests and fix what fails."));
+        t.rows.extend(crate::fixtures::chat().rows);
+    }
+    t
 }
 
 pub(crate) fn long_chat() -> Transcript {
@@ -567,6 +580,12 @@ mod tests {
         // Long enough to scroll for a while: hundreds of messages.
         let rows = db.load(long.id).unwrap().rows;
         assert!(rows.iter().filter(|r| r.first).count() >= 2 * LONG_CHAT_TURNS);
+        // Every chat opens on its transcript, not the empty new-thread view.
+        for session in &sessions {
+            let rows = db.load(session.id).unwrap().rows;
+            assert_eq!(rows.first().map(|r| r.role.as_str()), Some("user"));
+            assert!(rows.iter().any(|r| r.role == "assistant"));
+        }
         // The seeded workspace is not first-run setup.
         assert!(!crate::setup::rules::setup_pending(saved.as_deref()));
     }

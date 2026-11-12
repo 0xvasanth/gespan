@@ -95,10 +95,13 @@ function targetDirectory() {
   return metadata.target_directory;
 }
 
-/** Agent CLIs that answer `--version` and nothing else: nothing leaves the Mac. */
+/**
+ * Agent CLIs that answer `--version` and nothing else: nothing leaves the
+ * Mac. The version is above any release, so no update panel covers the chat.
+ */
 function writeStubAgent(dir) {
   const path = join(dir, "stub-agent");
-  writeFileSync(path, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo '0.0.0-bench'; fi\nexit 0\n");
+  writeFileSync(path, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo '999.0.0'; fi\nexit 0\n");
   chmodSync(path, 0o755);
   return path;
 }
