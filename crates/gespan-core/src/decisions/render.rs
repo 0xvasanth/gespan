@@ -1,4 +1,4 @@
-use crate::entry::{Entry, Status};
+use super::entry::{Entry, Status};
 
 /// The session-start block (and the project decision file) is capped here.
 pub const START_BUDGET: usize = 8192;

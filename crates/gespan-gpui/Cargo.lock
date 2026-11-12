@@ -2708,7 +2708,6 @@ dependencies = [
  "gespan-browser",
  "gespan-graph",
  "gespan-mcp-config",
- "gespan-memory",
  "gespan-mobile-link",
  "gespan-redact",
  "gespan-tracker-client",
@@ -2874,14 +2873,6 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "gespan-memory"
-version = "0.1.0"
-dependencies = [
- "rusqlite",
- "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -471,9 +471,10 @@ fn main() {
     let tool_data = database.parent().unwrap_or(std::path::Path::new("."));
     gespan_core::process::orphans::reap(Some(gespan_core::tool_servers::running_record(tool_data)));
     gespan_core::tool_servers::configure(tool_data);
-    // The decision log's store opens whether or not the log is on; the
-    // preference (applied with the others) decides whether anything uses it.
-    if let Err(error) = gespan_core::decisions::init(tool_data) {
+    // The decision log opens on the same gespan.db whether or not the log is
+    // on; the preference (applied with the others) decides whether anything
+    // uses it.
+    if let Err(error) = gespan_core::decisions::init(&database) {
         tracing::warn!(%error, "the decision log did not open");
     }
     // Optional: without it the browser toolkit lists nothing and says so.

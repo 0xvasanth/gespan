@@ -234,6 +234,27 @@ pub(super) fn project_turns(
     Ok(turns)
 }
 
+/// Opens gespan.db (`orm_path`) through Toasty: adopts and migrates it, and
+/// marks a `fresh` file (one that did not exist) as past every Tauri
+/// migration, since an older Tauri build that opens it must not run them
+/// again: they predate every column here. [`Store::open_gespan`] and the
+/// decision log's store both open the file this way, so whichever opens it
+/// first leaves it the same.
+pub(crate) fn open_database(orm_path: &Path, fresh: bool) -> Result<crate::orm::Database, String> {
+    let database = crate::orm::open(crate::orm::Kind::Gespan, orm_path)?;
+    if fresh {
+        database.run(|mut db| async move {
+            super::schema::TauriMigration::create()
+                .version(19)
+                .applied_at(0)
+                .exec(&mut db)
+                .await
+                .map(drop)
+        })?;
+    }
+    Ok(database)
+}
+
 impl Store {
     /// Open the sessions, notes and reminders the desktop app saved. Gespan
     /// owns the file: one an older Tauri build left is adopted into the
@@ -301,19 +322,7 @@ impl Store {
             } else {
                 None
             };
-            let database = crate::orm::open(crate::orm::Kind::Gespan, &orm_path)?;
-            if fresh {
-                // An older Tauri build that opens this file must not run its
-                // migrations again: they predate every column here.
-                database.run(|mut db| async move {
-                    super::schema::TauriMigration::create()
-                        .version(19)
-                        .applied_at(0)
-                        .exec(&mut db)
-                        .await
-                        .map(drop)
-                })?;
-            }
+            let database = open_database(&orm_path, fresh)?;
             let conn = match keeper {
                 Some(conn) => conn,
                 None => sql(Connection::open_with_flags(

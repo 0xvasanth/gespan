@@ -6,8 +6,10 @@ use crate::decisions::harness::{
 };
 use crate::decisions::scope::{git_common_dir, scope_for, shared_file};
 use crate::decisions::service::{self, isolated, Isolated};
+use crate::decisions::{
+    Config, DecisionStore, Kind as EntryKind, NewEntry, Scope, Source, START_BUDGET,
+};
 use crate::provider::Kind;
-use gespan_memory::{Config, Kind as EntryKind, NewEntry, Scope, Source, Store, START_BUDGET};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -15,7 +17,7 @@ use tempfile::TempDir;
 
 /// A temp home, data dir and git repository, and a store of their own.
 struct Fixture {
-    store: Store,
+    store: DecisionStore,
     _log: Isolated,
     _tmp: TempDir,
     home: PathBuf,
@@ -33,8 +35,8 @@ fn fixture() -> Fixture {
         fs::create_dir_all(dir).unwrap();
     }
     init_repo(&repo);
-    let store = Store::open(
-        &root.join("memory.db"),
+    let store = DecisionStore::open(
+        &root.join("gespan.db"),
         Config {
             redact: crate::pilot::memory::redact,
         },
@@ -887,7 +889,7 @@ fn a_fifo_in_place_of_a_harness_file_is_skipped_without_blocking() {
             Err(_) => {
                 // The reader cannot be unblocked, and the scope would wait
                 // for it forever: fail the whole run instead of hanging.
-                eprintln!("regenerate blocked on a FIFO");
+                tracing::error!("regenerate blocked on a FIFO");
                 std::process::abort();
             }
         };

@@ -59,14 +59,16 @@
 //! honoured. Project files are refused when they are symlinks, resolve into
 //! the git dir, or are tracked by git; files over 256 KB or that are not
 //! regular files are never read or written.
+use super::entry::{Entry, Kind as EntryKind, Scope};
 use super::files::{
     ensure_excluded, remove_excluded, replace_section, user_edited_section, write_atomic, BEGIN,
 };
+use super::render::{render_block, START_BUDGET};
 use super::scope::{git_common_dir, scope_for, shared_file};
 use super::service;
+use super::store::DecisionStore;
 use crate::accounts::{Book, Profile};
 use crate::provider::Kind;
-use gespan_memory::{render_block, Entry, Kind as EntryKind, Scope, Store, START_BUDGET};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -588,7 +590,7 @@ fn recorded_leftovers(registry: &Registry, jobs: &[Job]) -> Vec<Job> {
 /// profile or workspace no longer given, are withdrawn. Does nothing when
 /// the log is off by the time it gets to run.
 pub fn regenerate(
-    store: &Store,
+    store: &DecisionStore,
     book: &Book,
     data_dir: &Path,
     homes: Homes,

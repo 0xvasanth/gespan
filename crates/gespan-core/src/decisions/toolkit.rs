@@ -1,11 +1,10 @@
 //! The `decisions` tools: how an agent reads, searches, proposes and flags
 //! entries in the decision log. Agents can never approve, replace or reject.
+use super::entry::{Edit, Entry, Error, Kind, NewEntry, Scope, Source, Status};
+use super::render::{render_block, START_BUDGET};
 use super::scope::scope_for;
 use super::service;
 use crate::tool_servers::{DECISIONS, DECISIONS_READ};
-use gespan_memory::{
-    render_block, Edit, Entry, Kind, NewEntry, Scope, Source, Status, START_BUDGET,
-};
 use mcp_hub::Grant;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
@@ -412,7 +411,7 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
     // the session can see is compared, not just the best search hits, so a
     // crowded log can't hide a duplicate; so are the caller's own drafts,
     // which nobody else sees.
-    let candidates = service::with(|store| -> Result<Vec<Entry>, gespan_memory::Error> {
+    let candidates = service::with(|store| -> Result<Vec<Entry>, Error> {
         let mut found = store.visible(&scope)?;
         for draft in store.pending()? {
             if draft.scope == scope
@@ -483,7 +482,7 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
     };
     let entry =
         service::with(|store| store.propose(new, now_ms()))?.map_err(|error| match error {
-            gespan_memory::Error::MissingWhy => "why is required".to_owned(),
+            Error::MissingWhy => "why is required".to_owned(),
             other => failed(other),
         })?;
     Ok(with_note(

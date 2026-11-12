@@ -28,19 +28,41 @@ pub(crate) struct MyTask {
     decision_id: Option<i64>,
 }
 
-/// A project decision saved from the answers that point at it.
+/// One entry of the decision log: a project decision saved from My tasks
+/// answers, or a preference or decision an agent proposed. `statement` is the
+/// entry's text. `crate::decisions::entry` maps the shared columns (kind,
+/// status, scope, title), so My tasks and the log cannot drift apart.
 #[derive(Debug, toasty::Model)]
 #[table = "task_decisions"]
+#[index(name = "task_decisions_scope_status_idx", scope, status)]
+#[index(name = "task_decisions_replaced_by_idx", replaced_by)]
 pub(crate) struct TaskDecision {
     #[key]
     #[auto]
-    id: i64,
-    project: String,
-    statement: String,
-    why: String,
-    created_at: i64,
-    updated_at: i64,
-    archived_at: Option<i64>,
+    pub(crate) id: i64,
+    pub(crate) project: String,
+    pub(crate) statement: String,
+    pub(crate) why: String,
+    pub(crate) created_at: i64,
+    pub(crate) updated_at: i64,
+    pub(crate) archived_at: Option<i64>,
+    /// `preference` or `decision`.
+    pub(crate) kind: String,
+    /// `pending`, `active`, `replaced`, `rejected` or `archived`.
+    pub(crate) status: String,
+    /// The `Scope` as text: `global`, `repo:<key>` or `project:<path>`.
+    pub(crate) scope: String,
+    pub(crate) title: String,
+    pub(crate) user_answer: Option<String>,
+    /// The session that proposed it.
+    pub(crate) session: Option<i64>,
+    pub(crate) question_ref: Option<String>,
+    pub(crate) user_turn: Option<String>,
+    pub(crate) import_src: Option<String>,
+    pub(crate) pinned: bool,
+    pub(crate) supersedes: Option<i64>,
+    pub(crate) replaced_by: Option<i64>,
+    pub(crate) decided_at: Option<i64>,
 }
 
 /// The hand-made tables older builds created, for adoption tests.
@@ -232,7 +254,11 @@ impl Store {
         Ok(records(rows))
     }
 
-    /// Saves a decision for `project` from the answers under `sources`.
+    /// Saves a decision for `project` from the answers under `sources`. It
+    /// is an active project decision of the decision log too, in the scope
+    /// [`crate::decisions::scope_for`] gives `project` (which runs git, so it
+    /// is worked out before the transaction), carrying the first answer it
+    /// came from as its user source.
     pub fn save_decision(
         &self,
         project: &str,
@@ -241,20 +267,45 @@ impl Store {
         sources: &[String],
         at: u64,
     ) -> Result<i64, String> {
+        use crate::decisions::entry::{derived_title, Kind, Status};
         let statement = statement.trim();
         if statement.is_empty() {
             return Err("A decision needs a statement".into());
         }
+        let scope = crate::decisions::scope_for(std::path::Path::new(project)).to_string();
+        let title = derived_title(statement);
         let (project, statement, why) = (project.to_owned(), statement.to_owned(), why.trim());
         let (why, sources) = (why.to_owned(), sources.to_vec());
         self.orm()?.transaction(|tx| {
             Box::pin(async move {
+                let answer = match sources.first() {
+                    Some(key) => MyTask::filter_by_key(key)
+                        .first()
+                        .exec(tx)
+                        .await?
+                        .and_then(|task| task.answer),
+                    None => None,
+                };
                 let decision = TaskDecision::create()
                     .project(project)
                     .statement(statement)
                     .why(why)
                     .created_at(ms(at))
                     .updated_at(ms(at))
+                    .archived_at(None)
+                    .kind(Kind::Decision.as_str())
+                    .status(Status::Active.as_str())
+                    .scope(scope)
+                    .title(title)
+                    .user_answer(answer)
+                    .session(None)
+                    .question_ref(sources.first().cloned())
+                    .user_turn(None)
+                    .import_src(None)
+                    .pinned(false)
+                    .supersedes(None)
+                    .replaced_by(None)
+                    .decided_at(Some(ms(at)))
                     .exec(tx)
                     .await?;
                 for key in sources {
@@ -269,39 +320,58 @@ impl Store {
         })
     }
 
+    /// Rewrites a decision's statement. A title derived from the old
+    /// statement follows it; a title of its own (an agent's) is kept.
     pub fn edit_decision(&self, id: i64, statement: &str, at: u64) -> Result<(), String> {
-        let statement = statement.trim();
+        use crate::decisions::entry::derived_title;
+        let statement = statement.trim().to_owned();
         if statement.is_empty() {
             return Err("A decision needs a statement".into());
         }
-        self.orm()?.run(|mut db| async move {
-            TaskDecision::filter_by_id(id)
-                .update()
-                .statement(statement)
-                .updated_at(ms(at))
-                .exec(&mut db)
-                .await
+        self.orm()?.transaction(|tx| {
+            Box::pin(async move {
+                let Some(mut row) = TaskDecision::filter_by_id(id).first().exec(tx).await? else {
+                    return Ok(());
+                };
+                let title = if row.title == derived_title(&row.statement) {
+                    derived_title(&statement)
+                } else {
+                    row.title.clone()
+                };
+                row.update()
+                    .statement(statement)
+                    .title(title)
+                    .updated_at(ms(at))
+                    .exec(tx)
+                    .await
+            })
         })
     }
 
-    /// Takes a decision off the list; its answers stay in the history.
+    /// Takes a decision off the list, and out of the decision log; its
+    /// answers stay in the history.
     pub fn archive_decision(&self, id: i64, at: u64) -> Result<(), String> {
+        use crate::decisions::entry::Status;
         self.orm()?.run(|mut db| async move {
             TaskDecision::filter_by_id(id)
                 .update()
                 .archived_at(Some(ms(at)))
+                .status(Status::Archived.as_str())
+                .decided_at(Some(ms(at)))
                 .exec(&mut db)
                 .await
         })
     }
 
-    /// Decisions not archived, most recently changed first, each with the
-    /// answers it came from.
+    /// The decision log's active entries (project decisions and preferences
+    /// alike), most recently changed first, each with the answers it came
+    /// from. Pending proposals are not listed.
     pub fn decisions(&self) -> Result<Vec<SavedDecision>, String> {
+        use crate::decisions::entry::Status;
         self.orm()?.run(|mut db| async move {
             let decision = TaskDecision::fields();
             let task = MyTask::fields();
-            let rows = TaskDecision::filter(decision.archived_at().is_none())
+            let rows = TaskDecision::filter(decision.status().eq(Status::Active.as_str()))
                 .order_by((decision.updated_at().desc(), decision.id().desc()))
                 .exec(&mut db)
                 .await?;

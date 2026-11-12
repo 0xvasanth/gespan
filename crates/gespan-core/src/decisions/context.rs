@@ -1,9 +1,10 @@
 //! The session-start block: what a session of a harness that reads no
 //! decision file is told about the log, once, and again only after it changes.
+use super::entry::{Entry, Kind as EntryKind};
+use super::render::{render_block, START_BUDGET};
 use super::scope::scope_for;
 use super::service;
 use crate::provider::Kind;
-use gespan_memory::{render_block, Entry, Kind as EntryKind, START_BUDGET};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 

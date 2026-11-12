@@ -1,8 +1,8 @@
 use super::super::scope_for;
 use super::super::service::{self, isolated};
 use super::super::toolkit::Toolkit;
+use crate::decisions::{Entry, Kind, NewEntry, Scope, Source, Status, STANDING_INSTRUCTION};
 use crate::tool_servers::{self, Mount, DECISIONS, DECISIONS_READ};
-use gespan_memory::{Entry, Kind, NewEntry, Scope, Source, Status, STANDING_INSTRUCTION};
 use mcp_hub::{Grant, Toolkit as _};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;

@@ -12,7 +12,7 @@ mod kind;
 pub mod migrations;
 mod runtime;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use kind::Kind;
 pub use runtime::run;

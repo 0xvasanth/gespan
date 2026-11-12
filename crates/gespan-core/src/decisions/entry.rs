@@ -1,6 +1,6 @@
+//! The decision log's entry types, and the column mapping `task_decisions`
+//! shares with My tasks' saved decisions.
 use std::fmt;
-
-use crate::Error;
 
 /// Each of title, text, why and user_answer is capped at this many characters.
 pub const MAX_FIELD_CHARS: usize = 1_000;
@@ -18,7 +18,7 @@ impl Kind {
             Kind::Decision => "decision",
         }
     }
-    pub(crate) fn parse(s: &str) -> Result<Kind, Error> {
+    pub fn parse(s: &str) -> Result<Kind, Error> {
         match s {
             "preference" => Ok(Kind::Preference),
             "decision" => Ok(Kind::Decision),
@@ -46,7 +46,7 @@ impl Status {
             Status::Archived => "archived",
         }
     }
-    pub(crate) fn parse(s: &str) -> Result<Status, Error> {
+    pub fn parse(s: &str) -> Result<Status, Error> {
         match s {
             "pending" => Ok(Status::Pending),
             "active" => Ok(Status::Active),
@@ -77,7 +77,7 @@ impl fmt::Display for Scope {
 }
 
 impl Scope {
-    pub(crate) fn parse(s: &str) -> Result<Scope, Error> {
+    pub fn parse(s: &str) -> Result<Scope, Error> {
         if s == "global" {
             Ok(Scope::Global)
         } else if let Some(r) = s.strip_prefix("repo:") {
@@ -162,4 +162,72 @@ pub struct Flag {
 pub struct Config {
     /// Scrubs secrets from text before it is stored.
     pub redact: fn(&str) -> String,
+}
+
+/// Everything a decision-log operation can fail with.
+#[derive(Debug)]
+pub enum Error {
+    /// The database refused or failed the operation.
+    Db(String),
+    /// An entry needs a reason (why).
+    MissingWhy,
+    NotFound(i64),
+    NotPending(i64),
+    NotActive(i64),
+    SelfReplace(i64),
+    FlagNotFound(i64),
+    /// A stored kind, status or scope this build does not recognise.
+    BadValue(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Db(error) => write!(f, "decision database: {error}"),
+            Error::MissingWhy => f.write_str("an entry needs a reason (why)"),
+            Error::NotFound(id) => write!(f, "entry {id} does not exist"),
+            Error::NotPending(id) => write!(f, "entry {id} is not pending"),
+            Error::NotActive(id) => write!(f, "entry {id} is not active"),
+            Error::SelfReplace(id) => write!(f, "entry {id} cannot replace itself"),
+            Error::FlagNotFound(id) => write!(f, "flag {id} does not exist"),
+            Error::BadValue(value) => write!(f, "stored value {value:?} is not recognised"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl From<String> for Error {
+    fn from(error: String) -> Self {
+        Error::Db(error)
+    }
+}
+
+/// A title made from a statement: its first line, cut to this many
+/// characters. My tasks' decisions have no title of their own.
+pub const DERIVED_TITLE_CHARS: usize = 80;
+
+/// The title My tasks gives a decision it saves or edits: the statement's
+/// first line, trimmed of spaces, tabs and carriage returns, and cut to
+/// [`DERIVED_TITLE_CHARS`] characters. Migration `0001_decision_log` titles
+/// the rows older builds left with the same rule, in SQL.
+pub fn derived_title(statement: &str) -> String {
+    statement
+        .split('\n')
+        .next()
+        .unwrap_or_default()
+        .trim_matches([' ', '\t', '\r'])
+        .chars()
+        .take(DERIVED_TITLE_CHARS)
+        .collect()
+}
+
+/// The `project` column of an entry in `scope`, which My tasks groups its
+/// Decisions list by: the path of a project scope, otherwise the scope's own
+/// text (`repo:<key>` or `global`).
+pub fn project_column(scope: &Scope) -> String {
+    match scope {
+        Scope::Project(path) => path.clone(),
+        other => other.to_string(),
+    }
 }

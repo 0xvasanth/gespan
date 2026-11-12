@@ -190,6 +190,9 @@ impl MyTasks {
         });
         match saved {
             Ok(_) => {
+                // The decision is the decision log's too: its harness files
+                // follow (nothing happens while the log is off).
+                gespan_core::decisions::service::regenerate();
                 self.writing = None;
                 if self.offer.as_ref().is_some_and(|o| o.key == key) {
                     self.offer = None;
@@ -215,6 +218,7 @@ impl MyTasks {
             .and_then(|store| change(&store, gespan_core::time::now_ms()))
         {
             Ok(()) => {
+                gespan_core::decisions::service::regenerate();
                 self.writing = None;
                 self.reload(cx);
             }

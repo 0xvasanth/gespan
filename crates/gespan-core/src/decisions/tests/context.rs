@@ -1,8 +1,8 @@
 use super::super::context::{reads_decision_file, start_context};
 use super::super::scope_for;
 use super::super::service::{self, isolated};
+use crate::decisions::{Kind as EntryKind, NewEntry, Scope, Source, STANDING_INSTRUCTION};
 use crate::provider::Kind;
-use gespan_memory::{Kind as EntryKind, NewEntry, Scope, Source, STANDING_INSTRUCTION};
 use std::path::Path;
 
 /// Proposes an entry for `scope` as the user's, and approves it.

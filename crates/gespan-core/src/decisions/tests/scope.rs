@@ -1,6 +1,6 @@
 use crate::decisions::scope::strip_verbatim;
+use crate::decisions::Scope;
 use crate::decisions::{normalize_remote, scope_for, shared_file};
-use gespan_memory::Scope;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;

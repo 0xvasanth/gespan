@@ -2,7 +2,7 @@
 //!
 //! Worktrees and clones of one repository share decisions because the scope
 //! comes from the remote, not from the checkout's path.
-use gespan_memory::Scope;
+use super::entry::Scope;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 

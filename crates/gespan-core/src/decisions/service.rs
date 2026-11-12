@@ -1,12 +1,13 @@
 //! The process-wide decision log: one store, the on/off switch, and the hooks
 //! the app registers (regeneration of harness files, and the user-authored
 //! text of a session).
-use gespan_memory::{Config, Store};
+use super::entry::Config;
+use super::store::DecisionStore;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-static STORE: Mutex<Option<Arc<Store>>> = Mutex::new(None);
+static STORE: Mutex<Option<Arc<DecisionStore>>> = Mutex::new(None);
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static REGENERATE: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
 static USER_TEXT: Mutex<Option<Arc<UserTextSource>>> = Mutex::new(None);
@@ -20,26 +21,27 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Opens `<data_dir>/memory.db` once. Later calls keep the open store.
-pub fn init(data_dir: &Path) -> Result<(), String> {
+/// Opens the decision log on the app's gespan.db at `database` once (its own
+/// Toasty handle on the file the app's store uses). Later calls keep the
+/// open store.
+pub fn init(database: &Path) -> Result<(), String> {
     let mut slot = lock(&STORE);
     if slot.is_some() {
         return Ok(());
     }
-    std::fs::create_dir_all(data_dir).map_err(|e| format!("decision log: {e}"))?;
-    let store = Store::open(
-        &data_dir.join("memory.db"),
-        Config {
-            redact: crate::pilot::memory::redact,
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let store = DecisionStore::open(database, config()).map_err(|e| e.to_string())?;
     *slot = Some(Arc::new(store));
     Ok(())
 }
 
+fn config() -> Config {
+    Config {
+        redact: crate::pilot::memory::redact,
+    }
+}
+
 /// Runs `f` on the open store, or says the log isn't open.
-pub fn with<T>(f: impl FnOnce(&Store) -> T) -> Result<T, String> {
+pub fn with<T>(f: impl FnOnce(&DecisionStore) -> T) -> Result<T, String> {
     let store = lock(&STORE).clone();
     match store {
         Some(store) => Ok(f(&store)),
@@ -101,13 +103,7 @@ pub(crate) fn isolated() -> Isolated {
     static TESTS: Mutex<()> = Mutex::new(());
     let lock = lock(&TESTS);
     let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(
-        &dir.path().join("memory.db"),
-        Config {
-            redact: crate::pilot::memory::redact,
-        },
-    )
-    .unwrap();
+    let store = DecisionStore::open(&dir.path().join("gespan.db"), config()).unwrap();
     *self::lock(&STORE) = Some(Arc::new(store));
     *self::lock(&REGENERATE) = None;
     *self::lock(&USER_TEXT) = None;

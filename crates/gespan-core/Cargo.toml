@@ -71,7 +71,6 @@ gespan-browser = { path = "../gespan-browser" }
 # Only for its models, registered as the Graph database kind.
 gespan-graph = { path = "../gespan-graph" }
 herdr-link = { path = "../herdr-link" }
-gespan-memory = { path = "../gespan-memory" }
 zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

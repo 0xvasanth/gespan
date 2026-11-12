@@ -1,4 +1,6 @@
-use gespan_memory::{Config, Edit, Error, Kind, NewEntry, Scope, Source, Status, Store};
+use gespan_core::decisions::{
+    Config, DecisionStore as Store, Edit, Error, Kind, NewEntry, Scope, Source, Status,
+};
 use tempfile::TempDir;
 
 fn fake_redact(s: &str) -> String {
@@ -20,7 +22,7 @@ fn fake_redact(s: &str) -> String {
 fn open() -> (TempDir, Store) {
     let dir = TempDir::new().unwrap();
     let store = Store::open(
-        &dir.path().join("mem.db"),
+        &dir.path().join("gespan.db"),
         Config {
             redact: fake_redact,
         },
@@ -225,7 +227,8 @@ fn visible_includes_global_preferences_for_any_scope() {
         .unwrap();
     s.approve(d.id, None, false, &[], 4).unwrap();
 
-    let ids = |v: Vec<gespan_memory::Entry>| v.into_iter().map(|e| e.id).collect::<Vec<_>>();
+    let ids =
+        |v: Vec<gespan_core::decisions::Entry>| v.into_iter().map(|e| e.id).collect::<Vec<_>>();
     assert_eq!(ids(s.visible(&repo()).unwrap()), vec![p.id]);
     assert_eq!(ids(s.active(&repo()).unwrap()), vec![p.id]);
     assert_eq!(ids(s.active(&other).unwrap()), vec![d.id, p.id]);
@@ -303,7 +306,7 @@ fn scope_round_trips_through_storage() {
 #[test]
 fn reopening_keeps_rows() {
     let dir = TempDir::new().unwrap();
-    let path = dir.path().join("mem.db");
+    let path = dir.path().join("gespan.db");
     let id = {
         let s = Store::open(
             &path,
@@ -332,9 +335,9 @@ fn reopening_keeps_rows() {
 }
 
 #[test]
-fn reopen_after_fresh_create_has_one_version_row() {
+fn reopen_after_fresh_create_applies_each_migration_once() {
     let dir = TempDir::new().unwrap();
-    let path = dir.path().join("mem.db");
+    let path = dir.path().join("gespan.db");
     drop(
         Store::open(
             &path,
@@ -354,10 +357,15 @@ fn reopen_after_fresh_create_has_one_version_row() {
         .unwrap(),
     );
     let raw = rusqlite::Connection::open(&path).unwrap();
-    let n: i64 = raw
-        .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))
+    let (rows, distinct): (i64, i64) = raw
+        .query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT id) FROM __toasty_migrations",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .unwrap();
-    assert_eq!(n, 1);
+    assert!(rows > 0);
+    assert_eq!(rows, distinct, "no migration is recorded twice");
 }
 
 #[test]

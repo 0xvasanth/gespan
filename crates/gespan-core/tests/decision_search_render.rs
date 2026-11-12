@@ -1,13 +1,13 @@
-use gespan_memory::{
-    render_block, Config, Edit, Entry, Kind, NewEntry, Scope, Source, Store, STANDING_INSTRUCTION,
-    START_BUDGET,
+use gespan_core::decisions::{
+    render_block, Config, DecisionStore as Store, Edit, Entry, Kind, NewEntry, Scope, Source,
+    STANDING_INSTRUCTION, START_BUDGET,
 };
 use tempfile::TempDir;
 
 fn open() -> (TempDir, Store) {
     let dir = TempDir::new().unwrap();
     let store = Store::open(
-        &dir.path().join("mem.db"),
+        &dir.path().join("gespan.db"),
         Config {
             redact: |s| s.to_string(),
         },
