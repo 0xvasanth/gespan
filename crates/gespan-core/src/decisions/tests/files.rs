@@ -350,3 +350,103 @@ fn write_atomic_failure_keeps_original_when_rename_fails() {
         .collect();
     assert_eq!(names, ["target"], "temp file cleaned up");
 }
+
+#[test]
+fn a_stray_unclosed_fence_does_not_hide_the_section_or_duplicate_it() {
+    let stray = "intro  \n```\nunclosed example\t\n\n";
+    let first = replace_section(stray, "one");
+    let second = replace_section(&first, "two");
+    let third = replace_section(&second, "two");
+    assert_eq!(second.matches(BEGIN).count(), 1);
+    assert_eq!(third, second);
+    assert!(second.starts_with(stray));
+    assert_eq!(replace_section(&second, ""), stray);
+}
+
+#[test]
+fn tilde_and_longer_fences_hide_markers_until_a_matching_closer() {
+    let tilde = format!("~~~\n{BEGIN}\nx\n{END}\n~~~\n");
+    let out = replace_section(&tilde, "real");
+    assert!(out.starts_with(&tilde));
+    assert_eq!(out.matches(BEGIN).count(), 2);
+    assert_eq!(replace_section(&out, ""), tilde);
+
+    // ``` inside a ```` block does not close it; ~~~ does not close ```.
+    let long = format!("````\n```\n{BEGIN}\nx\n{END}\n```\n````\n```\n~~~\n{END}\n```\n");
+    let out = replace_section(&long, "real");
+    assert!(out.starts_with(&long));
+    assert_eq!(out.matches(BEGIN).count(), 2);
+    assert_eq!(replace_section(&out, ""), long);
+}
+
+#[test]
+fn an_orphan_begin_does_not_capture_a_fenced_example() {
+    let existing = format!("{BEGIN}\nuser\n```\n{END}\n```\nafter\n");
+    let out = replace_section(&existing, "fresh");
+    assert!(out.starts_with(&existing));
+    assert_eq!(out.matches(BEGIN).count(), 2);
+    assert_eq!(replace_section(&out, ""), existing);
+}
+
+#[cfg(unix)]
+fn symlink_or_skip(target: &Path, link: &Path) -> bool {
+    std::os::unix::fs::symlink(target, link).is_ok()
+}
+#[cfg(not(unix))]
+fn symlink_or_skip(target: &Path, link: &Path) -> bool {
+    std::os::windows::fs::symlink_file(target, link).is_ok()
+}
+
+#[test]
+fn write_atomic_writes_through_a_symlink_and_keeps_the_link() {
+    let tmp = TempDir::new().unwrap();
+    let real = tmp.path().join("AGENTS.md");
+    let mid = tmp.path().join("mid.md");
+    let link = tmp.path().join("CLAUDE.md");
+    fs::write(&real, "old").unwrap();
+    if !symlink_or_skip(Path::new("AGENTS.md"), &mid)
+        || !symlink_or_skip(Path::new("mid.md"), &link)
+    {
+        return; // Symlinks unavailable (unprivileged Windows).
+    }
+    write_atomic(&link, "new").unwrap();
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(fs::symlink_metadata(&mid).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read_to_string(&real).unwrap(), "new");
+    assert_eq!(fs::read_to_string(&link).unwrap(), "new");
+}
+
+#[test]
+fn ensure_excluded_lists_a_symlink_under_its_own_name() {
+    let tmp = TempDir::new().unwrap();
+    init_repo(tmp.path());
+    let real = tmp.path().join("AGENTS.md");
+    let link = tmp.path().join("CLAUDE.md");
+    fs::write(&real, "x").unwrap();
+    if !symlink_or_skip(Path::new("AGENTS.md"), &link) {
+        return;
+    }
+    let before = exclude_lines(&tmp.path().join(".git"));
+    ensure_excluded(tmp.path(), &link).unwrap();
+    let mut expected = before.clone();
+    expected.push("/CLAUDE.md".to_owned());
+    assert_eq!(exclude_lines(&tmp.path().join(".git")), expected);
+    remove_excluded(tmp.path(), &link).unwrap();
+    assert_eq!(exclude_lines(&tmp.path().join(".git")), before);
+}
+
+#[test]
+fn ensure_excluded_keeps_crlf_endings() {
+    let tmp = TempDir::new().unwrap();
+    init_repo(tmp.path());
+    let exclude = tmp.path().join(".git").join("info").join("exclude");
+    fs::write(&exclude, "# mine\r\n*.log").unwrap();
+    ensure_excluded(tmp.path(), &tmp.path().join("CLAUDE.md")).unwrap();
+    assert_eq!(
+        fs::read_to_string(&exclude).unwrap(),
+        "# mine\r\n*.log\r\n/CLAUDE.md\r\n"
+    );
+}

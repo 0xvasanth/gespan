@@ -30,22 +30,50 @@ fn line_ending(text: &str) -> &'static str {
     }
 }
 
-/// Complete sections outside code fences. A marker counts only as a whole
-/// line (ignoring surrounding whitespace). A BEGIN that is never closed, or
-/// is followed by another BEGIN first, is left alone as user text.
-fn find_sections(lines: &[&str]) -> Vec<Span> {
+/// A code fence opener: up to 3 spaces, then 3 or more backticks or tildes
+/// (a backtick fence's info string cannot contain a backtick).
+fn fence_opener(line: &str) -> Option<(char, usize)> {
+    let (ch, run, rest) = fence_run(line)?;
+    (run >= 3 && !(ch == '`' && rest.contains('`'))).then_some((ch, run))
+}
+
+/// A fence closer: the opener's character, at least as long, nothing after.
+fn closes_fence(line: &str, ch: char, len: usize) -> bool {
+    fence_run(line).is_some_and(|(c, run, rest)| c == ch && run >= len && rest.trim().is_empty())
+}
+
+fn fence_run(line: &str) -> Option<(char, usize, &str)> {
+    let body = line_body(line);
+    let indent = body.len() - body.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let body = &body[indent..];
+    let ch = body.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let run = body.chars().take_while(|&c| c == ch).count();
+    Some((ch, run, &body[run..]))
+}
+
+/// One pass over the lines. `Err(i)` when the fence opened at line `i` never
+/// closes, so the caller can treat that line as plain text and scan again.
+fn scan_sections(lines: &[&str], ignored: &[usize]) -> Result<Vec<Span>, usize> {
     let mut spans = Vec::new();
     let mut open: Option<usize> = None;
-    let mut fenced = false;
+    let mut fence: Option<(char, usize, usize)> = None;
     for (i, line) in lines.iter().enumerate() {
+        if let Some((ch, len, _)) = fence {
+            if closes_fence(line, ch, len) {
+                fence = None;
+            }
+            continue;
+        }
+        if !ignored.contains(&i) {
+            if let Some((ch, len)) = fence_opener(line) {
+                fence = Some((ch, len, i));
+                continue;
+            }
+        }
         let text = line.trim();
-        if open.is_none() && text.trim_start().starts_with("```") {
-            fenced = !fenced;
-            continue;
-        }
-        if fenced {
-            continue;
-        }
         if text == BEGIN {
             open = Some(i);
         } else if text == END {
@@ -54,7 +82,26 @@ fn find_sections(lines: &[&str]) -> Vec<Span> {
             }
         }
     }
-    spans
+    match fence {
+        Some((_, _, opener)) => Err(opener),
+        None => Ok(spans),
+    }
+}
+
+/// Complete sections outside code fences (``` or ~~~, closed only by the
+/// same character at least as long). A marker counts only as a whole line
+/// (ignoring surrounding whitespace). A BEGIN that is never closed, or is
+/// followed by another BEGIN first, is left alone as user text. A fence that
+/// is still open at the end of the file is not a fence: its opener is plain
+/// text, so a stray fence cannot hide Gespan's own section.
+fn find_sections(lines: &[&str]) -> Vec<Span> {
+    let mut ignored = Vec::new();
+    loop {
+        match scan_sections(lines, &ignored) {
+            Ok(spans) => return spans,
+            Err(opener) => ignored.push(opener),
+        }
+    }
 }
 
 /// Replaces Gespan's section in `existing` with `body`, adds it when missing,
@@ -148,6 +195,26 @@ pub fn user_edited_section(existing: &str, last_written: &str) -> bool {
     }
 }
 
+/// Follows a chain of symlinks so a linked file (CLAUDE.md -> AGENTS.md) is
+/// updated in place and the link survives. A dangling link resolves to its
+/// missing target, which then gets created.
+fn resolve_symlinks(path: &Path) -> io::Result<PathBuf> {
+    let mut current = path.to_path_buf();
+    for _ in 0..40 {
+        match fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = fs::read_link(&current)?;
+                current = match current.parent() {
+                    Some(parent) => parent.join(target),
+                    None => target,
+                };
+            }
+            _ => return Ok(current),
+        }
+    }
+    Err(io::Error::other("too many levels of symbolic links"))
+}
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Writes `content` to `path` via a temp file in the same directory and a
@@ -155,6 +222,8 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// target's permissions are kept (unix); the temp file is removed on any
 /// error. Missing parent directories are created.
 pub fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
+    let path = resolve_symlinks(path)?;
+    let path = path.as_path();
     let dir = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -215,12 +284,9 @@ fn exclude_target(workspace: &Path, file: &Path) -> Option<(String, PathBuf)> {
     ))
 }
 
-/// Canonical path of a file that may not exist yet: its parent's canonical
-/// path plus its name.
+/// The file's own path with its directory canonicalised. The file itself is
+/// never resolved, so a symlink is excluded under its own name.
 fn canonical_or_parent(file: &Path) -> PathBuf {
-    if let Ok(real) = fs::canonicalize(file) {
-        return real;
-    }
     match (
         file.parent().and_then(|p| fs::canonicalize(p).ok()),
         file.file_name(),
@@ -245,12 +311,13 @@ pub fn ensure_excluded(workspace: &Path, file: &Path) -> io::Result<()> {
     if current.lines().any(|l| l.trim_end_matches('\r') == pattern) {
         return Ok(());
     }
+    let eol = line_ending(&current);
     let mut next = current;
     if !next.is_empty() && !next.ends_with('\n') {
-        next.push('\n');
+        next.push_str(eol);
     }
     next.push_str(&pattern);
-    next.push('\n');
+    next.push_str(eol);
     write_atomic(&exclude, &next)
 }
 
