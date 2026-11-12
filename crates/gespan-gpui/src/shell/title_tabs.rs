@@ -158,7 +158,6 @@ impl Shell {
     }
 
     /// Every drawable tab of every project, in strip order, pins left out.
-    #[allow(dead_code)] // Drawn by the grouped strip.
     pub(super) fn global_strip_tabs(&self, cx: &App) -> Vec<TitleTab> {
         self.workspace
             .title_order
@@ -170,14 +169,12 @@ impl Shell {
 
     /// The strip for every project: each project's tabs as one group, where
     /// its first tab is, and app tabs loose between them.
-    #[allow(dead_code)] // Drawn by the grouped strip.
     pub(super) fn strip_entries(&self, cx: &App) -> Vec<StripEntry<TitleTab>> {
         entries(&self.global_strip_tabs(cx), |tab| self.tab_project(tab, cx))
     }
 
     /// The worktree `tab` runs in when that isn't its project folder, named
     /// as the sidebar names it.
-    #[allow(dead_code)] // Drawn by the grouped strip.
     pub(super) fn tab_worktree_label(&self, tab: &TitleTab, cx: &App) -> Option<String> {
         let project = self.tab_project(tab, cx)?;
         let worktree = match tab {
@@ -188,7 +185,8 @@ impl Shell {
             ),
             TitleTab::Pilot { worktree, .. } => worktree.as_str(),
         };
-        (path_key(worktree) != path_key(&project)).then(|| self.worktree_label(worktree))
+        (path_key(worktree) != path_key(&project))
+            .then(|| self.worktree_label_in(&project, worktree))
     }
 
     /// Keeps each project's tabs side by side in `title_order`, so a tab

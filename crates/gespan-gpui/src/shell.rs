@@ -73,6 +73,7 @@ mod sidebar_peek;
 mod space_reorder;
 #[cfg(test)]
 mod surface_tests;
+mod tab_groups;
 #[cfg(test)]
 mod tab_groups_tests;
 mod terminal_dock;
@@ -814,6 +815,13 @@ pub(crate) struct Shell {
     pin_fan: pinned_tabs::PinFan,
     pin_deck: pinned_tabs::PinDeck,
     pin_card_hover: Option<TitleTab>,
+    /// The collapsed project group shown open while the pointer is on it:
+    /// its project folder.
+    strip_peek: Option<String>,
+    /// The strip's direct children as last drawn: a loose tab's key, or
+    /// None for a group's box.
+    strip_children: Vec<Option<TitleTab>>,
+    group_tab_bounds: tab_groups::GroupTabBounds,
     /// Tab animations: opening and closing title tabs, with each tab's last label.
     title_tab_motion: crate::tab_motion::TabMotion<TitleTab, ()>,
     /// Tab animations: the selected tab before the last switch, the one now
@@ -1244,6 +1252,9 @@ impl Shell {
             pin_fan: Default::default(),
             pin_deck: Default::default(),
             pin_card_hover: None,
+            strip_peek: None,
+            strip_children: Vec::new(),
+            group_tab_bounds: Default::default(),
             title_tab_motion: Default::default(),
             title_tab_selection: (None, None, std::time::Instant::now()),
             session_hover: None,
@@ -4304,9 +4315,11 @@ impl Shell {
         if !strip.contains(&position) {
             return None;
         }
-        let count = self.strip_tabs(cx).len();
-        let bounds: Vec<_> = (0..count)
-            .filter_map(|ix| self.tab_scroll.bounds_for_item(ix))
+        let tabs = self.strip_tabs(cx);
+        let count = tabs.len();
+        let bounds: Vec<_> = tabs
+            .iter()
+            .filter_map(|tab| self.strip_tab_bounds(tab))
             .collect();
         if bounds.len() != count {
             return Some(count);
@@ -7878,8 +7891,10 @@ impl Shell {
         if tabs.len() < 2 {
             return;
         }
-        let bounds: Vec<_> = (0..tabs.len())
-            .filter_map(|ix| self.tab_scroll.bounds_for_item(ix))
+        // Each tab where it is drawn, loose or inside its group.
+        let bounds: Vec<_> = tabs
+            .iter()
+            .filter_map(|tab| self.strip_tab_bounds(tab))
             .collect();
         if bounds.len() != tabs.len() {
             return;
@@ -8118,8 +8133,18 @@ impl Shell {
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let strip_width = self.tabs_width(window, cx);
-        let tabs = self.strip_tabs(cx);
-        let count = tabs.len();
+        // Every project's tabs, grouped; collapsed groups draw only a chip.
+        let entries = self.strip_entries(cx);
+        let tabs = self.drawn_strip_tabs(&entries);
+        let chips = self.group_chip_widths(&entries, window, cx);
+        let group_room = Self::group_room(&chips);
+        // Drags and drops count the current scope's tabs, as shortcuts do.
+        let strip = self.strip_tabs(cx);
+        let strip_ix: Vec<Option<usize>> = tabs
+            .iter()
+            .map(|tab| strip.iter().position(|t| t == tab))
+            .collect();
+        let count = strip.len();
         let insert = self.pane_drag.as_ref().and_then(|d| d.insert);
         let reduced = cx.reduce_motion();
         let pane_motion = !reduced && !self.tab_drag.as_ref().is_some_and(|d| d.active);
@@ -8152,7 +8177,7 @@ impl Shell {
                 | crate::tab_motion::Slot::Closing { open, .. } => *open,
             })
             .sum();
-        let avail = viewport - STRIP_PAD - STRIP_NEW_TAB - share * 2.;
+        let avail = viewport - STRIP_PAD - STRIP_NEW_TAB - group_room - share * 2.;
         let width = if share <= 0. {
             TITLE_TAB_MAX_WIDTH
         } else {
@@ -8231,7 +8256,7 @@ impl Shell {
         let mut extra: HashMap<TitleTab, f32> = HashMap::new();
         let mut new_tab_lead = 2.;
         if crowded {
-            let leftover = (viewport - STRIP_PAD - STRIP_NEW_TAB - used).max(0.);
+            let leftover = (viewport - STRIP_PAD - STRIP_NEW_TAB - group_room - used).max(0.);
             let settled: Vec<&TitleTab> = slots
                 .iter()
                 .filter_map(|s| match s {
@@ -8261,7 +8286,7 @@ impl Shell {
             .into_iter()
             .enumerate()
             .map(|(ix, id)| {
-                let target = self.tab_shift(ix).as_f32();
+                let target = strip_ix[ix].map_or(0., |ix| self.tab_shift(ix).as_f32());
                 let (value, active) =
                     self.eased_shift(id.clone(), target, dragged.as_ref() == Some(&id), reduced);
                 moving |= active;
@@ -8331,6 +8356,8 @@ impl Shell {
                     .into_iter()
                     .filter(|pane| self.session_summaries.contains_key(pane))
                     .any(|pane| self.session_metadata(pane, cx).has_saved_draft());
+                // A tab in a worktree other than its project folder names it.
+                let worktree = self.tab_worktree_label(&TitleTab::Session(id), cx);
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -8386,7 +8413,13 @@ impl Shell {
                                 (leaving, dir, progress),
                                 active,
                                 hovered,
-                            )),
+                            ))
+                            .when_some(
+                                worktree.filter(|_| {
+                                    tab_width(&TitleTab::Session(id)) >= TAB_CLOSE_MIN_WIDTH
+                                }),
+                                |d, label| d.child(tab_groups::worktree_badge(id, label)),
+                            ),
                     )
                     .when(close, |d| {
                         d.child(
@@ -8447,10 +8480,14 @@ impl Shell {
                                 .rounded_full()
                                 .bg(accent_color())
                         };
-                        d.when(insert == Some(ix), |d| d.child(bar().left(px(-2.))))
-                            .when(insert == Some(count) && ix + 1 == count, |d| {
-                                d.child(bar().right(px(-2.)))
-                            })
+                        let at = strip_ix[ix];
+                        d.when(at.is_some() && insert == at, |d| {
+                            d.child(bar().left(px(-2.)))
+                        })
+                        .when(
+                            insert == Some(count) && at.is_some_and(|at| at + 1 == count),
+                            |d| d.child(bar().right(px(-2.))),
+                        )
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -8567,12 +8604,12 @@ impl Shell {
                 .mr(px(-give))
                 .overflow_hidden()
         };
-        let elements: Vec<AnyElement> = slots
+        let elements: Vec<(TitleTab, AnyElement)> = slots
             .into_iter()
             .filter_map(|s| match s {
                 crate::tab_motion::Slot::Live { key, open } => {
                     let element = live.remove(&key)?;
-                    Some(if open >= 1. {
+                    let element = if open >= 1. {
                         element
                     } else {
                         slot(&key, open)
@@ -8582,7 +8619,8 @@ impl Shell {
                             .when(crowded, |d| d.flex().justify_end())
                             .child(element)
                             .into_any_element()
-                    })
+                    };
+                    Some((key, element))
                 }
                 crate::tab_motion::Slot::Closing { key, open, .. } => {
                     let w = tab_width(&key);
@@ -8602,27 +8640,31 @@ impl Shell {
                         })
                         .into_iter()
                         .flatten();
-                    Some(
-                        slot(&key, open)
-                            .child(
-                                div()
-                                    .w(px(w))
-                                    .h(px(TITLE_BAR_HEIGHT))
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        title_tab_plate(false, false)
-                                            .w_full()
-                                            .min_w_0()
-                                            .gap(px(TAB_TILE_GAP))
-                                            .children(headline),
-                                    ),
-                            )
-                            .into_any_element(),
-                    )
+                    let element = slot(&key, open)
+                        .child(
+                            div()
+                                .w(px(w))
+                                .h(px(TITLE_BAR_HEIGHT))
+                                .flex()
+                                .items_center()
+                                .child(
+                                    title_tab_plate(false, false)
+                                        .w_full()
+                                        .min_w_0()
+                                        .gap(px(TAB_TILE_GAP))
+                                        .children(headline),
+                                ),
+                        )
+                        .into_any_element();
+                    Some((key, element))
                 }
             })
             .collect();
+        let (keys, elements): (Vec<_>, Vec<_>) = self
+            .grouped_strip(&entries, elements, &chips, cx)
+            .into_iter()
+            .unzip();
+        self.strip_children = keys;
         div()
             .id("title-tab-strip")
             .debug_selector(|| "title-tab-strip".into())
@@ -11296,8 +11338,9 @@ mod tests {
         window
             .update(cx, |shell, _, cx| {
                 assert_eq!(shell.visible_tabs(cx).len(), 3);
-                assert_eq!(shell.tab_scroll.bounds_for_item(2), Some(pilot));
-                assert_eq!(shell.tab_scroll.bounds_for_item(0), Some(first));
+                let tabs = shell.strip_tabs(cx);
+                assert_eq!(shell.strip_tab_bounds(&tabs[2]), Some(pilot));
+                assert_eq!(shell.strip_tab_bounds(&tabs[0]), Some(first));
             })
             .unwrap();
     }
@@ -11342,11 +11385,15 @@ mod tests {
         let last = cx
             .debug_bounds(Box::leak(format!("title-tab-{last}").into_boxed_str()))
             .unwrap();
+        // The last tab sits inside its project's group, which ends one inset
+        // past it.
+        let group = cx.debug_bounds("tab-group-gespan").unwrap();
+        assert!(group.right() >= last.right());
         // The strip's 2px gap and the button's 2px margin, as when it has room.
         assert!(
-            settled.left() - last.right() <= px(4.5),
+            settled.left() - group.right() <= px(4.5),
             "a full strip keeps the usual gap before the new-tab button: {:?}",
-            settled.left() - last.right()
+            settled.left() - group.right()
         );
         let (selected, other) = window
             .update(cx, |shell, _, cx| {

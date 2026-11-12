@@ -34,7 +34,11 @@ impl Shell {
     /// The heading a worktree's group takes in the sidebar: its branch, or
     /// its folder's name when the branch is not known yet.
     pub(super) fn worktree_label(&self, path: &str) -> String {
-        let project = &self.workspace.project;
+        self.worktree_label_in(&self.workspace.project, path)
+    }
+    /// [`Self::worktree_label`] for a worktree of `project`, whichever
+    /// project is current.
+    pub(super) fn worktree_label_in(&self, project: &str, path: &str) -> String {
         let tree = crate::git_cache::get(project).and_then(|git| {
             git.worktrees
                 .into_iter()

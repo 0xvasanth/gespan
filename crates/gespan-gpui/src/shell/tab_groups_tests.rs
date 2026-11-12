@@ -2,6 +2,7 @@
 //! group, pins from any project share the deck, and shortcuts still walk
 //! only the current project's tabs.
 use super::*;
+use crate::conversation::SessionChanged;
 use crate::shell::tests::window;
 use crate::strip_groups::StripEntry;
 use crate::workspace::TitleTab;
@@ -189,6 +190,239 @@ fn a_tab_in_a_worktree_names_it_and_one_in_the_project_folder_does_not(cx: &mut 
                 shell.tab_project(&TitleTab::App(app_views::AppView::Board), cx),
                 None
             );
+        })
+        .unwrap();
+}
+
+fn selector(name: String) -> &'static str {
+    Box::leak(name.into_boxed_str())
+}
+
+/// Adds a tab for a new chat in `project` without leaving the current one.
+fn add_background_tab(shell: &mut Shell, project: &str, cx: &mut Context<Shell>) -> i64 {
+    let summary = locked(&shell.store)
+        .unwrap()
+        .create("codex", project)
+        .unwrap();
+    let id = summary.id;
+    shell.add(summary, cx);
+    let active = shell.workspace.active;
+    shell.workspace.open(id);
+    shell.workspace.active = active;
+    shell.invalidate_chrome(cx);
+    id
+}
+
+fn drawn(visual: &mut gpui::VisualTestContext, name: String) -> bool {
+    visual.debug_bounds(selector(name)).is_some()
+}
+
+fn settle(visual: &mut gpui::VisualTestContext) {
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    visual.run_until_parked();
+}
+
+fn hover(visual: &mut gpui::VisualTestContext, name: String) {
+    let at = visual
+        .debug_bounds(selector(name.clone()))
+        .unwrap_or_else(|| panic!("{name} drawn"));
+    visual.simulate_mouse_move(at.center(), None, Default::default());
+    settle(visual);
+}
+
+#[gpui::test]
+fn other_projects_draw_collapsed_chips(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(drawn(visual, "tab-group-chip-another-project".into()));
+    assert!(drawn(visual, "tab-group-count-another-project".into()));
+    assert!(!drawn(visual, format!("title-tab-{other}")), "collapsed");
+    assert!(drawn(visual, format!("title-tab-{here}")));
+    // The current project's group is expanded behind its own chip.
+    let chip = visual.debug_bounds("tab-group-chip-gespan").unwrap();
+    let tab = visual
+        .debug_bounds(selector(format!("title-tab-{here}")))
+        .unwrap();
+    assert!(chip.right() <= tab.left());
+    assert!(!drawn(visual, "tab-group-count-gespan".into()));
+    let group = visual.debug_bounds("tab-group-gespan").unwrap();
+    assert!(group.left() <= chip.left() && group.right() >= tab.right());
+}
+
+#[gpui::test]
+fn hovering_a_chip_peeks_and_leaving_its_box_collapses(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    hover(visual, "tab-group-chip-another-project".into());
+    assert!(drawn(visual, format!("title-tab-{other}")), "peeks");
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(
+                shell.workspace.project, "/work/gespan",
+                "hover never switches"
+            );
+            assert_eq!(shell.strip_peek.as_deref(), Some("/work/another-project"));
+        })
+        .unwrap();
+    // Onto its own tab: still inside the group's box.
+    hover(visual, format!("title-tab-{other}"));
+    assert!(
+        drawn(visual, format!("title-tab-{other}")),
+        "stays while inside"
+    );
+    hover(visual, format!("title-tab-{here}"));
+    assert!(!drawn(visual, format!("title-tab-{other}")), "collapses");
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.strip_peek, None);
+            assert_eq!(shell.workspace.project, "/work/gespan");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn one_group_peeks_at_a_time(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, _) = window(cx);
+    let third = window
+        .update(cx, |shell, _, cx| {
+            add_background_tab(shell, "/work/third-project", cx)
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(!drawn(visual, format!("title-tab-{third}")));
+    hover(visual, "tab-group-chip-another-project".into());
+    assert!(drawn(visual, format!("title-tab-{other}")));
+    hover(visual, "tab-group-chip-third-project".into());
+    assert!(drawn(visual, format!("title-tab-{third}")));
+    assert!(
+        !drawn(visual, format!("title-tab-{other}")),
+        "only one peeks"
+    );
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.strip_peek.as_deref(), Some("/work/third-project"));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn running_project_shows_spinner_on_its_chip(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, _) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(!drawn(visual, "tab-group-running-another-project".into()));
+    for busy in [true, false] {
+        window
+            .update(visual, |shell, _, cx| {
+                shell.sessions[&other].update(cx, |session, cx| {
+                    session.busy = busy;
+                    cx.emit(SessionChanged);
+                });
+                shell.invalidate_chrome(cx);
+            })
+            .unwrap();
+        settle(visual);
+        window
+            .update(visual, |shell, _, cx| {
+                assert_eq!(shell.group_running(&[TitleTab::Session(other)], cx), busy);
+            })
+            .unwrap();
+        assert_eq!(
+            drawn(visual, "tab-group-running-another-project".into()),
+            busy
+        );
+    }
+}
+
+#[gpui::test]
+fn worktree_tabs_carry_a_label(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, here) = window(cx);
+    let worktree = window
+        .update(cx, |shell, _, cx| {
+            let id = add_background_tab(shell, "/work/gespan", cx);
+            shell
+                .workspace
+                .tab_workspaces
+                .insert(id, "/work/gespan-fix-tabs".into());
+            id
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(drawn(visual, format!("title-tab-{worktree}")));
+    let label = visual
+        .debug_bounds(selector(format!("title-tab-worktree-{worktree}")))
+        .expect("worktree label");
+    let tab = visual
+        .debug_bounds(selector(format!("title-tab-{worktree}")))
+        .unwrap();
+    assert!(tab.left() <= label.left() && label.right() <= tab.right());
+    assert!(!drawn(visual, format!("title-tab-worktree-{here}")));
+}
+
+#[gpui::test]
+fn current_project_without_tabs_draws_no_group(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, here) = window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.workspace.close(here);
+            shell.invalidate_chrome(cx);
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(!drawn(visual, "tab-group-gespan".into()));
+    assert!(!drawn(visual, "tab-group-chip-gespan".into()));
+    assert!(drawn(visual, "tab-group-chip-another-project".into()));
+}
+
+#[gpui::test]
+fn a_tab_in_another_project_names_its_branch(cx: &mut TestAppContext) {
+    let (window, _, _) = window(cx);
+    let project = "/work/branch-label-project";
+    let fix = "/work/branch-label-project-fix";
+    crate::git_cache::remember(
+        project,
+        &gespan_core::git::Snapshot {
+            worktrees: vec![
+                gespan_core::git::Worktree {
+                    path: project.into(),
+                    branch: Some("main".into()),
+                    main: true,
+                    ..Default::default()
+                },
+                gespan_core::git::Worktree {
+                    path: fix.into(),
+                    branch: Some("fix-tabs".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        },
+    );
+    window
+        .update(cx, |shell, _, cx| {
+            assert_eq!(shell.workspace.project, "/work/gespan");
+            let id = add_background_tab(shell, project, cx);
+            shell.workspace.tab_workspaces.insert(id, fix.into());
+            assert_eq!(
+                shell.tab_worktree_label(&TitleTab::Session(id), cx),
+                Some("fix-tabs".into()),
+                "the branch, resolved under the tab's own project"
+            );
+            assert_eq!(shell.worktree_label_in(project, fix), "fix-tabs");
+            // The current project's lookup is unchanged.
+            assert_eq!(shell.worktree_label("/work/gespan-other"), "gespan-other");
         })
         .unwrap();
 }
