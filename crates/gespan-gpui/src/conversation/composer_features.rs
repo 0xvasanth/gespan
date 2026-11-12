@@ -536,6 +536,12 @@ impl Conversation {
             .map(|row| row.text.clone())
             .unwrap_or_default()
     }
+    /// Everything the agent said since the last user message, in full.
+    pub(crate) fn last_reply(&self, cx: &gpui::App) -> String {
+        let rows = self.transcript.read(cx).source_rows();
+        let start = rows.iter().rposition(|row| row.role == "user").unwrap_or(0);
+        gespan_core::response::prose(&rows[start..])
+    }
     pub(crate) fn external_outcome(&self, cx: &gpui::App) -> (bool, String) {
         let rows = self.transcript.read(cx).source_rows();
         let start = rows.iter().rposition(|row| row.role == "user").unwrap_or(0);

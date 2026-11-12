@@ -39,6 +39,7 @@ impl MyTasks {
             Source::Session(_) => "Open session",
             Source::FlowRun(_) => "Open run",
             Source::Pilot { .. } => "Open chat",
+            Source::DraftReview { .. } => "Open draft",
         };
         let source = task.source.clone();
         let bar = div()

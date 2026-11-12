@@ -16,6 +16,7 @@ pub(super) fn kind_icon(kind: Kind) -> &'static str {
         Kind::Approval => "terminal",
         Kind::FlowApproval => "git-merge",
         Kind::PilotChoice => "queue-list",
+        Kind::DraftReview => "git-pull-request-draft",
     }
 }
 

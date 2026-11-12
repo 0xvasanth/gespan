@@ -1254,6 +1254,7 @@ mod tool_tests {
         request.settings.review = Some(crate::review_policy::ReviewPolicy {
             results,
             target: Some(crate::review_policy::ReviewTarget {
+                forge: crate::review_policy::Forge::GitHub,
                 repo: "acme/app".into(),
                 number: 7,
             }),

@@ -78,13 +78,18 @@ fn default_repo_only_when_single() {
 
 #[test]
 fn results_follow_the_harness() {
-    assert_eq!(results_for("pi"), [ReviewResults::Gespan]);
+    // Pi has no shell, but a pending review needs none: Gespan posts it.
+    assert_eq!(
+        results_for("pi"),
+        [ReviewResults::Gespan, ReviewResults::Pending]
+    );
     assert_eq!(
         results_for("claude"),
         [
             ReviewResults::Gespan,
             ReviewResults::Draft,
-            ReviewResults::Post
+            ReviewResults::Post,
+            ReviewResults::Pending
         ]
     );
 }
@@ -387,6 +392,10 @@ fn results_menu_respects_harness(cx: &mut TestAppContext) {
             ("gespan".into(), "keeps the review in Gespan".into()),
             ("draft".into(), "drafts a review for you to approve".into()),
             ("post".into(), "posts the review on the PR".into()),
+            (
+                "pending".into(),
+                "leaves a draft review on the PR for you to submit".into()
+            ),
         ]
     );
     choose(&window, &mut visual, Choice::SetupResults, "post");
@@ -402,7 +411,13 @@ fn results_menu_respects_harness(cx: &mut TestAppContext) {
     assert_eq!(setup.results, ReviewResults::Gespan);
     assert_eq!(
         results_menu(&mut visual),
-        vec![("gespan".into(), "keeps the review in Gespan".into())]
+        vec![
+            ("gespan".into(), "keeps the review in Gespan".into()),
+            (
+                "pending".into(),
+                "leaves a draft review on the PR for you to submit".into()
+            ),
+        ]
     );
     // A value the harness can't do is refused even if asked for directly.
     choose(&window, &mut visual, Choice::SetupResults, "post");

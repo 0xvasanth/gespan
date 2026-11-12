@@ -260,6 +260,43 @@ pub fn gitlab_mr_diff(app: PathBuf, repo: String, number: i64) -> Result<GitlabM
     gitlab_mr_diff_for(&config, &repo, number)
 }
 
+/// The connected account's GitLab API, for the draft notes Gespan leaves on
+/// a merge request itself.
+pub struct GitlabApi {
+    config: GitlabConfig,
+}
+
+impl GitlabApi {
+    pub fn connect(app: &Path) -> Result<Self, String> {
+        Ok(Self {
+            config: require_config(app)?,
+        })
+    }
+}
+
+impl crate::review_draft::GitlabHttp for GitlabApi {
+    fn get(&mut self, path: &str) -> Result<Value, String> {
+        gitlab_get(&self.config, path).map(|r| r.value)
+    }
+    fn post_json(&mut self, path: &str, body: &Value) -> Result<Value, String> {
+        gitlab_send(&self.config, "POST", path, Some(body)).map(|r| r.value)
+    }
+    fn put(&mut self, path: &str) -> Result<Value, String> {
+        gitlab_send(&self.config, "PUT", path, None).map(|r| r.value)
+    }
+    fn mr_patch(&mut self, repo: &str, number: u64) -> Result<String, String> {
+        let repo = validate_repo(repo)?;
+        let number = i64::try_from(number).map_err(|e| e.to_string())?;
+        gitlab_mr_diff_for(&self.config, &repo, number).map(|diff| diff.patch)
+    }
+}
+
+/// The unified patch Gespan builds from a `/diffs` response.
+#[cfg(test)]
+pub(crate) fn patch_from_diffs(value: &Value) -> Result<String, String> {
+    parse_mr_diff(value, false).map(|diff| diff.patch)
+}
+
 fn gitlab_list_work_items_for(
     config: &GitlabConfig,
     repo: &str,
@@ -835,6 +872,26 @@ fn gitlab_post_form(
             .set("User-Agent", USER_AGENT)
             .send_form(fields),
     )
+}
+
+fn gitlab_send(
+    config: &GitlabConfig,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Result<GitlabResponse, String> {
+    let url = format!("{}/api/v4{}", config.url.trim_end_matches('/'), path);
+    let request = gitlab_agent()
+        .request(method, &url)
+        .set("PRIVATE-TOKEN", &config.token)
+        .set("Accept", "application/json")
+        .set("User-Agent", USER_AGENT);
+    read_gitlab_response(match body {
+        Some(body) => request
+            .set("Content-Type", "application/json")
+            .send_string(&body.to_string()),
+        None => request.call(),
+    })
 }
 
 fn gitlab_agent() -> ureq::Agent {
