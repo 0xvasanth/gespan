@@ -18,38 +18,59 @@ pub struct Block {
     pub omitted: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Section {
+    Preferences,
+    Decisions,
+    Pending,
+}
+
+const PENDING_HEADING: &str = "Not yet approved (from the user's own words, not reviewed)";
+
 struct Line {
     id: i64,
     text: String,
-    is_pref: bool,
+    section: Section,
 }
 
 /// Render preferences then decisions as a Markdown list within `budget_bytes`.
 ///
-/// Order: preferences newest first, then pinned decisions, then the other
-/// decisions newest first (pending ones count from `created_ms`). The budget
-/// counts the whole text: the instruction, headings, and the closing
+/// Sections, in order: approved preferences (newest first), approved
+/// decisions (pinned first, then newest), and, last, every pending entry of
+/// either kind under its own heading (newest created first). Pending entries
+/// never share a section with approved ones, and their marker precedes any
+/// field text, so entry text cannot make a pending line look approved. The
+/// budget counts the whole text: the instruction, headings, and the closing
 /// `N more decisions: use decisions_search` line. Lines are dropped whole,
-/// from the end, so preferences go only after every decision is gone, and
-/// then oldest first. If the instruction alone exceeds the budget the result
-/// is still the instruction with no entries.
+/// from the end, so pending entries go first, then decisions, and
+/// preferences only when they alone overflow (oldest first). A heading with
+/// nothing under it is not emitted. If the instruction alone exceeds the
+/// budget the result is still the instruction with no entries.
 pub fn render_block(prefs: &[Entry], decisions: &[Entry], budget_bytes: usize) -> Block {
     let recency = |e: &Entry| e.decided_ms.unwrap_or(e.created_ms);
-    let mut prefs: Vec<&Entry> = prefs.iter().collect();
-    prefs.sort_by_key(|e| std::cmp::Reverse((recency(e), e.id)));
-    let mut decisions: Vec<&Entry> = decisions.iter().collect();
-    decisions.sort_by_key(|e| std::cmp::Reverse((e.pinned, recency(e), e.id)));
+    let pending = |e: &&Entry| e.status == Status::Pending;
+    let approved = |e: &&Entry| e.status != Status::Pending;
+    let mut p: Vec<&Entry> = prefs.iter().filter(approved).collect();
+    p.sort_by_key(|e| std::cmp::Reverse((recency(e), e.id)));
+    let mut d: Vec<&Entry> = decisions.iter().filter(approved).collect();
+    d.sort_by_key(|e| std::cmp::Reverse((e.pinned, recency(e), e.id)));
+    let mut n: Vec<&Entry> = prefs.iter().chain(decisions).filter(pending).collect();
+    n.sort_by_key(|e| std::cmp::Reverse((e.created_ms, e.id)));
 
-    let lines: Vec<Line> = prefs
-        .iter()
-        .map(|e| (true, *e))
-        .chain(decisions.iter().map(|e| (false, *e)))
-        .map(|(is_pref, e)| Line {
+    let lines: Vec<Line> = [
+        (Section::Preferences, p),
+        (Section::Decisions, d),
+        (Section::Pending, n),
+    ]
+    .into_iter()
+    .flat_map(|(section, es)| {
+        es.into_iter().map(move |e| Line {
             id: e.id,
             text: line(e),
-            is_pref,
+            section,
         })
-        .collect();
+    })
+    .collect();
 
     // Keep the longest prefix that fits. Fit is not monotonic in the prefix
     // length (the closing line disappears when nothing is omitted), so try
@@ -79,8 +100,12 @@ pub fn render_block(prefs: &[Entry], decisions: &[Entry], budget_bytes: usize) -
 
 fn assemble(kept: &[Line], omitted: usize) -> String {
     let mut out = String::from(STANDING_INSTRUCTION);
-    for (heading, want_pref) in [("Preferences", true), ("Decisions", false)] {
-        let mut section = kept.iter().filter(|l| l.is_pref == want_pref).peekable();
+    for (heading, want) in [
+        ("Preferences", Section::Preferences),
+        ("Decisions", Section::Decisions),
+        (PENDING_HEADING, Section::Pending),
+    ] {
+        let mut section = kept.iter().filter(|l| l.section == want).peekable();
         if section.peek().is_none() {
             continue;
         }
@@ -99,10 +124,10 @@ fn assemble(kept: &[Line], omitted: usize) -> String {
     out
 }
 
-/// `- D-14 (title): text. Why: why.` on one line; a pending entry also says
-/// it is not yet approved.
+/// `- D-14 (title): text. Why: why.` on one line. A pending entry carries its
+/// marker straight after the label, before any field text.
 fn line(e: &Entry) -> String {
-    let pending = if e.status == Status::Pending {
+    let marker = if e.status == Status::Pending {
         match e.source.session {
             Some(s) => format!(" [not yet approved — the user said this in session {s}]"),
             None => " [not yet approved — the user said this]".to_string(),
@@ -111,13 +136,17 @@ fn line(e: &Entry) -> String {
         String::new()
     };
     format!(
-        "- {} ({}){}: {}. Why: {}.",
+        "- {}{} ({}): {}. Why: {}.",
         e.label(),
+        marker,
         flat(&e.title),
-        pending,
-        flat(&e.text).trim_end_matches('.'),
-        flat(&e.why).trim_end_matches('.'),
+        strip_one_dot(&flat(&e.text)),
+        strip_one_dot(&flat(&e.why)),
     )
+}
+
+fn strip_one_dot(s: &str) -> &str {
+    s.strip_suffix('.').unwrap_or(s)
 }
 
 /// Collapse every run of whitespace, newlines included, to one space, so an
