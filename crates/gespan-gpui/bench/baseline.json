@@ -1,0 +1,573 @@
+{
+  "schema": 1,
+  "created_at": "2026-11-12T17:48:06.369Z",
+  "git": {
+    "commit": "2f384b924",
+    "branch": "claude/dev-benchmarks-8f369d",
+    "dirty": false
+  },
+  "machine": {
+    "model": "Mac14,6",
+    "cpu": "Apple M2 Max",
+    "cores": 12,
+    "memory_gb": 32,
+    "os": "27.0"
+  },
+  "config": {
+    "startup_runs": 5,
+    "cycles": 20,
+    "soak_s": 900,
+    "stages": [
+      "startup",
+      "interaction",
+      "soak"
+    ]
+  },
+  "load": {
+    "start": [
+      47.8,
+      78.2,
+      94.5
+    ],
+    "end": [
+      61.4,
+      103.3,
+      118.1
+    ]
+  },
+  "log_dir": "/Users/vasanth/Library/Logs/dev.gespan.native.dev",
+  "warnings": [
+    "The load average (47.8 → 61.4) was above the 12 cores: timings are inflated. Rerun on a quieter machine before trusting a regression."
+  ],
+  "startup": {
+    "runs": [
+      {
+        "app_run_ms": 241.2,
+        "first_frame_ms": 461,
+        "interactive_ms": 534.1,
+        "idle_rss_mb": 146.1,
+        "idle_footprint_mb": 178.9
+      },
+      {
+        "app_run_ms": 234.5,
+        "first_frame_ms": 412,
+        "interactive_ms": 510.9,
+        "idle_rss_mb": 183.6,
+        "idle_footprint_mb": 205
+      },
+      {
+        "app_run_ms": 315.6,
+        "first_frame_ms": 503,
+        "interactive_ms": 634.2,
+        "idle_rss_mb": 173.7,
+        "idle_footprint_mb": 198.4
+      },
+      {
+        "app_run_ms": 196.6,
+        "first_frame_ms": 383,
+        "interactive_ms": 450.4,
+        "idle_rss_mb": 177.7,
+        "idle_footprint_mb": 208.2
+      },
+      {
+        "app_run_ms": 283.5,
+        "first_frame_ms": 472,
+        "interactive_ms": 544.8,
+        "idle_rss_mb": 195.7,
+        "idle_footprint_mb": 207.3
+      }
+    ],
+    "median": {
+      "app_run_ms": 241.2,
+      "first_frame_ms": 461,
+      "interactive_ms": 534.1,
+      "idle_rss_mb": 177.7,
+      "idle_footprint_mb": 205
+    },
+    "stability": {
+      "crashes": 0,
+      "panics": 0,
+      "hangs": 0
+    }
+  },
+  "interaction": {
+    "phases": {
+      "tab_switch": {
+        "frame_ms": {
+          "count": 52,
+          "p50": 6.35,
+          "p95": 11.14,
+          "max": 17.15
+        },
+        "latency_ms": {
+          "count": 48,
+          "p50": 10.34,
+          "p95": 17.7,
+          "max": 44.12
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      },
+      "chat_scroll": {
+        "frame_ms": {
+          "count": 141,
+          "p50": 16.4,
+          "p95": 16.92,
+          "max": 61.05
+        },
+        "latency_ms": {
+          "count": 121,
+          "p50": 33.25,
+          "p95": 38.24,
+          "max": 69.85
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      },
+      "panes": {
+        "frame_ms": {
+          "count": 725,
+          "p50": 16.43,
+          "p95": 21.56,
+          "max": 187.75
+        },
+        "latency_ms": {
+          "count": 40,
+          "p50": 38.23,
+          "p95": 55.34,
+          "max": 220.73
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      },
+      "cycle": {
+        "frame_ms": {
+          "count": 4762,
+          "p50": 16.43,
+          "p95": 20.44,
+          "max": 107.85
+        },
+        "latency_ms": {
+          "count": 480,
+          "p50": 33.46,
+          "p95": 44.25,
+          "max": 196.96
+        },
+        "long_frames": 0,
+        "inactive_steps": 0
+      }
+    },
+    "memory": {
+      "idle": {
+        "label": "idle",
+        "rss_mb": 194.1,
+        "footprint_mb": 206,
+        "gpu_mb": 97.5,
+        "event": "memory",
+        "wall_ms": 1794505717685.086
+      },
+      "before": {
+        "label": "before_cycles",
+        "rss_mb": 163.8,
+        "footprint_mb": 256.1,
+        "gpu_mb": 97.5,
+        "event": "memory",
+        "wall_ms": 1794505741677.5469
+      },
+      "after": {
+        "label": "after_cycles",
+        "rss_mb": 220.5,
+        "footprint_mb": 251.5,
+        "gpu_mb": 95.5,
+        "event": "memory",
+        "wall_ms": 1794505832694.4001
+      },
+      "growth": {
+        "rss_mb": 56.7,
+        "footprint_mb": -4.6
+      },
+      "samples": [
+        {
+          "label": "idle",
+          "rss_mb": 194.1,
+          "footprint_mb": 206,
+          "gpu_mb": 97.5,
+          "event": "memory",
+          "wall_ms": 1794505717685.086
+        },
+        {
+          "label": "before_cycles",
+          "rss_mb": 163.8,
+          "footprint_mb": 256.1,
+          "gpu_mb": 97.5,
+          "event": "memory",
+          "wall_ms": 1794505741677.5469
+        },
+        {
+          "label": "cycle_5",
+          "rss_mb": 204,
+          "footprint_mb": 253.1,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505763722.387
+        },
+        {
+          "label": "cycle_10",
+          "rss_mb": 218.4,
+          "footprint_mb": 271,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505785722.806
+        },
+        {
+          "label": "cycle_15",
+          "rss_mb": 204.3,
+          "footprint_mb": 289.4,
+          "gpu_mb": 97.5,
+          "event": "memory",
+          "wall_ms": 1794505807546.705
+        },
+        {
+          "label": "cycle_20",
+          "rss_mb": 220.5,
+          "footprint_mb": 282.6,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505829545.66
+        },
+        {
+          "label": "after_cycles",
+          "rss_mb": 220.5,
+          "footprint_mb": 251.5,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505832694.4001
+        }
+      ]
+    },
+    "layout": [
+      {
+        "label": "start",
+        "tabs": 8,
+        "panes": 8,
+        "event": "layout",
+        "wall_ms": 1794505717685.144
+      },
+      {
+        "label": "after_phases",
+        "tabs": 8,
+        "panes": 8,
+        "event": "layout",
+        "wall_ms": 1794505739574.015
+      },
+      {
+        "label": "after_cycles",
+        "tabs": 8,
+        "panes": 8,
+        "event": "layout",
+        "wall_ms": 1794505829545.701
+      }
+    ],
+    "inactive_steps": 0,
+    "stability": {
+      "crashes": 0,
+      "panics": 0,
+      "hangs": 0,
+      "frame_timeouts": 0
+    }
+  },
+  "soak": {
+    "duration_s": 905,
+    "launches": 1,
+    "iterations": 338,
+    "phases": {
+      "soak": {
+        "frame_ms": {
+          "count": 23229,
+          "p50": 12.53,
+          "p95": 20.78,
+          "max": 153.94
+        },
+        "latency_ms": {
+          "count": 7329,
+          "p50": 70.96,
+          "p95": 86.82,
+          "max": 180.5
+        },
+        "long_frames": 0,
+        "inactive_steps": 5187
+      }
+    },
+    "memory": {
+      "start": {
+        "label": "soak_15",
+        "rss_mb": 182.6,
+        "footprint_mb": 237.3,
+        "gpu_mb": 95.5,
+        "event": "memory",
+        "wall_ms": 1794505867484.267
+      },
+      "end": {
+        "label": "soak_end",
+        "rss_mb": 176.5,
+        "footprint_mb": 350.8,
+        "gpu_mb": 104.1,
+        "event": "memory",
+        "wall_ms": 1794506738337.1912
+      },
+      "samples": [
+        {
+          "label": "idle",
+          "rss_mb": 193.8,
+          "footprint_mb": 202.7,
+          "gpu_mb": 97.5,
+          "event": "memory",
+          "wall_ms": 1794505836628.9238
+        },
+        {
+          "label": "soak_15",
+          "rss_mb": 182.6,
+          "footprint_mb": 237.3,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505867484.267
+        },
+        {
+          "label": "soak_30",
+          "rss_mb": 164,
+          "footprint_mb": 257.3,
+          "gpu_mb": 97.5,
+          "event": "memory",
+          "wall_ms": 1794505898574.493
+        },
+        {
+          "label": "soak_45",
+          "rss_mb": 183.1,
+          "footprint_mb": 246.7,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505929918.3062
+        },
+        {
+          "label": "soak_56",
+          "rss_mb": 187.2,
+          "footprint_mb": 250.8,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505961430.4258
+        },
+        {
+          "label": "soak_68",
+          "rss_mb": 190,
+          "footprint_mb": 254.6,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794505993531.71
+        },
+        {
+          "label": "soak_79",
+          "rss_mb": 169.3,
+          "footprint_mb": 256.2,
+          "gpu_mb": 96,
+          "event": "memory",
+          "wall_ms": 1794506023640.808
+        },
+        {
+          "label": "soak_90",
+          "rss_mb": 177.1,
+          "footprint_mb": 259.2,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506054839.386
+        },
+        {
+          "label": "soak_101",
+          "rss_mb": 181.8,
+          "footprint_mb": 265.1,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506086448.973
+        },
+        {
+          "label": "soak_113",
+          "rss_mb": 182.6,
+          "footprint_mb": 268.3,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506118639.472
+        },
+        {
+          "label": "soak_125",
+          "rss_mb": 187.4,
+          "footprint_mb": 272.5,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506150356.239
+        },
+        {
+          "label": "soak_136",
+          "rss_mb": 193.7,
+          "footprint_mb": 273.8,
+          "gpu_mb": 89.5,
+          "event": "memory",
+          "wall_ms": 1794506180594.871
+        },
+        {
+          "label": "soak_148",
+          "rss_mb": 198.6,
+          "footprint_mb": 277.7,
+          "gpu_mb": 89.5,
+          "event": "memory",
+          "wall_ms": 1794506214020.287
+        },
+        {
+          "label": "soak_159",
+          "rss_mb": 202.5,
+          "footprint_mb": 281.7,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506245498.958
+        },
+        {
+          "label": "soak_170",
+          "rss_mb": 203.9,
+          "footprint_mb": 288.9,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506278189.7012
+        },
+        {
+          "label": "soak_181",
+          "rss_mb": 169.2,
+          "footprint_mb": 289.7,
+          "gpu_mb": 89.5,
+          "event": "memory",
+          "wall_ms": 1794506310461.761
+        },
+        {
+          "label": "soak_192",
+          "rss_mb": 162.7,
+          "footprint_mb": 294.5,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506341894.619
+        },
+        {
+          "label": "soak_203",
+          "rss_mb": 170.9,
+          "footprint_mb": 300,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506374590.037
+        },
+        {
+          "label": "soak_214",
+          "rss_mb": 160,
+          "footprint_mb": 299.9,
+          "gpu_mb": 89.5,
+          "event": "memory",
+          "wall_ms": 1794506405329.51
+        },
+        {
+          "label": "soak_225",
+          "rss_mb": 177.1,
+          "footprint_mb": 303.9,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506435867.753
+        },
+        {
+          "label": "soak_236",
+          "rss_mb": 182.2,
+          "footprint_mb": 308.8,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506466741.4392
+        },
+        {
+          "label": "soak_247",
+          "rss_mb": 167.5,
+          "footprint_mb": 308.7,
+          "gpu_mb": 89.5,
+          "event": "memory",
+          "wall_ms": 1794506497930.407
+        },
+        {
+          "label": "soak_260",
+          "rss_mb": 167.4,
+          "footprint_mb": 316.9,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506530241.551
+        },
+        {
+          "label": "soak_272",
+          "rss_mb": 164.3,
+          "footprint_mb": 319.4,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506562641.593
+        },
+        {
+          "label": "soak_284",
+          "rss_mb": 168.1,
+          "footprint_mb": 323.5,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506594883.063
+        },
+        {
+          "label": "soak_296",
+          "rss_mb": 180.6,
+          "footprint_mb": 326,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506626331.269
+        },
+        {
+          "label": "soak_308",
+          "rss_mb": 182.9,
+          "footprint_mb": 330,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506658041.249
+        },
+        {
+          "label": "soak_320",
+          "rss_mb": 187.3,
+          "footprint_mb": 334,
+          "gpu_mb": 95.5,
+          "event": "memory",
+          "wall_ms": 1794506689564.345
+        },
+        {
+          "label": "soak_332",
+          "rss_mb": 193.8,
+          "footprint_mb": 337.9,
+          "gpu_mb": 97.5,
+          "event": "memory",
+          "wall_ms": 1794506721258.528
+        },
+        {
+          "label": "soak_end",
+          "rss_mb": 176.5,
+          "footprint_mb": 350.8,
+          "gpu_mb": 104.1,
+          "event": "memory",
+          "wall_ms": 1794506738337.1912
+        }
+      ],
+      "growth": {
+        "rss_mb": -6.1,
+        "footprint_mb": 113.5
+      }
+    },
+    "stability": {
+      "crashes": 0,
+      "panics": 0,
+      "hangs": 0,
+      "frame_timeouts": 0
+    },
+    "crash_details": []
+  }
+}

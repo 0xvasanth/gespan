@@ -290,7 +290,14 @@ fn auto_move_reads_only_the_columns_not_every_card_on_the_board() {
             [&other.id],
         )
         .unwrap();
-    assert!(get_board(&conn, &board.id).is_err());
+    // A whole-board read fails on it. Toasty's driver panics on a value of
+    // the wrong type, which ends that connection, so the check runs on a
+    // connection of its own.
+    let other_connection = conn.reopen();
+    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        get_board(&other_connection, &board.id)
+    }));
+    assert!(!matches!(read, Ok(Ok(_))));
     assert_eq!(
         on_linked_work(&conn, "session", "s-1", LinkedEvent::Started).unwrap(),
         std::slice::from_ref(&board.id)

@@ -9,6 +9,8 @@ mod app_menu;
 mod arcade;
 mod assets;
 mod automations;
+#[cfg(debug_assertions)]
+mod bench;
 mod board;
 mod browser;
 mod browser_pane;
@@ -448,6 +450,22 @@ fn main() {
         &gespan_core::diagnostics::metrics::database_path(&database),
         notifications::updater::version(),
     );
+    // A run that ended without quitting (panic, abort, kill) is reported now;
+    // this run's marker goes on a clean quit.
+    let running = match gespan_core::diagnostics::start_session(
+        &gespan_core::diagnostics::log_dir(channel),
+        notifications::updater::version(),
+        env!("GESPAN_BUILD_COMMIT"),
+    ) {
+        Ok((running, unclean)) => {
+            gespan_core::diagnostics::report_unclean_exits(&unclean);
+            Some(running)
+        }
+        Err(error) => {
+            tracing::warn!(%error, "cannot record this run for unclean-exit detection");
+            None
+        }
+    };
     // Agents a crashed or force-quit Gespan left running.
     let tool_data = database.parent().unwrap_or(std::path::Path::new("."));
     gespan_core::process::orphans::reap(Some(gespan_core::tool_servers::running_record(tool_data)));
@@ -469,6 +487,13 @@ fn main() {
             .unwrap_or(std::path::Path::new("."))
             .join("inbox-media"),
     );
+    // `bun run bench` starts from its own seeded chats, never first-run setup.
+    #[cfg(debug_assertions)]
+    if !use_gespan && bench::Mode::from_env().is_some() {
+        bench::seed(&mut db, &cwd).unwrap_or_else(|error| {
+            fatal(echo, 1, &format!("Cannot seed the benchmark data: {error}"))
+        });
+    }
     let saved = db.ui_state().unwrap_or_else(|e| {
         tracing::warn!(error = %e, "cannot read workspace settings");
         None
@@ -584,6 +609,14 @@ fn main() {
         // unavailable without it; Linux names notifications with it.
         #[cfg(not(target_os = "macos"))]
         cx.set_app_identity("dev.gespan.native", "Gespan");
+        // Before the flush, so the clean-quit line reaches the log.
+        if let Some(running) = running {
+            cx.on_app_quit(move |_| {
+                running.finish();
+                async {}
+            })
+            .detach();
+        }
         flush_logs_on_quit(cx, gespan_core::diagnostics::flush);
         // The Gespan browser goes with the app.
         cx.on_app_quit(|cx| {
@@ -593,6 +626,8 @@ fn main() {
         .detach();
         #[cfg(debug_assertions)]
         dev_reload::install(cx);
+        #[cfg(debug_assertions)]
+        bench::install(cx);
         cx.set_global(title_raster);
         image_memory::init(cx);
         #[cfg(target_os = "macos")]

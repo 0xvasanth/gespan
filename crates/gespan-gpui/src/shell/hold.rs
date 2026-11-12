@@ -417,7 +417,8 @@ impl Shell {
         }
         // Lift the hold first: resumed turns and schedulers may start work again.
         cx.set_global(Hold(None));
-        gespan_core::provider::unpin_idle_agents();
+        // Only what this hold pinned.
+        gespan_core::provider::unpin_idle_agents(state.sessions.iter().map(|s| s.session));
         self.hold.subscriptions.clear();
         self.hold.reasons = state
             .sessions
@@ -1556,8 +1557,21 @@ mod tests {
 
     #[gpui::test]
     fn hold_keeps_the_agents_of_held_sessions_until_resume(cx: &mut TestAppContext) {
-        let store = Store::open(Path::new(":memory:")).unwrap();
+        // The pins are process-wide and other tests hold and resume sessions
+        // 1, 2, …: these sessions get ids no other test uses.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hold.db");
+        let store = Store::open(&path).unwrap();
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT INTO native_sessions(id,title,provider,cwd,archived) \
+                 VALUES(731000,'Seed','codex','/missing/hold',1)",
+                [],
+            )
+            .unwrap();
         let ids = sessions(&store, 2);
+        assert!(ids.iter().all(|&id| id > 731000));
         let window = shell(store, cx);
         busy_and_idle(window, &ids, cx);
         window

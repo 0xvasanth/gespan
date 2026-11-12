@@ -13,6 +13,7 @@ use toasty::Executor;
 use crate::error::GraphError;
 use crate::key::{EdgeId, NodeId, NodeKey};
 use crate::kind::{EdgeKind, NodeKind};
+use crate::schema::GraphNode;
 use crate::store::{query, GraphStore};
 use crate::time::Timestamp;
 
@@ -93,6 +94,11 @@ pub struct Reached {
 // the `_all` indexes `(src|dst, valid_from DESC, other, valid_to)` serve the
 // whole order: without it the as-of statements sort in a temp B-tree. Under
 // `Now` every `valid_to` is NULL, so the term changes nothing.
+//
+// Raw SQL, though Toasty 0.11 could express them: a neighbourhood runs up to
+// `2 + 2·per_start` of these, and Toasty plans every typed statement when it
+// runs. The typed version measured three to four times slower and put
+// `neighborhood` over the scale test's budget.
 #[doc(hidden)]
 pub const OUT_NOW: &str = "SELECT id, dst, kind, valid_from, valid_to FROM graph_edges
  WHERE src = ?1 AND valid_to IS NULL
@@ -178,25 +184,19 @@ async fn expand(
     Ok(cands)
 }
 
-/// `(kind, key, label)` for each id, in one statement (`json_each`: raw SQL).
+/// `(kind, key, label)` for each id, in one query.
 async fn labels(
     ex: &mut dyn Executor,
     ids: impl Iterator<Item = i64>,
 ) -> Result<BTreeMap<i64, (NodeKind, NodeKey, String)>, GraphError> {
-    let ids = serde_json::to_string(&ids.collect::<Vec<_>>())?;
-    let rows = query(
-        ex,
-        toasty::sql::query(
-            "SELECT id, kind, key, label FROM graph_nodes WHERE id IN (SELECT value FROM json_each(?1))",
-        )
-        .bind(ids),
-    )
-    .await?;
+    let f = GraphNode::fields();
+    let nodes = GraphNode::filter(f.id().in_list(ids.collect::<Vec<_>>()))
+        .exec(ex)
+        .await?;
     let mut out = BTreeMap::new();
-    for mut r in rows {
-        let id = r.i64()?;
-        let kind: NodeKind = r.string()?.parse()?;
-        out.insert(id, (kind, NodeKey::new(r.string()?)?, r.string()?));
+    for node in nodes {
+        let kind: NodeKind = node.kind.parse()?;
+        out.insert(node.id, (kind, NodeKey::new(node.key)?, node.label));
     }
     Ok(out)
 }
@@ -249,6 +249,7 @@ fn kinds_param(at: bool) -> &'static str {
 }
 
 /// One of the four fixed `reachable` statements (`{Now, At} × {All, Only}`).
+/// Raw SQL: a recursive CTE, which Toasty 0.11 cannot express.
 ///
 /// Hop 1 is seeded in a non-recursive term with `:per_start`; the recursive
 /// term expands only depths `1..hops` with `:per_hop`. Each `LIMIT` is one
