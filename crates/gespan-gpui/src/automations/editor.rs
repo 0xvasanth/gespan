@@ -1,4 +1,5 @@
 use super::*;
+use crate::glass;
 use chrono::{Local, TimeZone};
 
 pub(super) fn toggle(id: impl Into<gpui::ElementId>, on: bool) -> gpui::Stateful<gpui::Div> {
@@ -114,12 +115,11 @@ pub(super) fn saved_effort(draft: &AutomationUpsert) -> Option<String> {
         .map(|value| effort_name(value))
 }
 fn section(label: &'static str) -> gpui::Div {
-    div()
-        .px(px(4.))
-        .text_size(px(12.))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(content(0.5))
-        .child(label)
+    glass::eyebrow(label).px(px(4.))
+}
+/// The glass card a settings section's rows sit in.
+fn panel() -> gpui::Div {
+    glass::card().overflow_hidden()
 }
 fn settings_row(label: &'static str, hint: &'static str, control: impl IntoElement) -> gpui::Div {
     div()
@@ -127,7 +127,7 @@ fn settings_row(label: &'static str, hint: &'static str, control: impl IntoEleme
         .px(px(16.))
         .py(px(10.))
         .border_b_1()
-        .border_color(content(0.07))
+        .border_color(glass::hairline())
         .flex()
         .items_center()
         .justify_between()
@@ -622,7 +622,7 @@ impl Automations {
         let mut actions = div().flex_shrink_0().flex().items_center().gap(px(8.));
         if !editor.saved || editor.dirty {
             actions = actions.child(
-                button(
+                ghost_button(
                     "automation-reset",
                     if editor.saved && editor.dirty {
                         "Reset"
@@ -655,7 +655,7 @@ impl Automations {
         }
         let disabled = !valid || self.saving || (editor.saved && !editor.dirty);
         actions = actions.child(
-            button(
+            primary_button(
                 "automation-save",
                 if self.saving {
                     "Saving…"
@@ -665,10 +665,6 @@ impl Automations {
                     "Create"
                 },
             )
-            .h(px(26.))
-            .bg(content(1.))
-            .text_color(shell_fill())
-            .font_weight(gpui::FontWeight::MEDIUM)
             .when(disabled, |d| d.opacity(0.4))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if !disabled {
@@ -679,17 +675,18 @@ impl Automations {
         let header = div()
             .flex_shrink_0()
             .border_b_1()
-            .border_color(content(0.07))
+            .border_color(glass::hairline())
             .child(
                 div()
                     .w_full()
                     .max_w(px(1024.))
                     .mx_auto()
-                    .px(px(32.))
-                    .pt(px(20.))
+                    .px(px(36.))
+                    .pt(px(26.))
+                    .pb(px(14.))
                     .flex()
                     .flex_col()
-                    .gap(px(10.))
+                    .gap(px(12.))
                     .child(
                         div()
                             .flex()
@@ -706,6 +703,7 @@ impl Automations {
                                         div()
                                             .flex_1()
                                             .min_w_0()
+                                            .text_size(px(20.))
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
                                             .child(editor.name.clone()),
                                     ),
@@ -777,46 +775,37 @@ impl Automations {
                             }),
                     )
                     .child(div().pt(px(6.)).child(self.render_summary_cards(cx)))
-                    .child(if editor.saved {
-                        div().h(px(36.)).flex().gap(px(16.)).children(
-                            [("Instructions", false), ("Recent runs", true)].map(
-                                |(label, history)| {
-                                    let id = if history {
-                                        "automation-history-tab"
-                                    } else {
-                                        "automation-settings-tab"
-                                    };
-                                    div()
-                                        .id(id)
-                                        .debug_selector(move || id.into())
-                                        .role(Role::Tab)
-                                        .aria_label(label)
-                                        .h_full()
-                                        .flex()
-                                        .items_center()
-                                        .border_b_2()
-                                        .border_color(if self.history == history {
-                                            content(0.8)
-                                        } else {
-                                            content(0.)
-                                        })
-                                        .text_size(px(12.))
-                                        .text_color(content(if self.history == history {
-                                            0.9
-                                        } else {
-                                            0.5
-                                        }))
-                                        .child(label)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.history = history;
-                                            this.choice = None;
-                                            cx.notify();
-                                        }))
-                                },
+                    .when(editor.saved, |d| {
+                        d.child(
+                            div().flex().child(
+                                glass::segmented()
+                                    .id("automation-tabs")
+                                    .role(Role::TabList)
+                                    .aria_label("Automation")
+                                    .children(
+                                        [("Instructions", false), ("Recent runs", true)].map(
+                                            |(label, history)| {
+                                                let id = if history {
+                                                    "automation-history-tab"
+                                                } else {
+                                                    "automation-settings-tab"
+                                                };
+                                                let selected = self.history == history;
+                                                glass::segment(id, label, selected)
+                                                    .debug_selector(move || id.into())
+                                                    .role(Role::Tab)
+                                                    .aria_label(label)
+                                                    .aria_selected(selected)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.history = history;
+                                                        this.choice = None;
+                                                        cx.notify();
+                                                    }))
+                                            },
+                                        ),
+                                    ),
                             ),
                         )
-                    } else {
-                        div().h(px(20.))
                     }),
             );
         let panel = if self.history && editor.saved {
@@ -838,11 +827,8 @@ impl Automations {
         let draft = &editor.draft;
         let triggers = draft.triggers.clone().unwrap_or_default();
         let triggers_section = div().child(section("Triggers")).child(
-            div()
+            panel()
                 .mt(px(12.))
-                .rounded(px(6.))
-                .border_1()
-                .border_color(content(0.1))
                 .when(!triggers.is_empty(), |d| {
                     d.child(
                         div().px(px(12.)).py(px(6.)).children(
@@ -852,7 +838,7 @@ impl Automations {
                                 .map(|(i, t)| self.render_trigger(t, i, cx)),
                         ),
                     )
-                    .child(div().h(px(1.)).bg(content(0.08)))
+                    .child(div().h(px(1.)).bg(glass::hairline()))
                 })
                 .child(
                     div()
@@ -867,7 +853,7 @@ impl Automations {
                         .gap(px(8.))
                         .text_size(px(13.))
                         .text_color(content(0.55))
-                        .hover(|s| s.bg(content(0.04)).text_color(content(1.)))
+                        .hover(|s| s.bg(glass::hover_fill()).text_color(content(1.)))
                         .child(self.trigger_anchor.probe())
                         .child(icon("plus", 14.))
                         .child("Add Trigger")
@@ -986,13 +972,9 @@ impl Automations {
         let instructions = div()
             .child(section("Instructions"))
             .child(
-                div()
+                glass::card()
                     .relative()
                     .mt(px(12.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(content(0.1))
-                    .bg(content(0.03))
                     .child(editor.completion.read(cx).composer_probe())
                     .child(
                         div()
@@ -1089,12 +1071,8 @@ impl Automations {
             .border_b_0()
         });
         let does = div().child(section("Do")).child(
-            div()
+            panel()
                 .mt(px(12.))
-                .rounded(px(6.))
-                .overflow_hidden()
-                .border_1()
-                .border_color(content(0.1))
                 .child(
                     settings_row(
                         "Do",
@@ -1140,18 +1118,14 @@ impl Automations {
                 .flex()
                 .flex_col()
                 .border_b_1()
-                .border_color(content(0.07))
+                .border_color(glass::hairline())
                 .child(row.border_b_0())
                 .children(warning)
         });
         let session = div().mt(px(32.)).child(section("Session")).child(
-            div()
+            panel()
                 .debug_selector(|| "automation-session-settings".into())
                 .mt(px(12.))
-                .rounded(px(6.))
-                .overflow_hidden()
-                .border_1()
-                .border_color(content(0.1))
                 .child(settings_row(
                     "Working copy",
                     "This repo, or a fresh worktree",
@@ -1190,10 +1164,7 @@ impl Automations {
             .find(|(id, _)| *id == draft.missed_run_grace_minutes.to_string())
             .map(|(_, label)| label.clone())
             .unwrap_or_else(|| format!("{} minutes", draft.missed_run_grace_minutes));
-        let advanced = div()
-            .rounded(px(6.))
-            .border_1()
-            .border_color(content(0.1))
+        let advanced = panel()
             .child(
                 div()
                     .id("automation-advanced")
@@ -1256,7 +1227,7 @@ impl Automations {
                 .w_full()
                 .max_w(px(1024.))
                 .mx_auto()
-                .px(px(32.))
+                .px(px(36.))
                 .child(section)
         };
         div()
@@ -1279,12 +1250,7 @@ impl Automations {
             .into_any_element()
     }
     fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut table = div()
-            .mt(px(12.))
-            .rounded(px(6.))
-            .overflow_hidden()
-            .border_1()
-            .border_color(content(0.1));
+        let mut table = panel().mt(px(12.));
         if self.runs.is_empty() {
             table = table.child(
                 div()
@@ -1365,7 +1331,7 @@ impl Automations {
                         .h(px(44.))
                         .px(px(16.))
                         .border_t_1()
-                        .border_color(content(0.08))
+                        .border_color(glass::hairline())
                         .flex()
                         .items_center()
                         .gap(px(16.))

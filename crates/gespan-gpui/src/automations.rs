@@ -1,6 +1,7 @@
 //! Native counterpart of AutomationsView: persisted list, example gallery,
 //! trigger editor and run history. All scheduling lives in gespan-core.
 use crate::{
+    glass,
     input::{self, Input},
     pickers::{ModelList, ModelPicked, ProjectPicked, ProjectPicker, cached_model_name},
     popover::{Anchor, AnchorSlot, popover},
@@ -943,27 +944,26 @@ fn project_name(path: &str) -> String {
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.into())
 }
+/// A glass plate button: the page's secondary actions.
 fn button(
     id: impl Into<gpui::ElementId>,
     label: impl Into<SharedString>,
 ) -> gpui::Stateful<gpui::Div> {
-    let label: SharedString = label.into();
-    div()
-        .id(id)
-        .role(Role::Button)
-        .px(px(12.))
-        .h(px(28.))
-        .rounded(px(6.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(6.))
-        .text_size(px(12.))
-        .text_color(content(0.8))
-        .border_1()
-        .border_color(content(0.15))
-        .hover(|s| s.bg(content(0.1)).border_color(content(0.3)))
-        .child(label)
+    glass::button(id, label, glass::Button::Glass).role(Role::Button)
+}
+/// The one main answer on a sheet: Create, Save, Turn on.
+fn primary_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    glass::button(id, label, glass::Button::Primary).role(Role::Button)
+}
+/// The quiet way out: Cancel, Reset.
+fn ghost_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+) -> gpui::Stateful<gpui::Div> {
+    glass::button(id, label, glass::Button::Ghost).role(Role::Button)
 }
 impl Render for Automations {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -980,51 +980,55 @@ impl Render for Automations {
             .collect();
         let list = self.render_list(&visible, &query, cx);
         let aside = div()
-            .w(px(320.))
+            .w(px(340.))
             .flex_shrink_0()
             .border_r_1()
-            .border_color(content(0.07))
+            .border_color(glass::hairline())
+            .bg(if is_light() {
+                content(0.03)
+            } else {
+                black(0.12)
+            })
             .flex()
             .flex_col()
             .child(
                 div()
-                    .px(px(16.))
-                    .pt(px(16.))
-                    .pb(px(10.))
+                    .px(px(18.))
+                    .pt(px(22.))
+                    .pb(px(14.))
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
+                    .gap(px(14.))
+                    .child(glass::page_header(
+                        "Automations",
+                        "Agents that start on their own, on a schedule or an event.",
+                    ))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
+                            .gap(px(8.))
                             .child(
-                                div()
-                                    .text_size(px(15.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Automations"),
+                                glass::field()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(icon("search", 14.).text_color(content(0.55)))
+                                    .child(div().flex_1().min_w_0().child(self.filter.clone())),
                             )
                             .child(
-                                icon_button("new-automation", "New automation", "plus").on_click(
-                                    cx.listener(|this, _, _, cx| {
+                                // Reversed so the plus leads the word.
+                                glass::button("new-automation", "New", glass::Button::Primary)
+                                    .debug_selector(|| "new-automation".into())
+                                    .role(Role::Button)
+                                    .aria_label("New automation")
+                                    .px(px(12.))
+                                    .gap(px(6.))
+                                    .flex_row_reverse()
+                                    .child(icon("plus", 13.).text_color(background_base()))
+                                    .on_click(cx.listener(|this, _, _, cx| {
                                         this.show_gallery(cx);
-                                    }),
-                                ),
+                                    })),
                             ),
-                    )
-                    .child(
-                        div()
-                            .h(px(32.))
-                            .px(px(10.))
-                            .rounded(px(8.))
-                            .border_1()
-                            .border_color(content(0.08))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(icon("search", 12.))
-                            .child(div().flex_1().min_w_0().child(self.filter.clone())),
                     ),
             )
             .child(list);

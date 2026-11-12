@@ -985,3 +985,140 @@ fn an_ignored_choice_does_not_dirty_the_draft(cx: &mut TestAppContext) {
         None
     );
 }
+
+#[gpui::test]
+fn card_shows_the_latest_result_as_a_status_pill(cx: &mut TestAppContext) {
+    let page = page();
+    let time = AutomationTrigger::new("time", "daily");
+    let failed = save(&page, "Failed", "/work/app", time.clone());
+    let passed = save(&page, "Passed", "/work/app", time.clone());
+    let never = save(&page, "Never", "/work/app", time);
+    {
+        let mut service = page.service.lock().unwrap();
+        for (automation, status) in [(&failed, "failed"), (&passed, "succeeded")] {
+            let run = service.run_now(&automation.id, now()).unwrap();
+            service
+                .update_run(&run.id, status, None, None, now())
+                .unwrap();
+        }
+    }
+    let (window, mut visual) = open(&page, "/work/app", cx);
+
+    // The pill reads the stored result in words.
+    let pills = window
+        .read_with(&visual, |view, _| {
+            [&failed.id, &passed.id, &never.id].map(|id| {
+                let automation = view.automations.iter().find(|a| &a.id == id).unwrap();
+                layout::last_run_pill(
+                    automation.last_run_status.as_deref(),
+                    automation.last_run_at,
+                    now(),
+                )
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        pills[0],
+        Some(("Failed just now".into(), crate::glass::Tone::Bad))
+    );
+    assert_eq!(
+        pills[1],
+        Some(("Last run just now".into(), crate::glass::Tone::Ok))
+    );
+    assert_eq!(pills[2], None);
+
+    // Cards with a result draw the pill; one never run keeps the plain line.
+    for id in [&failed.id, &passed.id] {
+        assert!(
+            visual
+                .drawn(&format!("automation-last-run-pill-{id}"))
+                .is_some()
+        );
+        assert!(visual.drawn(&format!("automation-last-run-{id}")).is_none());
+    }
+    assert!(
+        visual
+            .drawn(&format!("automation-last-run-{}", never.id))
+            .is_some()
+    );
+    assert!(
+        visual
+            .drawn(&format!("automation-last-run-pill-{}", never.id))
+            .is_none()
+    );
+}
+
+#[gpui::test]
+fn new_button_leaves_the_open_automation_for_the_gallery(cx: &mut TestAppContext) {
+    let page = page();
+    let time = AutomationTrigger::new("time", "daily");
+    let first = save(&page, "First", "/work/app", time.clone());
+    let second = save(&page, "Second", "/work/app", time);
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    let state = |visual: &mut VisualTestContext| {
+        window
+            .read_with(visual, |view, _| (view.gallery, view.selected.clone()))
+            .unwrap()
+    };
+    assert_eq!(state(&mut visual), (true, None), "opens on the gallery");
+    assert!(visual.drawn("automation-scratch").is_some());
+
+    // Clicking a card opens it in the editor; only that card is selected.
+    click(&mut visual, &format!("automation-card-{}", second.id));
+    assert_eq!(state(&mut visual), (false, Some(second.id.clone())));
+    assert!(visual.drawn("automation-scratch").is_none());
+    click(&mut visual, &format!("automation-card-{}", first.id));
+    assert_eq!(state(&mut visual), (false, Some(first.id.clone())));
+
+    // "New" (the old + icon's action) goes back to the gallery and clears
+    // the selection.
+    click(&mut visual, "new-automation");
+    assert_eq!(state(&mut visual), (true, None));
+    assert!(visual.drawn("automation-scratch").is_some());
+}
+
+#[gpui::test]
+fn gallery_tabs_switch_category_in_a_two_column_grid(cx: &mut TestAppContext) {
+    let page = page();
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    let row = |visual: &mut VisualTestContext, selector: &str| {
+        visual
+            .drawn(selector)
+            .unwrap_or_else(|| panic!("{selector} is not drawn"))
+            .origin
+    };
+
+    // Popular: scratch and the first example share a row, side by side; the
+    // third card starts the next row under the scratch card.
+    let scratch = row(&mut visual, "automation-scratch");
+    let bugs = row(&mut visual, "template-find-critical-bugs");
+    let scan = row(&mut visual, "template-scan-vulnerabilities");
+    assert_eq!(scratch.y, bugs.y);
+    assert!(scratch.x < bugs.x);
+    assert!(scan.y > scratch.y);
+    assert_eq!(scan.x, scratch.x);
+    assert!(visual.drawn("template-secret-scan").is_none());
+
+    // The category tabs are one segmented control along a single row.
+    let popular = row(&mut visual, "automation-category-popular");
+    let security = row(&mut visual, "automation-category-security");
+    assert_eq!(popular.y, security.y);
+    assert!(popular.x < security.x);
+
+    click(&mut visual, "automation-category-security");
+    let category = window
+        .read_with(&visual, |view, _| view.category.clone())
+        .unwrap();
+    assert_eq!(category, "security");
+    for id in ["scan-vulnerabilities", "dependency-audit", "secret-scan"] {
+        assert!(
+            visual.drawn(&format!("template-{id}")).is_some(),
+            "{id} is a security example"
+        );
+    }
+    assert!(visual.drawn("template-find-critical-bugs").is_none());
+    assert!(
+        visual.drawn("automation-scratch").is_some(),
+        "always offered"
+    );
+}
