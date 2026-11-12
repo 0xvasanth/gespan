@@ -1407,7 +1407,7 @@ mod tool_tests {
 
     #[test]
     fn opencode_review_policy_ignores_the_access_mode_and_never_remembers() {
-        use serde_json::json;
+        use crate::review_policy::ReviewResults;
         let (v2, _) = opencode_seen(204, true);
         let rows = v2.permissions(&review_request(ReviewResults::Post, AccessMode::FullAccess))
             ["permissions"]
