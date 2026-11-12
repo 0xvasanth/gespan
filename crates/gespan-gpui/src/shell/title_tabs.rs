@@ -590,15 +590,23 @@ impl Shell {
         closing
     }
 
-    /// A tab the idle cleanup leaves alone: pinned, or any of its panes is a
-    /// terminal (closing one would have to ask), busy, or holds unsent input
-    /// or a saved draft.
+    /// A tab the idle cleanup leaves alone: pinned, a Pilot whose chat is
+    /// running, or a chat tab with any pane that is a terminal (closing one
+    /// would have to ask), busy, or holds unsent input or a saved draft.
     fn idle_keeps(&self, tab: &TitleTab, cx: &App) -> bool {
         if self.tab_pinned(tab) {
             return true;
         }
-        let TitleTab::Session(key) = tab else {
-            return false;
+        let key = match tab {
+            TitleTab::Session(key) => key,
+            TitleTab::Pilot { id, .. } => {
+                return self.pilots.as_ref().is_some_and(|m| {
+                    m.read(cx)
+                        .chat_for(id)
+                        .is_some_and(|chat| chat.read(cx).busy)
+                });
+            }
+            TitleTab::App(_) => return false,
         };
         self.workspace.layout(*key).leaf_ids().iter().any(|id| {
             self.workspace.terminal_panes.contains_key(id)

@@ -1641,3 +1641,46 @@ fn a_group_left_empty_by_cleanup_disappears(cx: &mut TestAppContext) {
     assert!(!drawn(visual, "tab-group-chip-another-project".into()));
     assert!(drawn(visual, "tab-group-chip-gespan".into()));
 }
+
+#[gpui::test]
+fn a_running_pilot_tab_stays_until_it_is_idle(cx: &mut TestAppContext) {
+    let (window, _, here) = window(cx);
+    let pilot = window
+        .update(cx, |shell, w, cx| {
+            shell.select_project("/work/another-project".into(), w, cx);
+            let manager = shell.pilot_manager();
+            manager.update(cx, |m, cx| m.create(Vec::new(), w, cx));
+            manager.read(cx).active.clone().unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let tab = window
+        .update(cx, |shell, w, cx| {
+            let tab = shell.pilot_tab(pilot.clone());
+            shell.select_project("/work/gespan".into(), w, cx);
+            tab
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |shell, w, cx| {
+            let now = now();
+            assert_eq!(shell.active_title_tab(cx), Some(TitleTab::Session(here)));
+            let chat = shell.pilot_manager().read(cx).chat_for(&pilot).unwrap();
+            chat.update(cx, |chat, _| chat.busy = true);
+            shell
+                .workspace
+                .tab_focused_at
+                .insert(tab.clone(), now - LONG_AGO);
+            assert!(shell.close_idle_tabs(now, w, cx).is_empty(), "running");
+            assert!(shell.workspace.title_order.contains(&tab));
+            chat.update(cx, |chat, _| chat.busy = false);
+            assert_eq!(
+                shell.close_idle_tabs(now, w, cx),
+                std::slice::from_ref(&tab)
+            );
+            assert!(!shell.workspace.title_order.contains(&tab));
+            assert_eq!(shell.active_title_tab(cx), Some(TitleTab::Session(here)));
+        })
+        .unwrap();
+}
