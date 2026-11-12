@@ -1096,6 +1096,9 @@ impl Shell {
                 }
             }
         });
+        if !secondary {
+            listen_for_decision_changes(cx);
+        }
         let git_project = workspace.project.clone();
         let git = cx.new(|cx| crate::git_status::ProjectGit::new(git_project, cx));
         let git_observation = cx.observe(&git, |this, git, cx| {
@@ -9586,6 +9589,30 @@ impl Render for Shell {
                 root
             })
     }
+}
+
+/// Reads My tasks' decision items again whenever an agent changes the log
+/// (a proposal, a revision or a flag). The hook only sends on a channel, from
+/// whatever thread the agent's tool call runs on; this shell's task does the
+/// reading. The shell's 30 s clock stays as a fallback.
+fn listen_for_decision_changes(cx: &mut Context<Shell>) {
+    let (send, changes) = async_channel::unbounded::<()>();
+    gespan_core::decisions::service::set_changed(Box::new(move || {
+        let _ = send.try_send(());
+    }));
+    cx.spawn(async move |this, cx| {
+        while changes.recv().await.is_ok() {
+            // A burst of changes needs one read.
+            while changes.try_recv().is_ok() {}
+            if this
+                .update(cx, |this, cx| this.load_decision_tasks(cx))
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 #[cfg(test)]

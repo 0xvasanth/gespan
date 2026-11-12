@@ -3,7 +3,6 @@
 //! long they have waited.
 use super::*;
 use crate::glass::{self, Tone};
-use crate::workspace::project_name;
 use gpui::{AnyElement, BoxShadow, Div, FontWeight, Hsla, Role, SharedString, Stateful, px};
 
 /// The queue column's width, as in the approved design.
@@ -257,7 +256,7 @@ impl MyTasks {
                             .child(row_line(format!(
                                 "{} \u{b7} {}",
                                 task.source_label,
-                                project_name(&task.project)
+                                super::project_display(&task.project)
                             )))
                             .child(
                                 div()

@@ -4,7 +4,6 @@
 //! is not faded: any solid fade would show as a band over the glass.
 use super::*;
 use crate::glass::{self, Button, Tone};
-use crate::workspace::project_name;
 use gpui::{AnyElement, Div, px, relative};
 
 /// Every icon the page draws outside the kind marks, so a test can check
@@ -70,7 +69,7 @@ pub(super) fn top_bar(project: &str, source: String) -> Div {
             div()
                 .flex_shrink_0()
                 .text_color(content(0.62))
-                .child(project_name(project)),
+                .child(super::project_display(project)),
         )
         .child(div().flex_shrink_0().text_color(content(0.4)).child("/"))
         .child(

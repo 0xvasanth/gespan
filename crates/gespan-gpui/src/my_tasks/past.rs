@@ -3,6 +3,7 @@
 use super::card::answer as button;
 use super::list::{group_label, kind_status, row_line, row_title, task_row, tile, waited};
 use super::pane::{open_button, top_bar};
+use super::project_display;
 use super::*;
 use crate::glass::{self, Button};
 use crate::workspace::project_name;
@@ -43,7 +44,7 @@ fn caption(text: impl Into<SharedString>) -> Div {
 }
 
 /// The Decisions list's group key for preferences: their scope's text.
-const PREFERENCES: &str = "global";
+pub(super) const PREFERENCES: &str = "global";
 
 /// Where the Decisions list groups a decision, and the name a group of its
 /// own would show: preferences under "Your preferences"; a project decision
@@ -177,7 +178,7 @@ impl MyTasks {
         {
             return label;
         }
-        project_name(project)
+        project_display(project)
     }
 
     /// Every decision's group: its key, its name and its decisions' ids.
@@ -297,27 +298,35 @@ impl MyTasks {
         .detach();
     }
 
+    /// Edits or archives a saved decision off the UI thread (the store's
+    /// lock is taken there, never here), then shows the result.
     fn change_decision(
         &mut self,
-        change: impl FnOnce(&gespan_core::store::Store, u64) -> Result<(), String>,
+        change: impl FnOnce(&gespan_core::store::Store, u64) -> Result<(), String> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
-        let Some(store) = &self.store else {
+        let Some(store) = self.store.clone() else {
             return;
         };
-        match crate::runtime::locked(store)
-            .and_then(|store| change(&store, gespan_core::time::now_ms()))
-        {
-            Ok(()) => {
-                gespan_core::decisions::service::regenerate();
-                self.writing = None;
-                self.reload(cx);
-            }
-            Err(error) => {
-                self.error = Some(error);
-                cx.notify();
-            }
-        }
+        let work = cx.background_spawn(async move {
+            crate::runtime::locked(&store)
+                .and_then(|store| change(&store, gespan_core::time::now_ms()))
+        });
+        cx.spawn(async move |this, cx| {
+            let changed = work.await;
+            let _ = this.update(cx, |this, cx| match changed {
+                Ok(()) => {
+                    gespan_core::decisions::service::regenerate();
+                    this.writing = None;
+                    this.reload(cx);
+                }
+                Err(error) => {
+                    this.error = Some(error);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// An answer that just left the Waiting list: offered as a decision when
@@ -352,7 +361,7 @@ impl MyTasks {
     fn group_header(project: &str, count: usize, first: bool) -> AnyElement {
         group_label(
             format!("my-tasks-group-{project}"),
-            format!("{} \u{b7} {count}", project_name(project)),
+            format!("{} \u{b7} {count}", project_display(project)),
             first,
         )
     }
@@ -851,7 +860,8 @@ impl MyTasks {
                     .into_any_element()
             })
             .collect();
-        let (_, group) = decision_group(&decision);
+        // The name its list header shows.
+        let group = self.project_label(&decision_group(&decision).0);
         let noun = match decision.kind {
             gespan_core::decisions::Kind::Preference => "Preference",
             gespan_core::decisions::Kind::Decision => "Decision",
@@ -916,7 +926,10 @@ impl MyTasks {
                 )
         };
         let card = glass::card_strong()
-            .child(caption(group))
+            .child({
+                let selector = format!("my-tasks-decision-group-{group}");
+                caption(group).debug_selector(move || selector.clone())
+            })
             .child(if editing {
                 glass::field()
                     .debug_selector(|| "my-tasks-statement".into())

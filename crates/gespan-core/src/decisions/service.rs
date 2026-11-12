@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 static STORE: Mutex<Option<Arc<DecisionStore>>> = Mutex::new(None);
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static REGENERATE: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
+static CHANGED: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
 static USER_TEXT: Mutex<Option<Arc<UserTextSource>>> = Mutex::new(None);
 
 /// Returns the texts the user wrote in a session: the messages they sent and
@@ -68,6 +69,20 @@ pub fn regenerate() {
     }
 }
 
+/// Registers what the app does when an agent changes the log (a proposal,
+/// a revision or a flag): My tasks reads it again.
+pub fn set_changed(hook: Box<dyn Fn() + Send + Sync>) {
+    *lock(&CHANGED) = Some(Arc::from(hook));
+}
+
+/// Calls the registered change hook; nothing happens when there is none.
+pub fn changed() {
+    let hook = lock(&CHANGED).clone();
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
 /// Registers where the user-authored text of a session comes from. Until one
 /// is registered, no proposal can be verified as the user's.
 pub fn set_user_text_source(source: Box<UserTextSource>) {
@@ -104,6 +119,7 @@ pub(crate) fn isolated() -> Isolated {
     let store = DecisionStore::open(&dir.path().join("gespan.db"), config()).unwrap();
     *self::lock(&STORE) = Some(Arc::new(store));
     *self::lock(&REGENERATE) = None;
+    *self::lock(&CHANGED) = None;
     *self::lock(&USER_TEXT) = None;
     set_enabled(true);
     Isolated {

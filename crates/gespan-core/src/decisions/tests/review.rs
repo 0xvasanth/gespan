@@ -288,15 +288,108 @@ fn replace_from_flag_creates_active_successor_and_dismisses_flag() {
         assert_eq!(next.text, "Never panic, except at FFI boundaries");
         assert_eq!(next.supersedes, Some(old.id));
         assert_eq!(history.iter().map(|e| e.id).collect::<Vec<_>>(), [old.id]);
-        // Only the flag acted on is dismissed.
+        // Both flags on the replaced entry are closed: the one acted on and
+        // the other agent's, which was about wording that no longer applies.
+        assert!(store.open_flags().unwrap().is_empty(), "{other:?}");
+        // Nothing is left waiting for review.
+        assert!(store.pending().unwrap().is_empty());
+    })
+    .unwrap();
+}
+
+#[test]
+fn replace_from_flag_keeps_other_entries_flags_and_the_pin() {
+    let _guard = isolated();
+    service::with(|store| {
+        let old = active(store, &repo(), "No panics", "Never panic");
+        let pinned = propose(store, &repo(), "Tabs", "Indent with tabs");
+        let pinned = store.approve(pinned.id, None, true, &[], 20).unwrap();
+        let elsewhere = store.flag(old.id, 9, "disagree", 30).unwrap();
+        let flag = store.flag(pinned.id, 9, "spaces are the norm", 31).unwrap();
+        let new = Edit {
+            title: "Spaces".into(),
+            text: "Indent with spaces".into(),
+            why: "the formatter does".into(),
+        };
+        apply(
+            store,
+            pinned.id,
+            Review::ReplaceFromFlag { flag: flag.id, new },
+            70,
+        )
+        .unwrap();
+        let successor = entry(store, pinned.id).replaced_by.unwrap();
+        assert!(entry(store, successor).pinned, "the pin carries over");
         let open: Vec<i64> = store
             .open_flags()
             .unwrap()
             .iter()
             .map(|(f, _)| f.id)
             .collect();
-        assert_eq!(open, [other.id]);
-        // Nothing is left waiting for review.
+        assert_eq!(open, [elsewhere.id]);
+    })
+    .unwrap();
+}
+
+/// A database that refuses the last step (closing the flags), so the
+/// replacement fails after its successor and the replaced mark were
+/// written: the transaction must take both back.
+#[test]
+fn replace_from_flag_that_fails_part_way_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let store = DecisionStore::open(&path, crate::decisions::Config::app()).unwrap();
+    let old = active(&store, &repo(), "No panics", "Never panic");
+    let flag = store.flag(old.id, 9, "FFI must abort", 30).unwrap();
+    let rows = |store: &DecisionStore| store.search(&repo(), "panic", 50).unwrap().len();
+    let before = rows(&store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER refuse_dismiss BEFORE UPDATE ON decision_flags
+         BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    )
+    .unwrap();
+    let new = Edit {
+        title: "No panics except FFI".into(),
+        text: "Never panic, except at FFI boundaries".into(),
+        why: "unwinding across FFI is undefined".into(),
+    };
+    assert!(apply(
+        &store,
+        old.id,
+        Review::ReplaceFromFlag { flag: flag.id, new },
+        70
+    )
+    .is_err());
+    let after = entry(&store, old.id);
+    assert_eq!(after.status, Status::Active);
+    assert_eq!(after.replaced_by, None);
+    assert_eq!(rows(&store), before, "no successor was kept");
+    assert!(store.pending().unwrap().is_empty());
+    let open: Vec<i64> = store
+        .open_flags()
+        .unwrap()
+        .iter()
+        .map(|(f, _)| f.id)
+        .collect();
+    assert_eq!(open, [flag.id]);
+}
+
+#[test]
+fn replace_from_flag_refuses_an_entry_no_longer_active() {
+    let _guard = isolated();
+    service::with(|store| {
+        let old = active(store, &repo(), "No panics", "Never panic");
+        let flag = store.flag(old.id, 9, "disagree", 30).unwrap();
+        store.archive(old.id, 40).unwrap();
+        let new = Edit {
+            title: "t".into(),
+            text: "x".into(),
+            why: "y".into(),
+        };
+        let replace = Review::ReplaceFromFlag { flag: flag.id, new };
+        assert!(apply(store, old.id, replace, 70).is_err());
+        assert_eq!(entry(store, old.id).status, Status::Archived);
         assert!(store.pending().unwrap().is_empty());
     })
     .unwrap();

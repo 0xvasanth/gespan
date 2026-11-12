@@ -28,15 +28,28 @@ pub(crate) const HISTORY_PAGE: usize = 4;
 /// The card's largest share of the pane's height.
 const CARD_MAX_HEIGHT: f32 = 0.62;
 
-/// The project a decision-log task is listed under: a project scope's
-/// path, a repository's name, or "Your preferences".
+/// The project key a decision-log task is listed (and filtered) under,
+/// the same key the Decisions tab groups by: a project scope's path,
+/// `repo:<key>` for a repository, or `global` for a preference.
 pub(crate) fn decision_project(entry: &Entry) -> String {
     use gespan_core::decisions::{Kind as EntryKind, Scope};
     match &entry.scope {
-        _ if entry.kind == EntryKind::Preference => "Your preferences".into(),
-        Scope::Global => "Your preferences".into(),
+        _ if entry.kind == EntryKind::Preference => past::PREFERENCES.into(),
+        Scope::Global => past::PREFERENCES.into(),
         Scope::Project(path) => path.clone(),
-        Scope::Repo(repo) => past::repo_name(repo),
+        Scope::Repo(repo) => format!("repo:{repo}"),
+    }
+}
+
+/// How a project key reads on the page: a folder's name, a repository's
+/// name for `repo:<key>`, and "Your preferences" for `global`.
+pub(crate) fn project_display(project: &str) -> String {
+    if project == past::PREFERENCES {
+        "Your preferences".into()
+    } else if let Some(repo) = project.strip_prefix("repo:") {
+        past::repo_name(repo)
+    } else {
+        crate::workspace::project_name(project)
     }
 }
 
@@ -157,6 +170,9 @@ pub(crate) struct MyTasks {
     pub(crate) decision_text: Entity<Input>,
     pub(crate) decision_why: Entity<Input>,
     decision_editing: bool,
+    /// What the card showed when the edit began: approving the edit is
+    /// refused if the proposal changed since.
+    edit_shown: Option<gespan_core::decisions::ShownHash>,
     /// "Always include" on the card's proposal.
     decision_pinned: bool,
     /// The similar active entries ticked under "Replaces:".
@@ -213,6 +229,7 @@ impl MyTasks {
             decision_text: cx.new(|cx| Input::multiline_field("Decision", "What to do", cx)),
             decision_why: cx.new(|cx| Input::field("Why", "Why", content(0.4), cx)),
             decision_editing: false,
+            edit_shown: None,
             decision_pinned: false,
             decision_replaces: Vec::new(),
             review_error: None,
@@ -366,6 +383,7 @@ impl MyTasks {
         self.note
             .update(cx, |note, cx| note.set_text(String::new(), cx));
         self.decision_editing = false;
+        self.edit_shown = None;
         self.decision_pinned = false;
         self.decision_replaces.clear();
         self.history_scroll.scroll_to_bottom();

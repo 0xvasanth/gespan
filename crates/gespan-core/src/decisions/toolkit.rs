@@ -75,7 +75,11 @@ impl mcp_hub::Toolkit for Toolkit {
                     &fields,
                     &["title", "text", "why", "question", "user_answer"],
                 )?;
-                propose(grant, &fields)?
+                let (text, wrote) = propose(grant, &fields)?;
+                if wrote {
+                    service::changed();
+                }
+                text
             }
             "decisions_flag" => {
                 only(&fields, &["id", "reason"])?;
@@ -334,6 +338,7 @@ fn flag(grant: &Grant, id: &str, reason: &str) -> Result<String, String> {
         ));
     }
     service::with(|store| store.flag(number, grant.session, reason, now_ms()))?.map_err(failed)?;
+    service::changed();
     Ok(format!(
         "Flagged {}. The user will review it. Keep following the entry for now.",
         entry.label()
@@ -385,7 +390,9 @@ fn contains_words(haystack: &str, needle: &str) -> bool {
     })
 }
 
-fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String> {
+/// The proposal's reply, and whether it wrote to the log (a new proposal or
+/// a revision) rather than leaving it as it was.
+fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<(String, bool), String> {
     let title = required(fields, "title")?;
     let text = required(fields, "text")?;
     let why = required(fields, "why")?;
@@ -430,7 +437,7 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
     {
         match existing.status {
             Status::Active => {
-                return Ok(format!("already decided: {}", line(existing)));
+                return Ok((format!("already decided: {}", line(existing)), false));
             }
             Status::Pending => {
                 let mine = existing.source.session == Some(session);
@@ -438,9 +445,12 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
                 // Only the proposing session rewrites a proposal, and one that
                 // carries a user source needs the same proof a new one would.
                 if !mine || (sourced && !verified) {
-                    return Ok(format!(
-                        "Already proposed as {} and waiting for the user's review; left as it was.",
-                        existing.label()
+                    return Ok((
+                        format!(
+                            "Already proposed as {} and waiting for the user's review; left as it was.",
+                            existing.label()
+                        ),
+                        false,
                     ));
                 }
                 if verified && !sourced {
@@ -461,9 +471,12 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
                     )
                 })?
                 .map_err(failed)?;
-                return Ok(with_note(
-                    format!("Updated your pending proposal {}.", revised.label()),
-                    note,
+                return Ok((
+                    with_note(
+                        format!("Updated your pending proposal {}.", revised.label()),
+                        note,
+                    ),
+                    true,
                 ));
             }
             _ => {}
@@ -485,9 +498,12 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<String, String>
             Error::MissingWhy => "why is required".to_owned(),
             other => failed(other),
         })?;
-    Ok(with_note(
-        format!("Proposed {} for the user to review.", entry.label()),
-        note,
+    Ok((
+        with_note(
+            format!("Proposed {} for the user to review.", entry.label()),
+            note,
+        ),
+        true,
     ))
 }
 

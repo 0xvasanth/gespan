@@ -1091,6 +1091,14 @@ fn decision_log() {
     gespan_core::decisions::set_enabled(true);
 }
 
+/// Held for a whole test that switches the decision log on or off, opens
+/// it, or relies on its hooks: they are process-wide, and `cargo test` runs
+/// tests on threads of one process.
+fn log_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOG.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn with_log<T>(f: impl FnOnce(&gespan_core::decisions::DecisionStore) -> T) -> T {
     gespan_core::decisions::service::with(f).unwrap()
 }
@@ -1169,6 +1177,18 @@ fn open_task(window: WindowHandle<Shell>, visual: &mut VisualTestContext, key: &
     assert_eq!(selected_key(window, visual).as_deref(), Some(key));
 }
 
+/// Whether the page lists `key` now, without reading the log again.
+fn listed(window: WindowHandle<Shell>, visual: &mut VisualTestContext, key: &str) -> bool {
+    window
+        .read_with(visual, |shell, cx| {
+            shell
+                .my_tasks
+                .as_ref()
+                .is_some_and(|view| view.read(cx).tasks().iter().any(|t| t.key == key))
+        })
+        .unwrap()
+}
+
 fn on_screen(visual: &mut VisualTestContext, selector: &str) -> bool {
     visual.refresh().unwrap();
     visual
@@ -1178,6 +1198,7 @@ fn on_screen(visual: &mut VisualTestContext, selector: &str) -> bool {
 
 #[gpui::test]
 fn pending_proposal_appears_as_decision_task_with_question_and_answer(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1233,6 +1254,7 @@ fn pending_proposal_appears_as_decision_task_with_question_and_answer(cx: &mut T
 
 #[gpui::test]
 fn open_flag_appears_on_its_decision_task(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1291,6 +1313,7 @@ fn open_flag_appears_on_its_decision_task(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn dismissing_a_flag_keeps_the_decision(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1310,6 +1333,7 @@ fn dismissing_a_flag_keeps_the_decision(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn approve_removes_the_task(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1355,6 +1379,7 @@ fn approve_removes_the_task(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn edit_then_approve_saves_the_new_wording_and_reject_leaves(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1389,6 +1414,7 @@ fn edit_then_approve_saves_the_new_wording_and_reject_leaves(cx: &mut TestAppCon
 
 #[gpui::test]
 fn a_proposal_revised_after_the_card_showed_it_is_refused_and_shown_again(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1434,6 +1460,7 @@ fn a_proposal_revised_after_the_card_showed_it_is_refused_and_shown_again(cx: &m
 
 #[gpui::test]
 fn kind_filter_hides_decisions(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1455,6 +1482,7 @@ fn kind_filter_hides_decisions(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn decisions_are_not_tasks_while_the_log_is_off(cx: &mut TestAppContext) {
+    let _log = log_lock();
     let window = setup(cx);
     // After the shell applied the (off) preference.
     decision_log();
@@ -1571,8 +1599,10 @@ fn decisions_tab_groups_preferences_and_names_repo_scoped_decisions_by_project(
     ] {
         assert!(on_screen(visual, group), "{group} is on the list");
     }
-    // Editing and archiving work on the decision log's own entries.
+    // The detail pane names the group as its list header does.
     click(visual, &format!("my-tasks-decision-{proposed}"));
+    assert!(on_screen(visual, "my-tasks-decision-group-gespan-main"));
+    // Editing and archiving work on the decision log's own entries.
     click(visual, "my-tasks-edit-decision");
     page(window, visual).update(visual, |view, cx| {
         view.statement.update(cx, |input, cx| {
@@ -1590,4 +1620,121 @@ fn decisions_tab_groups_preferences_and_names_repo_scoped_decisions_by_project(
         gespan_core::decisions::Status::Archived
     );
     assert!(!on_screen(visual, &format!("my-tasks-decision-{short}")));
+}
+
+#[gpui::test]
+fn an_edit_started_before_the_agent_revised_is_refused(cx: &mut TestAppContext) {
+    let _log = log_lock();
+    let window = setup(cx);
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let entry = propose_decision("/work/decisions-edit-race", 1, "Errors", "Use thiserror");
+    let key = format!("decision:{}", entry.id);
+    task_by_key(window, visual, &key).expect("the proposal is a task");
+    open_task(window, visual, &key);
+    click(visual, "my-tasks-review-edit");
+    // The agent rewrites its proposal, and the card refreshes under the
+    // user's open edit.
+    with_log(|log| {
+        log.revise_pending(
+            entry.id,
+            gespan_core::decisions::Edit {
+                title: entry.title.clone(),
+                text: "Errors are plain strings".into(),
+                why: entry.why.clone(),
+            },
+            entry.user_answer.as_deref(),
+            &entry.source,
+        )
+        .unwrap()
+    });
+    task_by_key(window, visual, &key).expect("still waiting");
+    assert!(
+        on_screen(visual, "my-tasks-review-edit-text"),
+        "still editing"
+    );
+    click(visual, "my-tasks-review-approve");
+    let after = log_entry(entry.id);
+    assert_eq!(after.status, gespan_core::decisions::Status::Pending);
+    assert_eq!(after.text, "Errors are plain strings");
+    assert!(on_screen(visual, "my-tasks-review-error"));
+}
+
+#[gpui::test]
+fn a_change_in_the_log_reloads_my_tasks_without_waiting_for_the_clock(cx: &mut TestAppContext) {
+    let _log = log_lock();
+    let window = setup(cx);
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| shell.open_my_tasks(window, cx))
+        .unwrap();
+    visual.run_until_parked();
+    let entry = propose_decision("/work/decisions-pushed", 1, "Errors", "Use anyhow");
+    let key = format!("decision:{}", entry.id);
+    assert!(!listed(window, visual, &key), "not read yet");
+    // What the toolkit does after a proposal, revision or flag.
+    gespan_core::decisions::service::changed();
+    visual.run_until_parked();
+    assert!(listed(window, visual, &key));
+}
+
+#[gpui::test]
+fn a_repo_scoped_proposal_is_keyed_by_its_scope_and_named_after_its_repository(
+    cx: &mut TestAppContext,
+) {
+    use gespan_core::decisions::{Kind as EntryKind, NewEntry, Scope};
+    let _log = log_lock();
+    let window = setup(cx);
+    decision_log();
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let propose = |kind, scope: Scope, title: &str| {
+        with_log(|log| {
+            log.propose(
+                NewEntry {
+                    kind,
+                    scope,
+                    title: title.into(),
+                    text: title.into(),
+                    why: "the user said so".into(),
+                    user_answer: None,
+                    source: Default::default(),
+                },
+                1,
+            )
+            .unwrap()
+        })
+    };
+    let repo = "github.com/o/widgets@ba9876543210";
+    let decision = propose(
+        EntryKind::Decision,
+        Scope::Repo(repo.into()),
+        "Pure widgets",
+    );
+    let preference = propose(EntryKind::Preference, Scope::Global, "Answer briefly");
+    let task = task_by_key(window, visual, &format!("decision:{}", decision.id)).unwrap();
+    assert_eq!(task.project, format!("repo:{repo}"));
+    assert_eq!(crate::my_tasks::project_display(&task.project), "widgets");
+    let task = task_by_key(window, visual, &format!("decision:{}", preference.id)).unwrap();
+    assert_eq!(task.project, "global");
+    assert_eq!(
+        crate::my_tasks::project_display(&task.project),
+        "Your preferences"
+    );
+    open_task(window, visual, &format!("decision:{}", decision.id));
+    click(visual, "my-tasks-filter");
+    assert!(on_screen(
+        visual,
+        &format!("my-tasks-filter-project-repo:{repo}")
+    ));
+}
+
+#[gpui::test]
+fn a_log_switched_on_but_not_open_lists_nothing_and_fails_nothing(_cx: &mut TestAppContext) {
+    let _log = log_lock();
+    // nextest runs each test in its own process, so nothing opened the log.
+    gespan_core::decisions::set_enabled(true);
+    let waiting = super::my_tasks::waiting_decisions();
+    gespan_core::decisions::set_enabled(false);
+    assert!(waiting.is_ok(), "{:?}", waiting.err());
 }

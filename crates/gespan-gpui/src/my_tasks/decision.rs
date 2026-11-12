@@ -68,6 +68,7 @@ impl MyTasks {
             input.update(cx, |input, cx| input.set_text(text.clone(), cx));
         }
         self.decision_editing = true;
+        self.edit_shown = Some(shown_hash(entry));
         cx.notify();
     }
 
@@ -81,6 +82,7 @@ impl MyTasks {
     pub(crate) fn review_done(&mut self, cx: &mut Context<Self>) {
         self.review_error = None;
         self.decision_editing = false;
+        self.edit_shown = None;
         self.decision_pinned = false;
         self.decision_replaces.clear();
         cx.notify();
@@ -221,11 +223,17 @@ impl MyTasks {
                 cx,
                 move |this, cx| {
                     let edit = this.decision_editing.then(|| this.edited(cx));
+                    // An edit approves what the user was editing: the wording
+                    // shown when the edit began, not a later refresh.
+                    let shown = match (&edit, &this.edit_shown) {
+                        (Some(_), Some(began)) => began.clone(),
+                        _ => shown.clone(),
+                    };
                     cx.emit(Event::DecisionReview {
                         key: key.clone(),
                         id,
                         review: Review::Approve {
-                            shown: shown.clone(),
+                            shown,
                             edit,
                             pinned: this.decision_pinned,
                             replaces: this.decision_replaces.clone(),

@@ -105,6 +105,66 @@ fn propose(session: i64, dir: &Path, answer: &str) -> String {
     )
 }
 
+/// Each change an agent makes to the log (a proposal, a revision of one, a
+/// flag) tells the app, so My tasks shows it without waiting for its clock.
+/// A call that changes nothing, or fails, says nothing.
+#[test]
+fn propose_revise_and_flag_tell_the_app_the_log_changed() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let _guard = isolated();
+    users_said(&[(5, &["Let's keep it in one SQLite file, please"])]);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    service::set_changed(Box::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    }));
+    let dir = tempfile::tempdir().unwrap();
+    propose(5, dir.path(), "keep it in one SQLite file");
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "a proposal");
+    // The same session proposing the same decision again revises it.
+    call(
+        &FULL,
+        &grant(5, dir.path(), DECISIONS),
+        "decisions_propose",
+        json!({
+            "title": "Store decisions in SQLite",
+            "text": "Keep the decision log in one SQLite file.",
+            "why": "Backups stay simple.",
+            "question": "Where should the log live?",
+            "user_answer": "keep it in one SQLite file",
+        }),
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "a revision");
+    let active = seed(
+        &scope(dir.path()),
+        Kind::Decision,
+        "Tabs",
+        "Indent with tabs",
+        true,
+    );
+    call(
+        &FULL,
+        &grant(5, dir.path(), DECISIONS),
+        "decisions_flag",
+        json!({"id": active.label(), "reason": "spaces are the norm"}),
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3, "a flag");
+    // Reading changes nothing; a refused proposal neither.
+    call(
+        &FULL,
+        &grant(5, dir.path(), DECISIONS),
+        "decisions_list",
+        json!({}),
+    );
+    let _ = FULL.call(
+        &grant(5, dir.path(), DECISIONS),
+        "decisions_propose",
+        json!({"title": "t", "text": "x", "why": " "}),
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+}
+
 #[test]
 fn propose_records_session_and_user_answer_as_pending() {
     let _guard = isolated();

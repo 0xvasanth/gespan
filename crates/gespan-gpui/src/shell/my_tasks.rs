@@ -500,7 +500,7 @@ const SIMILAR_OFFERED: usize = 3;
 
 /// A decision-log item waiting on the user: a proposal with the active
 /// entries it might replace, or an active entry with an agent's open flag.
-struct WaitingDecision {
+pub(super) struct WaitingDecision {
     entry: Entry,
     flag: Option<Flag>,
     similar: Vec<Entry>,
@@ -508,11 +508,14 @@ struct WaitingDecision {
 
 /// What the decision log has waiting on the user; nothing while it is off.
 /// Runs off the UI thread: it reads the database.
-fn waiting_decisions() -> Result<Vec<WaitingDecision>, String> {
+pub(super) fn waiting_decisions() -> Result<Vec<WaitingDecision>, String> {
     if !decisions::enabled() {
         return Ok(Vec::new());
     }
-    decisions::service::with(|log| {
+    // Switched on but never opened (its database failed at startup, which
+    // was reported then): nothing to list, and nothing to warn about again
+    // on every tick.
+    let read = decisions::service::with(|log| {
         let mut found = Vec::new();
         for entry in log.pending().map_err(|e| e.to_string())? {
             let similar = decisions::review::similar_active(log, &entry, SIMILAR_OFFERED);
@@ -534,7 +537,8 @@ fn waiting_decisions() -> Result<Vec<WaitingDecision>, String> {
             }
         }
         Ok(found)
-    })?
+    });
+    read.unwrap_or_else(|_closed| Ok(Vec::new()))
 }
 
 /// A waiting proposal or flag as a My tasks item. It opens the session that

@@ -287,28 +287,10 @@ impl DecisionStore {
                 if shown.is_some_and(|shown| shown_now(&current) != shown) {
                     return Ok(Some(Error::Changed));
                 }
-                for &old in &replaces {
-                    if old == id {
-                        return Ok(Some(Error::SelfReplace(id)));
-                    }
-                    match TaskDecision::filter_by_id(old).first().exec(tx).await? {
-                        None => return Ok(Some(Error::NotFound(old))),
-                        Some(prev) if status(&prev) != Some(Status::Active) => {
-                            return Ok(Some(Error::NotActive(old)))
-                        }
-                        Some(_) => {}
-                    }
+                if let Some(refusal) = refuse_replacing(tx, &replaces, Some(id)).await? {
+                    return Ok(Some(refusal));
                 }
-                for &old in &replaces {
-                    TaskDecision::filter_by_id(old)
-                        .update()
-                        .status(Status::Replaced.as_str())
-                        .replaced_by(Some(id))
-                        .decided_at(Some(now_ms))
-                        .updated_at(now_ms)
-                        .exec(tx)
-                        .await?;
-                }
+                mark_replaced(tx, &replaces, id, now_ms).await?;
                 let mut current = current;
                 let mut update = current
                     .update()
@@ -328,6 +310,69 @@ impl DecisionStore {
             return Err(error);
         }
         self.load(id)?.ok_or(Error::NotFound(id))
+    }
+
+    /// Answers an agent's `flag` on active entry `id` with the user's own
+    /// wording: one transaction checks the flag is open and on `id` and that
+    /// `id` is active, writes the cleaned wording as an active entry of the
+    /// same kind, scope, project and pin, marks `id` replaced by it, and
+    /// closes every open flag on `id`. Any refusal or failure leaves all of
+    /// it unwritten. Returns the new entry.
+    pub fn replace_from_flag(
+        &self,
+        id: i64,
+        flag: i64,
+        new: Edit,
+        now_ms: i64,
+    ) -> Result<Entry, Error> {
+        if new.why.trim().is_empty() {
+            return Err(Error::MissingWhy);
+        }
+        let new = Edit {
+            title: self.clean(&new.title),
+            text: self.clean(&new.text),
+            why: self.clean(&new.why),
+        };
+        let outcome = self.db.transaction(move |tx| {
+            Box::pin(async move {
+                match DecisionFlag::filter_by_id(flag).first().exec(tx).await? {
+                    Some(open) if open.entry == id && !open.dismissed => {}
+                    _ => return Ok(Err(Error::FlagNotFound(flag))),
+                }
+                if let Some(refusal) = refuse_replacing(tx, &[id], None).await? {
+                    return Ok(Err(refusal));
+                }
+                let Some(old) = TaskDecision::filter_by_id(id).first().exec(tx).await? else {
+                    return Ok(Err(Error::NotFound(id)));
+                };
+                let successor = TaskDecision::create()
+                    .project(old.project)
+                    .statement(new.text)
+                    .why(new.why)
+                    .created_at(now_ms)
+                    .updated_at(now_ms)
+                    .archived_at(None)
+                    .kind(old.kind)
+                    .status(Status::Active.as_str())
+                    .scope(old.scope)
+                    .title(new.title)
+                    .user_answer(None)
+                    .session(None)
+                    .question_ref(None)
+                    .user_turn(None)
+                    .import_src(None)
+                    .pinned(old.pinned)
+                    .supersedes(Some(id))
+                    .replaced_by(None)
+                    .decided_at(Some(now_ms))
+                    .exec(tx)
+                    .await?;
+                mark_replaced(tx, &[id], successor.id, now_ms).await?;
+                Ok(Ok(successor.id))
+            })
+        })?;
+        let successor = outcome?;
+        self.load(successor)?.ok_or(Error::NotFound(successor))
     }
 
     /// Rewrite a pending entry's title, text and why in place (redacted and
@@ -553,6 +598,60 @@ impl DecisionStore {
             .map(|row| row_to_entry(&row))
             .transpose()
     }
+}
+
+/// Why `olds` can't be replaced (by entry `by`, when it exists yet): each
+/// must exist and be active, and none may be `by` itself. Reads only, so a
+/// refusal leaves the transaction with nothing written.
+async fn refuse_replacing(
+    tx: &mut toasty::Transaction<'_>,
+    olds: &[i64],
+    by: Option<i64>,
+) -> toasty::Result<Option<Error>> {
+    for &old in olds {
+        if Some(old) == by {
+            return Ok(Some(Error::SelfReplace(old)));
+        }
+        match TaskDecision::filter_by_id(old)
+            .first()
+            .exec(&mut *tx)
+            .await?
+        {
+            None => return Ok(Some(Error::NotFound(old))),
+            Some(prev) if Status::parse(&prev.status).ok() != Some(Status::Active) => {
+                return Ok(Some(Error::NotActive(old)))
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Marks each of `olds` replaced by entry `by`, and closes the open flags on
+/// them: a flag on wording that no longer applies has nothing left to decide.
+async fn mark_replaced(
+    tx: &mut toasty::Transaction<'_>,
+    olds: &[i64],
+    by: i64,
+    now_ms: i64,
+) -> toasty::Result<()> {
+    let flag = DecisionFlag::fields();
+    for &old in olds {
+        TaskDecision::filter_by_id(old)
+            .update()
+            .status(Status::Replaced.as_str())
+            .replaced_by(Some(by))
+            .decided_at(Some(now_ms))
+            .updated_at(now_ms)
+            .exec(&mut *tx)
+            .await?;
+        DecisionFlag::filter(flag.entry().eq(old).and(flag.dismissed().eq(false)))
+            .update()
+            .dismissed(true)
+            .exec(&mut *tx)
+            .await?;
+    }
+    Ok(())
 }
 
 /// The fingerprint of what a review card would show of `row` now.

@@ -1,6 +1,6 @@
 //! The user's review of the log, from My tasks: approving or rejecting a
 //! proposal, and answering an agent's flag on an approved entry.
-use super::entry::{Edit, Entry, NewEntry, ShownHash, Source, Status};
+use super::entry::{Edit, Entry, ShownHash, Status};
 use super::service;
 use super::store::DecisionStore;
 
@@ -75,7 +75,11 @@ pub fn apply(store: &DecisionStore, id: i64, review: Review, now_ms: i64) -> Res
         Review::Reject { shown } => store
             .reject_if_unchanged(id, &shown, now_ms)
             .map_err(|e| e.to_string())?,
-        Review::ReplaceFromFlag { flag, new } => replace_from_flag(store, id, flag, new, now_ms)?,
+        Review::ReplaceFromFlag { flag, new } => {
+            store
+                .replace_from_flag(id, flag, new, now_ms)
+                .map_err(|e| e.to_string())?;
+        }
         Review::DismissFlag { flag } => {
             open_flag_on(store, id, flag)?;
             store.dismiss_flag(flag).map_err(|e| e.to_string())?;
@@ -94,45 +98,4 @@ fn open_flag_on(store: &DecisionStore, id: i64, flag: i64) -> Result<Entry, Stri
         .find(|(f, _)| f.id == flag && f.entry == id)
         .map(|(_, entry)| entry)
         .ok_or_else(|| format!("Flag {flag} isn't open on entry {id}."))
-}
-
-/// Writes the user's replacement as a new entry of the flagged one's kind,
-/// scope and pin, approves it in the flagged one's place, then closes the
-/// flag. Its wording is cleaned like any entry's.
-fn replace_from_flag(
-    store: &DecisionStore,
-    id: i64,
-    flag: i64,
-    new: Edit,
-    now_ms: i64,
-) -> Result<(), String> {
-    let old = open_flag_on(store, id, flag)?;
-    if old.status != Status::Active {
-        return Err(format!(
-            "{} isn't approved, so it can't be replaced.",
-            old.label()
-        ));
-    }
-    let successor = store
-        .propose(
-            NewEntry {
-                kind: old.kind,
-                scope: old.scope.clone(),
-                title: new.title,
-                text: new.text,
-                why: new.why,
-                user_answer: None,
-                source: Source::default(),
-            },
-            now_ms,
-        )
-        .map_err(|e| e.to_string())?;
-    if let Err(error) = store.approve(successor.id, None, old.pinned, &[id], now_ms) {
-        // Leave nothing half-done waiting for review.
-        if let Err(cleanup) = store.reject(successor.id, now_ms) {
-            tracing::warn!(%cleanup, "a replacement that failed was left pending");
-        }
-        return Err(error.to_string());
-    }
-    store.dismiss_flag(flag).map_err(|e| e.to_string())
 }
