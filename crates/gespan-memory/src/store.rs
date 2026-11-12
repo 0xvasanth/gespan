@@ -55,7 +55,13 @@ impl Store {
         let text = self.clean(&e.text);
         let why = self.clean(&e.why);
         let answer = e.user_answer.as_deref().map(|a| self.clean(a));
-        let nonempty = |s: &Option<String>| s.clone().filter(|v| !v.is_empty());
+        // Source text is user-supplied free text too: redact and cap it, then
+        // treat what is left empty as absent.
+        let source = |s: &Option<String>| {
+            s.as_deref()
+                .map(|v| self.clean(v))
+                .filter(|v| !v.is_empty())
+        };
         let conn = self.conn();
         conn.execute(
             "INSERT INTO entries (kind, scope, status, title, text, why, user_answer, session, \
@@ -69,9 +75,9 @@ impl Store {
                 why,
                 answer,
                 e.source.session,
-                nonempty(&e.source.question_ref),
-                nonempty(&e.source.user_turn),
-                nonempty(&e.source.import),
+                source(&e.source.question_ref),
+                source(&e.source.user_turn),
+                source(&e.source.import),
                 now_ms
             ],
         )?;

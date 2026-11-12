@@ -330,3 +330,57 @@ fn reopening_keeps_rows() {
     assert!(e.pinned);
     assert_eq!(e.open_flags, 1);
 }
+
+#[test]
+fn reopen_after_fresh_create_has_one_version_row() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("mem.db");
+    drop(
+        Store::open(
+            &path,
+            Config {
+                redact: fake_redact,
+            },
+        )
+        .unwrap(),
+    );
+    drop(
+        Store::open(
+            &path,
+            Config {
+                redact: fake_redact,
+            },
+        )
+        .unwrap(),
+    );
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let n: i64 = raw
+        .query_row("SELECT COUNT(*) FROM schema_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn source_text_is_redacted_capped_and_blank_means_absent() {
+    let (_d, s) = open();
+    let mut e = new(Kind::Preference, Scope::Global, "p");
+    e.source.user_turn = Some("always use sk-abcdefghijklmnopqrstu please".into());
+    e.source.question_ref = Some("q".repeat(5_000));
+    e.source.import = Some("sk-onlysecret".into());
+    let got = s.propose(e, 1).unwrap();
+    let turn = got.source.user_turn.unwrap();
+    assert!(!turn.contains("sk-abc"));
+    assert!(turn.contains("[redacted]"));
+    assert_eq!(got.source.question_ref.unwrap().chars().count(), 1_000);
+    assert_eq!(got.source.import.as_deref(), Some("[redacted]"));
+    // Blank after cleaning stays absent, so it does not make a pending entry visible.
+    let mut blank = new(Kind::Preference, Scope::Global, "b");
+    blank.source.user_turn = Some(String::new());
+    let blank = s.propose(blank, 2).unwrap();
+    assert_eq!(blank.source.user_turn, None);
+    assert!(!s
+        .visible(&Scope::Global)
+        .unwrap()
+        .iter()
+        .any(|x| x.id == blank.id));
+}

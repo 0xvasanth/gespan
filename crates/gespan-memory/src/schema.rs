@@ -1,13 +1,16 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::Error;
 
 pub(crate) const VERSION: i64 = 1;
 
 pub(crate) fn migrate(conn: &Connection) -> Result<(), Error> {
-    conn.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")?;
+    // IMMEDIATE takes the write lock up front, so two openers of a fresh file
+    // serialise, and the DDL plus the version row commit together or not at all.
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);")?;
     let found: Option<i64> =
-        conn.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))?;
+        tx.query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))?;
     match found {
         Some(v) if v > VERSION => {
             return Err(Error::NewerSchema {
@@ -18,7 +21,7 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), Error> {
         Some(_) => return Ok(()),
         None => {}
     }
-    conn.execute_batch(
+    tx.execute_batch(
         "CREATE TABLE entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             kind TEXT NOT NULL,
@@ -50,9 +53,10 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), Error> {
         );
         CREATE INDEX flags_entry_open ON flags(entry, dismissed);",
     )?;
-    conn.execute(
+    tx.execute(
         "INSERT INTO schema_version (version) VALUES (?1)",
         [VERSION],
     )?;
+    tx.commit()?;
     Ok(())
 }
