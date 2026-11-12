@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const BEGIN: &str =
@@ -90,16 +90,17 @@ fn scan_sections(lines: &[&str], fence_aware: bool) -> (Vec<Span>, bool) {
 /// (ignoring surrounding whitespace). A BEGIN that is never closed, or is
 /// followed by another BEGIN first, is left alone as user text.
 ///
-/// When the fences are unbalanced (one is still open at the end of the file)
-/// they cannot be trusted, and a stray fence could hide Gespan's own section.
-/// If the fence-aware pass then finds no section, the last complete
-/// BEGIN..END pair, ignoring fences, is taken as ours: Gespan always appends
-/// at the end. That keeps regeneration idempotent for any input. Trade-off:
-/// in a file with unbalanced fences and no Gespan section yet, a user's
-/// example pair could be mistaken for ours.
+/// Rule: the first fence-aware pass wins; if it finds no section, the LAST
+/// complete BEGIN..END pair of a fence-blind pass is ours (Gespan appends at
+/// the end). Two linear passes at most, and since Gespan's bodies never
+/// contain line-leading fences, the section written by one run is found by
+/// one of the two passes on the next, so regeneration is idempotent for any
+/// input. Accepted trade-off: if the only BEGIN..END pair in a file is a
+/// user's fenced example of Gespan's exact markers, it is treated as ours
+/// (and an orphan BEGIN before such a pair is swallowed with what follows).
 fn find_sections(lines: &[&str]) -> Vec<Span> {
-    let (spans, unbalanced) = scan_sections(lines, true);
-    if !spans.is_empty() || !unbalanced {
+    let (spans, _) = scan_sections(lines, true);
+    if !spans.is_empty() {
         return spans;
     }
     let (blind, _) = scan_sections(lines, false);
@@ -112,6 +113,26 @@ fn find_sections(lines: &[&str]) -> Vec<Span> {
 /// the single blank line Gespan put before it. Of several sections the first
 /// is kept and the rest are removed.
 pub fn replace_section(existing: &str, body: &str) -> String {
+    // Dropping later sections can leave orphan markers that pair up into a
+    // new section, so apply until the text no longer changes. Each extra
+    // round removes marker lines, so this ends quickly.
+    // Removal is a single pass: repeating it would go on to eat a user's
+    // fenced example of the markers once the real section is gone.
+    let mut current = replace_section_once(existing, body);
+    for _ in 0..16 {
+        if body.is_empty() {
+            break;
+        }
+        let next = replace_section_once(&current, body);
+        if next == current {
+            break;
+        }
+        current = next;
+    }
+    current
+}
+
+fn replace_section_once(existing: &str, body: &str) -> String {
     let eol = line_ending(existing);
     let lines: Vec<&str> = existing.split_inclusive('\n').collect();
     let spans = find_sections(&lines);
@@ -231,6 +252,12 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// pass the workspace toplevel for project files, the profile home for
 /// global ones.
 pub fn write_atomic(path: &Path, content: &str, allowed_root: &Path) -> io::Result<()> {
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} contains '..'; not writing", path.display()),
+        ));
+    }
     let root = fs::canonicalize(allowed_root)?;
     let target = resolve_symlinks(path)?;
     let through_link = target != path;
@@ -263,9 +290,10 @@ pub fn write_atomic(path: &Path, content: &str, allowed_root: &Path) -> io::Resu
     );
     let tmp = dir.join(unique);
     let result = write_and_rename(&tmp, &target, content, || {
-        // The link chain must still lead to the same file.
+        // The link chain must still lead to the same file, whose directory
+        // must still be inside the root.
         if resolve_symlinks(path)? == target {
-            Ok(())
+            ensure_inside(&fs::canonicalize(&dir)?, &root, path)
         } else {
             Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,

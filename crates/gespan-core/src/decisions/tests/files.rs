@@ -95,18 +95,25 @@ fn two_sections_collapse_to_the_first() {
 }
 
 #[test]
-fn markers_inside_a_code_fence_are_ignored() {
-    let existing = format!("doc\n```\n{BEGIN}\nexample\n{END}\n```\nafter\n");
+fn markers_inside_a_code_fence_are_ignored_when_a_real_section_exists() {
+    let example = format!("doc\n```\n{BEGIN}\nexample\n{END}\n```\nafter\n");
+    let existing = format!("{example}\n{}", section("old"));
     let out = replace_section(&existing, "real");
-    assert!(out.starts_with(&existing));
-    assert!(out.ends_with(&section("real")));
-    assert_eq!(out.matches(BEGIN).count(), 2);
-    // Removing never touches the fenced example.
-    assert_eq!(replace_section(&out, ""), existing);
+    assert_eq!(out, format!("{example}\n{}", section("real")));
+    assert_eq!(replace_section(&out, ""), example);
     // A marker with extra text on its line is not a marker.
     let inline = format!("see {BEGIN} here\n");
     assert!(replace_section(&inline, "x").starts_with(&inline));
     assert_eq!(replace_section(&inline, "x").matches(END).count(), 1);
+}
+
+#[test]
+fn the_only_fenced_pair_is_taken_as_ours_and_stays_stable() {
+    // Accepted trade-off: a lone fenced example of the exact markers.
+    let existing = format!("doc\n```\n{BEGIN}\nexample\n{END}\n```\nafter\n");
+    let r1 = replace_section(&existing, "real");
+    assert_eq!(r1.matches(BEGIN).count(), 1);
+    assert_eq!(replace_section(&r1, "real"), r1);
 }
 
 #[test]
@@ -365,27 +372,28 @@ fn a_stray_unclosed_fence_does_not_hide_the_section_or_duplicate_it() {
 
 #[test]
 fn tilde_and_longer_fences_hide_markers_until_a_matching_closer() {
+    let real = section("old");
     let tilde = format!("~~~\n{BEGIN}\nx\n{END}\n~~~\n");
-    let out = replace_section(&tilde, "real");
-    assert!(out.starts_with(&tilde));
-    assert_eq!(out.matches(BEGIN).count(), 2);
+    let existing = format!("{tilde}\n{real}");
+    let out = replace_section(&existing, "new");
+    assert_eq!(out, format!("{tilde}\n{}", section("new")));
     assert_eq!(replace_section(&out, ""), tilde);
 
     // ``` inside a ```` block does not close it; ~~~ does not close ```.
     let long = format!("````\n```\n{BEGIN}\nx\n{END}\n```\n````\n```\n~~~\n{END}\n```\n");
-    let out = replace_section(&long, "real");
-    assert!(out.starts_with(&long));
-    assert_eq!(out.matches(BEGIN).count(), 2);
+    let existing = format!("{long}\n{real}");
+    let out = replace_section(&existing, "new");
+    assert_eq!(out, format!("{long}\n{}", section("new")));
     assert_eq!(replace_section(&out, ""), long);
 }
 
 #[test]
-fn an_orphan_begin_does_not_capture_a_fenced_example() {
-    let existing = format!("{BEGIN}\nuser\n```\n{END}\n```\nafter\n");
+fn an_orphan_begin_does_not_capture_a_fenced_example_when_a_real_section_exists() {
+    let user = format!("{BEGIN}\nuser\n```\n{END}\n```\nafter\n");
+    let existing = format!("{user}\n{}", section("old"));
     let out = replace_section(&existing, "fresh");
-    assert!(out.starts_with(&existing));
-    assert_eq!(out.matches(BEGIN).count(), 2);
-    assert_eq!(replace_section(&out, ""), existing);
+    assert_eq!(out, format!("{user}\n{}", section("fresh")));
+    assert_eq!(replace_section(&out, ""), user);
 }
 
 #[cfg(unix)]
@@ -626,4 +634,77 @@ fn many_stray_fences_are_scanned_in_linear_passes() {
     assert!(out.starts_with(&text));
     assert_eq!(replace_section(&out, "body"), out);
     assert_eq!(replace_section(&out, "").trim_end(), text.trim_end());
+}
+
+#[test]
+fn begin_fence_end_fence_counterexample_is_idempotent() {
+    let x = format!("```\n{BEGIN}\n```\n{END}\n```\n");
+    let r1 = replace_section(&x, "body");
+    assert_eq!(r1.matches(BEGIN).count(), 1);
+    let r2 = replace_section(&r1, "body");
+    assert_eq!(r2, r1);
+}
+
+#[test]
+fn regeneration_is_idempotent_for_every_short_sequence_of_fences_and_markers() {
+    let alphabet = ["```", "~~~", BEGIN, END, "text"];
+    let bodies = ["b", "b\n```\nc\n```"];
+    let mut checked = 0usize;
+    for len in 0..=6usize {
+        let total = alphabet.len().pow(len as u32);
+        for mut code in 0..total {
+            let mut lines = Vec::with_capacity(len);
+            for _ in 0..len {
+                lines.push(alphabet[code % alphabet.len()]);
+                code /= alphabet.len();
+            }
+            for trailing_newline in [true, false] {
+                let mut x = lines.join("\n");
+                if trailing_newline && !x.is_empty() {
+                    x.push('\n');
+                }
+                for body in bodies {
+                    let r1 = replace_section(&x, body);
+                    assert_eq!(
+                        replace_section(&r1, body),
+                        r1,
+                        "not idempotent: {x:?} / {body:?}"
+                    );
+                    let r3 = replace_section(&r1, "other");
+                    assert_eq!(
+                        r3.matches(BEGIN).count(),
+                        r1.matches(BEGIN).count(),
+                        "section count changed: {x:?} / {body:?}"
+                    );
+                    if replace_section(&x, "") == x {
+                        let back = replace_section(&r1, "");
+                        assert!(
+                            back == x || (!x.ends_with('\n') && back == format!("{x}\n")),
+                            "removal did not restore {x:?} / {body:?}: {back:?}"
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 50_000);
+}
+
+#[test]
+fn write_atomic_refuses_parent_dir_components_and_creates_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().join("repo");
+    fs::create_dir_all(&root).unwrap();
+    let sneaky = root
+        .join("missing")
+        .join("..")
+        .join("..")
+        .join("outside")
+        .join("f.md");
+    let err = write_atomic(&sneaky, "x", &root).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert!(!root.join("missing").exists());
+    assert!(!tmp.path().join("outside").exists());
+    assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
 }
