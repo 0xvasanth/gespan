@@ -1261,6 +1261,11 @@ mod tool_tests {
         request
     }
 
+    /// A bash permission as opencode 1.19 sends it.
+    fn bash(command: &str) -> serde_json::Value {
+        serde_json::json!({"permission":"bash","patterns":[command],"always":[],"metadata":{"command":command},"tool":{"messageID":"m","callID":"c"}})
+    }
+
     fn review_state(
         results: crate::review_policy::ReviewResults,
         access: AccessMode,
@@ -1302,19 +1307,12 @@ mod tool_tests {
             AccessMode::Auto,
         ] {
             let mut draft = review_state(ReviewResults::Draft, access);
-            let (events, reply) = review_permission(
-                &mut draft,
-                json!({"permission":"bash","pattern":"gh pr view 7 --repo acme/app"}),
-                true,
-            );
+            let (events, reply) =
+                review_permission(&mut draft, bash("gh pr view 7 --repo acme/app"), true);
             assert!(events.is_empty(), "{access:?}");
             assert!(reply.unwrap().contains("\"once\""), "{access:?}");
 
-            let (events, reply) = review_permission(
-                &mut draft,
-                json!({"permission":"bash","pattern":post}),
-                true,
-            );
+            let (events, reply) = review_permission(&mut draft, bash(post), true);
             assert!(reply.is_none(), "an approval is asked, nothing replied");
             match &events[..] {
                 [Event::Approval(a)] => {
@@ -1325,19 +1323,12 @@ mod tool_tests {
             }
 
             let mut posting = review_state(ReviewResults::Post, access);
-            let (events, reply) = review_permission(
-                &mut posting,
-                json!({"permission":"bash","pattern":post}),
-                true,
-            );
+            let (events, reply) = review_permission(&mut posting, bash(post), true);
             assert!(events.is_empty());
             assert!(reply.unwrap().contains("\"once\""));
 
-            let (events, reply) = review_permission(
-                &mut posting,
-                json!({"permission":"bash","pattern":"gh pr merge 7 --repo acme/app"}),
-                true,
-            );
+            let (events, reply) =
+                review_permission(&mut posting, bash("gh pr merge 7 --repo acme/app"), true);
             assert!(events.is_empty());
             assert!(reply.unwrap().contains("\"reject\""));
         }
@@ -1370,43 +1361,49 @@ mod tool_tests {
         }
         // No command, or one that changes what runs beside it.
         rejected(json!({"permission":"bash"}), true);
-        rejected(json!({"permission":"bash","pattern":""}), true);
         rejected(
-            json!({"permission":"bash","pattern":post,"env":{"GH_HOST":"evil"}}),
+            json!({"permission":"bash","metadata":{"command":"  "}}),
             true,
         );
+        // patterns alone are never judged.
+        rejected(json!({"permission":"bash","patterns":[post]}), true);
+        rejected(json!({"permission":"bash","pattern":post}), true);
         rejected(
-            json!({"permission":"bash","pattern":post,"metadata":{"args":["--x"]}}),
+            json!({"permission":"bash","metadata":{"command":["gh","pr","view"]}}),
             true,
         );
-        // Nobody to ask under Draft.
-        let mut draft = review_state(ReviewResults::Draft, AccessMode::FullAccess);
-        let (events, reply) = review_permission(
-            &mut draft,
-            json!({"permission":"bash","pattern":post}),
-            false,
-        );
+        let mut env = bash(post);
+        env["env"] = json!({"GH_HOST":"evil"});
+        rejected(env, true);
+        let mut args = bash(post);
+        args["metadata"]["args"] = json!(["--x"]);
+        rejected(args, true);
+        // Harmless-looking patterns over a command that does more.
+        let mut redirected = bash("gh pr view 7 --repo acme/app > x");
+        redirected["patterns"] = json!(["gh pr view 7 --repo acme/app"]);
+        let mut state = review_state(ReviewResults::Post, AccessMode::FullAccess);
+        let (events, reply) = review_permission(&mut state, redirected, true);
         assert!(events.is_empty());
         assert!(reply.unwrap().contains("\"reject\""));
-        // Reads pass; the command may come from metadata, or be an array.
+        let mut unrelated = bash(post);
+        unrelated["patterns"] = json!(["gh pr view 7", "rm -rf /"]);
+        rejected(unrelated, true);
+        let mut consistent = bash("gh pr view 7 --repo acme/app");
+        consistent["always"] = json!(["gh pr view *"]);
+        let (_, reply) = review_permission(&mut state, consistent, true);
+        assert!(reply.unwrap().contains("\"once\""));
+        // Nobody to ask under Draft.
+        let mut draft = review_state(ReviewResults::Draft, AccessMode::FullAccess);
+        let (events, reply) = review_permission(&mut draft, bash(post), false);
+        assert!(events.is_empty());
+        assert!(reply.unwrap().contains("\"reject\""));
+        // Reads pass.
         let mut state = review_state(ReviewResults::Post, AccessMode::FullAccess);
         for read in ["read", "grep", "glob", "search", "find"] {
             let (_, reply) =
                 review_permission(&mut state, json!({"permission":read,"pattern":"*"}), true);
             assert!(reply.unwrap().contains("\"once\""), "{read}");
         }
-        let (_, reply) = review_permission(
-            &mut state,
-            json!({"permission":"bash","metadata":{"command":"gh pr diff 7 --repo acme/app"}}),
-            true,
-        );
-        assert!(reply.unwrap().contains("\"once\""));
-        let (_, reply) = review_permission(
-            &mut state,
-            json!({"permission":"bash","pattern":["gh","pr","merge","7","--repo","acme/app"]}),
-            true,
-        );
-        assert!(reply.unwrap().contains("\"reject\""));
     }
 
     #[test]
@@ -1429,11 +1426,7 @@ mod tool_tests {
         // Approving an asked command replies once, even for a "session" decision.
         let mut draft = review_state(ReviewResults::Draft, AccessMode::FullAccess);
         let post = "gh pr review 7 --repo acme/app --comment --body 'x'";
-        let (events, _) = review_permission(
-            &mut draft,
-            json!({"permission":"bash","pattern":post}),
-            true,
-        );
+        let (events, _) = review_permission(&mut draft, bash(post), true);
         let Event::Approval(a) = &events[0] else {
             panic!()
         };
