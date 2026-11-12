@@ -93,14 +93,31 @@ fn acp_approval_tool(tool: &Value, id: &str, kind: Option<&str>) -> ToolCall {
     call
 }
 
-/// The shell command a permission request would run, as one string. An argv
-/// array is joined the way Codex's is; `None` when no command can be found.
-fn acp_command(tool: &Value, known: Option<&ToolCall>) -> Option<String> {
-    let input = tool
-        .get("rawInput")
+/// What a permission request would run: its `rawInput`, or failing that the
+/// input of the call the session announced earlier.
+fn acp_input(tool: &Value, known: Option<&ToolCall>) -> Option<Value> {
+    tool.get("rawInput")
         .or_else(|| tool.get("raw_input"))
         .cloned()
-        .or_else(|| serde_json::from_str(&known?.input).ok())?;
+        .or_else(|| serde_json::from_str(&known?.input).ok())
+}
+/// Whether the input names something to run, however its kind is labelled.
+fn acp_runs_something(input: &Value) -> bool {
+    ["command", "args", "argv", "env"]
+        .iter()
+        .any(|key| input.get(key).is_some_and(|v| !v.is_null()))
+}
+/// The shell command a permission request would run, as one string. An argv
+/// array is joined the way Codex's is. `None` when no command can be found or
+/// when `args`, `argv` or `env` come beside it, since they change what runs.
+fn acp_command(tool: &Value, known: Option<&ToolCall>) -> Option<String> {
+    let input = acp_input(tool, known)?;
+    if ["args", "argv", "env"]
+        .iter()
+        .any(|key| input.get(key).is_some_and(|v| !v.is_null()))
+    {
+        return None;
+    }
     match &input["command"] {
         Value::String(command) => Some(command.clone()),
         Value::Array(argv) => {
@@ -177,6 +194,7 @@ pub(super) fn configure(
     fallback: bool,
 ) -> Result<(), String> {
     let settings = &request.settings;
+    let access = settings.effective_access();
     match request.kind {
         Kind::Antigravity => {
             if cfg!(target_os = "linux") {
@@ -185,7 +203,7 @@ pub(super) fn configure(
         }
         Kind::Grok => {
             command.arg("--no-auto-update");
-            if settings.plan || settings.access == AccessMode::ReadOnly {
+            if settings.plan || access == AccessMode::ReadOnly {
                 command.args(["--permission-mode", "plan"]);
             }
             command.args(["agent", "--no-leader"]);
@@ -195,14 +213,14 @@ pub(super) fn configure(
             if let Some(effort) = &settings.effort {
                 command.args(["--reasoning-effort", effort]);
             }
-            if settings.access == AccessMode::FullAccess && !settings.plan {
+            if access == AccessMode::FullAccess && !settings.plan {
                 command.arg("--always-approve");
             }
             command.arg("stdio");
             command.env("GROK_NO_AUTO_UPDATE", "1");
         }
         Kind::Devin => {
-            if settings.access == AccessMode::Supervised {
+            if access == AccessMode::Supervised {
                 command.args(super::devin::supervised_args()?);
             }
             command.arg("acp");
@@ -449,10 +467,11 @@ impl Protocol {
     fn acp_new(&mut self, stdin: &mut impl Write) -> Result<(), String> {
         let mut params = json!({"cwd":self.request.cwd,"mcpServers":self.acp_mcp_servers()});
         if self.request.kind == Kind::Grok {
-            if self.request.settings.access == AccessMode::FullAccess {
+            let access = self.request.settings.effective_access();
+            if access == AccessMode::FullAccess {
                 params["_meta"] = json!({"yoloMode":true});
             }
-            if self.request.settings.access == AccessMode::Auto {
+            if access == AccessMode::Auto {
                 params["_meta"] = json!({"autoMode":true});
             }
         }
@@ -537,13 +556,14 @@ impl Protocol {
     fn acp_options(&mut self, setup: &Value) -> Result<(), String> {
         let kind = self.request.kind;
         let settings = &self.request.settings;
-        let planning = settings.plan || settings.access == AccessMode::ReadOnly;
+        let access = settings.effective_access();
+        let planning = settings.plan || access == AccessMode::ReadOnly;
         let mode = match kind {
             Kind::Antigravity => {
                 if planning {
                     "default"
                 } else {
-                    match settings.access {
+                    match access {
                         AccessMode::FullAccess => "yolo",
                         AccessMode::AutoAcceptEdits => "auto_edit",
                         _ => "default",
@@ -554,7 +574,7 @@ impl Protocol {
                 if planning {
                     "default"
                 } else {
-                    match settings.access {
+                    match access {
                         AccessMode::Supervised => "default",
                         AccessMode::AutoAcceptEdits => "accept_edits",
                         _ => "dont_ask",
@@ -565,7 +585,7 @@ impl Protocol {
                 if planning {
                     "plan"
                 } else {
-                    match settings.access {
+                    match access {
                         AccessMode::FullAccess => "bypass",
                         AccessMode::Auto => "smart",
                         _ => "accept-edits",
@@ -960,8 +980,9 @@ impl Protocol {
                         .unwrap_or_else(|| serde_json::to_string_pretty(tool).unwrap_or_default());
                     let id = v["id"].to_string();
                     let mut permission = request.clone();
-                    if self.request.kind == Kind::Devin
-                        && self.request.settings.access != AccessMode::FullAccess
+                    if self.request.settings.review.is_some()
+                        || (self.request.kind == Kind::Devin
+                            && self.request.settings.access != AccessMode::FullAccess)
                     {
                         permission["_gespanOneTime"] = true.into();
                     }
@@ -995,17 +1016,20 @@ impl Protocol {
                     // A pull request review runs only what its policy allows, whatever
                     // the access mode: reads pass, a shell command is judged, the rest is denied.
                     let review = self.request.settings.review.as_ref().and_then(|policy| {
-                        if read {
+                        let runs = acp_input(tool, known).is_some_and(|i| acp_runs_something(&i));
+                        // A read that carries a command is judged as the command it is.
+                        if read && !runs {
                             return None;
                         }
-                        Some(match kind {
-                            _ if self.probe => Verdict::Deny,
-                            Some("execute") => acp_command(tool, known)
-                                .map_or(Verdict::Deny, |c| review_policy::verdict(policy, &c)),
-                            _ => Verdict::Deny,
+                        if self.probe || !(runs || kind == Some("execute")) {
+                            return Some((Verdict::Deny, None));
+                        }
+                        Some(match acp_command(tool, known) {
+                            Some(c) => (review_policy::verdict(policy, &c), Some(c)),
+                            None => (Verdict::Deny, None),
                         })
                     });
-                    if let Some(verdict) = review {
+                    if let Some((verdict, judged)) = review {
                         match verdict {
                             Verdict::Allow | Verdict::Deny => self.respond(
                                 Control {
@@ -1018,13 +1042,23 @@ impl Protocol {
                                 },
                                 stdin,
                             )?,
-                            Verdict::Ask => events.push(Event::Approval(Approval {
-                                id,
-                                title,
-                                detail,
-                                can_remember: false,
-                                tool: Some(approved),
-                            })),
+                            Verdict::Ask => {
+                                // Show exactly the command that was judged.
+                                let mut approved = approved;
+                                let mut detail = detail;
+                                if let Some(command) = judged {
+                                    detail = format!("{}\n{command}", approved.name);
+                                    approved.input = command;
+                                    approved.output = String::new();
+                                }
+                                events.push(Event::Approval(Approval {
+                                    id,
+                                    title,
+                                    detail,
+                                    can_remember: false,
+                                    tool: Some(approved),
+                                }))
+                            }
                         }
                     } else if planning || auto {
                         self.respond(
@@ -3057,6 +3091,162 @@ mod tests {
         p.request.settings.access = AccessMode::Supervised;
         let (events, _) = acp_permission(&mut p, json!({"kind":"edit"}));
         assert!(matches!(events.as_slice(), [Event::Approval(a)] if a.can_remember));
+    }
+    fn acp_permission_with(p: &mut Protocol, tool: Value, options: Value) -> (Vec<Event>, Vec<u8>) {
+        let mut out = Vec::new();
+        let events = p.frame(json!({"id":"permission","method":"session/request_permission","params":{"toolCall":tool,"options":options}}), &mut out).unwrap();
+        (events, out)
+    }
+    #[test]
+    fn acp_review_never_selects_allow_always() {
+        use crate::review_policy::ReviewResults;
+        let options = json!([{"kind":"allow_always","optionId":"always"},{"kind":"reject_once","optionId":"no"}]);
+        let mut p = acp_review_protocol(ReviewResults::Post, AccessMode::Supervised);
+        let (events, mut out) = acp_permission_with(
+            &mut p,
+            json!({"kind":"execute","rawInput":{"command":"gh pr diff 7 -R acme/app"}}),
+            options.clone(),
+        );
+        assert!(events.is_empty());
+        assert_eq!(last(&mut out)["result"]["outcome"]["outcome"], "cancelled");
+        let mut p = acp_review_protocol(ReviewResults::Draft, AccessMode::Supervised);
+        let (events, _) = acp_permission_with(
+            &mut p,
+            json!({"kind":"execute","rawInput":{"command":"gh pr review 7 -R acme/app --comment -b x"}}),
+            options,
+        );
+        assert!(matches!(events.as_slice(), [Event::Approval(_)]));
+        let mut out = Vec::new();
+        p.respond(
+            Control {
+                id: "\"permission\"".into(),
+                decision: Decision::Session,
+            },
+            &mut out,
+        )
+        .unwrap();
+        assert_eq!(last(&mut out)["result"]["outcome"]["outcome"], "cancelled");
+    }
+    #[test]
+    fn acp_review_judges_a_read_that_carries_a_command() {
+        use crate::review_policy::ReviewResults;
+        let post = json!({"kind":"read","rawInput":{"command":"gh pr review 7 --repo acme/app --comment --body 'x'"}});
+        let mut p = acp_review_protocol(ReviewResults::Gespan, AccessMode::FullAccess);
+        let (events, mut out) = acp_permission(&mut p, post.clone());
+        assert!(events.is_empty());
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "no");
+        let mut p = acp_review_protocol(ReviewResults::Post, AccessMode::FullAccess);
+        let (events, mut out) = acp_permission(
+            &mut p,
+            json!({"kind":"read","rawInput":{"command":"gh pr review 7 -R acme/app --comment --body 'x'"}}),
+        );
+        assert!(events.is_empty());
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+        let (_, mut out) = acp_permission(
+            &mut p,
+            json!({"kind":"read","rawInput":{"command":"gh pr merge 7 -R acme/app"}}),
+        );
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "no");
+        let (_, mut out) = acp_permission(
+            &mut p,
+            json!({"kind":"search","rawInput":{"command":["gh","pr","merge","7"]}}),
+        );
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "no");
+    }
+    #[test]
+    fn acp_review_denies_args_argv_and_env_beside_the_command() {
+        use crate::review_policy::ReviewResults;
+        let mut p = acp_review_protocol(ReviewResults::Post, AccessMode::FullAccess);
+        for extra in [
+            ("args", json!(["--x"])),
+            ("argv", json!(["gh"])),
+            ("env", json!({"GH_HOST":"evil"})),
+        ] {
+            for kind in ["execute", "read"] {
+                let mut input = json!({"command":"gh pr diff 7 -R acme/app"});
+                input[extra.0] = extra.1.clone();
+                let (events, mut out) =
+                    acp_permission(&mut p, json!({"kind":kind,"rawInput":input}));
+                assert!(events.is_empty());
+                assert_eq!(
+                    last(&mut out)["result"]["outcome"]["optionId"],
+                    "no",
+                    "{kind} {}",
+                    extra.0
+                );
+            }
+        }
+    }
+    #[test]
+    fn acp_review_ask_shows_the_command_that_was_judged() {
+        use crate::review_policy::ReviewResults;
+        let mut p = acp_review_protocol(ReviewResults::Draft, AccessMode::Supervised);
+        let mut tool = ToolCall::new("t", "Run");
+        tool.input = "{\"command\":\"echo harmless\"}".into();
+        p.tools.insert("t".into(), tool);
+        let judged = "gh pr review 7 -R acme/app --comment -b x";
+        let (events, _) = acp_permission(
+            &mut p,
+            json!({"toolCallId":"t","kind":"execute","rawInput":{"command":judged}}),
+        );
+        let [Event::Approval(a)] = events.as_slice() else {
+            panic!("{events:?}")
+        };
+        assert!(a.detail.contains(judged), "{}", a.detail);
+        assert!(!a.detail.contains("harmless"), "{}", a.detail);
+        let shown = a.tool.as_ref().unwrap();
+        assert!(shown.input.contains(judged) && !shown.input.contains("harmless"));
+    }
+    #[test]
+    fn acp_review_launch_and_session_setup_ignore_the_access_mode() {
+        use crate::review_policy::ReviewResults;
+        let modes = [
+            AccessMode::FullAccess,
+            AccessMode::Auto,
+            AccessMode::AutoAcceptEdits,
+            AccessMode::Supervised,
+        ];
+        let all = json!({"modes":{"availableModes":[{"id":"default"},{"id":"yolo"},{"id":"auto_edit"},{"id":"plan"},{"id":"ask"},{"id":"build"},{"id":"bypass"},{"id":"smart"},{"id":"accept-edits"},{"id":"code"},{"id":"dont_ask"},{"id":"accept_edits"}]}});
+        for kind in [
+            Kind::Grok,
+            Kind::Devin,
+            Kind::Antigravity,
+            Kind::Hermes,
+            Kind::Fx,
+            Kind::OpenCode,
+            Kind::Cursor,
+            Kind::Kiro,
+        ] {
+            let mut reference = acp_review_protocol(ReviewResults::Post, AccessMode::ReadOnly);
+            reference.request.kind = kind;
+            let mut out = Vec::new();
+            reference.acp_options(&all).unwrap();
+            reference.acp_new(&mut out).unwrap();
+            let expected = (
+                launch_args(&reference.request, false),
+                reference.acp.mode,
+                last(&mut out)["params"].clone(),
+            );
+            for access in modes {
+                let mut p = acp_review_protocol(ReviewResults::Post, access);
+                p.request.kind = kind;
+                let mut out = Vec::new();
+                p.acp_options(&all).unwrap();
+                p.acp_new(&mut out).unwrap();
+                let got = (
+                    launch_args(&p.request, false),
+                    p.acp.mode,
+                    last(&mut out)["params"].clone(),
+                );
+                assert_eq!(got, expected, "{kind:?} {access:?}");
+                assert!(!got.0.iter().any(|a| a == "--always-approve"));
+                assert!(got.2.get("_meta").is_none());
+            }
+        }
+        // Without a review, FullAccess still launches as before.
+        let mut p = protocol(Kind::Grok);
+        p.request.settings.access = AccessMode::FullAccess;
+        assert!(launch_args(&p.request, false).contains(&"--always-approve".to_string()));
     }
     #[test]
     fn cursor_planning_denies_execution_without_requiring_a_session_mode() {

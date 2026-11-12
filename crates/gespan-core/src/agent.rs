@@ -176,6 +176,17 @@ pub struct Settings {
     pub pending_provider_switch: Option<ProviderSwitch>,
     pub turns: std::collections::HashMap<usize, TurnInfo>,
 }
+impl Settings {
+    /// The access mode a launch should act on. A pull request review always
+    /// runs as read-only, so no CLI flag or session mode can skip a permission request.
+    pub fn effective_access(&self) -> AccessMode {
+        if self.review.is_some() {
+            AccessMode::ReadOnly
+        } else {
+            self.access
+        }
+    }
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProviderSwitch {
