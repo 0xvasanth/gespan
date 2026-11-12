@@ -6,6 +6,10 @@
 //! `glass-edge`, `glass-highlight`). Light themes swap the white washes for
 //! opaque-leaning fills so cards still separate from the page.
 // Each page uses its own subset of these parts until all four pages land.
+// A panic while drawing takes the whole app down, so render code here may
+// not index, slice, unwrap or expect: use `get`, `let ... else` or a default.
+// Tests may (clippy.toml). See `settings/render_smoke_tests.rs`.
+#![deny(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 #![allow(dead_code)]
 use crate::theme::{accent_color, black, content, diff_foreground, is_light, white};
 use gpui::{

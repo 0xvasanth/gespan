@@ -11,6 +11,7 @@ mod panic;
 mod paths;
 mod recent;
 mod rotation;
+mod session;
 
 pub use actions::{open_logs_folder, summary, summary_for};
 pub use bundle::{
@@ -31,6 +32,10 @@ pub use panic::{install_panic_hook, panic_message, write_crash};
 pub use paths::{crash_dir, log_dir, Channel};
 pub use recent::{note_error_event, recent_error_events};
 pub use rotation::{file_name, prune, Clock, DailyFile, SystemClock, MAX_BYTES, MAX_DAYS};
+pub use session::{
+    report as report_unclean_exits, sessions_dir, start as start_session, RunningSession,
+    UncleanExit,
+};
 
 use std::{
     any::Any,

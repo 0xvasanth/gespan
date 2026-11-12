@@ -1,18 +1,18 @@
 //! `GraphStore`: `graph.db` through Toasty, one connection.
 //!
-//! Typed queries go through the models in [`crate::schema`]; what Toasty
+//! Queries go through the models in [`crate::schema`]. What Toasty 0.11
 //! cannot express stays raw SQL on the same connection (`toasty::sql`): the
-//! upsert with its min/max merge, `RETURNING`, the partial-index predicate
-//! `valid_to IS NULL`, joins, counting deletes and the queries in
-//! [`crate::query`].
+//! orphan collection, whose deletes report how many rows went, and in
+//! [`crate::query`] `reachable`'s recursive CTE and the per-node expansion
+//! (see there why).
 use std::cell::OnceCell;
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use rusqlite::Connection;
-use toasty::schema::db::Type;
-use toasty::stmt::Value;
+use toasty::stmt::{Expr, Value};
 use toasty::Executor;
 use toasty_core::driver::operation::TransactionMode;
 
@@ -20,7 +20,7 @@ use crate::db;
 use crate::error::GraphError;
 use crate::key::{scope_of, EdgeId, NodeId, NodeRef, Props, Scope, SessionId, Source, TimeBasis};
 use crate::kind::{EdgeKind, NodeKind};
-use crate::schema::{GraphNode, GraphScope};
+use crate::schema::{GraphEdge, GraphNode, GraphScope};
 use crate::time::Timestamp;
 
 /// The graph database's file name. The caller chooses the directory.
@@ -138,11 +138,6 @@ pub(crate) async fn query(
         .collect())
 }
 
-/// `value` as a nullable INTEGER parameter: a NULL needs its type spelled out.
-fn int(value: Option<i64>) -> (Value, Type) {
-    (value.into(), Type::Integer(8))
-}
-
 impl GraphStore {
     /// Opens (creating if needed) the graph database at `path` and applies
     /// its pending migrations. A file with migrations this build does not
@@ -212,32 +207,41 @@ impl GraphStore {
     /// the latest. The rowid never changes, so the node's edges stay.
     pub fn upsert_node(&mut self, fact: &NodeFact) -> Result<NodeId, GraphError> {
         let props = fact.props.to_json()?;
-        // A conditional upsert with a min/max merge: raw SQL.
-        let upsert = toasty::sql::statement(
-            "INSERT INTO graph_nodes (kind, key, label, props_json, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-             ON CONFLICT (kind, key) DO UPDATE SET
-               label = excluded.label,
-               props_json = excluded.props_json,
-               created_at = min(created_at, excluded.created_at),
-               updated_at = max(updated_at, excluded.updated_at)
-             WHERE label IS NOT excluded.label
-                OR props_json IS NOT excluded.props_json
-                OR excluded.created_at < created_at
-                OR excluded.updated_at > updated_at",
-        )
-        .bind(fact.node.kind.as_str())
-        .bind(fact.node.key.as_str())
-        .bind(fact.label.as_str())
-        .bind(props)
-        .bind(fact.seen_at.as_millis());
-        let node = fact.node.clone();
+        let fact = fact.clone();
         self.write(|tx| {
             Box::pin(async move {
-                upsert.exec(tx).await?;
-                node_id(tx, &node)
-                    .await?
-                    .ok_or(GraphError::MissingNode(node))
+                let seen = fact.seen_at.as_millis();
+                let Some(node) = find_node(tx, &fact.node).await? else {
+                    let node = GraphNode::create()
+                        .kind(fact.node.kind.as_str())
+                        .key(fact.node.key.as_str())
+                        .label(fact.label)
+                        .props_json(props)
+                        .created_at(seen)
+                        .updated_at(seen)
+                        .exec(tx)
+                        .await?;
+                    return Ok(NodeId(node.id));
+                };
+                let id = NodeId(node.id);
+                let created_at = node.created_at.min(seen);
+                let updated_at = node.updated_at.max(seen);
+                // A fact that changes nothing writes nothing.
+                if node.label != fact.label
+                    || node.props_json != props
+                    || created_at != node.created_at
+                    || updated_at != node.updated_at
+                {
+                    GraphNode::filter_by_id(node.id)
+                        .update()
+                        .label(fact.label)
+                        .props_json(props)
+                        .created_at(created_at)
+                        .updated_at(updated_at)
+                        .exec(tx)
+                        .await?;
+                }
+                Ok(id)
             })
         })
     }
@@ -280,27 +284,25 @@ impl GraphStore {
                 else {
                     return Ok(CloseOutcome::NotOpen);
                 };
-                // An update that returns the row it changed: raw SQL.
-                let closed = query(
-                    tx,
-                    toasty::sql::query(
-                        "UPDATE graph_edges SET valid_to = max(?6, valid_from)
-                         WHERE kind = ?1 AND src = ?2 AND dst = ?3 AND source = ?4 AND scope = ?5
-                           AND valid_to IS NULL
-                         RETURNING id",
-                    )
-                    .bind(key.kind.as_str())
-                    .bind(src.0)
-                    .bind(dst.0)
-                    .bind(key.source.as_str())
-                    .bind(key.scope.as_str())
-                    .bind(at.as_millis()),
-                )
+                let open = GraphEdge::filter(open_row(
+                    key.kind,
+                    src.0,
+                    dst.0,
+                    &key.source.as_str(),
+                    &key.scope.as_str(),
+                ))
+                .first()
+                .exec(tx)
                 .await?;
-                Ok(match closed.into_iter().next() {
-                    Some(mut row) => CloseOutcome::Closed(EdgeId(row.i64()?)),
-                    None => CloseOutcome::NotOpen,
-                })
+                let Some(edge) = open else {
+                    return Ok(CloseOutcome::NotOpen);
+                };
+                GraphEdge::filter_by_id(edge.id)
+                    .update()
+                    .valid_to(Some(at.as_millis().max(edge.valid_from)))
+                    .exec(tx)
+                    .await?;
+                Ok(CloseOutcome::Closed(EdgeId(edge.id)))
             })
         })
     }
@@ -316,22 +318,39 @@ impl GraphStore {
     pub fn canonical_dump(&self) -> Result<String, GraphError> {
         let (nodes, edges) = self.read(|mut db| async move {
             let nodes = GraphNode::all().exec(&mut db).await?;
-            // A join: raw SQL.
-            let edges = query(
-                &mut db,
-                toasty::sql::query(
-                    "SELECT e.kind, s.kind, s.key, d.kind, d.key, e.source, e.scope,
-                            e.valid_from, e.valid_from_basis, e.valid_to, e.props_json
-                     FROM graph_edges e
-                     JOIN graph_nodes s ON s.id = e.src
-                     JOIN graph_nodes d ON d.id = e.dst",
-                ),
-            )
-            .await?;
+            let edges = GraphEdge::all().exec(&mut db).await?;
             Ok((nodes, edges))
         })?;
+        let ends: HashMap<i64, (&str, &str)> = nodes
+            .iter()
+            .map(|node| (node.id, (node.kind.as_str(), node.key.as_str())))
+            .collect();
         let mut lines = Vec::with_capacity(nodes.len() + edges.len());
-        for node in nodes {
+        for edge in &edges {
+            // An edge whose endpoint is gone has no line, as with a join.
+            let (Some((src_kind, src_key)), Some((dst_kind, dst_key))) =
+                (ends.get(&edge.src), ends.get(&edge.dst))
+            else {
+                continue;
+            };
+            let props: serde_json::Value = serde_json::from_str(&edge.props_json)?;
+            let line = serde_json::json!([
+                "E",
+                edge.kind,
+                src_kind,
+                src_key,
+                dst_kind,
+                dst_key,
+                edge.source,
+                edge.scope,
+                edge.valid_from,
+                edge.valid_from_basis,
+                edge.valid_to,
+                props,
+            ]);
+            lines.push(line.to_string());
+        }
+        for node in &nodes {
             let props: serde_json::Value = serde_json::from_str(&node.props_json)?;
             let line = serde_json::json!([
                 "N",
@@ -341,19 +360,6 @@ impl GraphStore {
                 props,
                 node.created_at,
                 node.updated_at,
-            ]);
-            lines.push(line.to_string());
-        }
-        for mut r in edges {
-            let kind = r.string()?;
-            let (src_kind, src_key, dst_kind, dst_key) =
-                (r.string()?, r.string()?, r.string()?, r.string()?);
-            let (source, scope) = (r.string()?, r.string()?);
-            let (valid_from, basis, valid_to) = (r.i64()?, r.string()?, r.opt_i64()?);
-            let props: serde_json::Value = serde_json::from_str(&r.string()?)?;
-            let line = serde_json::json!([
-                "E", kind, src_kind, src_key, dst_kind, dst_key, source, scope, valid_from, basis,
-                valid_to, props,
             ]);
             lines.push(line.to_string());
         }
@@ -382,15 +388,13 @@ impl GraphStore {
                 // The cascade doesn't report its changes, so the report is
                 // the difference of the totals.
                 let before = totals(tx).await?;
-                toasty::sql::statement("DELETE FROM graph_edges WHERE scope = ?1")
-                    .bind(scope.as_str())
+                let e = GraphEdge::fields();
+                GraphEdge::filter(e.scope().eq(scope.as_str()))
+                    .delete()
                     .exec(tx)
                     .await?;
-                toasty::sql::statement("DELETE FROM graph_nodes WHERE kind = ?1 AND key = ?2")
-                    .bind(node.kind.as_str())
-                    .bind(node.key.as_str())
-                    .exec(tx)
-                    .await?;
+                // The cascade trigger takes the node's edges with it.
+                GraphNode::filter(node_is(&node)).delete().exec(tx).await?;
                 let f = GraphScope::fields();
                 GraphScope::filter(f.scope().eq(scope))
                     .delete()
@@ -487,82 +491,49 @@ async fn upsert_edge_in(
         .await?
         .ok_or_else(|| GraphError::MissingNode(fact.dst.clone()))?
         .0;
-    let kind = fact.kind.as_str();
     let basis = fact.basis.as_str();
-    // `valid_to IS NULL` is the partial unique index's predicate: raw SQL.
-    let open = query(
-        tx,
-        toasty::sql::query(
-            "SELECT id, valid_from, props_json FROM graph_edges
-             WHERE kind = ?1 AND src = ?2 AND dst = ?3 AND source = ?4 AND scope = ?5
-               AND valid_to IS NULL",
-        )
-        .bind(kind)
-        .bind(src)
-        .bind(dst)
-        .bind(source.as_str())
-        .bind(scope.as_str()),
-    )
-    .await?
-    .into_iter()
-    .next()
-    .map(|mut r| Ok::<_, GraphError>((r.i64()?, r.i64()?, r.string()?)))
-    .transpose()?;
+    let key = || open_row(fact.kind, src, dst, source.as_str(), scope.as_str());
+    let open = GraphEdge::filter(key()).first().exec(tx).await?;
     let insert = |valid_to: Option<i64>| {
-        let (valid_to, ty) = int(valid_to);
-        toasty::sql::query(
-            "INSERT INTO graph_edges
-               (src, dst, kind, props_json, valid_from, valid_from_basis, valid_to, source, scope, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?5)
-             RETURNING id",
-        )
-        .bind(src)
-        .bind(dst)
-        .bind(kind)
-        .bind(props.as_str())
-        .bind(from)
-        .bind(basis)
-        .bind_typed(valid_to, ty)
-        .bind(source.as_str())
-        .bind(scope.as_str())
-    };
-    let inserted = |rows: Vec<Row>| -> Result<i64, GraphError> {
-        rows.into_iter()
-            .next()
-            .ok_or_else(|| toasty::Error::invalid_result("an insert returned no id"))?
-            .i64()
+        GraphEdge::create()
+            .src(src)
+            .dst(dst)
+            .kind(fact.kind.as_str())
+            .props_json(props.as_str())
+            .valid_from(from)
+            .valid_from_basis(basis)
+            .valid_to(valid_to)
+            .source(source.as_str())
+            .scope(scope.as_str())
+            .created_at(from)
     };
     let id = match (fact.valid_to, open) {
-        (None, None) => inserted(query(tx, insert(None)).await?)?,
-        (None, Some((id, open_from, open_props))) => {
-            if open_props != props {
-                toasty::sql::statement("UPDATE graph_edges SET props_json = ?2 WHERE id = ?1")
-                    .bind(id)
-                    .bind(props.as_str())
+        (None, None) => insert(None).exec(tx).await?.id,
+        (None, Some(edge)) => {
+            if edge.props_json != props {
+                GraphEdge::filter_by_id(edge.id)
+                    .update()
+                    .props_json(props.as_str())
                     .exec(tx)
                     .await?;
             }
-            if fact.scope == Scope::Structural && from < open_from {
-                toasty::sql::statement(
-                    "UPDATE graph_edges SET valid_from = ?2, valid_from_basis = ?3 WHERE id = ?1",
-                )
-                .bind(id)
-                .bind(from)
-                .bind(basis)
+            if fact.scope == Scope::Structural && from < edge.valid_from {
+                GraphEdge::filter_by_id(edge.id)
+                    .update()
+                    .valid_from(from)
+                    .valid_from_basis(basis)
+                    .exec(tx)
+                    .await?;
+            }
+            edge.id
+        }
+        (Some(to), Some(edge)) => {
+            GraphEdge::filter_by_id(edge.id)
+                .update()
+                .valid_to(Some(to.as_millis().max(edge.valid_from)))
                 .exec(tx)
                 .await?;
-            }
-            id
-        }
-        (Some(to), Some((id, _, _))) => {
-            toasty::sql::statement(
-                "UPDATE graph_edges SET valid_to = max(?2, valid_from) WHERE id = ?1",
-            )
-            .bind(id)
-            .bind(to.as_millis())
-            .exec(tx)
-            .await?;
-            id
+            edge.id
         }
         (Some(to), None) => {
             // Already recorded when a closed row with this key covers the
@@ -571,47 +542,51 @@ async fn upsert_edge_in(
             // That is the row an earlier write of the fact closed or
             // inserted, even when the open row kept an earlier start.
             let to = to.as_millis();
-            let existing = query(
-                tx,
-                toasty::sql::query(
-                    "SELECT id FROM graph_edges
-                     WHERE kind = ?1 AND src = ?2 AND dst = ?3 AND source = ?4 AND scope = ?5
-                       AND valid_to IS NOT NULL
-                       AND valid_from <= ?6 AND valid_to = max(?7, valid_from)
-                     ORDER BY id LIMIT 1",
-                )
-                .bind(kind)
-                .bind(src)
-                .bind(dst)
-                .bind(source.as_str())
-                .bind(scope.as_str())
-                .bind(from)
-                .bind(to),
+            let e = GraphEdge::fields();
+            let closed = GraphEdge::filter(
+                e.kind()
+                    .eq(fact.kind.as_str())
+                    .and(e.src().eq(src))
+                    .and(e.dst().eq(dst))
+                    .and(e.source().eq(source.as_str()))
+                    .and(e.scope().eq(scope.as_str()))
+                    .and(e.valid_to().is_some())
+                    .and(e.valid_from().le(from)),
             )
+            .order_by(e.id().asc())
+            .exec(tx)
             .await?;
-            match existing.into_iter().next() {
-                Some(mut row) => row.i64()?,
+            match closed
+                .into_iter()
+                .find(|edge| edge.valid_to == Some(to.max(edge.valid_from)))
+            {
+                Some(edge) => edge.id,
                 // Clamped like close_edge, so an inverted fact still converges.
-                None => inserted(query(tx, insert(Some(to.max(from)))).await?)?,
+                None => insert(Some(to.max(from))).exec(tx).await?.id,
             }
         }
     };
     Ok(EdgeId(id))
 }
 
+/// The open row of an edge key: at most one exists, by the partial unique
+/// index on `valid_to IS NULL`.
+fn open_row(kind: EdgeKind, src: i64, dst: i64, source: &str, scope: &str) -> Expr<bool> {
+    let e = GraphEdge::fields();
+    e.kind()
+        .eq(kind.as_str())
+        .and(e.src().eq(src))
+        .and(e.dst().eq(dst))
+        .and(e.source().eq(source))
+        .and(e.scope().eq(scope))
+        .and(e.valid_to().is_none())
+}
+
 /// `(nodes, edges)` row counts.
 async fn totals(ex: &mut dyn Executor) -> Result<(u64, u64), GraphError> {
-    let mut row = query(
-        ex,
-        toasty::sql::query(
-            "SELECT (SELECT count(*) FROM graph_nodes), (SELECT count(*) FROM graph_edges)",
-        ),
-    )
-    .await?
-    .into_iter()
-    .next()
-    .ok_or_else(|| toasty::Error::invalid_result("no totals"))?;
-    Ok((row.i64()?.unsigned_abs(), row.i64()?.unsigned_abs()))
+    let nodes = GraphNode::all().count().exec(ex).await?;
+    let edges = GraphEdge::all().count().exec(ex).await?;
+    Ok((nodes, edges))
 }
 
 fn kind_list(keep: impl Fn(NodeKind) -> bool) -> String {
@@ -625,7 +600,8 @@ fn kind_list(keep: impl Fn(NodeKind) -> bool) -> String {
 
 /// `gc_orphans`' two passes inside the caller's transaction. The `OR` of
 /// "edge out to an anchor / edge in from an anchor" is two `EXISTS` clauses
-/// so each probes its own index.
+/// so each probes its own index. Raw SQL: the caller needs how many rows the
+/// deletes removed, and a Toasty 0.11 delete returns no count.
 async fn gc_in(ex: &mut dyn Executor) -> Result<u64, GraphError> {
     let anchors = kind_list(NodeKind::is_anchor);
     let derived = kind_list(|k| !k.is_anchor() && k != NodeKind::Repo);
@@ -651,17 +627,20 @@ async fn gc_in(ex: &mut dyn Executor) -> Result<u64, GraphError> {
     Ok(first + repos)
 }
 
-async fn node_id(ex: &mut dyn Executor, node: &NodeRef) -> Result<Option<NodeId>, GraphError> {
+/// Matches the node's `(kind, key)`.
+fn node_is(node: &NodeRef) -> Expr<bool> {
     let f = GraphNode::fields();
-    let found = GraphNode::filter(
-        f.kind()
-            .eq(node.kind.as_str())
-            .and(f.key().eq(node.key.as_str())),
-    )
-    .first()
-    .exec(ex)
-    .await?;
-    Ok(found.map(|node| NodeId(node.id)))
+    f.kind()
+        .eq(node.kind.as_str())
+        .and(f.key().eq(node.key.as_str()))
+}
+
+async fn find_node(ex: &mut dyn Executor, node: &NodeRef) -> Result<Option<GraphNode>, GraphError> {
+    Ok(GraphNode::filter(node_is(node)).first().exec(ex).await?)
+}
+
+async fn node_id(ex: &mut dyn Executor, node: &NodeRef) -> Result<Option<NodeId>, GraphError> {
+    Ok(find_node(ex, node).await?.map(|node| NodeId(node.id)))
 }
 
 /// Creates the file owner-only before SQLite first opens it, as the

@@ -1,0 +1,5 @@
+# Render modules deny indexing, slicing, unwrap and expect (see the
+# `#![deny(...)]` at the top of settings/mod.rs); test code keeps them.
+allow-indexing-slicing-in-tests = true
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

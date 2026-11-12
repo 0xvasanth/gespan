@@ -2,6 +2,10 @@
 //! rectangle, a touch wider than tall, holding one mark. A split tab
 //! stacks one tile per pane, the focused one in front and the rest tucked
 //! behind it, each peeking out a little further right.
+// A panic while drawing takes the whole app down, so render code here may
+// not index, slice, unwrap or expect: use `get`, `let ... else` or a default.
+// Tests may (clippy.toml). See `settings/render_smoke_tests.rs`.
+#![deny(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 use crate::theme::*;
 use gpui::{AnyElement, Corners, Div, Hsla, canvas, div, prelude::*, px};
 

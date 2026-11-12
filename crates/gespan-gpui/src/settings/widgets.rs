@@ -1,6 +1,6 @@
 //! The Settings building blocks: PageHeader, Group, Row, Toggle,
 //! Segmented, Slider, Select and SecondaryButton, at their Tailwind metrics.
-use super::{SettingsView, SliderKind, UI_SCALE_PERCENTS};
+use super::{SettingsView, SliderKind};
 use crate::{
     popover::{Align, Anchor, AnchorSlot, Side, popover},
     theme::*,
@@ -931,8 +931,7 @@ impl SettingsView {
 
     /// The scale the Interface scale slider shows, in percent.
     pub(super) fn shown_ui_scale(&self) -> u32 {
-        let last = UI_SCALE_PERCENTS.len() - 1;
-        UI_SCALE_PERCENTS[(self.slider_value(SliderKind::InterfaceScale) as usize).min(last)]
+        super::preferences::ui_scale_at(self.slider_value(SliderKind::InterfaceScale) as usize)
     }
 
     /// Mouse released: the drag ends and a held slider position is saved.
@@ -969,10 +968,10 @@ impl SettingsView {
         let selected = options.iter().position(|(v, _, _)| v == value);
         let mut options = options;
         let (trigger_label, trigger_icon) = match selected {
-            Some(ix) => {
-                let (_, text, icon) = &mut options[ix];
-                (text.clone(), icon.take())
-            }
+            Some(ix) => match options.get_mut(ix) {
+                Some((_, text, icon)) => (text.clone(), icon.take()),
+                None => (SharedString::from(value.to_owned()), None),
+            },
             None => (SharedString::from(value.to_owned()), None),
         };
         let values: Vec<String> = options.iter().map(|(v, _, _)| v.clone()).collect();

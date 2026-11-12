@@ -240,17 +240,15 @@ impl Counters {
         if on_orm_thread() {
             return Err("A failure counter cannot be recorded on the ORM runtime.".into());
         }
-        // Adds to the stored count in one statement, which needs raw SQL.
-        let upsert = toasty::sql::statement(
-            "INSERT INTO diagnostic_counters (day, name, error_kind, count, app_version)
-             VALUES (?1, ?2, ?3, 1, ?4)
-             ON CONFLICT (day, name, error_kind, app_version)
-             DO UPDATE SET count = count + 1",
+        // Adds to the stored count in one statement.
+        let upsert = DiagnosticCounter::upsert_by_day_and_name_and_error_kind_and_app_version(
+            day.to_string(),
+            name.to_owned(),
+            kind.map_or(SUCCESS, ErrorKind::code),
+            self.version.clone(),
         )
-        .bind(day.to_string())
-        .bind(name.to_owned())
-        .bind(kind.map_or(SUCCESS, ErrorKind::code))
-        .bind(self.version.clone());
+        .on_create(|create| create.count(1))
+        .on_update(|update| update.count(toasty::stmt::increment()));
         self.db
             .run(|mut db| async move { upsert.exec(&mut db).await })
             .map(|_| ())

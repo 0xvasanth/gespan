@@ -1,7 +1,8 @@
-use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex, Row};
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex};
 use crate::links::TICKET_KIND_ERROR;
-use crate::models::{ActivityRow, BoardRow, CardRow, ColumnRow};
+use crate::models::{ActivityRow, BoardRow, CardMetaRow, CardRow, ColumnRow, LinkRow};
 use crate::{now_millis, Activity, Board, BoardDetail, Card, Column};
+use toasty::stmt::{Expr, List, Query};
 use uuid::Uuid;
 
 pub(crate) const MAX_NAME: usize = 200;
@@ -18,13 +19,11 @@ pub const LINK_KINDS: [&str; 8] = [
 /// The `board_card_links` role of the link `link_card` manages, so the single
 /// link both apps show today stays one row among a card's links.
 const PRIMARY: &str = "primary";
-/// SQL true for a card that is not archived. Archived cards leave their
-/// column's order; live cards keep positions 0..n-1 without them.
+/// SQL true for a card that is not archived, for the raw queries left.
+/// Archived cards leave their column's order; live cards keep positions
+/// 0..n-1 without them. [`live`] is the same test for typed queries.
 pub(crate) const LIVE: &str = "NOT EXISTS (SELECT 1 FROM board_card_meta m
    WHERE m.card_id = board_cards.id AND m.archived_at IS NOT NULL)";
-/// The `board_cards` columns [`card_from_row`] reads, in its order.
-pub(crate) const CARD_COLUMNS: &str =
-    "id, board_id, column_id, number, title, body, position, link_kind, link_id, created_at, updated_at";
 const ACTORS: [&str; 2] = ["user", "system"];
 /// Kinds `board_card_record` may append. Every other kind is written by the
 /// mutation that causes it.
@@ -36,6 +35,23 @@ const RECORD_KINDS: [&str; 6] = [
     "pr_opened",
     "pr_merged",
 ];
+
+/// The ids of archived cards, as a subquery.
+pub(crate) fn archived_ids() -> Query<List<String>> {
+    CardMetaRow::filter(CardMetaRow::fields().archived_at().is_some())
+        .select(CardMetaRow::fields().card_id())
+}
+
+/// A [`CardRow`] filter: the card is not archived. The typed [`LIVE`].
+pub(crate) fn live() -> Expr<bool> {
+    CardRow::fields().id().in_query(archived_ids()).not()
+}
+
+/// How many rows a count query found.
+pub(crate) async fn count(ex: &mut Ex<'_>, query: Query<u64>) -> Result<i64, String> {
+    let n = query.exec(ex).await.map_err(err)?;
+    i64::try_from(n).map_err(|_| "Count out of range".to_string())
+}
 
 pub fn new_id() -> String {
     Uuid::new_v4().to_string()
@@ -64,27 +80,6 @@ fn check_role(role: Option<&str>) -> Result<(), String> {
         Some(role) if !ROLES.contains(&role) => Err(format!("Unknown column role: {role}")),
         _ => Ok(()),
     }
-}
-
-/// A card from a row of [`CARD_COLUMNS`].
-pub(crate) fn card_from_row(mut row: Row) -> Result<Card, String> {
-    Ok(Card {
-        id: row.take(0)?,
-        board_id: row.take(1)?,
-        column_id: row.take(2)?,
-        number: row.take(3)?,
-        title: row.take(4)?,
-        body: row.take(5)?,
-        position: row.take(6)?,
-        link_kind: row.take(7)?,
-        link_id: row.take(8)?,
-        created_at: row.take(9)?,
-        updated_at: row.take(10)?,
-    })
-}
-
-pub(crate) fn cards_from_rows(rows: Vec<Row>) -> Result<Vec<Card>, String> {
-    rows.into_iter().map(card_from_row).collect()
 }
 
 impl From<CardRow> for Card {
@@ -175,20 +170,18 @@ pub(crate) async fn column_card_ids(
     ex: &mut Ex<'_>,
     column_id: &str,
 ) -> Result<Vec<String>, String> {
-    query(
-        ex,
-        &format!(
-            "SELECT id FROM board_cards WHERE column_id = ?1 AND {LIVE} ORDER BY position, number"
-        ),
-        args![column_id],
-    )
-    .await?
-    .iter()
-    .map(|row| row.get(0))
-    .collect()
+    let card = CardRow::fields();
+    CardRow::filter(card.column_id().eq(column_id).and(live()))
+        .order_by((card.position().asc(), card.number().asc()))
+        .select(card.id())
+        .exec(ex)
+        .await
+        .map_err(err)
 }
 
 async fn board_column_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         "SELECT id FROM board_columns WHERE board_id = ?1 ORDER BY position, rowid",
@@ -203,24 +196,26 @@ async fn board_column_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>
 /// Rewrite positions to 0..n-1 in the given order.
 pub(crate) async fn write_card_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        execute(
-            ex,
-            "UPDATE board_cards SET position = ?1 WHERE id = ?2 AND position <> ?1",
-            args![index as i64, id],
-        )
-        .await?;
+        let card = CardRow::fields();
+        CardRow::filter(card.id().eq(id).and(card.position().ne(index as i64)))
+            .update()
+            .position(index as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
     }
     Ok(())
 }
 
 async fn write_column_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        execute(
-            ex,
-            "UPDATE board_columns SET position = ?1 WHERE id = ?2 AND position <> ?1",
-            args![index as i64, id],
-        )
-        .await?;
+        let column = ColumnRow::fields();
+        ColumnRow::filter(column.id().eq(id).and(column.position().ne(index as i64)))
+            .update()
+            .position(index as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
     }
     Ok(())
 }
@@ -236,23 +231,23 @@ pub struct NewActivity<'a> {
 }
 
 pub(crate) async fn is_archived(ex: &mut Ex<'_>, card_id: &str) -> Result<bool, String> {
-    query_value(
+    let meta = CardMetaRow::fields();
+    let archived = count(
         ex,
-        "SELECT EXISTS(SELECT 1 FROM board_card_meta WHERE card_id = ?1 AND archived_at IS NOT NULL)",
-        args![card_id],
+        CardMetaRow::filter(meta.card_id().eq(card_id).and(meta.archived_at().is_some())).count(),
     )
-    .await
+    .await?;
+    Ok(archived > 0)
 }
 
 /// Bumps the card's `updated_at`, for edits that live in other tables.
 pub(crate) async fn touch(ex: &mut Ex<'_>, card_id: &str) -> Result<(), String> {
-    execute(
-        ex,
-        "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
-        args![now_millis(), card_id],
-    )
-    .await
-    .map(drop)
+    CardRow::filter_by_id(card_id)
+        .update()
+        .updated_at(now_millis())
+        .exec(ex)
+        .await
+        .map_err(err)
 }
 
 /// One `edited` row by the user saying what changed.
@@ -304,14 +299,20 @@ async fn ensure_role_free(
     let Some(role) = role else {
         return Ok(());
     };
-    let taken: bool = query_value(
+    let column = ColumnRow::fields();
+    let taken = count(
         ex,
-        "SELECT EXISTS(SELECT 1 FROM board_columns
-           WHERE board_id = ?1 AND role = ?2 AND id <> ?3)",
-        args![board_id, role, except_column.unwrap_or("")],
+        ColumnRow::filter(
+            column
+                .board_id()
+                .eq(board_id)
+                .and(column.role().eq(Some(role.to_string())))
+                .and(column.id().ne(except_column.unwrap_or(""))),
+        )
+        .count(),
     )
     .await?;
-    if taken {
+    if taken > 0 {
         return Err(format!(
             "Another column on this board already has the {role} role"
         ));
@@ -321,6 +322,8 @@ async fn ensure_role_free(
 
 pub fn list_boards(conn: &Conn) -> Result<Vec<Board>, String> {
     with_db!(conn, |ex| {
+        // Raw SQL: boards made in the same millisecond keep insertion order
+        // (`rowid`), which Toasty 0.11 cannot order by.
         query(
             ex,
             "SELECT id, name, created_at, updated_at FROM boards ORDER BY created_at, rowid",
@@ -342,6 +345,8 @@ pub fn list_boards(conn: &Conn) -> Result<Vec<Board>, String> {
 
 /// The board's columns in order, without reading its cards.
 pub(crate) async fn board_columns(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<Column>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         "SELECT id, board_id, name, position, role, color, wip_limit, collapsed
@@ -374,17 +379,15 @@ pub(crate) async fn get_board_in(ex: &mut Ex<'_>, board_id: &str) -> Result<Boar
         .map(Board::from)
         .ok_or_else(|| "Board not found".to_string())?;
     let columns = board_columns(ex, board_id).await?;
-    let cards = cards_from_rows(
-        query(
-            ex,
-            &format!(
-                "SELECT {CARD_COLUMNS} FROM board_cards WHERE board_id = ?1 AND {LIVE}
-                 ORDER BY position, number"
-            ),
-            args![board_id],
-        )
-        .await?,
-    )?;
+    let card = CardRow::fields();
+    let cards = CardRow::filter(card.board_id().eq(board_id).and(live()))
+        .order_by((card.position().asc(), card.number().asc()))
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .map(Card::from)
+        .collect();
     Ok(BoardDetail {
         board,
         columns,
@@ -404,18 +407,16 @@ pub fn create_board(conn: &Conn, name: &str) -> Result<Board, String> {
 
 pub fn rename_board(conn: &Conn, board_id: &str, name: &str) -> Result<(), String> {
     let name = clean_text(name, "Board name", MAX_NAME)?;
-    let changed = with_db!(conn, |ex| {
-        execute(
-            ex,
-            "UPDATE boards SET name = ?1, updated_at = ?2 WHERE id = ?3",
-            args![name, now_millis(), board_id],
-        )
-        .await
-    })?;
-    if changed == 0 {
-        return Err("Board not found".into());
-    }
-    Ok(())
+    with_tx!(conn, |ex| {
+        board_exists(ex, board_id).await?;
+        BoardRow::filter_by_id(board_id)
+            .update()
+            .name(name)
+            .updated_at(now_millis())
+            .exec(ex)
+            .await
+            .map_err(err)
+    })
 }
 
 /// Deletes the board; everything on it goes with it (`boards_cascade`).
@@ -439,10 +440,9 @@ pub fn create_column(
     with_tx!(conn, |ex| {
         board_exists(ex, board_id).await?;
         ensure_role_free(ex, board_id, role, None).await?;
-        let position: i64 = query_value(
+        let position = count(
             ex,
-            "SELECT COUNT(*) FROM board_columns WHERE board_id = ?1",
-            args![board_id],
+            ColumnRow::filter(ColumnRow::fields().board_id().eq(board_id)).count(),
         )
         .await?;
         ColumnRow::create()
@@ -472,12 +472,13 @@ pub fn update_column(
     with_tx!(conn, |ex| {
         let column = get_column(ex, column_id).await?;
         ensure_role_free(ex, &column.board_id, role, Some(column_id)).await?;
-        execute(
-            ex,
-            "UPDATE board_columns SET name = ?1, role = ?2 WHERE id = ?3",
-            args![name, role, column_id],
-        )
-        .await?;
+        ColumnRow::filter_by_id(column_id)
+            .update()
+            .name(name)
+            .role(role.map(str::to_string))
+            .exec(ex)
+            .await
+            .map_err(err)?;
         Ok(column.board_id)
     })
 }
@@ -498,10 +499,9 @@ pub fn move_column(conn: &Conn, column_id: &str, index: usize) -> Result<String,
 pub fn delete_column(conn: &Conn, column_id: &str) -> Result<String, String> {
     with_tx!(conn, |ex| {
         let column = get_column(ex, column_id).await?;
-        let cards: i64 = query_value(
+        let cards = count(
             ex,
-            "SELECT COUNT(*) FROM board_cards WHERE column_id = ?1",
-            args![column_id],
+            CardRow::filter(CardRow::fields().column_id().eq(column_id)).count(),
         )
         .await?;
         if cards > 0 {
@@ -534,24 +534,8 @@ pub(crate) async fn create_card_in(
     let title = clean_text(title, "Card title", MAX_TITLE)?;
     check_body(body)?;
     let column = get_column(ex, column_id).await?;
-    execute(
-        ex,
-        "UPDATE boards SET card_seq = card_seq + 1 WHERE id = ?1",
-        args![&column.board_id],
-    )
-    .await?;
-    let number: i64 = query_value(
-        ex,
-        "SELECT card_seq FROM boards WHERE id = ?1",
-        args![&column.board_id],
-    )
-    .await?;
-    let position: i64 = query_value(
-        ex,
-        &format!("SELECT COUNT(*) FROM board_cards WHERE column_id = ?1 AND {LIVE}"),
-        args![column_id],
-    )
-    .await?;
+    let number = next_card_number(ex, &column.board_id).await?;
+    let position = live_card_count(ex, column_id).await?;
     let now = now_millis();
     let card: Card = CardRow::create()
         .id(new_id())
@@ -587,27 +571,64 @@ pub(crate) async fn create_card_in(
     Ok(card)
 }
 
+/// Takes the board's next card number.
+pub(crate) async fn next_card_number(ex: &mut Ex<'_>, board_id: &str) -> Result<i64, String> {
+    BoardRow::filter_by_id(board_id)
+        .update()
+        .card_seq(toasty::stmt::increment())
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    BoardRow::filter_by_id(board_id)
+        .select(BoardRow::fields().card_seq())
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .ok_or_else(|| "Board not found".to_string())
+}
+
+/// How many live cards the column has: where a card added at its end goes.
+pub(crate) async fn live_card_count(ex: &mut Ex<'_>, column_id: &str) -> Result<i64, String> {
+    count(
+        ex,
+        CardRow::filter(CardRow::fields().column_id().eq(column_id).and(live())).count(),
+    )
+    .await
+}
+
 /// Returns the owning board id.
 pub fn update_card(conn: &Conn, card_id: &str, title: &str, body: &str) -> Result<String, String> {
     let title = clean_text(title, "Card title", MAX_TITLE)?;
     check_body(body)?;
     with_tx!(conn, |ex| {
-        let card = get_card_in(ex, card_id).await?;
+        let Some(card) = CardRow::filter_by_id(card_id)
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+        else {
+            return Err("Card not found".into());
+        };
         if card.title == title && card.body == body {
             return Ok(card.board_id);
         }
         // A title the user edits is theirs, so it no longer counts as ticket
         // text; a body-only edit leaves the mark as it was. A description stays
         // marked as ticket text until it is emptied, since an edit can keep it.
-        execute(
-            ex,
-            "UPDATE board_cards SET title = ?1, body = ?2, updated_at = ?3,
-               title_from_ticket = CASE WHEN title = ?1 THEN title_from_ticket ELSE 0 END,
-               body_from_ticket = CASE WHEN trim(?2) = '' THEN 0 ELSE body_from_ticket END
-             WHERE id = ?4",
-            args![title, body, now_millis(), card_id],
-        )
-        .await?;
+        // Emptied means blank after trimming spaces, as SQL's `trim` did.
+        let title_from_ticket = card.title_from_ticket && card.title == title;
+        let body_from_ticket = card.body_from_ticket && !body.trim_matches(' ').is_empty();
+        CardRow::filter_by_id(card_id)
+            .update()
+            .title(title)
+            .body(body)
+            .updated_at(now_millis())
+            .title_from_ticket(title_from_ticket)
+            .body_from_ticket(body_from_ticket)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         log_activity(
             ex,
             NewActivity {
@@ -671,12 +692,12 @@ pub(crate) async fn move_card_in(
 
     let source = get_column(ex, &card.column_id).await?;
     if !same_column {
-        execute(
-            ex,
-            "UPDATE board_cards SET column_id = ?1 WHERE id = ?2",
-            args![column_id, card_id],
-        )
-        .await?;
+        CardRow::filter_by_id(card_id)
+            .update()
+            .column_id(column_id)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         let mut source_ids = column_card_ids(ex, &card.column_id).await?;
         source_ids.retain(|id| id != card_id);
         write_card_positions(ex, &source_ids).await?;
@@ -735,29 +756,35 @@ pub fn link_card(
             (None, None) => return Ok(card.board_id),
         };
         let now = now_millis();
-        execute(
-            ex,
-            "UPDATE board_cards SET link_kind = ?1, link_id = ?2, updated_at = ?3 WHERE id = ?4",
-            args![link.map(|l| l.0), link.map(|l| l.1), now, card_id],
+        CardRow::filter_by_id(card_id)
+            .update()
+            .link_kind(link.map(|l| l.0.to_string()))
+            .link_id(link.map(|l| l.1.to_string()))
+            .updated_at(now)
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        let links = LinkRow::fields();
+        LinkRow::filter(
+            links
+                .card_id()
+                .eq(card_id)
+                .and(links.role().eq(Some(PRIMARY.to_string()))),
         )
-        .await?;
-        execute(
-            ex,
-            "DELETE FROM board_card_links WHERE card_id = ?1 AND role = ?2",
-            args![card_id, PRIMARY],
-        )
-        .await?;
+        .delete()
+        .exec(ex)
+        .await
+        .map_err(err)?;
         // A link the card already has as an extra link stays an extra link: if
         // it were promoted, unlinking would delete the row the user added.
         if let Some((kind, id)) = link {
-            execute(
-                ex,
-                "INSERT INTO board_card_links (card_id, kind, ref, role, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT (card_id, kind, ref) DO NOTHING",
-                args![card_id, kind, id, PRIMARY, now],
-            )
-            .await?;
+            LinkRow::upsert_by_card_id_and_kind_and_reference(card_id, kind, id)
+                .role(Some(PRIMARY.to_string()))
+                .created_at(now)
+                .or_ignore()
+                .exec(ex)
+                .await
+                .map_err(err)?;
         }
         log_activity(
             ex,
@@ -838,19 +865,28 @@ pub(crate) async fn cards_for_link_in(
 ) -> Result<Vec<Card>, String> {
     // The link columns are read too, for links an older build wrote after the
     // v3 migration copied them.
-    cards_from_rows(
-        query(
-            ex,
-            &format!(
-                "SELECT {CARD_COLUMNS} FROM board_cards
-                 WHERE (id IN (SELECT card_id FROM board_card_links WHERE kind = ?1 AND ref = ?2)
-                        OR (link_kind = ?1 AND link_id = ?2))
-                   AND {LIVE}
-                 ORDER BY board_id, number"
-            ),
-            args![link_kind, link_id],
-        )
-        .await?,
+    let links = LinkRow::fields();
+    let linked = LinkRow::filter(
+        links
+            .kind()
+            .eq(link_kind)
+            .and(links.reference().eq(link_id)),
+    )
+    .select(links.card_id());
+    let card = CardRow::fields();
+    let on_card = card
+        .link_kind()
+        .eq(Some(link_kind.to_string()))
+        .and(card.link_id().eq(Some(link_id.to_string())));
+    Ok(
+        CardRow::filter(card.id().in_query(linked).or(on_card).and(live()))
+            .order_by((card.board_id().asc(), card.number().asc()))
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .into_iter()
+            .map(Card::from)
+            .collect(),
     )
 }
 
@@ -866,6 +902,8 @@ pub fn list_activity(
 ) -> Result<Vec<Activity>, String> {
     let limit = limit.clamp(1, MAX_ACTIVITY) as i64;
     with_db!(conn, |ex| {
+        // Raw SQL: rows written in the same millisecond keep insertion order
+        // (`rowid`), which Toasty 0.11 cannot order by.
         query(
             ex,
             "SELECT id, board_id, card_id, kind, actor, from_column, to_column, detail, created_at
@@ -966,17 +1004,13 @@ pub fn move_cards(
                 sources.push(card.column_id.clone());
             }
         }
-        let mut params = args![column_id];
-        params.extend(moving.iter().map(|card| crate::db::Arg::from(&card.id)));
-        execute(
-            ex,
-            &format!(
-                "UPDATE board_cards SET column_id = ?1 WHERE id IN ({})",
-                vec!["?"; moving.len()].join(", ")
-            ),
-            params,
-        )
-        .await?;
+        let ids: Vec<String> = moving.iter().map(|card| card.id.clone()).collect();
+        CardRow::filter(CardRow::fields().id().in_list(ids))
+            .update()
+            .column_id(column_id)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         for source in &sources {
             let ids = column_card_ids(ex, source).await?;
             write_card_positions(ex, &ids).await?;
@@ -990,12 +1024,12 @@ pub fn move_cards(
                 continue;
             }
             let source = get_column(ex, &card.column_id).await?;
-            execute(
-                ex,
-                "UPDATE board_cards SET updated_at = ?1 WHERE id = ?2",
-                args![now, &card.id],
-            )
-            .await?;
+            CardRow::filter_by_id(&card.id)
+                .update()
+                .updated_at(now)
+                .exec(ex)
+                .await
+                .map_err(err)?;
             log_activity(
                 ex,
                 NewActivity {
@@ -1032,12 +1066,14 @@ pub fn set_column_display(
     }
     with_tx!(conn, |ex| {
         let column = get_column(ex, column_id).await?;
-        execute(
-            ex,
-            "UPDATE board_columns SET color = ?1, wip_limit = ?2, collapsed = ?3 WHERE id = ?4",
-            args![color, wip_limit, collapsed, column_id],
-        )
-        .await?;
+        ColumnRow::filter_by_id(column_id)
+            .update()
+            .color(color.map(str::to_string))
+            .wip_limit(wip_limit)
+            .collapsed(collapsed)
+            .exec(ex)
+            .await
+            .map_err(err)?;
         Ok(column.board_id)
     })
 }
@@ -1087,28 +1123,28 @@ pub fn update_column_display(
     with_tx!(conn, |ex| {
         get_column(ex, column_id).await?;
         if let Some(color) = &patch.color {
-            execute(
-                ex,
-                "UPDATE board_columns SET color = ?1 WHERE id = ?2",
-                args![color.as_deref(), column_id],
-            )
-            .await?;
+            ColumnRow::filter_by_id(column_id)
+                .update()
+                .color(color.clone())
+                .exec(ex)
+                .await
+                .map_err(err)?;
         }
         if let Some(limit) = patch.wip_limit {
-            execute(
-                ex,
-                "UPDATE board_columns SET wip_limit = ?1 WHERE id = ?2",
-                args![limit, column_id],
-            )
-            .await?;
+            ColumnRow::filter_by_id(column_id)
+                .update()
+                .wip_limit(limit)
+                .exec(ex)
+                .await
+                .map_err(err)?;
         }
         if let Some(collapsed) = patch.collapsed {
-            execute(
-                ex,
-                "UPDATE board_columns SET collapsed = ?1 WHERE id = ?2",
-                args![collapsed, column_id],
-            )
-            .await?;
+            ColumnRow::filter_by_id(column_id)
+                .update()
+                .collapsed(collapsed)
+                .exec(ex)
+                .await
+                .map_err(err)?;
         }
         get_column(ex, column_id).await
     })

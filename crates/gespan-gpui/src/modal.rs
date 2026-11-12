@@ -2,6 +2,10 @@
 //! rises into place, and the dialog buttons every modal shares. Light themes
 //! paint the card opaque. `window.prompt` renders through [`prompt_builder`],
 //! so confirmations use the same card as every other modal.
+// A panic while drawing takes the whole app down, so render code here may
+// not index, slice, unwrap or expect: use `get`, `let ... else` or a default.
+// Tests may (clippy.toml). See `settings/render_smoke_tests.rs`.
+#![deny(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 use crate::theme::*;
 use gpui::{
     Animation, AnimationElement, AnimationExt, App, Context, Div, ElementId, EventEmitter,
@@ -319,10 +323,9 @@ impl Render for Prompt {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default = self.default();
         // Cancel sits on the left; the default answer is the rightmost.
-        let mut order: Vec<usize> = (0..self.actions.len()).collect();
-        order.sort_by_key(|ix| (!self.actions[*ix].is_cancel(), std::cmp::Reverse(*ix)));
-        let buttons = order.into_iter().map(|ix| {
-            let action = &self.actions[ix];
+        let mut order: Vec<_> = self.actions.iter().enumerate().collect();
+        order.sort_by_key(|(ix, action)| (!action.is_cancel(), std::cmp::Reverse(*ix)));
+        let buttons = order.into_iter().map(|(ix, action)| {
             let label = action.label().clone();
             let id = ("prompt-action", ix);
             let button = if action.is_cancel() || Some(ix) != default {

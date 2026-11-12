@@ -170,8 +170,8 @@ impl PanelStack {
     }
 
     #[cfg(test)]
-    pub(super) fn elapsed(&mut self, elapsed: std::time::Duration) {
-        let start = Instant::now() - elapsed;
+    pub(super) fn elapsed(&mut self, now: Instant, elapsed: std::time::Duration) {
+        let start = now - elapsed;
         self.base.start = Some(start);
         for page in &mut self.layers {
             page.motion.start = Some(start);

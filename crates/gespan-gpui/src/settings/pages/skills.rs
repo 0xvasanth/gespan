@@ -26,7 +26,9 @@ pub(in crate::settings) fn skill_bucket(scope: &str) -> usize {
 
 impl SettingsView {
     fn skill_create_form(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let e = self.management.as_ref().expect("open skill form");
+        let Some(e) = self.management.as_ref() else {
+            return div().into_any_element();
+        };
         let name = e.name.clone();
         let busy = e.busy;
         let scope = e.scope.clone();
@@ -360,7 +362,7 @@ impl SettingsView {
             let mut buckets: [Vec<AnyElement>; 3] = Default::default();
             for (ix, skill) in skills.into_iter().enumerate() {
                 let b = skill_bucket(&skill.scope);
-                let first_in = buckets[b].is_empty();
+                let first_in = buckets.get(b).is_none_or(Vec::is_empty);
                 let path = skill.path.clone();
                 let skill_path = path.display().to_string();
                 let enabled = !self.prefs.disabled_skill_paths.contains(&skill_path);
@@ -368,7 +370,10 @@ impl SettingsView {
                 let copy = path.clone();
                 let reveal = path.clone();
                 let name = skill.name.clone();
-                buckets[b].push(
+                let Some(bucket) = buckets.get_mut(b) else {
+                    continue;
+                };
+                bucket.push(
                     div()
                         .id(SharedString::from(format!("settings-skill-{ix}")))
                         .when(!enabled, |d| d.opacity(0.5))
@@ -510,11 +515,10 @@ impl SettingsView {
             if !rows.is_empty() {
                 list = list.child(crate::glass::card().overflow_hidden().children(rows));
             }
-            for (b, cards) in buckets.into_iter().enumerate() {
+            for (cards, &(title, hint)) in buckets.into_iter().zip(SKILL_BUCKETS.iter()) {
                 if cards.is_empty() {
                     continue;
                 }
-                let (title, hint) = SKILL_BUCKETS[b];
                 list = list.child(
                     div()
                         .debug_selector(move || format!("settings-skills-{}", title.to_lowercase()))

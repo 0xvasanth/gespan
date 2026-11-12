@@ -142,36 +142,76 @@ const QUERY_PATTERNS: &[&str] = &[
 /// adoption or a constraint, or is something Toasty 0.11 cannot express
 /// (see docs/toasty.md), with a comment on the statement saying which.
 const QUERIES: &[(&str, usize, &str)] = &[
-    ("board-store/src/agent.rs", 4, "to move to Toasty"),
-    ("board-store/src/auto_move.rs", 1, "to move to Toasty"),
-    ("board-store/src/card_ops.rs", 24, "to move to Toasty"),
-    ("board-store/src/comments.rs", 1, "to move to Toasty"),
+    (
+        "board-store/src/card_ops.rs",
+        3,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/comments.rs",
+        1,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
     (
         "board-store/src/constraints.rs",
         26,
         "trigger bodies of constraints Toasty cannot express",
     ),
-    ("board-store/src/fields.rs", 15, "to move to Toasty"),
-    ("board-store/src/labels.rs", 15, "to move to Toasty"),
-    ("board-store/src/links.rs", 15, "to move to Toasty"),
-    ("board-store/src/meta.rs", 16, "to move to Toasty"),
+    (
+        "board-store/src/fields.rs",
+        3,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/meta.rs",
+        4,
+        "GROUP BY counts Toasty cannot express",
+    ),
     (
         "board-store/src/migrate.rs",
         24,
         "legacy board upgrade for adoption",
     ),
-    ("board-store/src/ops.rs", 32, "to move to Toasty"),
-    ("board-store/src/relations.rs", 10, "to move to Toasty"),
-    ("board-store/src/seed.rs", 12, "to move to Toasty"),
-    ("board-store/src/settings.rs", 9, "to move to Toasty"),
-    ("board-store/src/subtasks.rs", 3, "to move to Toasty"),
-    ("board-store/src/templates.rs", 3, "to move to Toasty"),
+    (
+        "board-store/src/ops.rs",
+        5,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/relations.rs",
+        3,
+        "a recursive CTE Toasty cannot express",
+    ),
+    (
+        "board-store/src/seed.rs",
+        1,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/settings.rs",
+        1,
+        "a read that must fail, not panic, on a corrupt row",
+    ),
+    (
+        "board-store/src/subtasks.rs",
+        1,
+        "rowid tie-breaks Toasty cannot order by",
+    ),
+    (
+        "board-store/src/templates.rs",
+        1,
+        "a read that must fail, not panic, on a corrupt row",
+    ),
     ("board-store/src/testing.rs", 1, "test fixture"),
-    ("board-store/src/views.rs", 20, "to move to Toasty"),
+    (
+        "board-store/src/views.rs",
+        6,
+        "rowid tie-breaks and a window function Toasty cannot express",
+    ),
     (
         "gespan-browser/src/audit.rs",
-        10,
-        "a constraint trigger, and queries to move to Toasty",
+        2,
+        "a conditional upsert Toasty cannot express",
     ),
     (
         "gespan-core/src/accounts/transfer.rs",
@@ -185,13 +225,8 @@ const QUERIES: &[(&str, usize, &str)] = &[
     ),
     (
         "gespan-core/src/automations.rs",
-        17,
-        "constraint triggers, and queries to move to Toasty",
-    ),
-    (
-        "gespan-core/src/automations/review_drafts.rs",
-        2,
-        "to move to Toasty",
+        12,
+        "constraint triggers and the legacy claims upgrade for adoption",
     ),
     (
         "gespan-core/src/desktop_preferences/webview.rs",
@@ -199,14 +234,9 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "reads WebKit's database",
     ),
     (
-        "gespan-core/src/diagnostics/metrics.rs",
-        2,
-        "legacy shape, and queries to move to Toasty",
-    ),
-    (
         "gespan-core/src/flow/store.rs",
         8,
-        "constraint triggers, and queries to move to Toasty",
+        "constraint triggers, and two reads ordered by rowid, which a model cannot name",
     ),
     (
         "gespan-core/src/inbox/azure_devops.rs",
@@ -265,9 +295,17 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "a json1 filter",
     ),
     ("gespan-graph/src/db.rs", 2, "the graph's own Toasty driver"),
-    ("gespan-graph/src/query.rs", 13, "to move to Toasty"),
+    (
+        "gespan-graph/src/query.rs",
+        12,
+        "a recursive CTE Toasty cannot express, and the per-node expansion, kept raw for speed",
+    ),
     ("gespan-graph/src/schema.rs", 5, "constraint triggers"),
-    ("gespan-graph/src/store.rs", 17, "to move to Toasty"),
+    (
+        "gespan-graph/src/store.rs",
+        5,
+        "deletes that report a count, which Toasty cannot express",
+    ),
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {

@@ -129,10 +129,16 @@ impl Preferences {
         rule.allows(occurred_at.unwrap_or(now), now)
     }
     fn project_muted(&self, id: &str, now: u64) -> bool {
-        let p = &self.project_notifications[id];
-        p.get("mutedUntil") == Some(&Value::Null)
-            || p["mutedUntil"].as_u64().is_some_and(|at| at > now)
+        match project_setting(&self.project_notifications, id, "mutedUntil") {
+            Some(Value::Null) => true,
+            Some(until) => until.as_u64().is_some_and(|at| at > now),
+            None => false,
+        }
     }
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "indexing a JSON object made just above inserts, it never panics"
+    )]
     fn mute_projects(&mut self, ids: &[String], until: Option<Value>, now: u64) {
         if !self.project_notifications.is_object() {
             self.project_notifications = json!({});
@@ -145,11 +151,17 @@ impl Preferences {
             if let Some(until) = &until {
                 p["mutedUntil"] = until.clone();
             } else if p.get("mutedUntil").is_some() {
-                p.as_object_mut().unwrap().remove("mutedUntil");
+                if let Some(p) = p.as_object_mut() {
+                    p.remove("mutedUntil");
+                }
                 p["resumedAt"] = json!(now);
             }
         }
     }
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "indexing a JSON object made just above inserts, it never panics"
+    )]
     fn set_category(&mut self, id: &str, category: &str, enabled: bool, now: u64) {
         if !self.project_notifications.is_object() {
             self.project_notifications = json!({});
@@ -203,6 +215,10 @@ pub(super) fn project_shown(
         }
 }
 
+/// One setting of a project's notifications, when it is set.
+fn project_setting<'a>(projects: &'a Value, id: &str, key: &str) -> Option<&'a Value> {
+    projects.get(id)?.get(key)
+}
 fn valid_project(p: &Value) -> bool {
     ["id", "name", "detail"]
         .iter()
@@ -420,13 +436,19 @@ impl SettingsView {
                         })
                     })
             }) {
-                let id = p["id"].as_str().unwrap().to_owned();
-                ids.insert(id.clone());
+                // `valid_project` checked these are strings.
+                let text = |key: &str| p.get(key).and_then(Value::as_str);
+                let (Some(id), Some(name), Some(detail), Some(kind)) =
+                    (text("id"), text("name"), text("detail"), text("kind"))
+                else {
+                    continue;
+                };
+                ids.insert(id.to_owned());
                 projects.push(Project {
-                    id,
-                    name: p["name"].as_str().unwrap().into(),
-                    detail: p["detail"].as_str().unwrap().into(),
-                    kind: p["kind"].as_str().unwrap().into(),
+                    id: id.to_owned(),
+                    name: name.into(),
+                    detail: detail.into(),
+                    kind: kind.into(),
                 });
             }
         }
@@ -488,9 +510,9 @@ impl SettingsView {
             if let MenuEvent::Picked(id, _) = event {
                 let now = gespan_core::time::now_ms();
                 if id.as_ref() == "mute:custom" {
-                    let initial = if targets.len() == 1 {
-                        this.prefs.project_notifications[&targets[0]]["mutedUntil"]
-                            .as_u64()
+                    let initial = if let [target] = targets.as_slice() {
+                        project_setting(&this.prefs.project_notifications, target, "mutedUntil")
+                            .and_then(Value::as_u64)
                             .filter(|at| *at > now)
                             .unwrap_or(now + 3_600_000)
                     } else {
@@ -521,7 +543,7 @@ impl SettingsView {
                             .as_ref()
                             .map(|menu| menu.anchor.clone())
                             .unwrap_or_default(),
-                        month: date.with_day(1).unwrap(),
+                        month: date.with_day(1).unwrap_or(date),
                         error: None,
                     });
                 } else {
@@ -558,7 +580,11 @@ impl SettingsView {
         } else if ids.len() > 1 {
             format!("{} of {} projects muted", muted.len(), ids.len())
         } else {
-            match self.prefs.project_notifications[&ids[0]]["mutedUntil"].as_u64() {
+            match ids
+                .first()
+                .and_then(|id| project_setting(&self.prefs.project_notifications, id, "mutedUntil"))
+                .and_then(Value::as_u64)
+            {
                 Some(at) => chrono::DateTime::from_timestamp_millis(at as i64)
                     .map(|at| {
                         format!(
@@ -694,8 +720,8 @@ impl SettingsView {
             let enabled_count = categories
                 .iter()
                 .filter(|(cat, _)| {
-                    !this.prefs.project_notifications[&project.id]["disabled"]
-                        .as_array()
+                    !project_setting(&this.prefs.project_notifications, &project.id, "disabled")
+                        .and_then(Value::as_array)
                         .is_some_and(|values| values.iter().any(|v| v.as_str() == Some(cat)))
                 })
                 .count();
@@ -745,8 +771,8 @@ impl SettingsView {
             for (cat, label) in categories {
                 let category = (*cat).to_owned();
                 let project_id = id.clone();
-                let enabled = !self.prefs.project_notifications[&id]["disabled"]
-                    .as_array()
+                let enabled = !project_setting(&self.prefs.project_notifications, &id, "disabled")
+                    .and_then(Value::as_array)
                     .is_some_and(|values| values.iter().any(|v| v.as_str() == Some(cat)));
                 category_rows.push(
                     div()
@@ -1143,18 +1169,16 @@ impl SettingsView {
                                                     this.notification_state.custom = None;
                                                 }
                                                 _ => {
-                                                    this.notification_state
-                                                        .custom
-                                                        .as_mut()
-                                                        .unwrap()
-                                                        .error = Some(
-                                                        if parsed.is_some() {
-                                                            "Choose a date and time in the future."
-                                                        } else {
-                                                            "Choose a valid date and time."
-                                                        }
-                                                        .into(),
-                                                    );
+                                                    let error = if parsed.is_some() {
+                                                        "Choose a date and time in the future."
+                                                    } else {
+                                                        "Choose a valid date and time."
+                                                    };
+                                                    if let Some(custom) =
+                                                        this.notification_state.custom.as_mut()
+                                                    {
+                                                        custom.error = Some(error.into());
+                                                    }
                                                 }
                                             }
                                             cx.notify();
@@ -1173,7 +1197,7 @@ impl SettingsView {
     fn mute_calendar(&self, custom: &CustomMute, cx: &mut Context<Self>) -> AnyElement {
         let today = Local::now().date_naive();
         let month = custom.month;
-        let previous_disabled = month <= today.with_day(1).unwrap();
+        let previous_disabled = month <= today.with_day(1).unwrap_or(today);
         let shift = |date: NaiveDate, amount: i32| {
             let total = date.year() * 12 + date.month0() as i32 + amount;
             NaiveDate::from_ymd_opt(total.div_euclid(12), total.rem_euclid(12) as u32 + 1, 1)
@@ -1333,7 +1357,7 @@ impl SettingsView {
                         if let Some(next) = next {
                             let next = next.max(Local::now().date_naive());
                             custom.focused_date = next;
-                            custom.month = next.with_day(1).unwrap();
+                            custom.month = next.with_day(1).unwrap_or(next);
                             cx.stop_propagation();
                             cx.notify();
                         }

@@ -55,6 +55,8 @@ mod quick_open;
 mod rails;
 mod remote_projects;
 mod remote_sessions;
+#[cfg(test)]
+mod render_smoke_tests;
 mod report;
 mod review_drafts;
 #[cfg(test)]

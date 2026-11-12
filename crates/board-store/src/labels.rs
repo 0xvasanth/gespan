@@ -1,7 +1,7 @@
-use crate::db::{args, err, execute, query, query_opt, query_value, with_db, with_tx, Conn, Ex};
-use crate::meta::{card_set, cards_on_one_board};
-use crate::models::{CardLabelRow, LabelRow};
-use crate::ops::{clean_text, get_card_in, log_edit, new_id, touch};
+use crate::db::{err, with_db, with_tx, Conn, Ex};
+use crate::meta::{card_label_ids, card_label_names, cards_on_one_board};
+use crate::models::{CardLabelRow, CardRow, LabelRow};
+use crate::ops::{clean_text, count, get_card_in, log_edit, new_id, touch};
 use crate::views::{map_strings, rewrite_views, row_is, spec_rows};
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -30,25 +30,18 @@ impl From<LabelRow> for Label {
     }
 }
 
+/// The board's labels in list order: position, then name ignoring ASCII
+/// case, as SQLite's `lower` compares it.
 pub(crate) async fn list_labels_in(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<Label>, String> {
-    query(
-        ex,
-        "SELECT id, board_id, name, color, position FROM board_labels
-         WHERE board_id = ?1 ORDER BY position, lower(name)",
-        args![board_id],
-    )
-    .await?
-    .iter()
-    .map(|r| {
-        Ok(Label {
-            id: r.get(0)?,
-            board_id: r.get(1)?,
-            name: r.get(2)?,
-            color: r.get(3)?,
-            position: r.get(4)?,
-        })
-    })
-    .collect()
+    let mut labels: Vec<Label> = LabelRow::filter(LabelRow::fields().board_id().eq(board_id))
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .map(Label::from)
+        .collect();
+    labels.sort_by_cached_key(|label| (label.position, label.name.to_ascii_lowercase()));
+    Ok(labels)
 }
 
 pub fn list_labels(conn: &Conn, board_id: &str) -> Result<Vec<Label>, String> {
@@ -62,12 +55,15 @@ pub fn create_label(conn: &Conn, board_id: &str, name: &str, color: &str) -> Res
     check_color(color)?;
     with_tx!(conn, |ex| {
         check_name_free(ex, board_id, &name, None).await?;
-        let position: i64 = query_value(
-            ex,
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM board_labels WHERE board_id = ?1",
-            args![board_id],
-        )
-        .await?;
+        let label = LabelRow::fields();
+        let position = LabelRow::filter(label.board_id().eq(board_id))
+            .order_by(label.position().desc())
+            .select(label.position())
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .map_or(0, |last| last + 1);
         LabelRow::create()
             .id(new_id())
             .board_id(board_id)
@@ -86,12 +82,7 @@ pub fn set_card_labels(conn: &Conn, card_id: &str, label_ids: &[String]) -> Resu
     let ids: BTreeSet<&str> = label_ids.iter().map(String::as_str).collect();
     with_tx!(conn, |ex| {
         let card = get_card_in(ex, card_id).await?;
-        let current = card_set(
-            ex,
-            "SELECT label_id FROM board_card_labels WHERE card_id = ?1",
-            card_id,
-        )
-        .await?;
+        let current = card_label_ids(ex, card_id).await?;
         if current.iter().map(String::as_str).eq(ids.iter().copied()) {
             return Ok(card.board_id);
         }
@@ -102,16 +93,14 @@ pub fn set_card_labels(conn: &Conn, card_id: &str, label_ids: &[String]) -> Resu
             .map_err(err)?;
         let mut names = Vec::new();
         for id in &ids {
-            let name: Option<String> = match query_opt(
-                ex,
-                "SELECT name FROM board_labels WHERE id = ?1 AND board_id = ?2",
-                args![*id, &card.board_id],
-            )
-            .await?
-            {
-                Some(row) => Some(row.get(0)?),
-                None => None,
-            };
+            let label = LabelRow::fields();
+            let name =
+                LabelRow::filter(label.id().eq(*id).and(label.board_id().eq(&card.board_id)))
+                    .select(label.name())
+                    .first()
+                    .exec(ex)
+                    .await
+                    .map_err(err)?;
             let Some(name) = name else {
                 return Err("Label not on this board".into());
             };
@@ -150,48 +139,52 @@ pub fn set_label_many(
 ) -> Result<String, String> {
     with_tx!(conn, |ex| {
         let (board_id, cards) = cards_on_one_board(ex, card_ids, "No cards to edit").await?;
-        let on_board: bool = query_value(
+        let label = LabelRow::fields();
+        let on_board = count(
             ex,
-            "SELECT EXISTS(SELECT 1 FROM board_labels WHERE id = ?1 AND board_id = ?2)",
-            args![label_id, &board_id],
+            LabelRow::filter(label.id().eq(label_id).and(label.board_id().eq(&board_id))).count(),
         )
         .await?;
-        if !on_board {
+        if on_board == 0 {
             return Err("Label not on this board".into());
         }
         for card in &cards {
             let changed = if on {
-                execute(
-                    ex,
-                    "INSERT OR IGNORE INTO board_card_labels (card_id, label_id) VALUES (?1, ?2)",
-                    args![&card.id, label_id],
-                )
-                .await?
+                add_card_label(ex, &card.id, label_id).await?
             } else {
-                execute(
-                    ex,
-                    "DELETE FROM board_card_labels WHERE card_id = ?1 AND label_id = ?2",
-                    args![&card.id, label_id],
-                )
-                .await?
+                remove_card_label(ex, &card.id, label_id).await?
             };
-            if changed == 0 {
+            if !changed {
                 continue;
             }
-            let names: Vec<String> = card_set(
-                ex,
-                "SELECT l.name FROM board_card_labels cl JOIN board_labels l ON l.id = cl.label_id
-                 WHERE cl.card_id = ?1",
-                &card.id,
-            )
-            .await?
-            .into_iter()
-            .collect();
+            let names: Vec<String> = card_label_names(ex, &card.id).await?.into_iter().collect();
             touch(ex, &card.id).await?;
             log_edit(ex, &board_id, &card.id, &labels_detail(names)).await?;
         }
         Ok(board_id)
     })
+}
+
+/// Puts the label on the card. Whether it was not there before.
+async fn add_card_label(ex: &mut Ex<'_>, card_id: &str, label_id: &str) -> Result<bool, String> {
+    Ok(
+        CardLabelRow::upsert_by_card_id_and_label_id(card_id, label_id)
+            .or_ignore()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .is_some(),
+    )
+}
+
+/// Takes the label off the card. Whether it was there.
+async fn remove_card_label(ex: &mut Ex<'_>, card_id: &str, label_id: &str) -> Result<bool, String> {
+    let row = CardLabelRow::filter_by_card_id_and_label_id(card_id, label_id);
+    if row.clone().first().exec(ex).await.map_err(err)?.is_none() {
+        return Ok(false);
+    }
+    row.delete().exec(ex).await.map_err(err)?;
+    Ok(true)
 }
 
 fn check_color(color: &str) -> Result<(), String> {
@@ -235,40 +228,43 @@ async fn get_label(ex: &mut Ex<'_>, label_id: &str) -> Result<Label, String> {
 
 /// The board's label ids in list order.
 async fn label_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, String> {
-    query(
-        ex,
-        "SELECT id FROM board_labels WHERE board_id = ?1 ORDER BY position, lower(name)",
-        args![board_id],
-    )
-    .await?
-    .iter()
-    .map(|r| r.get(0))
-    .collect()
+    Ok(list_labels_in(ex, board_id)
+        .await?
+        .into_iter()
+        .map(|label| label.id)
+        .collect())
 }
 
 async fn write_label_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        execute(
-            ex,
-            "UPDATE board_labels SET position = ?1 WHERE id = ?2 AND position <> ?1",
-            args![index as i64, id],
-        )
-        .await?;
+        let label = LabelRow::fields();
+        LabelRow::filter(label.id().eq(id).and(label.position().ne(index as i64)))
+            .update()
+            .position(index as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
     }
     Ok(())
 }
 
 /// The cards (live and archived) that carry the label.
 async fn cards_with(ex: &mut Ex<'_>, label_id: &str) -> Result<Vec<String>, String> {
-    Ok(card_set(
-        ex,
-        "SELECT card_id FROM board_card_labels WHERE card_id IN (SELECT id FROM board_cards)
-           AND label_id = ?1",
-        label_id,
+    let label = CardLabelRow::fields();
+    let cards = CardRow::all().select(CardRow::fields().id());
+    let mut ids: Vec<String> = CardLabelRow::filter(
+        label
+            .label_id()
+            .eq(label_id)
+            .and(label.card_id().in_query(cards)),
     )
-    .await?
-    .into_iter()
-    .collect())
+    .select(label.card_id())
+    .exec(ex)
+    .await
+    .map_err(err)?;
+    // In card id order, as the set this replaced gave them.
+    ids.sort();
+    Ok(ids)
 }
 
 /// Renames and/or recolours a label. The name stays unique on its board,
@@ -288,13 +284,22 @@ pub fn update_label(
         if let Some(name) = &name {
             check_name_free(ex, &label.board_id, name, Some(label_id)).await?;
         }
-        execute(
-            ex,
-            "UPDATE board_labels SET name = COALESCE(?1, name), color = COALESCE(?2, color)
-             WHERE id = ?3",
-            args![name, color, label_id],
-        )
-        .await?;
+        if let Some(name) = name {
+            LabelRow::filter_by_id(label_id)
+                .update()
+                .name(name)
+                .exec(ex)
+                .await
+                .map_err(err)?;
+        }
+        if let Some(color) = color {
+            LabelRow::filter_by_id(label_id)
+                .update()
+                .color(color)
+                .exec(ex)
+                .await
+                .map_err(err)?;
+        }
         Ok(label.board_id)
     })
 }
@@ -360,27 +365,9 @@ pub fn merge_labels(conn: &Conn, from_id: &str, into_id: &str) -> Result<String,
         }
         let board_id = from.board_id;
         for card_id in cards_with(ex, from_id).await? {
-            execute(
-                ex,
-                "INSERT OR IGNORE INTO board_card_labels (card_id, label_id) VALUES (?1, ?2)",
-                args![&card_id, into_id],
-            )
-            .await?;
-            execute(
-                ex,
-                "DELETE FROM board_card_labels WHERE card_id = ?1 AND label_id = ?2",
-                args![&card_id, from_id],
-            )
-            .await?;
-            let names: Vec<String> = card_set(
-                ex,
-                "SELECT l.name FROM board_card_labels cl JOIN board_labels l ON l.id = cl.label_id
-                 WHERE cl.card_id = ?1",
-                &card_id,
-            )
-            .await?
-            .into_iter()
-            .collect();
+            add_card_label(ex, &card_id, into_id).await?;
+            remove_card_label(ex, &card_id, from_id).await?;
+            let names: Vec<String> = card_label_names(ex, &card_id).await?.into_iter().collect();
             touch(ex, &card_id).await?;
             log_edit(ex, &board_id, &card_id, &labels_detail(names)).await?;
         }

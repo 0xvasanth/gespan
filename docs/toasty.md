@@ -106,11 +106,33 @@ rusqlite-shaped calls.
   column.
 - Field-level `#[index]` cannot be named. Use a struct-level
   `#[index(name = "...", field)]` to keep an existing index name.
-- Conditional upserts (`ON CONFLICT ... WHERE`), updates that return a
-  count, CTEs, `json_*`, `substr`, scalar subqueries in a projection,
-  `INDEXED BY` and window functions go through `toasty::sql`. Binding a NULL
-  needs `bind_typed`.
+- Conditional upserts (`ON CONFLICT ... WHERE`), CTEs, `json_*`, `substr`,
+  scalar subqueries in a projection, `INDEXED BY` and window functions go
+  through `toasty::sql`. Binding a NULL needs `bind_typed`.
 - `select` projects a field or a tuple of up to eight; nest tuples for more.
   `offset` needs a `limit` first.
+- Plain upserts are typed: `Model::upsert_by_<key>(..)` replaces the row,
+  `.on_create(..)` sets columns only a new row gets, `.on_update(..)` takes
+  `toasty::stmt::increment()`, and `.or_ignore()` is `INSERT OR IGNORE`
+  (it returns `None` on a conflict, which stands in for its count).
+- There is no `rowid`. A query that breaks ties by insertion order
+  (`ORDER BY position, rowid`) stays raw.
+- There is no `GROUP BY` and no aggregate but `count()`. Per-group counts in
+  one statement stay raw. A single `MAX` is an `order_by(..desc())` with
+  `first()`.
+- Joins exist only through relations, and the board models declare none.
+  Use `in_query` with a `select` subquery, or two queries joined in Rust.
+- `ORDER BY lower(name)` has no typed form. Sort in Rust with
+  `to_ascii_lowercase`, which folds the same ASCII letters SQLite's `lower`
+  does.
+- Updates and deletes return no row count. Inside a write transaction, a
+  read followed by a typed update is a compare-and-set, and counting the
+  rows first with `count()` or `first()` gives an update's or delete's
+  count.
+- The SQLite driver panics when a stored value doesn't match the model's
+  type, which ends that connection's task. A read the app must survive a
+  corrupt row on (board settings, the saved-template list) stays raw, where a
+  bad value is an error. A test that corrupts a row on purpose reads it on a
+  connection of its own.
 - Toasty brings `PartialEq` impls for tuples into scope. An
   `assert_eq!(x, [])` on a tuple vector may then need a type annotation.

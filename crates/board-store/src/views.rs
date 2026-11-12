@@ -4,11 +4,14 @@
 //! The engine never reads the clock or the time zone. Callers pass `now_ms`
 //! and a local-day function (normally [`local_day_chrono`]), so date filters
 //! are the same in both apps and testable across midnight and DST changes.
-use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex, Row};
-use crate::meta::priority_of;
-use crate::models::ViewRow;
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex, Row};
+use crate::meta::{card_labels_in_order, priority_of};
+use crate::models::{
+    BoardRow, CardProjectRow, CardRow, ColumnRow, FieldRow, FieldValueRow, LabelRow, LinkRow,
+    SettingsRow, ViewRow,
+};
 use crate::now_millis;
-use crate::ops::{clean_text, new_id};
+use crate::ops::{clean_text, count, new_id};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -143,6 +146,8 @@ async fn pairs(
 /// Every live card on the board in manual order (column order, then
 /// position), read board-wide: one statement per table, never one per card.
 async fn load(ex: &mut Ex<'_>, board_id: &str, with_runs: bool) -> Result<Vec<Entry>, String> {
+    // Raw SQL: columns tied on position keep insertion order (`rowid`), which
+    // Toasty 0.11 cannot order by.
     let mut entries = query(
         ex,
         "SELECT c.id, c.column_id, c.number, c.title, c.body, c.created_at, c.updated_at,
@@ -185,47 +190,36 @@ async fn load(ex: &mut Ex<'_>, board_id: &str, with_runs: bool) -> Result<Vec<En
         .collect();
     let entry = |card: &str| at.get(card).copied();
 
-    let scope = "SELECT id FROM board_cards WHERE board_id = ?1";
-    let labels = pairs(
-        ex,
-        &format!(
-            "SELECT cl.card_id, cl.label_id FROM board_card_labels cl
-             JOIN board_labels l ON l.id = cl.label_id
-             WHERE cl.card_id IN ({scope}) ORDER BY l.position, lower(l.name)"
-        ),
-        board_id,
-    )
-    .await?;
-    for (card, label) in labels {
+    let card = CardRow::fields();
+    let scope = || CardRow::filter(card.board_id().eq(board_id)).select(card.id());
+    for (card, label) in card_labels_in_order(ex, scope()).await? {
         if let Some(index) = entry(&card) {
             entries[index].row.labels.push(label);
         }
     }
-    let projects = pairs(
-        ex,
-        &format!(
-            "SELECT card_id, project FROM board_card_projects
-             WHERE card_id IN ({scope}) ORDER BY project"
-        ),
-        board_id,
-    )
-    .await?;
+    let project = CardProjectRow::fields();
+    let projects: Vec<(String, String)> =
+        CardProjectRow::filter(project.card_id().in_query(scope()))
+            .order_by(project.project().asc())
+            .select((project.card_id(), project.project()))
+            .exec(ex)
+            .await
+            .map_err(err)?;
     for (card, project) in projects {
         if let Some(index) = entry(&card) {
             entries[index].row.projects.push(project);
         }
     }
-    let values = query(
-        ex,
-        "SELECT v.card_id, v.field_id, v.value_json FROM board_card_field_values v
-         JOIN board_fields f ON f.id = v.field_id
-         WHERE f.board_id = ?1",
-        args![board_id],
-    )
-    .await?;
-    for mut value in values {
-        let (card, field, json): (String, String, String) =
-            (value.take(0)?, value.take(1)?, value.take(2)?);
+    let field = FieldRow::fields();
+    let board_fields = FieldRow::filter(field.board_id().eq(board_id)).select(field.id());
+    let value = FieldValueRow::fields();
+    let values: Vec<(String, String, String)> =
+        FieldValueRow::filter(value.field_id().in_query(board_fields))
+            .select((value.card_id(), value.field_id(), value.value_json()))
+            .exec(ex)
+            .await
+            .map_err(err)?;
+    for (card, field, json) in values {
         if let Some(index) = entry(&card) {
             entries[index].row.fields.insert(field, json);
         }
@@ -234,19 +228,25 @@ async fn load(ex: &mut Ex<'_>, board_id: &str, with_runs: bool) -> Result<Vec<En
         // A link an older build wrote only into the card's legacy
         // `link_kind`/`link_id` columns counts too, as it does for
         // `board_links` and `cards_for_link`.
-        let linked = pairs(
-            ex,
-            &format!(
-                "SELECT card_id, kind FROM board_card_links
-                 WHERE card_id IN ({scope})
-                 UNION
-                 SELECT id, link_kind FROM board_cards
-                 WHERE board_id = ?1 AND link_kind IS NOT NULL AND link_id IS NOT NULL"
-            ),
-            board_id,
-        )
-        .await?;
-        for (card, _) in linked {
+        let link = LinkRow::fields();
+        let mut linked: Vec<String> = LinkRow::filter(link.card_id().in_query(scope()))
+            .select(link.card_id())
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        linked.extend(
+            CardRow::filter(
+                card.board_id()
+                    .eq(board_id)
+                    .and(card.link_kind().is_some())
+                    .and(card.link_id().is_some()),
+            )
+            .select(card.id())
+            .exec(ex)
+            .await
+            .map_err(err)?,
+        );
+        for card in linked {
             if let Some(index) = entry(&card) {
                 entries[index].has_links = true;
             }
@@ -316,48 +316,41 @@ async fn board_facts(
     board_id: &str,
     entries: &[Entry],
 ) -> Result<BoardFacts, String> {
+    let field = FieldRow::fields();
     let mut fields = HashMap::new();
-    for row in query(
-        ex,
-        "SELECT id, kind, options_json FROM board_fields WHERE board_id = ?1",
-        args![board_id],
-    )
-    .await?
+    for (id, kind, options) in FieldRow::filter(field.board_id().eq(board_id))
+        .select((field.id(), field.kind(), field.options_json()))
+        .exec(ex)
+        .await
+        .map_err(err)?
     {
-        let (id, kind, options): (String, String, Option<String>) =
-            (row.get(0)?, row.get(1)?, row.get(2)?);
+        let (id, kind, options): (String, String, Option<String>) = (id, kind, options);
         let options = (kind == "select" || kind == "multi-select")
             .then(|| options.and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok()))
             .flatten();
         fields.insert(id, options);
     }
+    let column = ColumnRow::fields();
+    let columns = ColumnRow::filter(column.board_id().eq(board_id))
+        .select(column.id())
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    let label = LabelRow::fields();
+    let labels = LabelRow::filter(label.board_id().eq(board_id))
+        .select(label.id())
+        .exec(ex)
+        .await
+        .map_err(err)?;
     Ok(BoardFacts {
-        columns: ids(
-            ex,
-            "SELECT id FROM board_columns WHERE board_id = ?1",
-            board_id,
-        )
-        .await?,
-        labels: ids(
-            ex,
-            "SELECT id FROM board_labels WHERE board_id = ?1",
-            board_id,
-        )
-        .await?,
+        columns: columns.into_iter().collect(),
+        labels: labels.into_iter().collect(),
         projects: entries
             .iter()
             .flat_map(|entry| entry.row.projects.iter().cloned())
             .collect(),
         fields,
     })
-}
-
-async fn ids(ex: &mut Ex<'_>, sql: &str, board_id: &str) -> Result<HashSet<String>, String> {
-    query(ex, sql, args![board_id])
-        .await?
-        .iter()
-        .map(|r| r.get::<String>(0))
-        .collect()
 }
 
 /// The row's test, keeping only values that still exist. `None` when no
@@ -667,6 +660,8 @@ impl From<ViewRow> for View {
 }
 
 pub(crate) async fn list_views_in(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<View>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         "SELECT id, board_id, name, position, spec_json, layout_json, created_at, updated_at
@@ -694,6 +689,8 @@ async fn view_board(ex: &mut Ex<'_>, view_id: &str) -> Result<String, String> {
 }
 
 async fn view_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         "SELECT id FROM board_views WHERE board_id = ?1 ORDER BY position, rowid",
@@ -707,12 +704,13 @@ async fn view_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, String
 
 async fn write_view_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        execute(
-            ex,
-            "UPDATE board_views SET position = ?1 WHERE id = ?2 AND position <> ?1",
-            args![index as i64, id],
-        )
-        .await?;
+        let view = ViewRow::fields();
+        ViewRow::filter(view.id().eq(id).and(view.position().ne(index as i64)))
+            .update()
+            .position(index as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
     }
     Ok(())
 }
@@ -729,21 +727,18 @@ pub fn create_view(
     check_spec(spec_json)?;
     check_layout(layout_json)?;
     with_tx!(conn, |ex| {
-        let board_exists: bool = query_value(
-            ex,
-            "SELECT EXISTS(SELECT 1 FROM boards WHERE id = ?1)",
-            args![board_id],
-        )
-        .await?;
-        if !board_exists {
+        if count(ex, BoardRow::filter_by_id(board_id).count()).await? == 0 {
             return Err("Board not found".into());
         }
-        let position: i64 = query_value(
-            ex,
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM board_views WHERE board_id = ?1",
-            args![board_id],
-        )
-        .await?;
+        let view = ViewRow::fields();
+        let position = ViewRow::filter(view.board_id().eq(board_id))
+            .order_by(view.position().desc())
+            .select(view.position())
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .map_or(0, |last| last + 1);
         let now = now_millis();
         ViewRow::create()
             .id(new_id())
@@ -775,16 +770,25 @@ pub fn update_view(
     spec_json.map(check_spec).transpose()?;
     layout_json.map(check_layout).transpose()?;
     with_tx!(conn, |ex| {
-        let board_id = view_board(ex, view_id).await?;
-        execute(
-            ex,
-            "UPDATE board_views SET name = COALESCE(?1, name), spec_json = COALESCE(?2, spec_json),
-               layout_json = COALESCE(?3, layout_json), updated_at = ?4
-             WHERE id = ?5",
-            args![name, spec_json, layout_json, now_millis(), view_id],
-        )
-        .await?;
-        Ok(board_id)
+        let Some(view) = ViewRow::filter_by_id(view_id)
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+        else {
+            return Err("View not found".into());
+        };
+        // The parts not given keep their stored values.
+        ViewRow::filter_by_id(view_id)
+            .update()
+            .name(name.unwrap_or(view.name))
+            .spec_json(spec_json.map_or(view.spec_json, str::to_string))
+            .layout_json(layout_json.map_or(view.layout_json, str::to_string))
+            .updated_at(now_millis())
+            .exec(ex)
+            .await
+            .map_err(err)?;
+        Ok(view.board_id)
     })
 }
 
@@ -798,13 +802,18 @@ pub fn delete_view(conn: &Conn, view_id: &str) -> Result<String, String> {
             .exec(ex)
             .await
             .map_err(err)?;
-        execute(
-            ex,
-            "UPDATE board_settings SET default_view_id = NULL
-             WHERE board_id = ?1 AND default_view_id = ?2",
-            args![&board_id, view_id],
+        let settings = SettingsRow::fields();
+        SettingsRow::filter(
+            settings
+                .board_id()
+                .eq(&board_id)
+                .and(settings.default_view_id().eq(Some(view_id.to_string()))),
         )
-        .await?;
+        .update()
+        .default_view_id(None::<String>)
+        .exec(ex)
+        .await
+        .map_err(err)?;
         let ids = view_ids(ex, &board_id).await?;
         write_view_positions(ex, &ids).await?;
         Ok(board_id)

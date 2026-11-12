@@ -1,32 +1,20 @@
 //! Operations that touch several tables at once: converting a subtask to a
 //! card, duplicating a card, and moving a card to another board. Each runs in
 //! one write transaction.
-use crate::db::{args, err, execute, query, query_opt, query_value, with_tx, Conn, Ex};
+use crate::db::{args, err, query, query_opt, with_tx, Conn, Ex};
 use crate::fields::carry_value;
-use crate::models::{CardLabelRow, CardRow, FieldValueRow, RelationRow, SubtaskRow};
+use crate::models::{
+    BoardRow, CardLabelRow, CardMetaRow, CardProjectRow, CardRow, FieldRow, FieldValueRow,
+    LabelRow, RelationRow, SubtaskRow,
+};
 use crate::ops::{
-    column_card_ids, get_card_in, get_column, is_archived, log_activity, log_edit, new_id, touch,
-    write_card_positions, NewActivity, LIVE, MAX_TITLE,
+    column_card_ids, get_card_in, get_column, is_archived, live_card_count, log_activity, log_edit,
+    new_id, next_card_number, touch, write_card_positions, NewActivity, MAX_TITLE,
 };
 use crate::{now_millis, Card};
 use std::collections::HashMap;
 
 const COPY_SUFFIX: &str = " (copy)";
-
-async fn next_number(ex: &mut Ex<'_>, board_id: &str) -> Result<i64, String> {
-    execute(
-        ex,
-        "UPDATE boards SET card_seq = card_seq + 1 WHERE id = ?1",
-        args![board_id],
-    )
-    .await?;
-    query_value(
-        ex,
-        "SELECT card_seq FROM boards WHERE id = ?1",
-        args![board_id],
-    )
-    .await
-}
 
 /// Inserts a card into `column_id` at `index` (clamped) with a fresh number
 /// on the column's board, and rewrites the column's positions. Writes no
@@ -39,7 +27,7 @@ async fn insert_card_at(
     index: usize,
 ) -> Result<Card, String> {
     let column = get_column(ex, column_id).await?;
-    let number = next_number(ex, &column.board_id).await?;
+    let number = next_card_number(ex, &column.board_id).await?;
     let mut ids = column_card_ids(ex, column_id).await?;
     let index = index.min(ids.len());
     let now = now_millis();
@@ -87,6 +75,8 @@ async fn subtask_column(
     column: &str,
     card_id: &str,
 ) -> Result<Vec<String>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         &format!("SELECT {column} FROM board_subtasks WHERE card_id = ?1 ORDER BY position, rowid"),
@@ -130,12 +120,12 @@ pub fn convert_subtask(conn: &Conn, subtask_id: &str) -> Result<Card, String> {
             .map_err(err)?;
         let remaining = subtask_column(ex, "id", &parent.id).await?;
         for (position, id) in remaining.iter().enumerate() {
-            execute(
-                ex,
-                "UPDATE board_subtasks SET position = ?1 WHERE id = ?2",
-                args![position as i64, id],
-            )
-            .await?;
+            SubtaskRow::filter_by_id(id)
+                .update()
+                .position(position as i64)
+                .exec(ex)
+                .await
+                .map_err(err)?;
         }
         touch(ex, &parent.id).await?;
         log_edit(
@@ -163,47 +153,7 @@ pub fn duplicate_card(conn: &Conn, card_id: &str) -> Result<Card, String> {
         let title = format!("{base}{COPY_SUFFIX}");
         let index = live_index(ex, &original).await?;
         let copy = insert_card_at(ex, &original.column_id, &title, &original.body, index).await?;
-        // The copy drops the ticket link but keeps its text, so text that came
-        // from a ticket stays marked as ticket text. `INSERT … SELECT` copies
-        // the rest without reading it into Rust, so raw SQL.
-        execute(
-            ex,
-            "UPDATE board_cards SET
-               title_from_ticket = (SELECT title_from_ticket FROM board_cards WHERE id = ?1),
-               body_from_ticket = (SELECT body_from_ticket FROM board_cards WHERE id = ?1)
-             WHERE id = ?2",
-            args![&original.id, &copy.id],
-        )
-        .await?;
-        execute(
-            ex,
-            "INSERT INTO board_card_meta (card_id, priority, due_at, start_at, estimate_minutes)
-             SELECT ?2, priority, due_at, start_at, estimate_minutes
-             FROM board_card_meta WHERE card_id = ?1",
-            args![&original.id, &copy.id],
-        )
-        .await?;
-        execute(
-            ex,
-            "INSERT INTO board_card_labels (card_id, label_id)
-             SELECT ?2, label_id FROM board_card_labels WHERE card_id = ?1",
-            args![&original.id, &copy.id],
-        )
-        .await?;
-        execute(
-            ex,
-            "INSERT INTO board_card_projects (card_id, project)
-             SELECT ?2, project FROM board_card_projects WHERE card_id = ?1",
-            args![&original.id, &copy.id],
-        )
-        .await?;
-        execute(
-            ex,
-            "INSERT INTO board_card_field_values (card_id, field_id, value_json)
-             SELECT ?2, field_id, value_json FROM board_card_field_values WHERE card_id = ?1",
-            args![&original.id, &copy.id],
-        )
-        .await?;
+        copy_card_rows(ex, &original.id, &copy.id).await?;
         let subtasks = subtask_column(ex, "title", &original.id).await?;
         for (position, subtask_title) in subtasks.iter().enumerate() {
             SubtaskRow::create()
@@ -234,6 +184,82 @@ pub fn duplicate_card(conn: &Conn, card_id: &str) -> Result<Card, String> {
     })
 }
 
+/// Copies `from`'s ticket-text marks, meta (not archive or completion),
+/// labels, projects and field values onto the new card `to`. The copy drops
+/// the ticket link but keeps its text, so text that came from a ticket stays
+/// marked as ticket text.
+async fn copy_card_rows(ex: &mut Ex<'_>, from: &str, to: &str) -> Result<(), String> {
+    let original = CardRow::filter_by_id(from)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .ok_or_else(|| "Card not found".to_string())?;
+    CardRow::filter_by_id(to)
+        .update()
+        .title_from_ticket(original.title_from_ticket)
+        .body_from_ticket(original.body_from_ticket)
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    if let Some(meta) = CardMetaRow::filter_by_card_id(from)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+    {
+        CardMetaRow::create()
+            .card_id(to)
+            .priority(meta.priority)
+            .due_at(meta.due_at)
+            .start_at(meta.start_at)
+            .estimate_minutes(meta.estimate_minutes)
+            .archived_at(None::<i64>)
+            .completed_at(None::<i64>)
+            .exec(ex)
+            .await
+            .map_err(err)?;
+    }
+    for label in CardLabelRow::filter_by_card_id(from)
+        .exec(ex)
+        .await
+        .map_err(err)?
+    {
+        CardLabelRow::create()
+            .card_id(to)
+            .label_id(label.label_id)
+            .exec(ex)
+            .await
+            .map_err(err)?;
+    }
+    for project in CardProjectRow::filter_by_card_id(from)
+        .exec(ex)
+        .await
+        .map_err(err)?
+    {
+        CardProjectRow::create()
+            .card_id(to)
+            .project(project.project)
+            .exec(ex)
+            .await
+            .map_err(err)?;
+    }
+    for value in FieldValueRow::filter_by_card_id(from)
+        .exec(ex)
+        .await
+        .map_err(err)?
+    {
+        FieldValueRow::create()
+            .card_id(to)
+            .field_id(value.field_id)
+            .value_json(value.value_json)
+            .exec(ex)
+            .await
+            .map_err(err)?;
+    }
+    Ok(())
+}
+
 /// Moves a card to the end of the target board's first `todo` column (else its
 /// first column) under a new number there. Labels map by case-insensitive
 /// name and field values by name and kind; what has no match is dropped.
@@ -245,10 +271,12 @@ pub fn move_card_to_board(conn: &Conn, card_id: &str, board_id: &str) -> Result<
 }
 
 async fn board_name(ex: &mut Ex<'_>, board_id: &str) -> Result<Option<String>, String> {
-    match query_opt(ex, "SELECT name FROM boards WHERE id = ?1", args![board_id]).await? {
-        Some(row) => Ok(Some(row.get(0)?)),
-        None => Ok(None),
-    }
+    BoardRow::filter_by_id(board_id)
+        .select(BoardRow::fields().name())
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)
 }
 
 async fn move_card_to_board_in(
@@ -268,6 +296,8 @@ async fn move_card_to_board_in(
         .await?
         .ok_or_else(|| "Board not found".to_string())?;
     let source_column = get_column(ex, &card.column_id).await?;
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     let first_column = query_opt(
         ex,
         "SELECT id, name FROM board_columns WHERE board_id = ?1
@@ -279,25 +309,22 @@ async fn move_card_to_board_in(
     let (column_id, column_name): (String, String) = (first_column.get(0)?, first_column.get(1)?);
 
     // Labels: keep those whose name exists on the target board.
-    let target_labels: HashMap<String, String> = query(
-        ex,
-        "SELECT id, name FROM board_labels WHERE board_id = ?1",
-        args![board_id],
-    )
-    .await?
-    .iter()
-    .map(|r| Ok((r.get::<String>(1)?.to_lowercase(), r.get::<String>(0)?)))
-    .collect::<Result<_, String>>()?;
-    let card_labels: Vec<String> = query(
-        ex,
-        "SELECT l.name FROM board_card_labels cl
-         JOIN board_labels l ON l.id = cl.label_id WHERE cl.card_id = ?1",
-        args![card_id],
-    )
-    .await?
-    .iter()
-    .map(|r| r.get::<String>(0))
-    .collect::<Result<_, String>>()?;
+    let target_labels: HashMap<String, String> =
+        LabelRow::filter(LabelRow::fields().board_id().eq(board_id))
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .into_iter()
+            .map(|label| (label.name.to_lowercase(), label.id))
+            .collect();
+    let card_label_ids =
+        CardLabelRow::filter_by_card_id(card_id).select(CardLabelRow::fields().label_id());
+    let card_labels: Vec<String> =
+        LabelRow::filter(LabelRow::fields().id().in_query(card_label_ids))
+            .select(LabelRow::fields().name())
+            .exec(ex)
+            .await
+            .map_err(err)?;
     CardLabelRow::filter_by_card_id(card_id)
         .delete()
         .exec(ex)
@@ -305,18 +332,19 @@ async fn move_card_to_board_in(
         .map_err(err)?;
     for name in card_labels {
         if let Some(label_id) = target_labels.get(&name.to_lowercase()) {
-            execute(
-                ex,
-                "INSERT OR IGNORE INTO board_card_labels (card_id, label_id) VALUES (?1, ?2)",
-                args![card_id, label_id],
-            )
-            .await?;
+            CardLabelRow::upsert_by_card_id_and_label_id(card_id, label_id)
+                .or_ignore()
+                .exec(ex)
+                .await
+                .map_err(err)?;
         }
     }
 
     // Field values: keep those whose field (name, kind) exists on the target
     // and that are valid for it (multi-select loses options it lacks).
     let target_fields: HashMap<(String, String), (String, Option<String>)> = {
+        // Raw SQL: ties on position keep insertion order (`rowid`), which
+        // Toasty 0.11 cannot order by.
         let rows = query(
             ex,
             "SELECT id, name, kind, options_json FROM board_fields WHERE board_id = ?1
@@ -333,17 +361,26 @@ async fn move_card_to_board_in(
         }
         map
     };
-    let values: Vec<(String, String, String)> = query(
-        ex,
-        "SELECT f.name, f.kind, v.value_json
-         FROM board_card_field_values v
-         JOIN board_fields f ON f.id = v.field_id WHERE v.card_id = ?1",
-        args![card_id],
-    )
-    .await?
-    .iter()
-    .map(|r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-    .collect::<Result<_, String>>()?;
+    let card_values = FieldValueRow::filter_by_card_id(card_id)
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    let field_ids: Vec<String> = card_values.iter().map(|v| v.field_id.clone()).collect();
+    let fields: HashMap<String, (String, String)> =
+        FieldRow::filter(FieldRow::fields().id().in_list(field_ids))
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .into_iter()
+            .map(|field| (field.id, (field.name, field.kind)))
+            .collect();
+    let values: Vec<(String, String, String)> = card_values
+        .into_iter()
+        .filter_map(|v| {
+            let (name, kind) = fields.get(&v.field_id)?.clone();
+            Some((name, kind, v.value_json))
+        })
+        .collect();
     FieldValueRow::filter_by_card_id(card_id)
         .delete()
         .exec(ex)
@@ -355,45 +392,39 @@ async fn move_card_to_board_in(
             continue;
         };
         if let Some(value) = carry_value(&key.1, options.as_deref(), &value_json) {
-            execute(
-                ex,
-                "INSERT OR IGNORE INTO board_card_field_values (card_id, field_id, value_json)
-                 VALUES (?1, ?2, ?3)",
-                args![card_id, field_id, value.to_string()],
-            )
-            .await?;
+            FieldValueRow::upsert_by_card_id_and_field_id(card_id, field_id)
+                .value_json(value.to_string())
+                .or_ignore()
+                .exec(ex)
+                .await
+                .map_err(err)?;
         }
     }
 
-    execute(
-        ex,
-        "DELETE FROM board_card_relations WHERE card_id = ?1 OR related_card_id = ?1",
-        args![card_id],
+    let relation = RelationRow::fields();
+    RelationRow::filter(
+        relation
+            .card_id()
+            .eq(card_id)
+            .or(relation.related_card_id().eq(card_id)),
     )
-    .await?;
+    .delete()
+    .exec(ex)
+    .await
+    .map_err(err)?;
 
-    let number = next_number(ex, board_id).await?;
-    let position: i64 = query_value(
-        ex,
-        &format!("SELECT COUNT(*) FROM board_cards WHERE column_id = ?1 AND {LIVE}"),
-        args![&column_id],
-    )
-    .await?;
-    execute(
-        ex,
-        "UPDATE board_cards
-         SET board_id = ?1, column_id = ?2, number = ?3, position = ?4, updated_at = ?5
-         WHERE id = ?6",
-        args![
-            board_id,
-            &column_id,
-            number,
-            position,
-            now_millis(),
-            card_id
-        ],
-    )
-    .await?;
+    let number = next_card_number(ex, board_id).await?;
+    let position = live_card_count(ex, &column_id).await?;
+    CardRow::filter_by_id(card_id)
+        .update()
+        .board_id(board_id)
+        .column_id(&column_id)
+        .number(number)
+        .position(position)
+        .updated_at(now_millis())
+        .exec(ex)
+        .await
+        .map_err(err)?;
     // The card already sits on the target board, so this lists only the cards left behind.
     let source_ids = column_card_ids(ex, &card.column_id).await?;
     write_card_positions(ex, &source_ids).await?;

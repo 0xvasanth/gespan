@@ -1,14 +1,15 @@
 //! Per-card properties in `board_card_meta` and `board_card_projects`, archive,
 //! and the per-card summary the board face shows.
-use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex};
-use crate::models::{CardMetaRow, CardProjectRow};
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex};
+use crate::models::{CardLabelRow, CardMetaRow, CardProjectRow, CardRow, LabelRow};
 use crate::ops::{
-    cards_from_rows, column_card_ids, get_card_in, get_column, is_archived, log_activity, log_edit,
+    column_card_ids, count, get_card_in, get_column, is_archived, live, log_activity, log_edit,
     touch, write_card_positions, NewActivity, LIVE,
 };
 use crate::{now_millis, Card};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
+use toasty::stmt::{List, Query};
 
 pub const PRIORITIES: [&str; 5] = ["None", "Low", "Medium", "High", "Urgent"];
 const MAX_ESTIMATE_MINUTES: i64 = 100_000 * 60;
@@ -65,25 +66,58 @@ pub fn card_meta(conn: &Conn, card_id: &str) -> Result<CardMeta, String> {
     with_db!(conn, |ex| card_meta_in(ex, card_id).await)
 }
 
+/// A `board_card_meta` column [`write_meta`] sets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum MetaField {
+    Priority,
+    DueAt,
+    StartAt,
+    EstimateMinutes,
+    ArchivedAt,
+}
+
 /// Sets one `board_card_meta` column, adding the row when the card has none.
 /// A new row's priority is 0, as the hand-made table's default had it.
+/// Priority is never empty.
 pub(crate) async fn write_meta(
     ex: &mut Ex<'_>,
     card_id: &str,
-    column: &str,
+    field: MetaField,
     value: Option<i64>,
 ) -> Result<(), String> {
-    let sql = if column == "priority" {
-        "INSERT INTO board_card_meta (card_id, priority) VALUES (?1, ?2)
-         ON CONFLICT (card_id) DO UPDATE SET priority = excluded.priority"
-            .to_string()
-    } else {
-        format!(
-            "INSERT INTO board_card_meta (card_id, priority, {column}) VALUES (?1, 0, ?2)
-             ON CONFLICT (card_id) DO UPDATE SET {column} = excluded.{column}"
-        )
-    };
-    execute(ex, &sql, args![card_id, value]).await.map(drop)
+    if field == MetaField::Priority && value.is_none() {
+        return Err("Priority is required".into());
+    }
+    let exists = CardMetaRow::filter_by_card_id(card_id)
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .is_some();
+    if !exists {
+        let pick = |wanted: MetaField| if field == wanted { value } else { None };
+        return CardMetaRow::create()
+            .card_id(card_id)
+            .priority(pick(MetaField::Priority).unwrap_or(0))
+            .due_at(pick(MetaField::DueAt))
+            .start_at(pick(MetaField::StartAt))
+            .estimate_minutes(pick(MetaField::EstimateMinutes))
+            .archived_at(pick(MetaField::ArchivedAt))
+            .completed_at(None::<i64>)
+            .exec(ex)
+            .await
+            .map(drop)
+            .map_err(err);
+    }
+    let row = CardMetaRow::filter_by_card_id(card_id).update();
+    match field {
+        MetaField::Priority => row.priority(value.unwrap_or(0)).exec(ex).await,
+        MetaField::DueAt => row.due_at(value).exec(ex).await,
+        MetaField::StartAt => row.start_at(value).exec(ex).await,
+        MetaField::EstimateMinutes => row.estimate_minutes(value).exec(ex).await,
+        MetaField::ArchivedAt => row.archived_at(value).exec(ex).await,
+    }
+    .map_err(err)
 }
 
 /// Shared shape of the single-value meta setters: no row and no activity
@@ -91,7 +125,7 @@ pub(crate) async fn write_meta(
 fn set_meta(
     conn: &Conn,
     card_id: &str,
-    column: &str,
+    field: MetaField,
     value: Option<i64>,
     current: impl Fn(&CardMeta) -> Option<i64> + Send + Sync,
     detail: impl Fn(Option<i64>) -> String + Send + Sync,
@@ -101,7 +135,7 @@ fn set_meta(
         if current(&card_meta_in(ex, card_id).await?) == value {
             return Ok(card.board_id);
         }
-        write_meta(ex, card_id, column, value).await?;
+        write_meta(ex, card_id, field, value).await?;
         touch(ex, card_id).await?;
         log_edit(ex, &card.board_id, card_id, &detail(value)).await?;
         Ok(card.board_id)
@@ -123,7 +157,7 @@ pub fn set_priority(conn: &Conn, card_id: &str, priority: u8) -> Result<String, 
     set_meta(
         conn,
         card_id,
-        "priority",
+        MetaField::Priority,
         Some(i64::from(priority)),
         |meta| Some(i64::from(meta.priority)),
         |_| format!("priority: {}", PRIORITIES[priority as usize]),
@@ -134,7 +168,7 @@ pub fn set_due(conn: &Conn, card_id: &str, due_at: Option<i64>) -> Result<String
     set_meta(
         conn,
         card_id,
-        "due_at",
+        MetaField::DueAt,
         due_at,
         |meta| meta.due_at,
         |at| day_detail("due", at),
@@ -145,7 +179,7 @@ pub fn set_start(conn: &Conn, card_id: &str, start_at: Option<i64>) -> Result<St
     set_meta(
         conn,
         card_id,
-        "start_at",
+        MetaField::StartAt,
         start_at,
         |meta| meta.start_at,
         |at| day_detail("start", at),
@@ -159,7 +193,7 @@ pub fn set_estimate(conn: &Conn, card_id: &str, minutes: Option<i64>) -> Result<
     set_meta(
         conn,
         card_id,
-        "estimate_minutes",
+        MetaField::EstimateMinutes,
         minutes,
         |meta| meta.estimate_minutes,
         |minutes| match minutes {
@@ -169,17 +203,47 @@ pub fn set_estimate(conn: &Conn, card_id: &str, minutes: Option<i64>) -> Result<
     )
 }
 
-/// The values one card holds in a set table, such as its projects.
-pub(crate) async fn card_set(
+/// The card's projects.
+async fn card_projects(ex: &mut Ex<'_>, card_id: &str) -> Result<BTreeSet<String>, String> {
+    Ok(CardProjectRow::filter_by_card_id(card_id)
+        .select(CardProjectRow::fields().project())
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .collect())
+}
+
+/// The card's label ids.
+pub(crate) async fn card_label_ids(
     ex: &mut Ex<'_>,
-    sql: &str,
     card_id: &str,
 ) -> Result<BTreeSet<String>, String> {
-    query(ex, sql, args![card_id])
-        .await?
-        .iter()
-        .map(|r| r.get::<String>(0))
-        .collect()
+    Ok(CardLabelRow::filter_by_card_id(card_id)
+        .select(CardLabelRow::fields().label_id())
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .collect())
+}
+
+/// The names of the card's labels.
+pub(crate) async fn card_label_names(
+    ex: &mut Ex<'_>,
+    card_id: &str,
+) -> Result<BTreeSet<String>, String> {
+    let label_ids =
+        CardLabelRow::filter_by_card_id(card_id).select(CardLabelRow::fields().label_id());
+    Ok(
+        LabelRow::filter(LabelRow::fields().id().in_query(label_ids))
+            .select(LabelRow::fields().name())
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .into_iter()
+            .collect(),
+    )
 }
 
 pub fn set_projects(conn: &Conn, card_id: &str, projects: &[String]) -> Result<String, String> {
@@ -190,12 +254,7 @@ pub fn set_projects(conn: &Conn, card_id: &str, projects: &[String]) -> Result<S
         .collect();
     with_tx!(conn, |ex| {
         let card = get_card_in(ex, card_id).await?;
-        let current = card_set(
-            ex,
-            "SELECT project FROM board_card_projects WHERE card_id = ?1",
-            card_id,
-        )
-        .await?;
+        let current = card_projects(ex, card_id).await?;
         if current
             .iter()
             .map(String::as_str)
@@ -236,7 +295,7 @@ pub fn archive_card(conn: &Conn, card_id: &str) -> Result<String, String> {
         if is_archived(ex, card_id).await? {
             return Ok(card.board_id);
         }
-        write_meta(ex, card_id, "archived_at", Some(now_millis())).await?;
+        write_meta(ex, card_id, MetaField::ArchivedAt, Some(now_millis())).await?;
         let ids = column_card_ids(ex, &card.column_id).await?;
         write_card_positions(ex, &ids).await?;
         touch(ex, card_id).await?;
@@ -253,7 +312,7 @@ pub fn unarchive_card(conn: &Conn, card_id: &str) -> Result<String, String> {
             return Ok(card.board_id);
         }
         let mut ids = column_card_ids(ex, &card.column_id).await?;
-        write_meta(ex, card_id, "archived_at", None).await?;
+        write_meta(ex, card_id, MetaField::ArchivedAt, None).await?;
         ids.push(card.id.clone());
         write_card_positions(ex, &ids).await?;
         touch(ex, card_id).await?;
@@ -273,7 +332,7 @@ pub fn archive_cards(conn: &Conn, card_ids: &[String]) -> Result<String, String>
             if is_archived(ex, &card.id).await? {
                 continue;
             }
-            write_meta(ex, &card.id, "archived_at", Some(now_millis())).await?;
+            write_meta(ex, &card.id, MetaField::ArchivedAt, Some(now_millis())).await?;
             touch(ex, &card.id).await?;
             log_edit(ex, &board_id, &card.id, "archived").await?;
             if !columns.contains(&card.column_id) {
@@ -329,7 +388,7 @@ pub fn set_priority_many(conn: &Conn, card_ids: &[String], priority: u8) -> Resu
             if card_meta_in(ex, &card.id).await?.priority == priority {
                 continue;
             }
-            write_meta(ex, &card.id, "priority", Some(i64::from(priority))).await?;
+            write_meta(ex, &card.id, MetaField::Priority, Some(i64::from(priority))).await?;
             touch(ex, &card.id).await?;
             log_edit(ex, &board_id, &card.id, &detail).await?;
         }
@@ -356,15 +415,15 @@ pub fn restore_card(
         let was_archived = is_archived(ex, card_id).await?;
         let same_column = card.column_id == column_id;
         if was_archived {
-            write_meta(ex, card_id, "archived_at", None).await?;
+            write_meta(ex, card_id, MetaField::ArchivedAt, None).await?;
         }
         if !same_column {
-            execute(
-                ex,
-                "UPDATE board_cards SET column_id = ?1 WHERE id = ?2",
-                args![column_id, card_id],
-            )
-            .await?;
+            CardRow::filter_by_id(card_id)
+                .update()
+                .column_id(column_id)
+                .exec(ex)
+                .await
+                .map_err(err)?;
             let source_ids = column_card_ids(ex, &card.column_id).await?;
             write_card_positions(ex, &source_ids).await?;
         }
@@ -400,19 +459,14 @@ pub fn restore_card(
 pub fn column_card_count(conn: &Conn, column_id: &str) -> Result<(usize, usize), String> {
     with_db!(conn, |ex| {
         get_column(ex, column_id).await?;
-        let archived: i64 = query_value(
+        let card = CardRow::fields();
+        let total = count(ex, CardRow::filter(card.column_id().eq(column_id)).count()).await?;
+        let live = count(
             ex,
-            "SELECT COUNT(*) FROM board_cards c JOIN board_card_meta m ON m.card_id = c.id
-             WHERE c.column_id = ?1 AND m.archived_at IS NOT NULL",
-            args![column_id],
+            CardRow::filter(card.column_id().eq(column_id).and(live())).count(),
         )
         .await?;
-        let total: i64 = query_value(
-            ex,
-            "SELECT COUNT(*) FROM board_cards WHERE column_id = ?1",
-            args![column_id],
-        )
-        .await?;
+        let archived = total - live;
         Ok(((total - archived) as usize, archived as usize))
     })
 }
@@ -425,6 +479,8 @@ pub fn column_card_counts(
     board_id: &str,
 ) -> Result<HashMap<String, (usize, usize)>, String> {
     let rows = with_db!(conn, |ex| {
+        // Raw SQL: per-column counts in one statement need GROUP BY, which
+        // Toasty 0.11 cannot express.
         query(
             ex,
             "SELECT b.id, col.id,
@@ -462,19 +518,68 @@ pub fn column_card_counts(
 /// A board's archived cards, most recently archived first.
 pub fn archived_cards(conn: &Conn, board_id: &str) -> Result<Vec<Card>, String> {
     with_db!(conn, |ex| {
-        cards_from_rows(
-            query(
-                ex,
-                "SELECT c.id, c.board_id, c.column_id, c.number, c.title, c.body, c.position,
-                        c.link_kind, c.link_id, c.created_at, c.updated_at
-                 FROM board_cards c JOIN board_card_meta m ON m.card_id = c.id
-                 WHERE c.board_id = ?1 AND m.archived_at IS NOT NULL
-                 ORDER BY m.archived_at DESC, c.number DESC",
-                args![board_id],
-            )
-            .await?,
+        let card = CardRow::fields();
+        let on_board = CardRow::filter(card.board_id().eq(board_id)).select(card.id());
+        let meta = CardMetaRow::fields();
+        let archived_at: HashMap<String, i64> = CardMetaRow::filter(
+            meta.archived_at()
+                .is_some()
+                .and(meta.card_id().in_query(on_board)),
         )
+        .select((meta.card_id(), meta.archived_at()))
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .filter_map(|(card_id, at): (String, Option<i64>)| Some((card_id, at?)))
+        .collect();
+        let mut cards: Vec<Card> = CardRow::filter(
+            card.board_id().eq(board_id).and(
+                card.id()
+                    .in_list(archived_at.keys().cloned().collect::<Vec<_>>()),
+            ),
+        )
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .map(Card::from)
+        .collect();
+        cards.sort_by(|a, b| {
+            (archived_at.get(&b.id), b.number).cmp(&(archived_at.get(&a.id), a.number))
+        });
+        Ok(cards)
     })
+}
+
+/// The (card, label) pairs of the cards `cards` selects, in label order:
+/// position, then name ignoring ASCII case, as SQLite's `lower` compares it.
+pub(crate) async fn card_labels_in_order(
+    ex: &mut Ex<'_>,
+    cards: Query<List<String>>,
+) -> Result<Vec<(String, String)>, String> {
+    let card_label = CardLabelRow::fields();
+    let pairs: Vec<(String, String)> = CardLabelRow::filter(card_label.card_id().in_query(cards))
+        .select((card_label.card_id(), card_label.label_id()))
+        .exec(ex)
+        .await
+        .map_err(err)?;
+    let used: BTreeSet<&String> = pairs.iter().map(|(_, label_id)| label_id).collect();
+    let used: Vec<String> = used.into_iter().cloned().collect();
+    let order: HashMap<String, (i64, String)> =
+        LabelRow::filter(LabelRow::fields().id().in_list(used))
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .into_iter()
+            .map(|label| (label.id, (label.position, label.name.to_ascii_lowercase())))
+            .collect();
+    let mut pairs: Vec<(String, String)> = pairs
+        .into_iter()
+        .filter(|(_, label_id)| order.contains_key(label_id))
+        .collect();
+    pairs.sort_by(|a, b| order[&a.1].cmp(&order[&b.1]));
+    Ok(pairs)
 }
 
 /// Every live card's extras on a board, keyed by card id. Cards with none are absent.
@@ -487,52 +592,35 @@ async fn card_extras_in(
     board_id: &str,
 ) -> Result<HashMap<String, CardExtras>, String> {
     let mut extras: HashMap<String, CardExtras> = HashMap::new();
+    let card = CardRow::fields();
+    let scope = || CardRow::filter(card.board_id().eq(board_id).and(live())).select(card.id());
+    let meta = CardMetaRow::fields();
+    for (card_id, priority, due_at) in CardMetaRow::filter(meta.card_id().in_query(scope()))
+        .select((meta.card_id(), meta.priority(), meta.due_at()))
+        .exec(ex)
+        .await
+        .map_err(err)?
+    {
+        let entry = extras.entry(card_id).or_default();
+        entry.priority = priority_of(priority);
+        entry.due_at = due_at;
+    }
+    let project = CardProjectRow::fields();
+    for (card_id, name) in CardProjectRow::filter(project.card_id().in_query(scope()))
+        .order_by(project.project().asc())
+        .select((project.card_id(), project.project()))
+        .exec(ex)
+        .await
+        .map_err(err)?
+    {
+        extras.entry(card_id).or_default().projects.push(name);
+    }
+    for (card_id, label_id) in card_labels_in_order(ex, scope()).await? {
+        extras.entry(card_id).or_default().labels.push(label_id);
+    }
+    // Raw SQL from here: per-card counts need GROUP BY, which Toasty 0.11
+    // cannot express.
     let scope = format!("SELECT id FROM board_cards WHERE board_id = ?1 AND {LIVE}");
-    for mut r in query(
-        ex,
-        &format!(
-            "SELECT card_id, priority, due_at FROM board_card_meta WHERE card_id IN ({scope})"
-        ),
-        args![board_id],
-    )
-    .await?
-    {
-        let entry = extras.entry(r.take::<String>(0)?).or_default();
-        entry.priority = priority_of(r.get::<i64>(1)?);
-        entry.due_at = r.get(2)?;
-    }
-    for mut r in query(
-        ex,
-        &format!(
-            "SELECT card_id, project FROM board_card_projects WHERE card_id IN ({scope}) ORDER BY project"
-        ),
-        args![board_id],
-    )
-    .await?
-    {
-        extras
-            .entry(r.take::<String>(0)?)
-            .or_default()
-            .projects
-            .push(r.take(1)?);
-    }
-    for mut r in query(
-        ex,
-        &format!(
-            "SELECT cl.card_id, cl.label_id FROM board_card_labels cl
-             JOIN board_labels l ON l.id = cl.label_id
-             WHERE cl.card_id IN ({scope}) ORDER BY l.position, lower(l.name)"
-        ),
-        args![board_id],
-    )
-    .await?
-    {
-        extras
-            .entry(r.take::<String>(0)?)
-            .or_default()
-            .labels
-            .push(r.take(1)?);
-    }
     for mut r in query(
         ex,
         &format!(

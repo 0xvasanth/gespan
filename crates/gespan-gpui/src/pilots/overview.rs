@@ -19,6 +19,10 @@ pub(crate) struct Overview {
     expand_labels: bool,
     stack: PanelStack,
     native_content: bool,
+    /// Tests stop the clock the slide animation reads, so a slow machine
+    /// cannot run a page past the moment a test checks.
+    #[cfg(test)]
+    clock: Option<Instant>,
     _observation: Subscription,
 }
 
@@ -31,6 +35,8 @@ impl Overview {
             expand_labels: true,
             stack: PanelStack::default(),
             native_content: false,
+            #[cfg(test)]
+            clock: None,
             _observation: cx.observe(&manager, |_, _, cx| cx.notify()),
         }
     }
@@ -59,10 +65,22 @@ impl Overview {
         cx.notify();
     }
 
+    /// Puts the slide animation `elapsed` into its run and stops the clock
+    /// there until the next call.
     #[cfg(test)]
     pub(super) fn elapsed(&mut self, elapsed: std::time::Duration, cx: &mut Context<Self>) {
-        self.stack.elapsed(elapsed);
+        let now = Instant::now();
+        self.stack.elapsed(now, elapsed);
+        self.clock = Some(now);
         cx.notify();
+    }
+
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = self.clock {
+            return now;
+        }
+        Instant::now()
     }
 }
 
@@ -94,7 +112,7 @@ impl Focusable for Overview {
 
 impl Render for Overview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let now = Instant::now();
+        let now = self.now();
         let state = self
             .manager
             .read_with(cx, |m, _| {

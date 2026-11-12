@@ -1171,17 +1171,18 @@ fn qr_canvas(qr: Arc<Qr>) -> impl IntoElement {
                 px((bounds.origin.x.as_f32() * scale).round() / scale),
                 px((bounds.origin.y.as_f32() * scale).round() / scale),
             );
-            for (y, row) in qr.dark.chunks(qr.width).enumerate() {
+            // `chunks` panics on 0; a QR code is never that narrow.
+            for (y, row) in qr.dark.chunks(qr.width.max(1)).enumerate() {
                 let top = qr_edge(y + 2, modules, side, scale);
                 let bottom = qr_edge(y + 3, modules, side, scale);
                 let mut x = 0;
                 while x < row.len() {
-                    if !row[x] {
+                    if row.get(x) != Some(&true) {
                         x += 1;
                         continue;
                     }
                     let start = x;
-                    while x < row.len() && row[x] {
+                    while row.get(x) == Some(&true) {
                         x += 1;
                     }
                     let left = qr_edge(start + 2, modules, side, scale);

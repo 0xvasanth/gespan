@@ -677,42 +677,31 @@ async fn get(ex: &mut dyn Executor, id: &str) -> toasty::Result<Option<Automatio
         .transpose()
 }
 
-/// An upsert that replaces every column: raw SQL.
+/// Saves the automation, replacing every column of an existing row.
 async fn write_automation(ex: &mut dyn Executor, automation: &Automation) -> toasty::Result<()> {
     let raw = serde_json::to_string(automation).map_err(fail)?;
-    toasty::sql::statement(
-        "INSERT INTO automations (id, definition_json, enabled, next_run_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(id) DO UPDATE SET
-           definition_json = excluded.definition_json,
-           enabled = excluded.enabled,
-           next_run_at = excluded.next_run_at,
-           updated_at = excluded.updated_at",
-    )
-    .bind(automation.id.clone())
-    .bind(raw)
-    .bind(automation.enabled)
-    .bind(automation.next_run_at)
-    .bind(automation.updated_at)
-    .exec(ex)
-    .await?;
+    AutomationRow::upsert_by_id(automation.id.clone())
+        .definition_json(raw)
+        .enabled(automation.enabled)
+        .next_run_at(automation.next_run_at)
+        .updated_at(automation.updated_at)
+        .exec(ex)
+        .await?;
     Ok(())
 }
 
-/// An upsert that keeps the run's automation and time: raw SQL.
+/// Saves the run. An existing row keeps its automation and time.
 async fn write_run(ex: &mut dyn Executor, run: &AutomationRun) -> toasty::Result<()> {
     let raw = serde_json::to_string(run).map_err(fail)?;
-    toasty::sql::statement(
-        "INSERT INTO automation_runs (id, automation_id, created_at, run_json)
-         VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(id) DO UPDATE SET run_json = excluded.run_json",
-    )
-    .bind(run.id.clone())
-    .bind(run.automation_id.clone())
-    .bind(run.created_at)
-    .bind(raw)
-    .exec(ex)
-    .await?;
+    AutomationRunRow::upsert_by_id(run.id.clone())
+        .run_json(raw)
+        .on_create(|create| {
+            create
+                .automation_id(run.automation_id.clone())
+                .created_at(run.created_at)
+        })
+        .exec(ex)
+        .await?;
     Ok(())
 }
 
@@ -1135,20 +1124,27 @@ impl Service {
                 if !has_time_trigger(&current) {
                     return Ok(None);
                 }
-                // A compare-and-set that reports whether it matched: raw SQL.
-                let claimed = toasty::sql::statement(
-                    "UPDATE automations SET next_run_at = ?1
-                     WHERE id = ?2 AND enabled = 1 AND next_run_at = ?3 AND next_run_at <= ?4",
+                // A compare-and-set: the transaction holds the write lock,
+                // so the row read here is the row updated.
+                let row = AutomationRow::fields();
+                let due = AutomationRow::filter(
+                    row.id()
+                        .eq(&automation_id)
+                        .and(row.enabled().eq(true))
+                        .and(row.next_run_at().eq(expected_next_run_at))
+                        .and(row.next_run_at().le(now)),
                 )
-                .bind(next_run_at)
-                .bind(automation_id.clone())
-                .bind(expected_next_run_at)
-                .bind(now)
+                .first()
                 .exec(&mut *tx)
                 .await?;
-                if claimed == 0 {
+                if due.is_none() {
                     return Ok(None);
                 }
+                AutomationRow::filter_by_id(&automation_id)
+                    .update()
+                    .next_run_at(next_run_at)
+                    .exec(&mut *tx)
+                    .await?;
                 let mut automation = get(&mut *tx, &automation_id)
                     .await?
                     .ok_or_else(|| fail("Automation not found."))?;
@@ -1214,17 +1210,16 @@ impl Service {
                 {
                     return Ok(None);
                 }
-                // Claims the event unless it already is: raw `INSERT OR IGNORE`.
-                let claimed = toasty::sql::statement(
-                    "INSERT OR IGNORE INTO automation_event_claims
-                     (automation_id, event_key, created_at) VALUES (?1, ?2, ?3)",
+                // Claims the event unless it already is.
+                let claimed = EventClaimRow::upsert_by_automation_id_and_event_key(
+                    automation_id.clone(),
+                    claim.event_key.clone(),
                 )
-                .bind(automation_id.clone())
-                .bind(claim.event_key.clone())
-                .bind(now)
+                .created_at(now)
+                .or_ignore()
                 .exec(&mut *tx)
                 .await?;
-                if claimed == 0 {
+                if claimed.is_none() {
                     return Ok(None);
                 }
                 let mut run = new_event_run(

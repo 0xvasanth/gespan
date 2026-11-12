@@ -1,4 +1,4 @@
-use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn, Ex, Row};
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex, Row};
 use crate::models::SubtaskRow;
 use crate::ops::{clean_text, get_card_in, log_activity, log_edit, new_id, touch, NewActivity};
 use serde::Serialize;
@@ -53,6 +53,8 @@ pub(crate) async fn list_subtasks_in(
     ex: &mut Ex<'_>,
     card_id: &str,
 ) -> Result<Vec<Subtask>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         "SELECT id, card_id, title, done, position FROM board_subtasks
@@ -73,12 +75,15 @@ pub fn add_subtask(conn: &Conn, card_id: &str, title: &str) -> Result<Subtask, S
     let title = clean_text(title, "Subtask", MAX_SUBTASK)?;
     with_tx!(conn, |ex| {
         let card = get_card_in(ex, card_id).await?;
-        let position: i64 = query_value(
-            ex,
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM board_subtasks WHERE card_id = ?1",
-            args![card_id],
-        )
-        .await?;
+        let subtask = SubtaskRow::fields();
+        let position = SubtaskRow::filter(subtask.card_id().eq(card_id))
+            .order_by(subtask.position().desc())
+            .select(subtask.position())
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .map_or(0, |last| last + 1);
         let subtask: Subtask = SubtaskRow::create()
             .id(new_id())
             .card_id(card_id)
@@ -185,13 +190,12 @@ async fn renumber_subtasks(ex: &mut Ex<'_>, card_id: &str) -> Result<(), String>
 }
 
 async fn set_position(ex: &mut Ex<'_>, subtask_id: &str, position: usize) -> Result<(), String> {
-    execute(
-        ex,
-        "UPDATE board_subtasks SET position = ?1 WHERE id = ?2",
-        args![position as i64, subtask_id],
-    )
-    .await
-    .map(drop)
+    SubtaskRow::filter_by_id(subtask_id)
+        .update()
+        .position(position as i64)
+        .exec(ex)
+        .await
+        .map_err(err)
 }
 
 /// Moves a subtask to `index` among its card's subtasks (clamped to the end)

@@ -1,14 +1,16 @@
 //! A card's links to sessions, pilots, runs, PRs, worktrees and tickets. The
 //! single link both apps show today (`link_card`) is the row with role
 //! `primary`; `board_cards.link_kind`/`link_id` mirror it for older readers.
-use crate::db::{args, err, execute, query, query_opt, with_db, with_tx, Conn, Ex, Row};
+use crate::db::{err, with_db, with_tx, Conn, Ex};
 use crate::models::{CardRow, LinkRow};
 use crate::ops::{
-    check_body, clean_text, create_card_in, get_card_in, log_activity, touch, NewActivity,
+    check_body, clean_text, create_card_in, get_card_in, live, log_activity, touch, NewActivity,
     LINK_KINDS, MAX_TITLE,
 };
 use crate::{now_millis, Card};
 use serde::Serialize;
+use std::collections::HashSet;
+use toasty::stmt::Expr;
 
 const MAX_REF: usize = 10_000;
 /// The role of the card's single link, which only `link_card` writes.
@@ -25,14 +27,31 @@ pub struct CardLink {
     pub created_at: i64,
 }
 
-fn link_from_row(r: &Row) -> Result<CardLink, String> {
-    Ok(CardLink {
-        card_id: r.get(0)?,
-        kind: r.get(1)?,
-        reference: r.get(2)?,
-        role: r.get(3)?,
-        created_at: r.get(4)?,
-    })
+impl From<LinkRow> for CardLink {
+    fn from(row: LinkRow) -> Self {
+        CardLink {
+            card_id: row.card_id,
+            kind: row.kind,
+            reference: row.reference,
+            role: row.role,
+            created_at: row.created_at,
+        }
+    }
+}
+
+/// A [`LinkRow`] filter: the card's ticket links (role `ticket`, a tracker
+/// kind).
+fn ticket_links(card_id: &str) -> Expr<bool> {
+    let link = LinkRow::fields();
+    link.card_id().eq(card_id).and(is_ticket_link())
+}
+
+/// A [`LinkRow`] filter: a ticket link (role `ticket`, a tracker kind).
+fn is_ticket_link() -> Expr<bool> {
+    let link = LinkRow::fields();
+    link.role()
+        .eq(Some(TICKET_ROLE.to_string()))
+        .and(link.kind().in_list(TICKET_KINDS))
 }
 
 async fn log_link(
@@ -84,14 +103,15 @@ pub fn add_link(
     }
     with_tx!(conn, |ex| {
         let card = get_card_in(ex, card_id).await?;
-        let added = execute(
-            ex,
-            "INSERT OR IGNORE INTO board_card_links (card_id, kind, ref, role, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            args![card_id, kind, reference, role, now_millis()],
-        )
-        .await?;
-        if added == 0 {
+        let added = LinkRow::upsert_by_card_id_and_kind_and_reference(card_id, kind, reference)
+            .role(role.map(str::to_string))
+            .created_at(now_millis())
+            .or_ignore()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .is_some();
+        if !added {
             return Ok(card.board_id);
         }
         touch(ex, card_id).await?;
@@ -139,13 +159,12 @@ pub fn remove_link(
                     && role.as_deref() != Some(PRIMARY_ROLE)
                     && role.as_deref() != Some(TICKET_ROLE) =>
             {
-                execute(
-                    ex,
-                    "UPDATE board_card_links SET role = ?4
-                     WHERE card_id = ?1 AND kind = ?2 AND ref = ?3",
-                    args![card_id, kind, reference, PRIMARY_ROLE],
-                )
-                .await?;
+                LinkRow::filter_by_card_id_and_kind_and_reference(card_id, kind, reference)
+                    .update()
+                    .role(Some(PRIMARY_ROLE.to_string()))
+                    .exec(ex)
+                    .await
+                    .map_err(err)?;
             }
             Some(role) => {
                 LinkRow::filter_by_card_id_and_kind_and_reference(card_id, kind, reference)
@@ -173,27 +192,26 @@ pub fn remove_link(
 }
 
 async fn clear_primary_columns(ex: &mut Ex<'_>, card_id: &str) -> Result<(), String> {
-    execute(
-        ex,
-        "UPDATE board_cards SET link_kind = NULL, link_id = NULL WHERE id = ?1",
-        args![card_id],
-    )
-    .await
-    .map(drop)
+    CardRow::filter_by_id(card_id)
+        .update()
+        .link_kind(None::<String>)
+        .link_id(None::<String>)
+        .exec(ex)
+        .await
+        .map_err(err)
 }
 
 pub fn card_links(conn: &Conn, card_id: &str) -> Result<Vec<CardLink>, String> {
     with_db!(conn, |ex| {
-        query(
-            ex,
-            "SELECT card_id, kind, ref, role, created_at FROM board_card_links
-             WHERE card_id = ?1 ORDER BY kind, ref",
-            args![card_id],
-        )
-        .await?
-        .iter()
-        .map(link_from_row)
-        .collect()
+        let link = LinkRow::fields();
+        Ok(LinkRow::filter(link.card_id().eq(card_id))
+            .order_by((link.kind().asc(), link.reference().asc()))
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .into_iter()
+            .map(CardLink::from)
+            .collect())
     })
 }
 
@@ -205,31 +223,56 @@ pub(crate) async fn board_links_in(
     ex: &mut Ex<'_>,
     board_id: &str,
 ) -> Result<Vec<CardLink>, String> {
-    query(
-        ex,
-        "SELECT l.card_id, l.kind, l.ref, l.role, l.created_at
-         FROM board_card_links l JOIN board_cards c ON c.id = l.card_id
-         WHERE c.board_id = ?1
-           AND l.kind NOT IN ('jira', 'linear', 'plane')
-           AND NOT EXISTS (SELECT 1 FROM board_card_meta m
-             WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
-         UNION ALL
-         SELECT c.id, c.link_kind, c.link_id, 'primary', c.updated_at
-         FROM board_cards c
-         WHERE c.board_id = ?1
-           AND c.link_kind IS NOT NULL AND c.link_id IS NOT NULL
-           AND c.link_kind NOT IN ('jira', 'linear', 'plane')
-           AND NOT EXISTS (SELECT 1 FROM board_card_links l
-             WHERE l.card_id = c.id AND l.kind = c.link_kind AND l.ref = c.link_id)
-           AND NOT EXISTS (SELECT 1 FROM board_card_meta m
-             WHERE m.card_id = c.id AND m.archived_at IS NOT NULL)
-         ORDER BY 1, 2, 3",
-        args![board_id],
+    let card = CardRow::fields();
+    let live_cards = || CardRow::filter(card.board_id().eq(board_id).and(live())).select(card.id());
+    let link = LinkRow::fields();
+    let mut links: Vec<CardLink> = LinkRow::filter(
+        link.card_id()
+            .in_query(live_cards())
+            .and(link.kind().in_list(TICKET_KINDS).not()),
     )
-    .await?
-    .iter()
-    .map(link_from_row)
-    .collect()
+    .exec(ex)
+    .await
+    .map_err(err)?
+    .into_iter()
+    .map(CardLink::from)
+    .collect();
+    // A link only in the card's columns, with no row of its own. Such a row
+    // would be one of the links above: same live card, not a tracker kind.
+    let rows: HashSet<(String, String, String)> = links
+        .iter()
+        .map(|l| (l.card_id.clone(), l.kind.clone(), l.reference.clone()))
+        .collect();
+    let mirrored = CardRow::filter(
+        card.board_id()
+            .eq(board_id)
+            .and(card.link_kind().is_some())
+            .and(card.link_id().is_some())
+            .and(live()),
+    )
+    .exec(ex)
+    .await
+    .map_err(err)?;
+    for c in mirrored {
+        let (Some(kind), Some(reference)) = (c.link_kind, c.link_id) else {
+            continue;
+        };
+        if is_ticket_kind(&kind) || rows.contains(&(c.id.clone(), kind.clone(), reference.clone()))
+        {
+            continue;
+        }
+        links.push(CardLink {
+            card_id: c.id,
+            kind,
+            reference,
+            role: Some(PRIMARY_ROLE.to_string()),
+            created_at: c.updated_at,
+        });
+    }
+    links.sort_by(|a, b| {
+        (&a.card_id, &a.kind, &a.reference).cmp(&(&b.card_id, &b.kind, &b.reference))
+    });
+    Ok(links)
 }
 
 pub fn board_links(conn: &Conn, board_id: &str) -> Result<Vec<CardLink>, String> {
@@ -266,18 +309,14 @@ fn ticket_identity(json: &str) -> Result<(String, String), String> {
 }
 
 async fn ticket_in(ex: &mut Ex<'_>, card_id: &str) -> Result<Option<String>, String> {
-    match query_opt(
-        ex,
-        "SELECT ref FROM board_card_links
-         WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')
-         ORDER BY created_at DESC, kind LIMIT 1",
-        args![card_id],
-    )
-    .await?
-    {
-        Some(row) => Ok(Some(row.get(0)?)),
-        None => Ok(None),
-    }
+    let link = LinkRow::fields();
+    LinkRow::filter(ticket_links(card_id))
+        .order_by((link.created_at().desc(), link.kind().asc()))
+        .select(link.reference())
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)
 }
 
 /// The card's ticket link as `TicketRef` JSON, if it has one.
@@ -289,18 +328,15 @@ pub fn ticket(conn: &Conn, card_id: &str) -> Result<Option<String>, String> {
 /// card faces.
 pub fn board_tickets(conn: &Conn, board_id: &str) -> Result<Vec<(String, String)>, String> {
     with_db!(conn, |ex| {
-        query(
-            ex,
-            "SELECT l.card_id, l.ref FROM board_card_links l
-             JOIN board_cards c ON c.id = l.card_id
-             WHERE c.board_id = ?1 AND l.role = 'ticket' AND l.kind IN ('jira', 'linear', 'plane')
-             ORDER BY l.card_id",
-            args![board_id],
-        )
-        .await?
-        .iter()
-        .map(|r| Ok((r.get(0)?, r.get(1)?)))
-        .collect()
+        let card = CardRow::fields();
+        let on_board = CardRow::filter(card.board_id().eq(board_id)).select(card.id());
+        let link = LinkRow::fields();
+        LinkRow::filter(link.card_id().in_query(on_board).and(is_ticket_link()))
+            .order_by(link.card_id().asc())
+            .select((link.card_id(), link.reference()))
+            .exec(ex)
+            .await
+            .map_err(err)
     })
 }
 
@@ -322,16 +358,12 @@ async fn set_ticket_in(
     wanted: Option<(String, String)>,
 ) -> Result<String, String> {
     let card = get_card_in(ex, card_id).await?;
-    let existing: Vec<(String, String)> = query(
-        ex,
-        "SELECT kind, ref FROM board_card_links
-         WHERE card_id = ?1 AND role = 'ticket' AND kind IN ('jira', 'linear', 'plane')",
-        args![card_id],
-    )
-    .await?
-    .iter()
-    .map(|r| Ok((r.get(0)?, r.get(1)?)))
-    .collect::<Result<_, String>>()?;
+    let link = LinkRow::fields();
+    let existing: Vec<(String, String)> = LinkRow::filter(ticket_links(card_id))
+        .select((link.kind(), link.reference()))
+        .exec(ex)
+        .await
+        .map_err(err)?;
     let same = |(kind, reference): &(String, String)| {
         wanted.as_ref().is_some_and(|(tracker, key)| {
             kind == tracker
@@ -340,26 +372,35 @@ async fn set_ticket_in(
     };
     let mut changed = false;
     for row in existing.iter().filter(|row| !same(row)) {
-        execute(
-            ex,
-            "DELETE FROM board_card_links
-             WHERE card_id = ?1 AND kind = ?2 AND ref = ?3 AND role = 'ticket'",
-            args![card_id, &row.0, &row.1],
+        LinkRow::filter(
+            link.card_id()
+                .eq(card_id)
+                .and(link.kind().eq(&row.0))
+                .and(link.reference().eq(&row.1))
+                .and(link.role().eq(Some(TICKET_ROLE.to_string()))),
         )
-        .await?;
+        .delete()
+        .exec(ex)
+        .await
+        .map_err(err)?;
         changed = true;
     }
     if let (Some(json), Some((tracker, key))) = (ticket_json, wanted.as_ref()) {
         match existing.iter().find(|row| same(row)) {
             Some((_, old)) if old == json => {}
             Some((kind, old)) => {
-                execute(
-                    ex,
-                    "UPDATE board_card_links SET ref = ?1
-                     WHERE card_id = ?2 AND kind = ?3 AND ref = ?4 AND role = 'ticket'",
-                    args![json, card_id, kind, old],
+                LinkRow::filter(
+                    link.card_id()
+                        .eq(card_id)
+                        .and(link.kind().eq(kind))
+                        .and(link.reference().eq(old))
+                        .and(link.role().eq(Some(TICKET_ROLE.to_string()))),
                 )
-                .await?;
+                .update()
+                .reference(json)
+                .exec(ex)
+                .await
+                .map_err(err)?;
             }
             None => {
                 LinkRow::create()
@@ -429,12 +470,13 @@ pub fn retitle_card_from_ticket(
             return Ok((card.board_id, false));
         }
         if card.title != title {
-            execute(
-                ex,
-                "UPDATE board_cards SET title = ?1, updated_at = ?2 WHERE id = ?3",
-                args![&title, now_millis(), card_id],
-            )
-            .await?;
+            CardRow::filter_by_id(card_id)
+                .update()
+                .title(&title)
+                .updated_at(now_millis())
+                .exec(ex)
+                .await
+                .map_err(err)?;
             log_activity(
                 ex,
                 NewActivity {

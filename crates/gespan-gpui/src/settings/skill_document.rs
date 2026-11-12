@@ -57,7 +57,9 @@ impl SkillDocument {
     fn row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let frame = div().px_4().w_full().min_w_0();
         if self.source {
-            let text = self.data.source[ix].clone();
+            let Some(text) = self.data.source.get(ix).cloned() else {
+                return frame.into_any_element();
+            };
             let mut offset = 0;
             let headings: Vec<_> = text
                 .split_inclusive('\n')
@@ -149,7 +151,9 @@ impl SkillDocument {
                 .into_any_element();
         }
         let at = ix - usize::from(self.data.metadata.is_some());
-        let row = &self.data.rows[at];
+        let Some(row) = self.data.rows.get(at) else {
+            return frame.into_any_element();
+        };
         let id: SharedString = format!("skill-document-row-{at}").into();
         let body = match &row.part {
             Part::Code { fence, lines } => div()

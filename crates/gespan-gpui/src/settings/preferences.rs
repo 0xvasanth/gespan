@@ -114,6 +114,14 @@ pub(crate) struct Preferences {
 pub(crate) const UI_SCALE_PERCENTS: [u32; 16] = [
     50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200,
 ];
+/// The scale at a slider step, the largest past the end.
+pub(crate) fn ui_scale_at(step: usize) -> u32 {
+    UI_SCALE_PERCENTS
+        .get(step)
+        .or(UI_SCALE_PERCENTS.last())
+        .copied()
+        .unwrap_or(100)
+}
 
 impl Default for Preferences {
     fn default() -> Self {

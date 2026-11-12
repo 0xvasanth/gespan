@@ -1,8 +1,9 @@
-use crate::db::{args, err, execute, query, query_value, with_db, with_tx, Conn};
-use crate::models::RelationRow;
-use crate::ops::{get_card_in, log_edit, touch};
+use crate::db::{args, err, query_value, with_db, with_tx, Conn};
+use crate::models::{CardRow, ColumnRow, RelationRow};
+use crate::ops::{count, get_card_in, live, log_edit, touch};
 use serde::Serialize;
 use std::collections::BTreeMap;
+use toasty::stmt::Expr;
 
 pub const RELATION_KINDS: [&str; 3] = ["blocks", "relates", "duplicates"];
 
@@ -20,6 +21,25 @@ fn check_kind(kind: &str) -> Result<(), String> {
     } else {
         Err(format!("Unknown relation: {kind}"))
     }
+}
+
+/// `card_id` → `related_card_id` as `kind`, or either way round for the
+/// two-way `relates`.
+fn same_relation(card_id: &str, related_card_id: &str, kind: &str) -> Expr<bool> {
+    let relation = RelationRow::fields();
+    let forward = relation
+        .card_id()
+        .eq(card_id)
+        .and(relation.related_card_id().eq(related_card_id));
+    let pair = if kind == "relates" {
+        forward.or(relation
+            .card_id()
+            .eq(related_card_id)
+            .and(relation.related_card_id().eq(card_id)))
+    } else {
+        forward
+    };
+    relation.kind().eq(kind).and(pair)
 }
 
 fn phrase(kind: &str, number: i64) -> String {
@@ -49,15 +69,12 @@ pub fn add_relation(
         if card.board_id != related.board_id {
             return Err("Cards are on different boards".into());
         }
-        let exists: bool = query_value(
+        let exists = count(
             ex,
-            "SELECT EXISTS(SELECT 1 FROM board_card_relations WHERE kind = ?3 AND (
-               (card_id = ?1 AND related_card_id = ?2)
-               OR (?3 = 'relates' AND card_id = ?2 AND related_card_id = ?1)))",
-            args![card_id, related_card_id, kind],
+            RelationRow::filter(same_relation(card_id, related_card_id, kind)).count(),
         )
         .await?;
-        if exists {
+        if exists > 0 {
             return Ok(card.board_id);
         }
         if kind != "relates" {
@@ -81,15 +98,23 @@ pub fn add_relation(
         }
         // Two cards have one relation at most: "blocked by" and "relates to" the
         // same card would say two different things about one pair.
-        let linked: bool = query_value(
+        let relation = RelationRow::fields();
+        let linked = count(
             ex,
-            "SELECT EXISTS(SELECT 1 FROM board_card_relations WHERE
-               (card_id = ?1 AND related_card_id = ?2)
-               OR (card_id = ?2 AND related_card_id = ?1))",
-            args![card_id, related_card_id],
+            RelationRow::filter(
+                relation
+                    .card_id()
+                    .eq(card_id)
+                    .and(relation.related_card_id().eq(related_card_id))
+                    .or(relation
+                        .card_id()
+                        .eq(related_card_id)
+                        .and(relation.related_card_id().eq(card_id))),
+            )
+            .count(),
         )
         .await?;
-        if linked {
+        if linked > 0 {
             return Err("These cards are already linked. Remove that link first".into());
         }
         RelationRow::create()
@@ -122,17 +147,19 @@ pub fn remove_relation(
     with_tx!(conn, |ex| {
         let card = get_card_in(ex, card_id).await?;
         let related = get_card_in(ex, related_card_id).await?;
-        let removed = execute(
+        let found = count(
             ex,
-            "DELETE FROM board_card_relations WHERE kind = ?3 AND (
-               (card_id = ?1 AND related_card_id = ?2)
-               OR (?3 = 'relates' AND card_id = ?2 AND related_card_id = ?1))",
-            args![card_id, related_card_id, kind],
+            RelationRow::filter(same_relation(card_id, related_card_id, kind)).count(),
         )
         .await?;
-        if removed == 0 {
+        if found == 0 {
             return Ok(card.board_id);
         }
+        RelationRow::filter(same_relation(card_id, related_card_id, kind))
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)?;
         touch(ex, card_id).await?;
         log_edit(
             ex,
@@ -148,23 +175,28 @@ pub fn remove_relation(
 /// Every relation the card is on either side of.
 pub fn card_relations(conn: &Conn, card_id: &str) -> Result<Vec<Relation>, String> {
     with_db!(conn, |ex| {
-        query(
-            ex,
-            "SELECT card_id, related_card_id, kind FROM board_card_relations
-             WHERE card_id = ?1 OR related_card_id = ?1
-             ORDER BY kind, card_id, related_card_id",
-            args![card_id],
+        let relation = RelationRow::fields();
+        Ok(RelationRow::filter(
+            relation
+                .card_id()
+                .eq(card_id)
+                .or(relation.related_card_id().eq(card_id)),
         )
-        .await?
-        .iter()
-        .map(|r| {
-            Ok(Relation {
-                card_id: r.get(0)?,
-                related_card_id: r.get(1)?,
-                kind: r.get(2)?,
-            })
+        .order_by((
+            relation.kind().asc(),
+            relation.card_id().asc(),
+            relation.related_card_id().asc(),
+        ))
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .map(|row| Relation {
+            card_id: row.card_id,
+            related_card_id: row.related_card_id,
+            kind: row.kind,
         })
-        .collect()
+        .collect())
     })
 }
 
@@ -173,28 +205,52 @@ pub fn card_relations(conn: &Conn, card_id: &str) -> Result<Vec<Relation>, Strin
 /// to those blockers' numbers, sorted.
 pub fn blocked_cards(conn: &Conn, board_id: &str) -> Result<BTreeMap<String, Vec<i64>>, String> {
     let rows = with_db!(conn, |ex| {
-        query(
-            ex,
-            "SELECT r.related_card_id, blocker.number
-             FROM board_card_relations r
-             JOIN board_cards blocker ON blocker.id = r.card_id
-             JOIN board_cards blocked ON blocked.id = r.related_card_id
-             JOIN board_columns col ON col.id = blocker.column_id
-             WHERE r.kind = 'blocks'
-               AND blocked.board_id = ?1
-               AND blocker.board_id = ?1
-               AND COALESCE(col.role, '') NOT IN ('done', 'cancelled')
-               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
-                 WHERE m.card_id = blocker.id AND m.archived_at IS NOT NULL)
-               AND NOT EXISTS (SELECT 1 FROM board_card_meta m
-                 WHERE m.card_id = blocked.id AND m.archived_at IS NOT NULL)
-             ORDER BY r.related_card_id, blocker.number",
-            args![board_id],
+        let card = CardRow::fields();
+        let column = ColumnRow::fields();
+        // Columns whose cards still block: any role but done and cancelled.
+        let open_columns = ColumnRow::filter(
+            column.board_id().eq(board_id).and(
+                column.role().is_none().or(column
+                    .role()
+                    .in_list([Some("done".to_string()), Some("cancelled".to_string())])
+                    .not()),
+            ),
         )
-        .await?
-        .iter()
-        .map(|r| Ok((r.get::<String>(0)?, r.get::<i64>(1)?)))
-        .collect::<Result<Vec<_>, String>>()
+        .select(column.id());
+        let blockers: BTreeMap<String, i64> = CardRow::filter(
+            card.board_id()
+                .eq(board_id)
+                .and(card.column_id().in_query(open_columns))
+                .and(live()),
+        )
+        .select((card.id(), card.number()))
+        .exec(ex)
+        .await
+        .map_err(err)?
+        .into_iter()
+        .collect();
+        let blockable = CardRow::filter(card.board_id().eq(board_id).and(live())).select(card.id());
+        let relation = RelationRow::fields();
+        let relations = RelationRow::filter(
+            relation
+                .kind()
+                .eq("blocks")
+                .and(
+                    relation
+                        .card_id()
+                        .in_list(blockers.keys().cloned().collect::<Vec<_>>()),
+                )
+                .and(relation.related_card_id().in_query(blockable)),
+        )
+        .exec(ex)
+        .await
+        .map_err(err)?;
+        let mut rows: Vec<(String, i64)> = relations
+            .into_iter()
+            .filter_map(|r| Some((r.related_card_id, *blockers.get(&r.card_id)?)))
+            .collect();
+        rows.sort();
+        Ok::<_, String>(rows)
     })?;
     let mut blocked: BTreeMap<String, Vec<i64>> = BTreeMap::new();
     for (card_id, number) in rows {

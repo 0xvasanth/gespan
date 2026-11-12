@@ -1,10 +1,8 @@
 //! Custom fields a board defines, and each card's values for them. Values are
 //! stored as JSON so every kind shares one column.
-use crate::db::{
-    args, err, execute, query, query_opt, query_value, with_db, with_tx, Conn, Ex, Row,
-};
-use crate::models::{FieldRow, FieldValueRow};
-use crate::ops::{clean_text, get_card_in, log_edit, new_id, touch};
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex, Row};
+use crate::models::{BoardRow, CardRow, FieldRow, FieldValueRow, SettingsRow};
+use crate::ops::{clean_text, count, get_card_in, live, log_edit, new_id, touch};
 use crate::views::{map_strings, rewrite_views, row_is, spec_rows};
 use serde::Serialize;
 use serde_json::Value;
@@ -96,21 +94,19 @@ pub fn create_field(
         None => None,
     };
     with_tx!(conn, |ex| {
-        let board_exists: bool = query_value(
-            ex,
-            "SELECT EXISTS(SELECT 1 FROM boards WHERE id = ?1)",
-            args![board_id],
-        )
-        .await?;
-        if !board_exists {
+        let board_exists = count(ex, BoardRow::filter_by_id(board_id).count()).await?;
+        if board_exists == 0 {
             return Err("Board not found".into());
         }
-        let position: i64 = query_value(
-            ex,
-            "SELECT COALESCE(MAX(position) + 1, 0) FROM board_fields WHERE board_id = ?1",
-            args![board_id],
-        )
-        .await?;
+        let field = FieldRow::fields();
+        let position = FieldRow::filter(field.board_id().eq(board_id))
+            .order_by(field.position().desc())
+            .select(field.position())
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .map_or(0, |last| last + 1);
         FieldRow::create()
             .id(new_id())
             .board_id(board_id)
@@ -126,6 +122,8 @@ pub fn create_field(
 }
 
 pub(crate) async fn list_fields_in(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<Field>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         "SELECT id, board_id, name, kind, options_json, position FROM board_fields
@@ -155,17 +153,21 @@ pub fn set_field_value(
         .transpose()?;
     with_tx!(conn, |ex| {
         let card = get_card_in(ex, card_id).await?;
-        let field = query_opt(
-            ex,
-            "SELECT name, kind, options_json FROM board_fields WHERE id = ?1 AND board_id = ?2",
-            args![field_id, &card.board_id],
+        let fields = FieldRow::fields();
+        let field = FieldRow::filter(
+            fields
+                .id()
+                .eq(field_id)
+                .and(fields.board_id().eq(&card.board_id)),
         )
-        .await?;
+        .first()
+        .exec(ex)
+        .await
+        .map_err(err)?;
         let Some(field) = field else {
             return Err("Field not on this board".into());
         };
-        let (name, kind, options): (String, String, Option<String>) =
-            (field.get(0)?, field.get(1)?, field.get(2)?);
+        let (name, kind, options) = (field.name, field.kind, field.options_json);
         let options = parse_options(options.as_deref());
         let value = value
             .map(|value| validate_value(&kind, &options, &value))
@@ -183,14 +185,11 @@ pub fn set_field_value(
         }
         match &value {
             Some(value) => {
-                execute(
-                    ex,
-                    "INSERT INTO board_card_field_values (card_id, field_id, value_json)
-                     VALUES (?1, ?2, ?3)
-                     ON CONFLICT (card_id, field_id) DO UPDATE SET value_json = excluded.value_json",
-                    args![card_id, field_id, value.to_string()],
-                )
-                .await?;
+                FieldValueRow::upsert_by_card_id_and_field_id(card_id, field_id)
+                    .value_json(value.to_string())
+                    .exec(ex)
+                    .await
+                    .map_err(err)?;
             }
             None => {
                 FieldValueRow::filter_by_card_id_and_field_id(card_id, field_id)
@@ -218,6 +217,8 @@ pub fn set_field_value(
 
 pub fn field_values(conn: &Conn, card_id: &str) -> Result<Vec<FieldValue>, String> {
     with_db!(conn, |ex| {
+        // Raw SQL: fields tied on position keep insertion order (`rowid`),
+        // which Toasty 0.11 cannot order by.
         query(
             ex,
             "SELECT v.card_id, v.field_id, v.value_json FROM board_card_field_values v
@@ -382,6 +383,8 @@ async fn get_field(ex: &mut Ex<'_>, field_id: &str) -> Result<Field, String> {
 }
 
 async fn field_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, String> {
+    // Raw SQL: ties on position keep insertion order (`rowid`), which Toasty
+    // 0.11 cannot order by.
     query(
         ex,
         "SELECT id FROM board_fields WHERE board_id = ?1 ORDER BY position, rowid",
@@ -395,12 +398,13 @@ async fn field_ids(ex: &mut Ex<'_>, board_id: &str) -> Result<Vec<String>, Strin
 
 async fn write_field_positions(ex: &mut Ex<'_>, ids: &[String]) -> Result<(), String> {
     for (index, id) in ids.iter().enumerate() {
-        execute(
-            ex,
-            "UPDATE board_fields SET position = ?1 WHERE id = ?2 AND position <> ?1",
-            args![index as i64, id],
-        )
-        .await?;
+        let field = FieldRow::fields();
+        FieldRow::filter(field.id().eq(id).and(field.position().ne(index as i64)))
+            .update()
+            .position(index as i64)
+            .exec(ex)
+            .await
+            .map_err(err)?;
     }
     Ok(())
 }
@@ -464,14 +468,22 @@ pub fn update_field(
             Some(raw) => Some(check_options(raw)?),
             None => None,
         };
-        execute(
-            ex,
-            "UPDATE board_fields SET name = COALESCE(?1, name),
-           options_json = COALESCE(?2, options_json)
-         WHERE id = ?3",
-            args![name, options.as_deref(), field_id],
-        )
-        .await?;
+        if let Some(name) = name {
+            FieldRow::filter_by_id(field_id)
+                .update()
+                .name(name)
+                .exec(ex)
+                .await
+                .map_err(err)?;
+        }
+        if let Some(options) = &options {
+            FieldRow::filter_by_id(field_id)
+                .update()
+                .options_json(Some(options.clone()))
+                .exec(ex)
+                .await
+                .map_err(err)?;
+        }
         if let Some(options) = &options {
             let kept = parse_options(Some(options));
             let keeps = |value: &Value| value.as_str().is_some_and(|o| kept.iter().any(|k| k == o));
@@ -545,15 +557,14 @@ pub fn rename_field_option(
             return Err(format!("An option named {to} already exists"));
         }
         options[at] = to.clone();
-        execute(
-            ex,
-            "UPDATE board_fields SET options_json = ?1 WHERE id = ?2",
-            args![
+        FieldRow::filter_by_id(field_id)
+            .update()
+            .options_json(Some(
                 serde_json::to_string(&options).map_err(|error| error.to_string())?,
-                field_id
-            ],
-        )
-        .await?;
+            ))
+            .exec(ex)
+            .await
+            .map_err(err)?;
         let (old, new) = (Value::String(from.to_string()), Value::String(to));
         let rename = |value: &Value| {
             if *value == old {
@@ -639,26 +650,23 @@ pub fn delete_field(conn: &Conn, field_id: &str) -> Result<String, String> {
         })
         .await?;
         // The board's own display options lose it the same way.
-        let display_json: Option<String> = match query_opt(
-            ex,
-            "SELECT display_json FROM board_settings WHERE board_id = ?1",
-            args![&field.board_id],
-        )
-        .await?
-        {
-            Some(row) => row.get(0)?,
-            None => None,
-        };
+        let display_json: Option<String> = SettingsRow::filter_by_board_id(&field.board_id)
+            .select(SettingsRow::fields().display_json())
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .flatten();
         if let Some(Ok(mut display)) = display_json.as_deref().map(serde_json::from_str::<Value>) {
             let before = display.clone();
             drop_field_from_display(&mut display, field_id);
             if display != before {
-                execute(
-                    ex,
-                    "UPDATE board_settings SET display_json = ?1 WHERE board_id = ?2",
-                    args![display.to_string(), &field.board_id],
-                )
-                .await?;
+                SettingsRow::filter_by_board_id(&field.board_id)
+                    .update()
+                    .display_json(Some(display.to_string()))
+                    .exec(ex)
+                    .await
+                    .map_err(err)?;
             }
         }
         Ok(field.board_id)
@@ -702,27 +710,29 @@ pub fn field_distinct_values(
     limit: usize,
 ) -> Result<Vec<String>, String> {
     let raws = with_db!(conn, |ex| {
-        let on_board: bool = query_value(
+        let field = FieldRow::fields();
+        let on_board = count(
             ex,
-            "SELECT EXISTS(SELECT 1 FROM board_fields WHERE id = ?1 AND board_id = ?2)",
-            args![field_id, board_id],
+            FieldRow::filter(field.id().eq(field_id).and(field.board_id().eq(board_id))).count(),
         )
         .await?;
-        if !on_board {
+        if on_board == 0 {
             return Err("Field not on this board".into());
         }
-        query(
-            ex,
-            "SELECT v.value_json FROM board_card_field_values v
-             JOIN board_cards c ON c.id = v.card_id
-             LEFT JOIN board_card_meta m ON m.card_id = c.id
-             WHERE v.field_id = ?1 AND c.board_id = ?2 AND m.archived_at IS NULL",
-            args![field_id, board_id],
+        let card = CardRow::fields();
+        let live_cards =
+            CardRow::filter(card.board_id().eq(board_id).and(live())).select(card.id());
+        let value = FieldValueRow::fields();
+        FieldValueRow::filter(
+            value
+                .field_id()
+                .eq(field_id)
+                .and(value.card_id().in_query(live_cards)),
         )
-        .await?
-        .iter()
-        .map(|r| r.get::<String>(0))
-        .collect::<Result<Vec<_>, String>>()
+        .select(value.value_json())
+        .exec(ex)
+        .await
+        .map_err(err)
     })?;
     let mut counts: HashMap<String, (Value, usize)> = HashMap::new();
     let mut add = |value: Value| {

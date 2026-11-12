@@ -6,7 +6,7 @@
 //! label and field ids inside view specs, layouts, display options and
 //! auto-move rules are remapped to the new ids; a value with no match is
 //! dropped (the saved-view rule), and an auto-move target with no match stays.
-use crate::db::{args, err, execute, query, query_opt, with_db, with_tx, Conn, Ex};
+use crate::db::{args, err, query, with_db, with_tx, Conn, Ex};
 use crate::fields::list_fields_in;
 use crate::labels::list_labels_in;
 use crate::models::{BoardRow, ColumnRow, FieldRow, LabelRow, SettingsRow, TemplateRow, ViewRow};
@@ -201,6 +201,9 @@ pub fn list_templates(conn: &Conn) -> Result<Vec<TemplateInfo>, String> {
             built_in: true,
         })
         .collect();
+    // Raw, not typed: a typed read of a corrupt row (a blob for a name)
+    // panics Toasty 0.11's SQLite driver, and the switcher must still offer
+    // Blank when the saved list can't be read (docs/toasty.md).
     let saved = with_db!(conn, |ex| {
         query(
             ex,
@@ -497,14 +500,13 @@ pub fn create_board_from_template(
         let spec = match built_in_spec(template_id) {
             Some(spec) => spec,
             None => {
-                let raw: String = query_opt(
-                    ex,
-                    "SELECT spec_json FROM board_templates WHERE id = ?1",
-                    args![template_id],
-                )
-                .await?
-                .ok_or_else(|| "Template not found".to_string())?
-                .get(0)?;
+                let raw: String = TemplateRow::filter_by_id(template_id)
+                    .select(TemplateRow::fields().spec_json())
+                    .first()
+                    .exec(ex)
+                    .await
+                    .map_err(err)?
+                    .ok_or_else(|| "Template not found".to_string())?;
                 serde_json::from_str(&raw).map_err(|_| "Template is not valid".to_string())?
             }
         };
@@ -595,13 +597,22 @@ pub fn delete_template(conn: &Conn, id: &str) -> Result<(), String> {
     if BUILT_IN_TEMPLATES.contains(&id) {
         return Err("Built-in templates can't be deleted".into());
     }
-    let deleted = with_db!(conn, |ex| {
-        execute(ex, "DELETE FROM board_templates WHERE id = ?1", args![id]).await
-    })?;
-    if deleted == 0 {
-        return Err("Template not found".into());
-    }
-    Ok(())
+    with_tx!(conn, |ex| {
+        let found = TemplateRow::filter_by_id(id)
+            .first()
+            .exec(ex)
+            .await
+            .map_err(err)?
+            .is_some();
+        if !found {
+            return Err("Template not found".into());
+        }
+        TemplateRow::filter_by_id(id)
+            .delete()
+            .exec(ex)
+            .await
+            .map_err(err)
+    })
 }
 
 /// The built-in "blank" board, as `create_board` makes it.
