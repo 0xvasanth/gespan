@@ -93,19 +93,30 @@ fn launcher_script(words: &[String]) -> Option<&str> {
     let [shell, flag, script] = words else {
         return None;
     };
-    let name = if shell.starts_with('/') {
-        shell.rsplit('/').next()?
-    } else {
-        shell
-    };
-    (matches!(name, "bash" | "zsh" | "sh") && matches!(flag.as_str(), "-c" | "-lc"))
-        .then_some(script.as_str())
+    (matches!(
+        shell.as_str(),
+        "bash"
+            | "zsh"
+            | "sh"
+            | "/bin/bash"
+            | "/bin/zsh"
+            | "/bin/sh"
+            | "/usr/bin/bash"
+            | "/usr/bin/zsh"
+            | "/usr/bin/sh"
+    ) && matches!(flag.as_str(), "-c" | "-lc"))
+    .then_some(script.as_str())
 }
 
 fn verdict_at(policy: &ReviewPolicy, command: &str, unwrap: bool) -> Verdict {
     let Some(words) = shlex::split(command) else {
         return Verdict::Deny;
     };
+    // A launcher line is run by a real shell on some paths, so it must be as
+    // plain as a `gh` line: nothing outside quotes may expand or chain.
+    if unwrap && launcher_script(&words).is_some() && !is_plain_command(command) {
+        return Verdict::Deny;
+    }
     if let Some(script) = launcher_script(&words) {
         return if unwrap {
             verdict_at(policy, script, false)
@@ -497,6 +508,45 @@ mod tests {
             "zsh -lc 'gh pr merge 7 -R acme/app'",
         ] {
             assert_eq!(v(ReviewResults::Post, c), Verdict::Deny, "{c}");
+        }
+    }
+
+    #[test]
+    fn the_outer_launcher_string_is_syntax_checked_and_the_shell_is_a_known_path() {
+        let read = "'gh pr diff 7 -R acme/app'";
+        for r in [
+            ReviewResults::Gespan,
+            ReviewResults::Draft,
+            ReviewResults::Post,
+        ] {
+            for c in [
+                format!("/bin/$(sh<evil.sh)/zsh -lc {read}"),
+                format!("/x;sh<evil.sh;/bin/zsh -lc {read}"),
+                format!("/`touch${{IFS}}PWNED3`/bin/zsh -lc {read}"),
+                format!("/Users/x/checkout/tools/zsh -lc {read}"),
+                format!("/bin/../tmp/zsh -lc {read}"),
+                format!("/b?n/zsh -lc {read}"),
+                format!("/opt/homebrew/bin/zsh -lc {read}"),
+            ] {
+                assert_eq!(verdict(&policy(r), &c), Verdict::Deny, "{c}");
+            }
+            for shell in [
+                "bash",
+                "zsh",
+                "sh",
+                "/bin/bash",
+                "/bin/zsh",
+                "/bin/sh",
+                "/usr/bin/bash",
+                "/usr/bin/zsh",
+                "/usr/bin/sh",
+            ] {
+                assert_eq!(
+                    verdict(&policy(r), &format!("{shell} -c {read}")),
+                    Verdict::Allow,
+                    "{shell}"
+                );
+            }
         }
     }
 
