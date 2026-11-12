@@ -1,0 +1,23 @@
+CLAUDE.md
+  s_64286283c3c9f7::t_ba13e4aa0323b7 32-48
+crates/gespan-core/tests/toasty_only.rs
+  s_64286283c3c9f7::t_a4cb1cac336339 11-16,102,134-138,148-314,340-357,361,364-368,370-388,390-391,402-403,411,429,445-500,506
+docs/toasty.md
+  s_64286283c3c9f7::t_2518585d0a863e 18-19,45-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d1cf10779ca69af19ade3554a88dcd40e7cff1a7",
+  "prompts": {},
+  "sessions": {
+    "s_64286283c3c9f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "abd7f3ae-46a7-4db0-ab6b-525bea14d1e1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
