@@ -220,7 +220,9 @@ pub(super) fn configure(
             command.env("GROK_NO_AUTO_UPDATE", "1");
         }
         Kind::Devin => {
-            if access == AccessMode::Supervised {
+            if settings.review.is_some() {
+                command.args(super::devin::review_args()?);
+            } else if access == AccessMode::Supervised {
                 command.args(super::devin::supervised_args()?);
             }
             command.arg("acp");
@@ -2967,6 +2969,21 @@ mod tests {
         let mut out = Vec::new();
         let events = p.frame(json!({"id":"permission","method":"session/request_permission","params":{"toolCall":tool,"options":[{"kind":"allow_once","optionId":"yes"},{"kind":"allow_always","optionId":"always"},{"kind":"reject_once","optionId":"no"}]}}), &mut out).unwrap();
         (events, out)
+    }
+    #[test]
+    fn a_devin_review_launches_with_a_config_that_has_no_allow_rules() {
+        use crate::review_policy::ReviewResults;
+        let mut p = acp_review_protocol(ReviewResults::Draft, AccessMode::ReadOnly);
+        p.request.kind = Kind::Devin;
+        let args = launch_args(&p.request, false);
+        assert_eq!(args.len(), 3, "{args:?}");
+        assert_eq!((args[0].as_str(), args[2].as_str()), ("--config", "acp"));
+        let config: Value =
+            serde_json::from_str(&std::fs::read_to_string(&args[1]).unwrap()).unwrap();
+        assert_eq!(config["permissions"]["allow"], json!([]));
+        // Without a review, read-only Devin keeps the user's own config.
+        p.request.settings.review = None;
+        assert_eq!(launch_args(&p.request, false), vec!["acp"]);
     }
     #[test]
     fn acp_review_policy_decides_execute() {
