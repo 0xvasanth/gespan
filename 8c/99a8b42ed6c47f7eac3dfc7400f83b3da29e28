@@ -1,0 +1,21 @@
+crates/gespan-core/src/automations.rs
+  s_18428559a9dbe9::t_3a52fe8bf29a20 1266-1291
+crates/gespan-gpui/src/shell/my_tasks.rs
+  s_18428559a9dbe9::t_a8706b7b313973 290-291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c99a8b42ed6c47f7eac3dfc7400f83b3da29e28",
+  "prompts": {},
+  "sessions": {
+    "s_18428559a9dbe9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d41edd73-59e7-406c-967b-a6a9bab02fc6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
