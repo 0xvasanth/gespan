@@ -10,13 +10,24 @@ use crate::{schema, Error};
 
 /// `entries` columns in the order `row_to_entry` reads them, with the open
 /// flag count last.
-const COLS: &str = "e.id, e.kind, e.scope, e.status, e.title, e.text, e.why, e.user_answer, \
+pub(crate) const COLS: &str =
+    "e.id, e.kind, e.scope, e.status, e.title, e.text, e.why, e.user_answer, \
     e.session, e.question_ref, e.user_turn, e.import_src, e.pinned, e.supersedes, \
     e.replaced_by, e.created_ms, e.decided_ms, \
     (SELECT COUNT(*) FROM flags f WHERE f.entry = e.id AND f.dismissed = 0)";
 
 const HAS_USER_SOURCE: &str =
     "((e.question_ref IS NOT NULL AND e.question_ref <> '') OR (e.user_turn IS NOT NULL AND e.user_turn <> ''))";
+
+/// What an agent may see in `scope` (bound as `?1`): active entries, plus
+/// pending ones that carry a user source, for the scope and for global.
+/// `visible` and `search` both filter with this, so they cannot drift apart.
+pub(crate) fn visible_filter() -> String {
+    format!(
+        "(e.status = 'active' OR (e.status = 'pending' AND {HAS_USER_SOURCE})) \
+         AND e.scope IN (?1, 'global')"
+    )
+}
 
 pub struct Store {
     conn: Mutex<Connection>,
@@ -35,7 +46,7 @@ impl Store {
         })
     }
 
-    fn conn(&self) -> MutexGuard<'_, Connection> {
+    pub(crate) fn conn(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -231,13 +242,7 @@ impl Store {
     /// Active entries, plus pending ones that carry a user source, for the
     /// scope and for global.
     pub fn visible(&self, scope: &Scope) -> Result<Vec<Entry>, Error> {
-        self.query(
-            &format!(
-                "(e.status = 'active' OR (e.status = 'pending' AND {HAS_USER_SOURCE})) \
-                 AND e.scope IN (?1, 'global')"
-            ),
-            Some(scope),
-        )
+        self.query(&visible_filter(), Some(scope))
     }
 
     /// Active entries for the scope and for global, newest decided first.
@@ -316,7 +321,7 @@ fn load(conn: &Connection, id: i64) -> Result<Option<Entry>, Error> {
 
 /// The outer error is SQLite's; the inner is a stored value this build does
 /// not recognise.
-fn row_to_entry(r: &Row<'_>) -> rusqlite::Result<Result<Entry, Error>> {
+pub(crate) fn row_to_entry(r: &Row<'_>) -> rusqlite::Result<Result<Entry, Error>> {
     let kind: String = r.get(1)?;
     let scope: String = r.get(2)?;
     let status: String = r.get(3)?;

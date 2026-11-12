@@ -6,11 +6,14 @@
 
 mod entry;
 mod error;
+mod render;
 mod schema;
+mod search;
 mod store;
 
 pub use entry::{
     Config, Edit, Entry, Flag, Kind, NewEntry, Scope, Source, Status, MAX_FIELD_CHARS,
 };
 pub use error::Error;
+pub use render::{render_block, Block, STANDING_INSTRUCTION, START_BUDGET, TURN_BUDGET};
 pub use store::Store;
