@@ -7,9 +7,9 @@
 //!
 //! | Harness | Preferences (global) | Project |
 //! |---|---|---|
-//! | Claude Code | `<profile home>/CLAUDE.md`, Section, for every profile | `.claude/rules/gespan-decisions.md`, OwnedFile, inline |
+//! | Claude Code | `<profile home>/CLAUDE.md`, Section, for every profile | `.claude/rules/gespan-decisions.md`, OwnedFile, inline, decisions only |
 //! | Codex | `<profile home>/AGENTS.md`, Section, for every profile | none (injected block) |
-//! | OpenCode | `~/.config/opencode/AGENTS.md`, Section, only when it exists | none (injected block) |
+//! | OpenCode | `$XDG_CONFIG_HOME/opencode/AGENTS.md` (default `~/.config`), Section, only when it exists | none (injected block) |
 //! | Cursor | none (User Rules live in its settings, not a file) | `.cursor/rules/gespan-decisions.mdc`, OwnedFile, `alwaysApply: true`, inline |
 //! | Kiro | `~/.kiro/steering/gespan-preferences.md`, OwnedFile, when `~/.kiro` exists | `.kiro/steering/gespan-decisions.md`, OwnedFile, `inclusion: always`, inline |
 //!
@@ -49,20 +49,28 @@
 //!   too.
 //!
 //! Every body comes from `render_block` over active entries only (never
-//! pending), so it never holds a line-leading code fence. Project files
-//! carry preferences as well as decisions: Cursor has no global file and
-//! Kiro's CLI reads no global steering.
+//! pending), so it never holds a line-leading code fence. Cursor's and
+//! Kiro's project files carry preferences as well as decisions (Cursor has
+//! no global file, Kiro's CLI reads no global steering); Claude's carries
+//! decisions only, since its global `CLAUDE.md` has the preferences.
+//!
+//! Default homes come from a lookup (`default_homes` in the app, temp dirs in
+//! tests), so `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `XDG_CONFIG_HOME` are
+//! honoured. Project files are refused when they are symlinks, resolve into
+//! the git dir, or are tracked by git; files over 256 KB or that are not
+//! regular files are never read or written.
 use super::files::{
     ensure_excluded, remove_excluded, replace_section, user_edited_section, write_atomic, BEGIN,
 };
 use super::scope::{git_common_dir, scope_for, shared_file};
+use super::service;
 use crate::accounts::{Book, Profile};
 use crate::provider::Kind;
 use gespan_memory::{render_block, Entry, Kind as EntryKind, Scope, Store, START_BUDGET};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -93,6 +101,29 @@ pub struct Report {
     pub errors: Vec<(PathBuf, String)>,
 }
 
+/// Where a harness keeps its default config: the default account's home for
+/// Claude Code and Codex, OpenCode's config folder, Kiro's `~/.kiro`.
+/// `None` when it has none.
+pub type Homes<'a> = &'a dyn Fn(Kind) -> Option<PathBuf>;
+
+/// The real default homes, honouring `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and
+/// `XDG_CONFIG_HOME` the way each harness does.
+pub fn default_homes(kind: Kind) -> Option<PathBuf> {
+    match kind {
+        Kind::Claude | Kind::Codex => Profile::default().home(kind).ok(),
+        Kind::OpenCode => std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| crate::accounts::home().map(|h| h.join(".config")))
+            .map(|config| config.join("opencode")),
+        Kind::Kiro => crate::accounts::home().map(|h| h.join(".kiro")),
+        _ => None,
+    }
+}
+
+/// Files larger than this are never read, so never rewritten.
+pub const MAX_FILE_BYTES: u64 = 256 * 1024;
+
 // Runs between reading a file and re-reading it just before the write, so
 // tests can edit the file in that window.
 #[cfg(test)]
@@ -107,6 +138,13 @@ thread_local! {
 /// on the record of what was written.
 static WRITING: Mutex<()> = Mutex::new(());
 
+/// Holds the writing lock, so a test can schedule a run and flip the switch
+/// before the run gets the lock.
+#[cfg(test)]
+pub(crate) fn hold_writing() -> std::sync::MutexGuard<'static, ()> {
+    WRITING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 const CLAUDE_RULE: [&str; 3] = [".claude", "rules", "gespan-decisions.md"];
 const CURSOR_RULE: [&str; 3] = [".cursor", "rules", "gespan-decisions.mdc"];
 const KIRO_STEERING: [&str; 3] = [".kiro", "steering", "gespan-decisions.md"];
@@ -119,22 +157,15 @@ fn join(base: &Path, parts: &[&str]) -> PathBuf {
         .fold(base.to_path_buf(), |p, part| p.join(part))
 }
 
-/// The default account's config home, under `home`, for a provider with
-/// per-account homes.
-fn default_home(kind: Kind, home: &Path) -> Option<PathBuf> {
-    let profile = kind.spec().accounts?.profile?;
-    Some(home.join(profile.default_dir))
-}
-
 /// The global files preferences go to, for every installed harness and every
 /// account profile Gespan knows. A profile or harness whose home folder does
 /// not exist is skipped: Gespan never creates a harness's home.
-pub fn preference_targets(book: &Book, data_dir: &Path, home: &Path) -> Vec<Target> {
+pub fn preference_targets(book: &Book, data_dir: &Path, homes: Homes) -> Vec<Target> {
     let mut targets = Vec::new();
     for (kind, file) in [(Kind::Claude, "CLAUDE.md"), (Kind::Codex, "AGENTS.md")] {
         for account in book.list(kind) {
             let dir = if account.is_default() {
-                default_home(kind, home)
+                homes(kind)
             } else {
                 Profile::new(&account.id, data_dir).home(kind).ok()
             };
@@ -148,8 +179,9 @@ pub fn preference_targets(book: &Book, data_dir: &Path, home: &Path) -> Vec<Targ
             }
         }
     }
-    let opencode = home.join(".config").join("opencode");
-    if opencode.join("AGENTS.md").is_file() {
+    // OpenCode reads ~/.claude/CLAUDE.md only while its own file is missing,
+    // so Gespan never creates it.
+    if let Some(opencode) = homes(Kind::OpenCode).filter(|d| d.join("AGENTS.md").is_file()) {
         targets.push(Target {
             harness: Kind::OpenCode,
             path: opencode.join("AGENTS.md"),
@@ -157,8 +189,7 @@ pub fn preference_targets(book: &Book, data_dir: &Path, home: &Path) -> Vec<Targ
             root: opencode,
         });
     }
-    let kiro = home.join(".kiro");
-    if kiro.is_dir() {
+    if let Some(kiro) = homes(Kind::Kiro).filter(|d| d.is_dir()) {
         targets.push(Target {
             harness: Kind::Kiro,
             path: kiro.join("steering").join("gespan-preferences.md"),
@@ -197,6 +228,18 @@ pub fn project_targets(workspace: &Path) -> Vec<Target> {
     .collect()
 }
 
+/// Whether `kind` will find Gespan's project file in `workspace`: it exists
+/// and is Gespan's. When it is not, the session needs the injected block.
+pub fn project_file_ready(kind: Kind, workspace: &Path) -> bool {
+    project_targets(workspace)
+        .into_iter()
+        .find(|t| t.harness == kind)
+        .is_some_and(|t| {
+            check_project_target(&t.path, &t.root).is_ok()
+                && matches!(read_capped(&t.path), Ok(Some(text)) if is_ours(&text))
+        })
+}
+
 fn header(harness: Option<Kind>) -> &'static str {
     match harness {
         Some(Kind::Cursor) => CURSOR_HEADER,
@@ -219,23 +262,32 @@ struct Record {
     last: String,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Written {
+    #[serde(default)]
+    files: BTreeMap<PathBuf, Record>,
+    /// Folders Gespan created for its files; only these are ever removed.
+    #[serde(default)]
+    dirs: BTreeSet<PathBuf>,
+}
+
 struct Registry {
     path: PathBuf,
-    records: BTreeMap<PathBuf, Record>,
+    written: Written,
 }
 
 impl Registry {
     fn load(data_dir: &Path) -> Self {
         let path = data_dir.join("decisions").join("written.json");
-        let records = fs::read_to_string(&path)
+        let written = fs::read_to_string(&path)
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
-        Self { path, records }
+        Self { path, written }
     }
 
     fn save(&self, data_dir: &Path) -> io::Result<()> {
-        let text = serde_json::to_string_pretty(&self.records).map_err(io::Error::other)?;
+        let text = serde_json::to_string_pretty(&self.written).map_err(io::Error::other)?;
         if fs::read_to_string(&self.path).is_ok_and(|now| now == text) {
             return Ok(());
         }
@@ -243,25 +295,92 @@ impl Registry {
     }
 }
 
-/// A file to bring in line with `body` (an empty body withdraws it).
+/// A file to bring in line with a body (an empty body withdraws it).
 struct Job {
     path: PathBuf,
     mode: Mode,
     root: PathBuf,
     header: &'static str,
+    /// Set for files inside a work tree: excluded from git, and checked
+    /// against symlinks, the git dir and tracked files.
     workspace: Option<PathBuf>,
+    /// Whether the body includes preferences.
+    prefs: bool,
 }
 
-fn read_existing(path: &Path) -> io::Result<Option<String>> {
-    match fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e),
+/// Reads a regular file of at most [`MAX_FILE_BYTES`]; `None` when missing.
+/// Anything else is an error, so the file is left alone.
+fn read_capped(path: &Path) -> io::Result<Option<String>> {
+    let meta = match fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if !meta.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file; not touching it",
+        ));
     }
+    let too_big = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("larger than {MAX_FILE_BYTES} bytes; not touching it"),
+        )
+    };
+    if meta.len() > MAX_FILE_BYTES {
+        return Err(too_big());
+    }
+    let mut text = String::new();
+    fs::File::open(path)?
+        .take(MAX_FILE_BYTES + 1)
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_FILE_BYTES {
+        return Err(too_big());
+    }
+    Ok(Some(text))
 }
 
 fn is_ours(text: &str) -> bool {
     text.lines().any(|line| line.trim() == BEGIN)
+}
+
+fn refused(message: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, message.to_owned())
+}
+
+/// A project file must not be a symlink, must not resolve into the git dir
+/// or the common dir (hooks live there), and must not be tracked by git.
+fn check_project_target(path: &Path, workspace: &Path) -> io::Result<()> {
+    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(refused("is a symlink; not touching it"));
+    }
+    let existing = path
+        .ancestors()
+        .skip(1)
+        .find(|a| a.exists())
+        .and_then(|a| fs::canonicalize(a).ok());
+    let git_dirs = [
+        crate::git::git_probe(workspace, &["rev-parse", "--absolute-git-dir"])
+            .map(|d| PathBuf::from(d.trim())),
+        git_common_dir(workspace),
+    ];
+    for dir in git_dirs.into_iter().flatten() {
+        let dir = fs::canonicalize(&dir).unwrap_or(dir);
+        if existing.as_ref().is_some_and(|e| e.starts_with(&dir)) {
+            return Err(refused(
+                "resolves inside the git directory; not touching it",
+            ));
+        }
+    }
+    let Some(path_text) = path.to_str() else {
+        return Err(refused("path is not valid UTF-8"));
+    };
+    if crate::git::git_probe(workspace, &["ls-files", "--error-unmatch", "--", path_text]).is_some()
+    {
+        return Err(refused("is tracked by git; not touching it"));
+    }
+    Ok(())
 }
 
 /// Writes or withdraws one file, recording errors and changes in `report`.
@@ -277,8 +396,11 @@ fn try_apply(
     registry: &mut Registry,
     report: &mut Report,
 ) -> io::Result<()> {
-    let record = registry.records.get(&job.path).cloned();
-    let existing = read_existing(&job.path)?;
+    if let Some(workspace) = &job.workspace {
+        check_project_target(&job.path, workspace)?;
+    }
+    let record = registry.written.files.get(&job.path).cloned();
+    let existing = read_capped(&job.path)?;
     // What the file should become: `None` deletes it.
     let next_for = |current: Option<&str>| -> io::Result<Option<String>> {
         match job.mode {
@@ -308,7 +430,7 @@ fn try_apply(
         if let Some(workspace) = &job.workspace {
             remove_excluded(workspace, &job.path)?;
         }
-        registry.records.remove(&job.path);
+        registry.written.files.remove(&job.path);
         return Ok(());
     }
     next_for(existing.as_deref())?;
@@ -319,13 +441,15 @@ fn try_apply(
         }
     });
     // Re-read just before replacing: an edit made meanwhile is kept.
-    let current = read_existing(&job.path)?;
+    let current = read_capped(&job.path)?;
     let next = next_for(current.as_deref())?;
     if let (Some(_), Some(workspace)) = (&next, &job.workspace) {
         // Excluded before it exists, so it never shows in `git status`.
         ensure_excluded(workspace, &job.path)?;
     }
-    if let (Some(now), Some(last), Some(next)) = (&current, &record, &next) {
+    // Only a regeneration replaces an edit; a removal hands the file back.
+    if let (false, Some(now), Some(last), Some(next)) = (body.is_empty(), &current, &record, &next)
+    {
         if user_edited_section(now, &last.last) && now != next {
             report.user_edits_overwritten.push(job.path.clone());
         }
@@ -333,14 +457,16 @@ fn try_apply(
     match next {
         Some(next) => {
             if current.as_deref() != Some(next.as_str()) {
+                let made = missing_dirs(&job.path, &job.root);
                 write_atomic(&job.path, &next, &job.root)?;
+                registry.written.dirs.extend(made);
                 report.written.push(job.path.clone());
             }
             if body.is_empty() {
-                registry.records.remove(&job.path);
+                registry.written.files.remove(&job.path);
             } else {
                 let created = record.as_ref().map_or(current.is_none(), |r| r.created);
-                registry.records.insert(
+                registry.written.files.insert(
                     job.path.clone(),
                     Record {
                         mode: job.mode,
@@ -356,30 +482,43 @@ fn try_apply(
             if current.is_some() {
                 fs::remove_file(&job.path)?;
                 report.written.push(job.path.clone());
-                if job.mode == Mode::OwnedFile {
-                    remove_empty_dirs(&job.path, &job.root);
-                }
+                remove_created_dirs(&job.path, &job.root, &mut registry.written.dirs);
             }
             if let Some(workspace) = &job.workspace {
                 remove_excluded(workspace, &job.path)?;
             }
-            registry.records.remove(&job.path);
+            registry.written.files.remove(&job.path);
         }
     }
     Ok(())
 }
 
-/// Removes the folders above `path` that are now empty, up to `root`.
-fn remove_empty_dirs(path: &Path, root: &Path) {
+/// The folders above `path`, below `root`, that do not exist yet: the ones
+/// writing it will create.
+fn missing_dirs(path: &Path, root: &Path) -> Vec<PathBuf> {
+    path.ancestors()
+        .skip(1)
+        .take_while(|dir| *dir != root && dir.starts_with(root) && !dir.exists())
+        .map(Path::to_path_buf)
+        .collect()
+}
+
+/// Removes the empty folders above `path` that Gespan created, deepest
+/// first, stopping at the first one it did not create or that is not empty.
+fn remove_created_dirs(path: &Path, root: &Path, dirs: &mut BTreeSet<PathBuf>) {
     for dir in path.ancestors().skip(1) {
-        if dir == root || !dir.starts_with(root) || fs::remove_dir(dir).is_err() {
+        if dir == root || !dir.starts_with(root) || !dirs.contains(dir) {
             return;
         }
+        if fs::remove_dir(dir).is_err() {
+            return;
+        }
+        dirs.remove(dir);
     }
 }
 
-fn preference_jobs(book: &Book, data_dir: &Path, home: &Path) -> Vec<Job> {
-    preference_targets(book, data_dir, home)
+fn preference_jobs(book: &Book, data_dir: &Path, homes: Homes) -> Vec<Job> {
+    preference_targets(book, data_dir, homes)
         .into_iter()
         .map(|t| Job {
             header: header((t.mode == Mode::OwnedFile).then_some(t.harness)),
@@ -387,6 +526,7 @@ fn preference_jobs(book: &Book, data_dir: &Path, home: &Path) -> Vec<Job> {
             mode: t.mode,
             root: t.root,
             workspace: None,
+            prefs: true,
         })
         .collect()
 }
@@ -401,10 +541,13 @@ fn project_jobs(workspace: &Path, data_dir: &Path) -> Vec<Job> {
         root: shared_root,
         header: "",
         workspace: None,
+        prefs: true,
     }];
     jobs.extend(project_targets(workspace).into_iter().map(|t| Job {
         header: header(Some(t.harness)),
         workspace: Some(t.root.clone()),
+        // Claude Code has its preferences in its global CLAUDE.md.
+        prefs: t.harness != Kind::Claude,
         path: t.path,
         mode: t.mode,
         root: t.root,
@@ -419,19 +562,43 @@ fn body(prefs: &[Entry], decisions: &[Entry]) -> String {
     render_block(prefs, decisions, START_BUDGET).text
 }
 
+/// Jobs for files Gespan recorded writing that `jobs` no longer covers (a
+/// removed account, a closed project).
+fn recorded_leftovers(registry: &Registry, jobs: &[Job]) -> Vec<Job> {
+    registry
+        .written
+        .files
+        .iter()
+        .filter(|(path, _)| !jobs.iter().any(|job| &job.path == *path))
+        .map(|(path, record)| Job {
+            path: path.clone(),
+            mode: record.mode,
+            root: record.root.clone(),
+            header: "",
+            workspace: record.workspace.clone(),
+            prefs: false,
+        })
+        .collect()
+}
+
 /// Rewrites every harness file from the active entries: preferences into
 /// every profile's global files, and each workspace's decisions into its
 /// shared file and the files each harness reads. Never writes pending
-/// entries. Files left with nothing to say are withdrawn.
+/// entries. Files left with nothing to say, and files Gespan wrote for a
+/// profile or workspace no longer given, are withdrawn. Does nothing when
+/// the log is off by the time it gets to run.
 pub fn regenerate(
     store: &Store,
     book: &Book,
     data_dir: &Path,
-    home: &Path,
+    homes: Homes,
     workspaces: &[PathBuf],
 ) -> Report {
     let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     let mut report = Report::default();
+    if !service::enabled() {
+        return report;
+    }
     if let Err(error) = fs::create_dir_all(data_dir.join("decisions")) {
         report
             .errors
@@ -439,20 +606,23 @@ pub fn regenerate(
         return report;
     }
     let mut registry = Registry::load(data_dir);
-    match store.active(&Scope::Global) {
-        Ok(entries) => {
-            let prefs: Vec<Entry> = entries
-                .into_iter()
-                .filter(|e| e.kind == EntryKind::Preference)
-                .collect();
-            let text = body(&prefs, &[]);
-            for job in preference_jobs(book, data_dir, home) {
-                apply(&job, &text, &mut registry, &mut report);
-            }
+    let prefs: Vec<Entry> = match store.active(&Scope::Global) {
+        Ok(entries) => entries
+            .into_iter()
+            .filter(|e| e.kind == EntryKind::Preference)
+            .collect(),
+        Err(error) => {
+            report
+                .errors
+                .push((data_dir.to_path_buf(), error.to_string()));
+            return report;
         }
-        Err(error) => report
-            .errors
-            .push((data_dir.to_path_buf(), error.to_string())),
+    };
+    let mut done: Vec<Job> = Vec::new();
+    let text = body(&prefs, &[]);
+    for job in preference_jobs(book, data_dir, homes) {
+        apply(&job, &text, &mut registry, &mut report);
+        done.push(job);
     }
     for workspace in workspaces {
         let entries = match store.active(&scope_for(workspace)) {
@@ -465,10 +635,16 @@ pub fn regenerate(
         let (prefs, decisions): (Vec<Entry>, Vec<Entry>) = entries
             .into_iter()
             .partition(|e| e.kind == EntryKind::Preference);
-        let text = body(&prefs, &decisions);
+        let full = body(&prefs, &decisions);
+        let decisions_only = body(&[], &decisions);
         for job in project_jobs(workspace, data_dir) {
-            apply(&job, &text, &mut registry, &mut report);
+            let text = if job.prefs { &full } else { &decisions_only };
+            apply(&job, text, &mut registry, &mut report);
+            done.push(job);
         }
+    }
+    for job in recorded_leftovers(&registry, &done) {
+        apply(&job, "", &mut registry, &mut report);
     }
     if let Err(error) = registry.save(data_dir) {
         report
@@ -480,31 +656,26 @@ pub fn regenerate(
 
 /// The off switch: removes every Gespan section and Gespan-owned file, for
 /// the profiles and workspaces given and for any file Gespan recorded
-/// writing before (a removed account, a closed project). The user's text is
-/// kept; a file Gespan created is deleted once nothing else is in it.
-pub fn remove_all(book: &Book, data_dir: &Path, home: &Path, workspaces: &[PathBuf]) -> Report {
+/// writing before (a removed account, a closed project, an old home). The
+/// user's text is kept; a file Gespan created is deleted once nothing else
+/// is in it. Does nothing when the log is back on by the time it runs.
+pub fn remove_all(book: &Book, data_dir: &Path, homes: Homes, workspaces: &[PathBuf]) -> Report {
     let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     let mut report = Report::default();
+    if service::enabled() {
+        return report;
+    }
     let mut registry = Registry::load(data_dir);
-    let mut jobs = preference_jobs(book, data_dir, home);
+    let mut jobs = preference_jobs(book, data_dir, homes);
     for workspace in workspaces {
         jobs.extend(project_jobs(workspace, data_dir));
     }
-    for (path, record) in &registry.records {
-        if !jobs.iter().any(|job| &job.path == path) {
-            jobs.push(Job {
-                path: path.clone(),
-                mode: record.mode,
-                root: record.root.clone(),
-                header: "",
-                workspace: record.workspace.clone(),
-            });
-        }
-    }
+    let leftovers = recorded_leftovers(&registry, &jobs);
+    jobs.extend(leftovers);
     for job in &jobs {
         apply(job, "", &mut registry, &mut report);
     }
-    if registry.path.exists() || !registry.records.is_empty() {
+    if registry.path.exists() {
         if let Err(error) = registry.save(data_dir) {
             report
                 .errors

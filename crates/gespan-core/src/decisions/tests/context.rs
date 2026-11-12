@@ -50,7 +50,23 @@ fn no_context_when_disabled() {
 fn no_context_for_harness_that_reads_the_file() {
     let _guard = isolated();
     let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
     approve(&scope_for(dir.path()), "Use tabs");
+    // Before Gespan writes its project files every harness gets the block.
+    for kind in Kind::ALL {
+        assert!(context(kind, dir.path(), None).is_some(), "{kind:?}");
+    }
+    let report = service::with(|store| {
+        crate::decisions::harness::regenerate(
+            store,
+            &crate::accounts::Book::default(),
+            data.path(),
+            &|_| None,
+            &[dir.path().to_path_buf()],
+        )
+    })
+    .unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
     for kind in Kind::ALL {
         let reads = matches!(kind, Kind::Claude | Kind::Cursor | Kind::Kiro);
         assert_eq!(reads_decision_file(kind), reads, "{kind:?}");

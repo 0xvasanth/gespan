@@ -738,6 +738,9 @@ fn run_turn_using(
                 None => None,
             };
             let workspace = settings.worktree_cwd.as_deref().unwrap_or(&summary.cwd);
+            // A checkout Gespan has not written for gets its files soon; this
+            // session gets the block meanwhile.
+            crate::decision_log::note_session_workspace(std::path::Path::new(workspace));
             if let Some((block, hash)) = gespan_core::decisions::start_context(
                 kind,
                 std::path::Path::new(workspace),

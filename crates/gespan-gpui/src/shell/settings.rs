@@ -440,7 +440,8 @@ impl Shell {
         self.refresh_notification_permission();
         self.configure_quick_composer(cx);
         gespan_core::cli::initialize(&self.workspace.preferences.binary_paths);
-        // Turning it off stops the toolkit and the injection; nothing is deleted.
+        // Turning it off stops the toolkit and the injection and removes the
+        // files Gespan wrote; the log itself is kept.
         gespan_core::decisions::set_enabled(self.workspace.preferences.decision_log);
         // On: harness files are (re)written; switched off: what Gespan wrote
         // is removed. Off the UI thread either way.

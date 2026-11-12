@@ -1,9 +1,11 @@
 use crate::accounts::{Account, Book};
 use crate::decisions::files::{BEGIN, END};
 use crate::decisions::harness::{
-    preference_targets, project_targets, regenerate, remove_all, Mode, BEFORE_WRITE,
+    hold_writing, preference_targets, project_targets, regenerate, remove_all, Mode, Report,
+    BEFORE_WRITE, MAX_FILE_BYTES,
 };
 use crate::decisions::scope::{git_common_dir, scope_for, shared_file};
+use crate::decisions::service::{self, isolated, Isolated};
 use crate::provider::Kind;
 use gespan_memory::{Config, Kind as EntryKind, NewEntry, Scope, Source, Store, START_BUDGET};
 use std::fs;
@@ -13,14 +15,17 @@ use tempfile::TempDir;
 
 /// A temp home, data dir and git repository, and a store of their own.
 struct Fixture {
+    store: Store,
+    _log: Isolated,
     _tmp: TempDir,
     home: PathBuf,
     data: PathBuf,
     repo: PathBuf,
-    store: Store,
 }
 
 fn fixture() -> Fixture {
+    // Serializes with every test of the process-wide switch, and turns it on.
+    let log = isolated();
     let tmp = TempDir::new().unwrap();
     let root = fs::canonicalize(tmp.path()).unwrap();
     let (home, data, repo) = (root.join("home"), root.join("data"), root.join("repo"));
@@ -36,11 +41,12 @@ fn fixture() -> Fixture {
     )
     .unwrap();
     Fixture {
+        store,
+        _log: log,
         _tmp: tmp,
         home,
         data,
         repo,
-        store,
     }
 }
 
@@ -79,8 +85,27 @@ impl Fixture {
         id
     }
 
-    fn regenerate(&self, book: &Book, workspaces: &[PathBuf]) -> crate::decisions::harness::Report {
-        regenerate(&self.store, book, &self.data, &self.home, workspaces)
+    /// Each harness's default home, all under the temp home.
+    fn homes(&self) -> impl Fn(Kind) -> Option<PathBuf> + '_ {
+        move |kind| match kind {
+            Kind::Claude => Some(self.home.join(".claude")),
+            Kind::Codex => Some(self.home.join(".codex")),
+            Kind::OpenCode => Some(self.home.join(".config").join("opencode")),
+            Kind::Kiro => Some(self.home.join(".kiro")),
+            _ => None,
+        }
+    }
+
+    fn regenerate(&self, book: &Book, workspaces: &[PathBuf]) -> Report {
+        regenerate(&self.store, book, &self.data, &self.homes(), workspaces)
+    }
+
+    /// The off switch: the log is turned off, then everything is removed.
+    fn remove_all(&self, book: &Book, workspaces: &[PathBuf]) -> Report {
+        service::set_enabled(false);
+        let report = remove_all(book, &self.data, &self.homes(), workspaces);
+        service::set_enabled(true);
+        report
     }
 }
 
@@ -168,7 +193,7 @@ fn preferences_go_to_every_claude_and_codex_profile() {
     assert!(!f.home.join(".kiro").exists());
     assert!(!f.home.join(".config").exists());
     // The targets say the same, and global files are sections, not owned.
-    let targets = preference_targets(&book, &f.data, &f.home);
+    let targets = preference_targets(&book, &f.data, &f.homes());
     for file in &files {
         let target = targets.iter().find(|t| &t.path == file).unwrap();
         assert!(matches!(target.mode, Mode::Section));
@@ -182,7 +207,7 @@ fn opencode_and_kiro_preferences_only_when_installed() {
     fs::create_dir_all(&opencode).unwrap();
     // OpenCode reads ~/.claude/CLAUDE.md only while its own AGENTS.md is
     // missing, so Gespan writes into its file only when the user has one.
-    let targets = preference_targets(&Book::default(), &f.data, &f.home);
+    let targets = preference_targets(&Book::default(), &f.data, &f.homes());
     assert!(!targets.iter().any(|t| t.harness == Kind::OpenCode));
     fs::write(opencode.join("AGENTS.md"), "my opencode rules\n").unwrap();
     fs::create_dir_all(f.home.join(".kiro")).unwrap();
@@ -362,6 +387,7 @@ fn regenerate_reports_overwritten_user_edits() {
     let f = fixture();
     f.install_claude_and_codex();
     f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
     let claude = f.home.join(".claude").join("CLAUDE.md");
     let first = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
     assert!(first.user_edits_overwritten.is_empty());
@@ -381,7 +407,7 @@ fn regenerate_reports_overwritten_user_edits() {
         .join(".claude")
         .join("rules")
         .join("gespan-decisions.md");
-    let owned = read(&rules).replace("Answer tersely text", "hand edit");
+    let owned = read(&rules).replace("Use sqlite text", "hand edit");
     fs::write(&rules, owned).unwrap();
     let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
     assert!(
@@ -452,7 +478,7 @@ fn remove_all_restores_files_to_user_text_and_deletes_owned_files() {
     assert!(owned.iter().all(|p| p.exists()));
     assert!(codex.exists());
 
-    let report = remove_all(&Book::default(), &f.data, &f.home, &workspaces);
+    let report = f.remove_all(&Book::default(), &workspaces);
     assert!(report.errors.is_empty(), "{:?}", report.errors);
 
     let restored = read(&claude);
@@ -473,7 +499,7 @@ fn remove_all_restores_files_to_user_text_and_deletes_owned_files() {
     assert_eq!(read(&exclude), "# user excludes\n*.log\n");
     assert_eq!(git_out(&f.repo, &["status", "--porcelain"]), "");
     // Running it again changes nothing.
-    let again = remove_all(&Book::default(), &f.data, &f.home, &workspaces);
+    let again = f.remove_all(&Book::default(), &workspaces);
     assert!(
         again.errors.is_empty() && again.written.is_empty(),
         "{again:?}"
@@ -494,7 +520,7 @@ fn remove_all_cleans_profiles_and_workspaces_no_longer_known() {
     assert!(work.join("CLAUDE.md").exists());
 
     // The account was removed and the project closed since.
-    remove_all(&Book::default(), &f.data, &f.home, &[]);
+    f.remove_all(&Book::default(), &[]);
     assert!(!work.join("CLAUDE.md").exists());
     assert!(!f.repo.join(".claude").exists());
     assert!(!shared_file(&f.repo, &f.data).exists());
@@ -521,4 +547,354 @@ fn an_empty_log_writes_nothing_and_withdraws_what_it_wrote() {
     f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
     assert_eq!(read(&claude), "mine\n");
     assert!(!f.repo.join(".claude").exists());
+}
+
+#[test]
+fn a_run_scheduled_before_the_log_is_turned_off_writes_nothing() {
+    let f = fixture();
+    f.install_claude_and_codex();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    let claude = f.home.join(".claude").join("CLAUDE.md");
+    // A regeneration is scheduled, then the user turns the log off before
+    // it gets the lock.
+    let report = std::thread::scope(|scope| {
+        let held = hold_writing();
+        let run = scope.spawn(|| f.regenerate(&Book::default(), std::slice::from_ref(&f.repo)));
+        service::set_enabled(false);
+        drop(held);
+        run.join().unwrap()
+    });
+    service::set_enabled(true);
+    assert!(report.written.is_empty(), "{report:?}");
+    assert!(!claude.exists());
+    assert!(!f.repo.join(".cursor").exists());
+}
+
+#[test]
+fn a_removal_scheduled_before_the_log_is_turned_back_on_removes_nothing() {
+    let f = fixture();
+    f.install_claude_and_codex();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    f.regenerate(&Book::default(), &[]);
+    let claude = f.home.join(".claude").join("CLAUDE.md");
+    assert!(claude.exists());
+    // Off schedules the removal; on again before it runs.
+    service::set_enabled(false);
+    let report = std::thread::scope(|scope| {
+        let held = hold_writing();
+        let run = scope.spawn(|| remove_all(&Book::default(), &f.data, &f.homes(), &[]));
+        service::set_enabled(true);
+        drop(held);
+        run.join().unwrap()
+    });
+    assert!(report.written.is_empty(), "{report:?}");
+    assert!(section_of(&read(&claude)).contains("Answer tersely text"));
+}
+
+#[test]
+fn moved_default_homes_are_written_and_cleaned_after_they_move_back() {
+    let f = fixture();
+    let root = f.home.parent().unwrap().to_path_buf();
+    // CLAUDE_CONFIG_DIR and XDG_CONFIG_HOME point outside the home folder.
+    let claude_dir = root.join("claude-config");
+    let xdg_opencode = root.join("xdg").join("opencode");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::create_dir_all(&xdg_opencode).unwrap();
+    fs::write(xdg_opencode.join("AGENTS.md"), "mine\n").unwrap();
+    fs::create_dir_all(f.home.join(".claude")).unwrap();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    let moved = |kind: Kind| match kind {
+        Kind::Claude => Some(claude_dir.clone()),
+        Kind::OpenCode => Some(xdg_opencode.clone()),
+        _ => None,
+    };
+    let report = regenerate(&f.store, &Book::default(), &f.data, &moved, &[]);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert!(section_of(&read(&claude_dir.join("CLAUDE.md"))).contains("Answer tersely text"));
+    assert!(section_of(&read(&xdg_opencode.join("AGENTS.md"))).contains("Answer tersely text"));
+    assert!(!f.home.join(".claude").join("CLAUDE.md").exists());
+
+    // The variables are gone by the time the log is turned off: the
+    // recorded files are still cleaned.
+    let report = f.remove_all(&Book::default(), &[]);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert!(!claude_dir.join("CLAUDE.md").exists());
+    assert_eq!(read(&xdg_opencode.join("AGENTS.md")), "mine\n");
+}
+
+#[test]
+fn a_worktree_created_after_the_last_regenerate_gets_the_block_until_written() {
+    let f = fixture();
+    // start_context reads the process-wide store, so use it here.
+    let scope = scope_for(&f.repo);
+    service::with(|store| {
+        let id = store
+            .propose(
+                NewEntry {
+                    kind: EntryKind::Decision,
+                    scope: scope.clone(),
+                    title: "Use sqlite".into(),
+                    text: "Use sqlite text".into(),
+                    why: "why".into(),
+                    user_answer: None,
+                    source: Source {
+                        session: Some(1),
+                        question_ref: Some("q".into()),
+                        ..Source::default()
+                    },
+                },
+                10,
+            )
+            .unwrap()
+            .id;
+        store.approve(id, None, false, &[], 20).unwrap();
+    })
+    .unwrap();
+    let run = |workspaces: &[PathBuf]| {
+        service::with(|store| regenerate(store, &Book::default(), &f.data, &f.homes(), workspaces))
+            .unwrap()
+    };
+    run(std::slice::from_ref(&f.repo));
+    let start = |kind: Kind, ws: &Path| crate::decisions::start_context(kind, ws, None);
+    for kind in [Kind::Claude, Kind::Cursor, Kind::Kiro] {
+        assert_eq!(start(kind, &f.repo), None, "{kind:?} reads the file");
+    }
+
+    let worktree = f.repo.parent().unwrap().join("late");
+    git_out(
+        &f.repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "late",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    // Its first session gets the decisions injected instead.
+    for kind in [Kind::Claude, Kind::Cursor, Kind::Kiro] {
+        let (block, _) = start(kind, &worktree).expect("injected");
+        assert!(block.contains("Use sqlite text"), "{kind:?}: {block}");
+    }
+    // The regeneration the session schedules writes its files, excluded.
+    let report = run(&[f.repo.clone(), worktree.clone()]);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    for target in project_targets(&worktree) {
+        assert!(section_of(&read(&target.path)).contains("Use sqlite text"));
+    }
+    assert_eq!(git_out(&worktree, &["status", "--porcelain"]), "");
+    for kind in [Kind::Claude, Kind::Cursor, Kind::Kiro] {
+        assert_eq!(start(kind, &worktree), None, "{kind:?}");
+    }
+    // A harness that reads no file always gets the block.
+    assert!(start(Kind::Codex, &worktree).is_some());
+}
+
+#[test]
+fn oversized_or_irregular_files_are_never_read_or_written() {
+    let f = fixture();
+    f.install_claude_and_codex();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    let claude = f.home.join(".claude").join("CLAUDE.md");
+    let big = "x".repeat(MAX_FILE_BYTES as usize + 1);
+    fs::write(&claude, &big).unwrap();
+    // A folder where Codex's file would be.
+    let codex = f.home.join(".codex").join("AGENTS.md");
+    fs::create_dir_all(&codex).unwrap();
+
+    let report = f.regenerate(&Book::default(), &[]);
+    let failed: Vec<&PathBuf> = report.errors.iter().map(|(p, _)| p).collect();
+    assert!(failed.contains(&&claude), "{report:?}");
+    assert!(failed.contains(&&codex), "{report:?}");
+    assert!(read(&claude) == big, "the large file is untouched");
+    assert!(codex.is_dir());
+    assert!(report.written.is_empty(), "{report:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn project_files_that_are_symlinks_or_lead_into_git_are_refused() {
+    use std::os::unix::fs::symlink;
+    let f = fixture();
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
+    // Claude's rule file links to a file of the user's.
+    let rules = f.repo.join(".claude").join("rules");
+    fs::create_dir_all(&rules).unwrap();
+    // It even carries Gespan's markers, so only the symlink check stops it.
+    let notes = format!("user notes\n{BEGIN}\nold\n{END}\n");
+    fs::write(f.repo.join("notes.md"), &notes).unwrap();
+    symlink(f.repo.join("notes.md"), rules.join("gespan-decisions.md")).unwrap();
+    // Cursor's folder links into .git, where hooks live.
+    let hooks = f.repo.join(".git").join("hooks");
+    fs::create_dir_all(&hooks).unwrap();
+    let before: Vec<_> = fs::read_dir(&hooks)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    symlink(&hooks, f.repo.join(".cursor")).unwrap();
+
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    let failed: Vec<&PathBuf> = report.errors.iter().map(|(p, _)| p).collect();
+    assert!(
+        failed.contains(&&rules.join("gespan-decisions.md")),
+        "{report:?}"
+    );
+    assert!(
+        failed.contains(
+            &&f.repo
+                .join(".cursor")
+                .join("rules")
+                .join("gespan-decisions.mdc")
+        ),
+        "{report:?}"
+    );
+    assert_eq!(read(&f.repo.join("notes.md")), notes);
+    let after: Vec<_> = fs::read_dir(&hooks)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(before, after, "nothing was written into .git/hooks");
+    assert!(!hooks.join("rules").exists());
+    // Kiro's file, which is neither, is still written.
+    assert!(f
+        .repo
+        .join(".kiro")
+        .join("steering")
+        .join("gespan-decisions.md")
+        .exists());
+}
+
+#[test]
+fn a_project_file_tracked_by_git_is_never_written() {
+    let f = fixture();
+    let steering = f.repo.join(".kiro").join("steering");
+    fs::create_dir_all(&steering).unwrap();
+    let tracked = steering.join("gespan-decisions.md");
+    // Even one that looks like Gespan's: it is the repository's file.
+    let committed = format!("{BEGIN}\nteam text\n{END}\n");
+    fs::write(&tracked, &committed).unwrap();
+    git_out(&f.repo, &["add", "."]);
+    git_out(&f.repo, &["commit", "-q", "-m", "steering"]);
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
+
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(
+        report.errors.iter().any(|(p, _)| p == &tracked),
+        "{report:?}"
+    );
+    assert_eq!(read(&tracked), committed);
+    let again = f.remove_all(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(again.errors.iter().any(|(p, _)| p == &tracked), "{again:?}");
+    assert_eq!(read(&tracked), committed);
+    assert_eq!(git_out(&f.repo, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn claudes_project_file_has_decisions_but_not_preferences() {
+    let f = fixture();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
+    f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    for target in project_targets(&f.repo) {
+        let body = section_of(&read(&target.path));
+        assert!(body.contains("Use sqlite text"), "{body}");
+        // Claude has its preferences in its global CLAUDE.md.
+        assert_eq!(
+            body.contains("Answer tersely text"),
+            target.harness != Kind::Claude,
+            "{:?}: {body}",
+            target.harness
+        );
+    }
+}
+
+#[test]
+fn regenerate_withdraws_files_of_workspaces_and_profiles_no_longer_known() {
+    let f = fixture();
+    f.install_claude_and_codex();
+    let book = extra_profiles();
+    let work = profile_dir(&f.data, Kind::Codex, "work");
+    fs::create_dir_all(&work).unwrap();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
+    f.regenerate(&book, std::slice::from_ref(&f.repo));
+    assert!(work.join("AGENTS.md").exists());
+    assert!(f.repo.join(".claude").exists());
+
+    // The project was closed and the account removed.
+    let report = f.regenerate(&Book::default(), &[]);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert!(!work.join("AGENTS.md").exists());
+    assert!(!f.repo.join(".claude").exists());
+    assert!(!shared_file(&f.repo, &f.data).exists());
+    assert_eq!(git_out(&f.repo, &["status", "--porcelain"]), "");
+    // Known profiles keep theirs.
+    assert!(section_of(&read(&f.home.join(".claude").join("CLAUDE.md"))).contains("Answer tersely"));
+}
+
+#[test]
+fn removal_reports_no_overwritten_edits() {
+    let f = fixture();
+    f.install_claude_and_codex();
+    let claude = f.home.join(".claude").join("CLAUDE.md");
+    fs::write(&claude, "mine\n").unwrap();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    f.regenerate(&Book::default(), &[]);
+    fs::write(
+        &claude,
+        read(&claude).replace("Answer tersely text", "my edit"),
+    )
+    .unwrap();
+    let report = f.remove_all(&Book::default(), &[]);
+    assert!(report.user_edits_overwritten.is_empty(), "{report:?}");
+    assert_eq!(read(&claude), "mine\n");
+}
+
+#[test]
+fn remove_all_keeps_folders_gespan_did_not_create() {
+    let f = fixture();
+    // The user already has an (empty) .kiro folder; .cursor is new.
+    fs::create_dir_all(f.repo.join(".kiro")).unwrap();
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
+    f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(f.repo.join(".kiro").join("steering").exists());
+
+    f.remove_all(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(f.repo.join(".kiro").is_dir(), "the user's folder stays");
+    assert!(!f.repo.join(".kiro").join("steering").exists());
+    assert!(!f.repo.join(".cursor").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_in_place_of_a_harness_file_is_skipped_without_blocking() {
+    use std::os::unix::fs::FileTypeExt;
+    let f = fixture();
+    f.install_claude_and_codex();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    let claude = f.home.join(".claude").join("CLAUDE.md");
+    let made = Command::new("mkfifo").arg(&claude).status().unwrap();
+    assert!(made.success());
+    // Reading a FIFO would block until a writer comes; it must be refused.
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let _ = done.send(f.regenerate(&Book::default(), &[]));
+        });
+        let report = match wait.recv_timeout(std::time::Duration::from_secs(20)) {
+            Ok(report) => report,
+            Err(_) => {
+                // The reader cannot be unblocked, and the scope would wait
+                // for it forever: fail the whole run instead of hanging.
+                eprintln!("regenerate blocked on a FIFO");
+                std::process::abort();
+            }
+        };
+        assert!(
+            report.errors.iter().any(|(p, _)| p == &claude),
+            "{report:?}"
+        );
+        assert!(fs::symlink_metadata(&claude).unwrap().file_type().is_fifo());
+    });
 }

@@ -14,14 +14,18 @@ pub fn reads_decision_file(kind: Kind) -> bool {
 }
 
 /// The block to inject into this session now, with its hash: `None` when the
-/// log is off or closed, the harness reads the decision file itself, or
-/// `already` (the hash stored when the block was last delivered) matches.
+/// log is off or closed, the harness reads the decision file itself and
+/// Gespan's project file is in place, or `already` (the hash stored when the
+/// block was last delivered) matches. A checkout Gespan has not written yet
+/// (a new worktree) gets the block, so no session goes without the log.
 pub fn start_context(
     kind: Kind,
     workspace: &Path,
     already: Option<&str>,
 ) -> Option<(String, String)> {
-    if !service::enabled() || reads_decision_file(kind) {
+    if !service::enabled()
+        || (reads_decision_file(kind) && super::harness::project_file_ready(kind, workspace))
+    {
         return None;
     }
     let scope = scope_for(workspace);

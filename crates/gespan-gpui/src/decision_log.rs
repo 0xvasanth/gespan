@@ -183,6 +183,10 @@ fn known_workspaces() -> Vec<PathBuf> {
         .unwrap_or_else(|e| e.into_inner())
         .clone();
     let mut out: Vec<PathBuf> = Vec::new();
+    let sessions = SESSION_CHECKOUTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     for project in projects {
         let path = PathBuf::from(&project);
         if gespan_core::files::remote::is_remote(&path) || !path.is_dir() {
@@ -199,7 +203,43 @@ fn known_workspaces() -> Vec<PathBuf> {
             }
         }
     }
+    for checkout in sessions {
+        if checkout.is_dir() && !out.contains(&checkout) {
+            out.push(checkout);
+        }
+    }
     out
+}
+
+/// Checkouts sessions started in that are not an open project (a worktree
+/// made after the last regeneration, say), so they get their files too.
+static SESSION_CHECKOUTS: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(Default::default);
+
+/// Called as a session starts in `workspace`. The first session in a
+/// checkout Gespan has not seen schedules a regeneration (it runs off the UI
+/// thread); until it lands, `start_context` injects the block there. True
+/// when it scheduled one.
+pub(crate) fn note_session_workspace(workspace: &Path) -> bool {
+    if gespan_core::files::remote::is_remote(workspace) {
+        return false;
+    }
+    let known = KNOWN_PROJECTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|p| Path::new(p) == workspace);
+    if known {
+        return false;
+    }
+    {
+        let mut seen = SESSION_CHECKOUTS.lock().unwrap_or_else(|e| e.into_inner());
+        if seen.iter().any(|p| p == workspace) {
+            return false;
+        }
+        seen.push(workspace.to_path_buf());
+    }
+    gespan_core::decisions::service::regenerate();
+    true
 }
 
 /// What the harness writer should do when the log's switch is applied.
@@ -297,13 +337,11 @@ fn install_harness_writer(store: Database) {
 }
 
 /// Regenerates (or, with `regenerate` off, removes) every harness file for
-/// the real home, the app's data dir, its accounts and its known checkouts.
+/// each harness's real home (honouring its config variables), the app's
+/// data dir, its accounts and its known checkouts. The core re-checks the
+/// switch under its lock, so a run that lost a race with it does nothing.
 fn write_harness_files(store: &Database, regenerate: bool) {
     use gespan_core::decisions::harness;
-    let Some(home) = gespan_core::accounts::home() else {
-        tracing::warn!("the decision log found no home folder to write to");
-        return;
-    };
     let Ok((book, data_dir)) = locked(store).map(|s| {
         (
             s.provider_accounts().unwrap_or_default(),
@@ -318,7 +356,7 @@ fn write_harness_files(store: &Database, regenerate: bool) {
     let workspaces = known_workspaces();
     let report = if regenerate {
         match gespan_core::decisions::service::with(|log| {
-            harness::regenerate(log, &book, &data_dir, &home, &workspaces)
+            harness::regenerate(log, &book, &data_dir, &harness::default_homes, &workspaces)
         }) {
             Ok(report) => report,
             Err(error) => {
@@ -327,7 +365,7 @@ fn write_harness_files(store: &Database, regenerate: bool) {
             }
         }
     } else {
-        harness::remove_all(&book, &data_dir, &home, &workspaces)
+        harness::remove_all(&book, &data_dir, &harness::default_homes, &workspaces)
     };
     for (path, error) in &report.errors {
         tracing::warn!(path = %path.display(), %error, "a decision log harness file was not written");
@@ -641,5 +679,28 @@ mod tests {
         assert!(!set_known_projects(&a));
         assert!(set_known_projects(&a[..1]));
         *KNOWN_PROJECTS.lock().unwrap() = saved;
+    }
+
+    #[test]
+    fn decision_first_session_in_an_unknown_checkout_schedules_one_regenerate() {
+        let _guard = exclusive();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        gespan_core::decisions::service::set_regenerate(Box::new(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        let project = tempfile::tempdir().unwrap();
+        let worktree = tempfile::tempdir().unwrap();
+        let saved = KNOWN_PROJECTS.lock().unwrap().clone();
+        set_known_projects(&[project.path().to_string_lossy().into_owned()]);
+        // An open project is already written for.
+        assert!(!note_session_workspace(project.path()));
+        // A new checkout: one regeneration, and it joins the known ones.
+        assert!(note_session_workspace(worktree.path()));
+        assert!(!note_session_workspace(worktree.path()));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(known_workspaces().contains(&worktree.path().to_path_buf()));
+        *KNOWN_PROJECTS.lock().unwrap() = saved;
+        SESSION_CHECKOUTS.lock().unwrap().clear();
     }
 }
