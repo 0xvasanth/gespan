@@ -1,0 +1,21 @@
+crates/gespan-core/src/review_policy.rs
+  s_09449038da8e60::t_033455b4979f7e 95-107,136-137,144-150,623-641,647-661,667
+  s_09449038da8e60::t_6cabc63abcdc30 642-646,662-666
+  s_09449038da8e60::t_db8f2c48393de9 668
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "36da4c6c2b756789a57658a3fbe71058a7246243",
+  "prompts": {},
+  "sessions": {
+    "s_09449038da8e60": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6decefc-34f5-421f-aeca-6c331645bfc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
