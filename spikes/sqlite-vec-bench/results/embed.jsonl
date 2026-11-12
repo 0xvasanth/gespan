@@ -1,0 +1,4 @@
+{"embedded":"queries.text.f32","n":835,"secs":164.7,"per_sec":5.1}
+{"embedded":"docs.text.f32","n":17016,"secs":2450.8,"per_sec":6.9}
+{"embedded": "queries.code", "n": 300, "secs": 334.9, "per_sec": 0.9}
+{"embedded": "docs.code", "n": 5000, "secs": 2505.8, "per_sec": 2.0}
