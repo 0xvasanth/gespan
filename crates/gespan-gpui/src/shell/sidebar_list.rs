@@ -854,6 +854,7 @@ impl Shell {
             )
             .children(
                 [
+                    ("My tasks", "circle-alert"),
                     ("Inbox", "inbox"),
                     ("Runs", "clock"),
                     ("Automations", "zap"),
@@ -873,6 +874,11 @@ impl Shell {
                 })
                 .map(|(label, glyph)| {
                     let selected = self.app_view_label() == Some(label);
+                    let waiting = if label == "My tasks" {
+                        self.my_task_count(cx)
+                    } else {
+                        0
+                    };
                     let unread = label == "Inbox"
                         && self
                             .inbox
@@ -882,7 +888,13 @@ impl Shell {
                         .id(label)
                         .debug_selector(move || format!("sidebar-navigation-{label}"))
                         .role(Role::Button)
-                        .aria_label(if unread { "Inbox, new items" } else { label })
+                        .aria_label(if unread {
+                            SharedString::from("Inbox, new items")
+                        } else if waiting > 0 {
+                            SharedString::from(format!("My tasks, {waiting} waiting"))
+                        } else {
+                            SharedString::from(label)
+                        })
                         .aria_selected(selected)
                         .cursor_pointer()
                         .group("rail-action")
@@ -906,6 +918,25 @@ impl Shell {
                         .when_some(
                             match label {
                                 "Settings" => Some(format!("{MOD},").into_any_element()),
+                                "My tasks" if waiting > 0 => Some(
+                                    div()
+                                        .debug_selector(|| {
+                                            "sidebar-navigation-count-My tasks".into()
+                                        })
+                                        .flex_shrink_0()
+                                        .min_w(px(18.))
+                                        .h(px(16.))
+                                        .px(px(5.))
+                                        .rounded_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .bg(gpui::rgb(0xffb900))
+                                        .text_color(black(0.9))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(waiting.to_string())
+                                        .into_any_element(),
+                                ),
                                 "Inbox" if unread => Some(
                                     div()
                                         .flex_shrink_0()
@@ -953,6 +984,7 @@ impl Shell {
                             "Settings" => {
                                 this.open_settings(crate::settings::Section::General, window, cx)
                             }
+                            "My tasks" => this.open_my_tasks(window, cx),
                             "Inbox" => this.open_inbox(window, cx),
                             "Runs" => this.show_runs(window, cx),
                             "Notes" => this.open_notes(window, cx),
@@ -1042,7 +1074,7 @@ impl Shell {
                     && !self.session_metadata(id, cx).summary.has_messages
             })
     }
-    fn notify_navigation(&self, cx: &mut Context<Self>) {
+    pub(super) fn notify_navigation(&self, cx: &mut Context<Self>) {
         self.sidebar_frame.update(cx, |_, cx| cx.notify());
     }
     pub(super) fn sidebar_filter_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {

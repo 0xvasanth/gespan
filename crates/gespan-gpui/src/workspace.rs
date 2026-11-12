@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum AppView {
+    MyTasks,
     Inbox,
     Notes,
     Automations,
@@ -18,6 +19,7 @@ pub(crate) enum AppView {
 impl AppView {
     pub fn label(self) -> &'static str {
         match self {
+            Self::MyTasks => "My tasks",
             Self::Inbox => "Inbox",
             Self::Notes => "Notes",
             Self::Automations => "Automations",
@@ -28,6 +30,7 @@ impl AppView {
     }
     pub fn icon(self) -> &'static str {
         match self {
+            Self::MyTasks => "circle-alert",
             Self::Inbox => "inbox",
             Self::Notes => "note",
             Self::Automations => "zap",
@@ -63,7 +66,10 @@ impl TitleTab {
     /// Older builds reject an unknown `AppView` and with it the whole saved
     /// workspace, so Flows and Runs tabs live only while the app runs.
     fn saved(&self) -> bool {
-        !matches!(self, Self::App(AppView::Flows | AppView::Runs))
+        !matches!(
+            self,
+            Self::App(AppView::Flows | AppView::Runs | AppView::MyTasks)
+        )
     }
 }
 
