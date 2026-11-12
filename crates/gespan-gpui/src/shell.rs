@@ -41,6 +41,8 @@ mod orchestration;
 mod picker_preferences;
 pub(crate) mod pilot_flows;
 mod pilot_panes;
+#[cfg(test)]
+mod pilot_quit_tests;
 pub(crate) mod pilots;
 mod pinned_tabs;
 mod project_removal;
@@ -1360,6 +1362,9 @@ impl Shell {
                         view.update(cx, |view, cx| view.set_pilots(pilots, cx));
                     }
                     this.sync_pilot_search(cx);
+                    // A Pilot's chat starting or ending a turn is a running
+                    // chat for the quit guard and the next launch.
+                    this.sync_in_flight(cx);
                     this.update_usage_provider(cx);
                     this.invalidate_chrome(cx);
                     cx.notify();

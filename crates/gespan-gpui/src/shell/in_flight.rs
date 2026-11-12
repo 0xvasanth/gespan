@@ -4,8 +4,8 @@
 use super::*;
 
 impl Shell {
-    /// Local chats with a turn running, in sidebar order. Remote turns belong to
-    /// their host; Pilot chats are held and resumed by Pilots.
+    /// Local chats with a turn running: sessions in sidebar order, then Pilot
+    /// chats. Remote turns belong to their host.
     pub(super) fn running_chats(&self, cx: &App) -> Vec<i64> {
         let busy = |id: &i64| {
             self.sessions
@@ -21,6 +21,9 @@ impl Shell {
             .collect();
         rest.sort_unstable();
         ids.extend(rest);
+        if let Some(pilots) = &self.pilots {
+            ids.extend(pilots.read(cx).running_chats(cx));
+        }
         ids
     }
 
@@ -53,21 +56,45 @@ impl Shell {
         };
         let now = gespan_core::time::now_ms();
         let mut marked = Vec::new();
+        let mut pilot_chats = Vec::new();
         for id in ids {
-            let Some(summary) = self.session_summaries.get(&id) else {
-                continue;
-            };
+            let pilot_chat = self
+                .pilots
+                .as_ref()
+                .is_some_and(|pilots| pilots.read(cx).is_pilot_chat(id));
             // Continuing needs the provider's thread; without one the agent
             // would start over with no context.
-            let resumable = summary.provider_id.is_some();
+            let resumable = if pilot_chat {
+                match locked(&self.store).and_then(|store| store.pilot_session(id)) {
+                    Ok(Some(summary)) => summary.provider_id.is_some(),
+                    Ok(None) => continue,
+                    Err(error) => {
+                        tracing::warn!(%error, session = id, "cannot read interrupted Pilot chat");
+                        continue;
+                    }
+                }
+            } else if let Some(summary) = self.session_summaries.get(&id) {
+                summary.provider_id.is_some()
+            } else {
+                continue;
+            };
             match locked(&self.store).and_then(|mut store| store.mark_turn_interrupted(id, now)) {
+                Ok(_) if resumable && pilot_chat => pilot_chats.push(id),
                 Ok(_) if resumable => marked.push(id),
                 Ok(_) => {}
                 Err(error) => tracing::warn!(%error, session = id, "cannot mark interrupted chat"),
             }
         }
+        // On hold, Resume continues them (a Pilot's chat once it loads).
         if crate::hold::active(cx) {
             return;
+        }
+        if let Some(pilots) = self.pilots.clone() {
+            pilots.update(cx, |pilots, cx| {
+                for id in pilot_chats {
+                    pilots.continue_after_quit(id, cx);
+                }
+            });
         }
         // A restored run waits for Resume, which sends its own recovery turns.
         marked.retain(|id| !self.in_live_orchestration(*id));

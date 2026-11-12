@@ -1901,9 +1901,11 @@ fn set_child(s: &Setup, child: i64, busy: bool, cx: &mut TestAppContext) {
     cx.update(|cx| {
         let owner = s.manager.read(cx).owner.upgrade().unwrap();
         let view = owner.read(cx).pilot_session_entity(child).unwrap();
-        view.update(cx, |v, _| {
+        // A turn starting or ending says so, as a real one does.
+        view.update(cx, |v, cx| {
             v.busy = busy;
             v.summary.has_messages = true;
+            cx.emit(SessionChanged);
         });
     });
 }
