@@ -99,9 +99,12 @@ an adopted copy, so the file itself never changes.
   column.
 - Field-level `#[index]` cannot be named. Use a struct-level
   `#[index(name = "...", field)]` to keep an existing index name.
-- Conditional upserts (`ON CONFLICT ... WHERE`), updates that return a
-  count, CTEs, `json_*` and window functions go through `toasty::sql`.
-  Binding a NULL needs `bind_typed`.
+- Conditional upserts (`ON CONFLICT ... WHERE`), CTEs, `json_*` and window
+  functions go through `toasty::sql`. Binding a NULL needs `bind_typed`.
+- Plain upserts are typed: `Model::upsert_by_<key>(..)` replaces the row,
+  `.on_create(..)` sets columns only a new row gets, `.on_update(..)` takes
+  `toasty::stmt::increment()`, and `.or_ignore()` is `INSERT OR IGNORE`
+  (it returns `None` on a conflict, which stands in for its count).
 - There is no `rowid`. A query that breaks ties by insertion order
   (`ORDER BY position, rowid`) stays raw.
 - There is no `GROUP BY` and no aggregate but `count()`. Per-group counts in
@@ -112,10 +115,9 @@ an adopted copy, so the file itself never changes.
 - `ORDER BY lower(name)` has no typed form. Sort in Rust with
   `to_ascii_lowercase`, which folds the same ASCII letters SQLite's `lower`
   does.
-- Updates and deletes return no row count. When the count only decides
-  what happens next, check with `count()` or `first()` in the same
-  transaction instead. `upsert_by_*` with `or_ignore()`
-  returns `None` on a conflict, which stands in for `INSERT OR IGNORE`'s
+- Updates and deletes return no row count. Inside a write transaction, a
+  read followed by a typed update is a compare-and-set, and counting the
+  rows first with `count()` or `first()` gives an update's or delete's
   count.
 - The SQLite driver panics when a stored value doesn't match the model's
   type, which ends that connection's task. A test that corrupts a row on

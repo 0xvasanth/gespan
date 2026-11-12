@@ -18,7 +18,6 @@
 use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{json, Map, Value};
 use sha2::Sha256;
-use toasty::schema::db::Type;
 
 use super::embedder::BrowserDb;
 use super::policy::{audit_url, now_ms};
@@ -109,11 +108,6 @@ pub const CONSTRAINTS: &[&str] = &[
 const SETTINGS_KEY: &str = "settings";
 const RUN_COUNTER_KEY: &str = "run_counter";
 const SECRET_KEY: &str = "audit_secret";
-
-/// `value` as a nullable TEXT parameter: a NULL needs its type spelled out.
-fn text(value: Option<&str>) -> (toasty::stmt::Value, Type) {
-    (value.map(str::to_owned).into(), Type::Text)
-}
 
 /// Who caused a `browser_events` row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -242,19 +236,30 @@ pub fn clear(db: &BrowserDb) -> toasty::Result<()> {
 /// Drop rows older than the retention window. Returns rows removed.
 pub fn prune(db: &BrowserDb, now_ms: i64) -> toasty::Result<usize> {
     let cutoff = now_ms - RETENTION_MS;
-    // Deletes that report their count: raw SQL.
+    // A delete returns no count, so each table counts its old rows first, in
+    // the same transaction.
     let removed = db.run(|mut db| async move {
-        let mut removed = 0;
-        for sql in [
-            "DELETE FROM browser_audit WHERE ts < ?1",
-            "DELETE FROM browser_events WHERE ts < ?1",
-            "DELETE FROM browser_leases WHERE COALESCE(closed_at, created_at) < ?1",
-        ] {
-            removed += toasty::sql::statement(sql)
-                .bind(cutoff)
-                .exec(&mut db)
-                .await?;
-        }
+        let mut tx = db.transaction().await?;
+        let audit = AuditRow::fields();
+        let old_audit = AuditRow::filter(audit.ts().lt(cutoff));
+        let event = EventRow::fields();
+        let old_events = EventRow::filter(event.ts().lt(cutoff));
+        // A lease ages from when it closed, or from when it opened while it
+        // is still open.
+        let lease = LeaseRow::fields();
+        let old_leases = LeaseRow::filter(
+            lease.closed_at().lt(Some(cutoff)).or(lease
+                .closed_at()
+                .is_none()
+                .and(lease.created_at().lt(cutoff))),
+        );
+        let removed = old_audit.clone().count().exec(&mut tx).await?
+            + old_events.clone().count().exec(&mut tx).await?
+            + old_leases.clone().count().exec(&mut tx).await?;
+        old_audit.delete().exec(&mut tx).await?;
+        old_events.delete().exec(&mut tx).await?;
+        old_leases.delete().exec(&mut tx).await?;
+        tx.commit().await?;
         Ok(removed)
     })?;
     Ok(removed as usize)
@@ -318,19 +323,15 @@ pub fn lease_opened(
     opened_by: Option<&TabId>,
     url: &str,
 ) -> toasty::Result<()> {
-    // A tab id seen again replaces its row: an upsert, so raw SQL.
-    let (opened_by, ty) = text(opened_by.map(|t| t.0.as_str()));
-    let upsert = toasty::sql::statement(
-        "INSERT OR REPLACE INTO browser_leases (tab_id, run_id, target_id, session_id, opened_by, url, created_at, closed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)",
-    )
-    .bind(tab.0.clone())
-    .bind(format!("{run_id:x}"))
-    .bind(target_id)
-    .bind(session)
-    .bind_typed(opened_by, ty)
-    .bind(audit_url(url))
-    .bind(now_ms());
+    // A tab id seen again replaces its row.
+    let upsert = LeaseRow::upsert_by_tab_id(tab.0.clone())
+        .run_id(format!("{run_id:x}"))
+        .target_id(target_id)
+        .session_id(session)
+        .opened_by(opened_by.map(|t| t.0.clone()))
+        .url(audit_url(url))
+        .created_at(now_ms())
+        .closed_at(None::<i64>);
     db.run(|mut db| async move { upsert.exec(&mut db).await })?;
     Ok(())
 }
@@ -355,27 +356,28 @@ pub fn close_leases_except(
             .is_none()
             .and(row.run_id().eq(format!("{run_id:x}"))),
     );
-    let gone: Vec<String> = db
-        .run(|mut db| async move { open.exec(&mut db).await })?
-        .into_iter()
-        .map(|lease| lease.tab_id)
-        .filter(|tab| !live.contains(tab))
-        .collect();
     let now = now_ms();
-    let closed = db.run(|mut db| async move {
-        let mut closed = 0;
-        for tab in gone {
-            closed += toasty::sql::statement(
-                "UPDATE browser_leases SET closed_at = ?2 WHERE tab_id = ?1 AND closed_at IS NULL",
-            )
-            .bind(tab)
-            .bind(now)
-            .exec(&mut db)
-            .await?;
+    // An update returns no count; in one transaction, the open rows read are
+    // the rows closed.
+    db.run(|mut db| async move {
+        let mut tx = db.transaction().await?;
+        let gone: Vec<String> = open
+            .exec(&mut tx)
+            .await?
+            .into_iter()
+            .map(|lease| lease.tab_id)
+            .filter(|tab| !live.contains(tab))
+            .collect();
+        for tab in &gone {
+            LeaseRow::filter_by_tab_id(tab)
+                .update()
+                .closed_at(Some(now))
+                .exec(&mut tx)
+                .await?;
         }
-        Ok(closed)
-    })?;
-    Ok(closed as usize)
+        tx.commit().await?;
+        Ok(gone.len())
+    })
 }
 
 pub fn lease_transferred(db: &BrowserDb, tab: &TabId, to: &str) -> toasty::Result<()> {
@@ -386,12 +388,22 @@ pub fn lease_transferred(db: &BrowserDb, tab: &TabId, to: &str) -> toasty::Resul
 /// Leases of earlier runs still marked open: closed on startup because the
 /// module never re-adopts tabs. Returns how many were closed out.
 pub fn close_stale_leases(db: &BrowserDb, run_id: u64) -> toasty::Result<usize> {
-    let close = toasty::sql::statement(
-        "UPDATE browser_leases SET closed_at = ?2 WHERE closed_at IS NULL AND run_id <> ?1",
-    )
-    .bind(format!("{run_id:x}"))
-    .bind(now_ms());
-    let closed = db.run(|mut db| async move { close.exec(&mut db).await })?;
+    let row = LeaseRow::fields();
+    let stale = LeaseRow::filter(
+        row.closed_at()
+            .is_none()
+            .and(row.run_id().ne(format!("{run_id:x}"))),
+    );
+    let now = now_ms();
+    // An update returns no count, so it counts the rows first, in the same
+    // transaction.
+    let closed = db.run(|mut db| async move {
+        let mut tx = db.transaction().await?;
+        let closed = stale.clone().count().exec(&mut tx).await?;
+        stale.update().closed_at(Some(now)).exec(&mut tx).await?;
+        tx.commit().await?;
+        Ok(closed)
+    })?;
     Ok(closed as usize)
 }
 
@@ -412,12 +424,7 @@ fn setting(db: &BrowserDb, key: &'static str) -> toasty::Result<Option<String>> 
 
 /// Saves `value` under `key`, replacing what was there.
 fn put_setting(db: &BrowserDb, key: &'static str, value: String) -> toasty::Result<()> {
-    let upsert = toasty::sql::statement(
-        "INSERT INTO browser_settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    )
-    .bind(key)
-    .bind(value);
+    let upsert = SettingRow::upsert_by_key(key).value(value);
     db.run(|mut db| async move { upsert.exec(&mut db).await })?;
     Ok(())
 }
@@ -495,8 +502,8 @@ pub fn install_secret(db: &BrowserDb) -> [u8; 32] {
     let fresh = random_secret();
     let encoded: String = fresh.iter().map(|b| format!("{b:02x}")).collect();
     // Replaces a damaged value; a concurrent first start keeps whichever
-    // was written first, which `stored` then returns. A conditional upsert:
-    // raw SQL.
+    // was written first, which `stored` then returns. Raw SQL: a conditional
+    // upsert (`ON CONFLICT ... WHERE`), which Toasty 0.11 cannot express.
     let upsert = toasty::sql::statement(
         "INSERT INTO browser_settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -688,6 +695,59 @@ mod tests {
         assert_eq!(s1.len(), 1);
         assert_eq!(s1[0].request_id, "r1");
         assert!(list(&conn, Some("nobody"), 50).unwrap().is_empty());
+    }
+
+    #[test]
+    fn leases_age_from_closing_and_reopen_and_close_by_run() {
+        let conn = conn();
+        let open = |run: u64, tab: &str| {
+            lease_opened(
+                &conn,
+                run,
+                &TabId(tab.into()),
+                "T",
+                "s1",
+                None,
+                "about:blank",
+            )
+            .unwrap();
+        };
+        let now = now_ms();
+        let old = now - RETENTION_MS - 1000;
+        // Opened long ago and still open: pruned by when it opened.
+        open(0x1, "t_old_open");
+        // Opened long ago, closed recently: kept, it ages from closing.
+        open(0x1, "t_closed_recently");
+        // Opened and closed long ago: pruned.
+        open(0x1, "t_closed_long_ago");
+        conn.execute(&format!("UPDATE browser_leases SET created_at = {old}"));
+        conn.execute(&format!(
+            "UPDATE browser_leases SET closed_at = {now} WHERE tab_id = 't_closed_recently'"
+        ));
+        conn.execute(&format!(
+            "UPDATE browser_leases SET closed_at = {old} WHERE tab_id = 't_closed_long_ago'"
+        ));
+        assert_eq!(prune(&conn, now).unwrap(), 2);
+        let left = conn.text("SELECT group_concat(tab_id) FROM browser_leases");
+        assert_eq!(left, "t_closed_recently");
+
+        // A tab id seen again replaces its row and is open again.
+        open(0x2, "t_closed_recently");
+        assert_eq!(open_lease_count(&conn).unwrap(), 1);
+        let run = conn.text("SELECT run_id FROM browser_leases WHERE tab_id = 't_closed_recently'");
+        assert_eq!(run, "2");
+
+        // Only this run's tabs that are gone close, and only once.
+        open(0x2, "t_live");
+        open(0x2, "t_gone");
+        open(0x3, "t_other_run");
+        let live = ["t_live".to_string()].into_iter().collect();
+        assert_eq!(close_leases_except(&conn, 0x2, &live).unwrap(), 2);
+        assert_eq!(close_leases_except(&conn, 0x2, &live).unwrap(), 0);
+        assert_eq!(open_lease_count(&conn).unwrap(), 2);
+        assert_eq!(close_stale_leases(&conn, 0x2).unwrap(), 1);
+        assert_eq!(close_stale_leases(&conn, 0x2).unwrap(), 0);
+        assert_eq!(open_lease_count(&conn).unwrap(), 1);
     }
 
     #[test]
