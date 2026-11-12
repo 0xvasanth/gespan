@@ -1,0 +1,19 @@
+docs/design/review-setup-plan.md
+  s_09449038da8e60::t_2596c92b4e1385 1-538
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa58173b6ceea68f84a56631ab5386f2e00930bf",
+  "prompts": {},
+  "sessions": {
+    "s_09449038da8e60": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f6decefc-34f5-421f-aeca-6c331645bfc4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
