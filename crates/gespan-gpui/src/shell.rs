@@ -1203,7 +1203,10 @@ impl Shell {
                 }
             }
         });
-        if !secondary {
+        // The change hook is process-wide; under `cargo test` every test's
+        // shell would take it from the one before, so a test that needs it
+        // installs it itself (see `listen_for_decision_changes`).
+        if !secondary && !cfg!(test) {
             listen_for_decision_changes(cx);
         }
         let git_project = workspace.project.clone();
@@ -10076,10 +10079,11 @@ fn backdrop_layer(a: u32, b: u32) -> gpui::Div {
 /// reading. The shell's 30 s clock stays as a fallback.
 fn listen_for_decision_changes(cx: &mut Context<Shell>) {
     let (send, changes) = async_channel::unbounded::<()>();
-    gespan_core::decisions::service::set_changed(Box::new(move || {
-        let _ = send.try_send(());
-    }));
+    gespan_core::decisions::service::set_changed(decision_change_hook(&send));
     cx.spawn(async move |this, cx| {
+        // The task owns the channel's only strong sender, so the channel
+        // closes when this task is dropped, on this shell's own executor.
+        let _send = send;
         while changes.recv().await.is_ok() {
             // A burst of changes needs one read.
             while changes.try_recv().is_ok() {}
@@ -10092,6 +10096,19 @@ fn listen_for_decision_changes(cx: &mut Context<Shell>) {
         }
     })
     .detach();
+}
+
+/// The process-wide change hook for one listener. It holds a weak sender: a
+/// hook replaced by the next shell's (or dropped on any other thread) must
+/// not close this listener's channel, since closing it wakes the listener
+/// from that thread, which GPUI's test scheduler rejects as nondeterminism.
+fn decision_change_hook(send: &async_channel::Sender<()>) -> Box<dyn Fn() + Send + Sync + 'static> {
+    let send = send.downgrade();
+    Box::new(move || {
+        if let Some(send) = send.upgrade() {
+            let _ = send.try_send(());
+        }
+    })
 }
 
 #[cfg(test)]
