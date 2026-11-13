@@ -595,3 +595,22 @@ fn keyword_search_widens_its_pool_past_better_matches_it_cannot_show() {
         .collect();
     assert_eq!(all, [best.id, tied[3], tied[2], tied[1], tied[0]]);
 }
+
+/// A source made only of whitespace is no source: it must not make a
+/// pending entry look like the user's words to other sessions.
+#[test]
+fn blank_source_text_is_trimmed_to_nothing() {
+    let dir = TempDir::new().unwrap();
+    let log = DecisionStore::open(&dir.path().join("gespan.db"), config()).unwrap();
+    let mut new = proposal(Scope::Global, "Tabs", "Use tabs");
+    new.source = Source {
+        session: Some(3),
+        question_ref: Some("  \n ".into()),
+        user_turn: Some("\t".into()),
+        import: Some("  ~/.claude/CLAUDE.md  ".into()),
+    };
+    let entry = log.propose(new, 1).unwrap();
+    assert_eq!(entry.source.question_ref, None);
+    assert_eq!(entry.source.user_turn, None);
+    assert_eq!(entry.source.import.as_deref(), Some("~/.claude/CLAUDE.md"));
+}

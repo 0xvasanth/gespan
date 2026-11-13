@@ -327,11 +327,12 @@ impl DecisionStore {
         self.config.clean(s)
     }
 
-    /// Source text is user-supplied free text too: redact and cap it, then
-    /// treat what is left empty as absent.
+    /// Source text is user-supplied free text too: redact and cap it, trim
+    /// it, then treat what is left empty as absent, so blank text never
+    /// counts as a user source.
     fn clean_source(&self, s: &Option<String>) -> Option<String> {
         s.as_deref()
-            .map(|v| self.clean(v))
+            .map(|v| self.clean(v).trim().to_owned())
             .filter(|v| !v.is_empty())
     }
 

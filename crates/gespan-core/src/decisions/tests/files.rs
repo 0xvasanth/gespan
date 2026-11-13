@@ -911,3 +911,38 @@ fn removing_collapsed_sections_keeps_the_text_between_orphan_markers() {
     assert_eq!(regenerated, format!("u1\nu2\ntail\n\n{}", section("new")));
     assert_eq!(regenerated.matches(BEGIN).count(), 1);
 }
+
+/// Windows canonicalises to `\\?\C:\...`; the exclude pattern is worked out
+/// by stripping the toplevel from the file, so both must lose the prefix,
+/// and the file's folders may not exist yet. Checked on every OS with a
+/// canonicalisation that adds the prefix.
+#[test]
+fn lenient_canonical_drops_the_verbatim_prefix_and_keeps_missing_folders() {
+    use crate::decisions::files::{lenient_canonical, lenient_canonical_with, without_verbatim};
+    let dir = tempfile::tempdir().unwrap();
+    let real = without_verbatim(&std::fs::canonicalize(dir.path()).unwrap());
+    let file = dir
+        .path()
+        .join(".cursor")
+        .join("rules")
+        .join("gespan-decisions.mdc");
+    let windows_like = |p: &Path| {
+        std::fs::canonicalize(p)
+            .map(|c| PathBuf::from(format!(r"\\?\{}", without_verbatim(&c).display())))
+    };
+    let expected = real
+        .join(".cursor")
+        .join("rules")
+        .join("gespan-decisions.mdc");
+    assert_eq!(lenient_canonical_with(&file, windows_like), expected);
+    assert_eq!(lenient_canonical(&file), expected);
+    assert_eq!(
+        without_verbatim(Path::new(r"\\?\C:\repo\.cursor")),
+        PathBuf::from(r"C:\repo\.cursor")
+    );
+    assert_eq!(
+        without_verbatim(Path::new(r"\\?\UNC\host\share\repo")),
+        PathBuf::from(r"\\host\share\repo")
+    );
+    assert_eq!(without_verbatim(&expected), expected);
+}

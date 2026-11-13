@@ -293,6 +293,66 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// pass the workspace toplevel for project files, the profile home for
 /// global ones.
 pub fn write_atomic(path: &Path, content: &str, allowed_root: &Path) -> io::Result<()> {
+    write_atomic_in(path, content, allowed_root, false)
+}
+
+/// [`write_atomic`] for a global, home-level file (`~/.claude/CLAUDE.md`,
+/// `~/.codex/AGENTS.md`, OpenCode's and Kiro's): a symlink there may also
+/// lead outside `allowed_root` (a dotfiles repository, say), as long as it
+/// ends at an existing regular file the user owns. The file it ends at is
+/// replaced, by a rename in that file's own folder, so the link survives.
+/// A link to a folder or to a missing file is refused. Project files never
+/// use this: a link shipped inside a repository must not lead Gespan out.
+pub fn write_atomic_global(path: &Path, content: &str, allowed_root: &Path) -> io::Result<()> {
+    write_atomic_in(path, content, allowed_root, true)
+}
+
+/// Whether `path` (followed through any links) is an existing regular file
+/// owned by the user Gespan runs as; the reason when it is not.
+pub(crate) fn owned_regular_file(path: &Path) -> io::Result<()> {
+    let meta = fs::metadata(path).map_err(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} links to a missing file; not writing", path.display()),
+            )
+        } else {
+            e
+        }
+    })?;
+    if !meta.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "{} does not link to a regular file; not writing",
+                path.display()
+            ),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let me = unsafe { libc::geteuid() };
+        if meta.uid() != me {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "{} links to a file you do not own; not writing",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn write_atomic_in(
+    path: &Path,
+    content: &str,
+    allowed_root: &Path,
+    own_link_may_leave_root: bool,
+) -> io::Result<()> {
     if path.components().any(|c| c == Component::ParentDir) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -307,9 +367,17 @@ pub fn write_atomic(path: &Path, content: &str, allowed_root: &Path) -> io::Resu
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
+    // A global file linked out of its home, to a file the user owns.
+    let mut linked_out = false;
     if through_link {
         // Never create directories for a path reached through a link.
-        ensure_inside(&fs::canonicalize(&dir)?, &root, path)?;
+        let inside = ensure_inside(&fs::canonicalize(&dir)?, &root, path);
+        if inside.is_err() && own_link_may_leave_root {
+            owned_regular_file(&target)?;
+            linked_out = true;
+        } else {
+            inside?;
+        }
     } else {
         // Check the nearest existing ancestor before creating anything.
         let existing = dir
@@ -332,14 +400,17 @@ pub fn write_atomic(path: &Path, content: &str, allowed_root: &Path) -> io::Resu
     let tmp = dir.join(unique);
     let result = write_and_rename(&tmp, &target, content, || {
         // The link chain must still lead to the same file, whose directory
-        // must still be inside the root.
-        if resolve_symlinks(path)? == target {
-            ensure_inside(&fs::canonicalize(&dir)?, &root, path)
-        } else {
+        // must still be inside the root (or which must still be the user's
+        // own regular file, for a global file linked out).
+        if resolve_symlinks(path)? != target {
             Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!("{} changed while being written", path.display()),
             ))
+        } else if linked_out {
+            owned_regular_file(&target)
+        } else {
+            ensure_inside(&fs::canonicalize(&dir)?, &root, path)
         }
     });
     if result.is_err() {
@@ -390,9 +461,11 @@ fn write_and_rename(
 /// outside git, outside the work tree, or inside `.git`.
 fn exclude_target(workspace: &Path, file: &Path) -> Option<(String, PathBuf, PathBuf)> {
     let top = crate::git::git_probe(workspace, &["rev-parse", "--show-toplevel"])?;
-    let top = fs::canonicalize(top.trim()).ok()?;
+    let top = without_verbatim(&fs::canonicalize(top.trim()).ok()?);
     let common = super::scope::git_common_dir(workspace)?;
-    let file = canonical_or_parent(file);
+    // Both sides the same way: canonical, without Windows' `\\?\` prefix,
+    // even while the file's folders do not exist yet.
+    let file = lenient_canonical(file);
     let rel = file.strip_prefix(&top).ok()?;
     let parts: Vec<String> = rel
         .components()
@@ -408,15 +481,50 @@ fn exclude_target(workspace: &Path, file: &Path) -> Option<(String, PathBuf, Pat
     ))
 }
 
-/// The file's own path with its directory canonicalised. The file itself is
-/// never resolved, so a symlink is excluded under its own name.
-fn canonical_or_parent(file: &Path) -> PathBuf {
-    match (
-        file.parent().and_then(|p| fs::canonicalize(p).ok()),
-        file.file_name(),
-    ) {
-        (Some(parent), Some(name)) => parent.join(name),
-        _ => file.to_path_buf(),
+/// `path` with its nearest existing folder canonicalised and the missing
+/// rest appended, without Windows' verbatim prefix (`\\?\`). The last
+/// component is never resolved, so a symlink is excluded under its own name.
+pub(crate) fn lenient_canonical(path: &Path) -> PathBuf {
+    lenient_canonical_with(path, |p| fs::canonicalize(p))
+}
+
+/// [`lenient_canonical`] with the canonicalisation given (tests give one
+/// that adds the Windows prefix, so it is checked on every OS).
+pub(crate) fn lenient_canonical_with(
+    path: &Path,
+    canonicalize: impl Fn(&Path) -> io::Result<PathBuf>,
+) -> PathBuf {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return without_verbatim(path);
+    };
+    let mut missing = Vec::new();
+    let mut base = parent;
+    loop {
+        if let Ok(found) = canonicalize(base) {
+            let mut out = found;
+            out.extend(missing.iter().rev());
+            out.push(name);
+            return without_verbatim(&out);
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(up), Some(part)) => {
+                missing.push(part);
+                base = up;
+            }
+            _ => return without_verbatim(path),
+        }
+    }
+}
+
+/// `path` without the `\\?\` (or `\\?\UNC\`) prefix Windows'
+/// canonicalisation adds, so one folder compares equal however it was
+/// reached.
+pub(crate) fn without_verbatim(path: &Path) -> PathBuf {
+    match path.to_str() {
+        Some(text) if text.starts_with(r"\\?\") => {
+            PathBuf::from(super::scope::strip_verbatim(text))
+        }
+        _ => path.to_path_buf(),
     }
 }
 

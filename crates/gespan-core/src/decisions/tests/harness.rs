@@ -1,5 +1,5 @@
 use crate::accounts::{Account, Book};
-use crate::decisions::files::{BEGIN, END};
+use crate::decisions::files::{lenient_canonical, BEGIN, END};
 use crate::decisions::harness::{
     hold_writing, preference_targets, project_targets, regenerate, remove_all, Mode, Report,
     BEFORE_WRITE, MAX_FILE_BYTES,
@@ -256,7 +256,14 @@ fn project_pointer_files_are_excluded_from_git() {
         assert_eq!(targets.len(), 3, "{targets:?}");
         for target in &targets {
             assert!(matches!(target.mode, Mode::OwnedFile));
-            assert!(target.path.starts_with(ws), "{}", target.path.display());
+            // Compared canonical and without Windows' `\\?\` prefix: the
+            // toplevel git reports may be spelled differently from `ws`.
+            assert!(
+                lenient_canonical(&target.path)
+                    .starts_with(lenient_canonical(&ws.join("x")).parent().unwrap()),
+                "{}",
+                target.path.display()
+            );
             assert!(
                 section_of(&read(&target.path)).contains("Use sqlite text"),
                 "{}",
@@ -1022,4 +1029,155 @@ fn recorded_files_are_known_until_removed() {
     let report = f.remove_all(&Book::default(), &[]);
     assert!(report.errors.is_empty(), "{report:?}");
     assert!(!has_recorded_files(&f.data));
+}
+
+/// When the store cannot be read for one workspace, its files are left as
+/// they were: not withdrawn as leftovers for want of a body.
+#[test]
+fn a_store_error_for_a_workspace_leaves_its_files_alone() {
+    use crate::decisions::harness::FAIL_SCOPE;
+    let f = fixture();
+    let scope = scope_for(&f.repo);
+    f.approve(EntryKind::Decision, scope.clone(), "Use sqlite");
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(report.errors.is_empty(), "{report:?}");
+    let shared = shared_file(&f.repo, &f.data);
+    let mut files = vec![shared];
+    files.extend(project_targets(&f.repo).into_iter().map(|t| t.path));
+    for file in &files {
+        assert!(read(file).contains("Use sqlite text"), "{}", file.display());
+    }
+    FAIL_SCOPE.with(|s| *s.borrow_mut() = Some(scope));
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    FAIL_SCOPE.with(|s| *s.borrow_mut() = None);
+    assert!(
+        report.errors.iter().any(|(path, _)| *path == f.repo),
+        "{report:?}"
+    );
+    assert!(report.written.is_empty(), "{report:?}");
+    for file in &files {
+        assert!(read(file).contains("Use sqlite text"), "{}", file.display());
+    }
+}
+
+/// Only `ls-files --error-unmatch` exiting 1 means "not tracked". When git
+/// fails any other way it could not tell, so the project file is refused
+/// and reported, never written.
+#[test]
+fn a_failing_tracked_check_refuses_the_project_file() {
+    use crate::decisions::harness::LS_FILES_EXIT;
+    let f = fixture();
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
+    LS_FILES_EXIT.with(|c| *c.borrow_mut() = Some(128));
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    LS_FILES_EXIT.with(|c| *c.borrow_mut() = None);
+    for target in project_targets(&f.repo) {
+        assert!(!target.path.exists(), "{}", target.path.display());
+        let error = report
+            .errors
+            .iter()
+            .find(|(p, _)| *p == target.path)
+            .map(|(_, e)| e.as_str());
+        assert!(
+            error.is_some_and(|e| e.contains("could not tell") && e.contains("exit 128")),
+            "{report:?}"
+        );
+    }
+    // The shared file is not in the work tree, so it is still written.
+    assert!(read(&shared_file(&f.repo, &f.data)).contains("Use sqlite text"));
+    // With git answering normally, they are written.
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(report.errors.is_empty(), "{report:?}");
+    for target in project_targets(&f.repo) {
+        assert!(target.path.is_file(), "{}", target.path.display());
+    }
+}
+
+/// A global CLAUDE.md kept in a dotfiles repository and linked into the
+/// harness home gets Gespan's section in the linked file (the link stays),
+/// and the import reads its rules through the link. Project files still
+/// refuse links (`project_files_that_are_symlinks_or_lead_into_git_are_refused`).
+#[cfg(unix)]
+#[test]
+fn a_global_file_linked_to_the_users_own_file_is_written_and_imported() {
+    use std::os::unix::fs::symlink;
+    let f = fixture();
+    f.install_claude_and_codex();
+    let dotfiles = f.home.parent().unwrap().join("dotfiles");
+    fs::create_dir_all(&dotfiles).unwrap();
+    let real = dotfiles.join("CLAUDE.md");
+    fs::write(&real, "# Mine\n\n- Prefer small functions.\n").unwrap();
+    let claude = f.home.join(".claude").join("CLAUDE.md");
+    symlink(&real, &claude).unwrap();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+
+    let report = f.regenerate(&Book::default(), &[]);
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert!(fs::symlink_metadata(&claude)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    let text = read(&real);
+    assert!(
+        text.starts_with("# Mine\n\n- Prefer small functions.\n"),
+        "{text}"
+    );
+    assert!(section_of(&text).contains("Answer tersely"), "{text}");
+    // No temp file is left in either folder.
+    for dir in [&dotfiles, &f.home.join(".claude")] {
+        let names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .all(|n| !n.to_string_lossy().ends_with(".gespan-tmp")),
+            "{names:?}"
+        );
+    }
+
+    let files = crate::decisions::import::global_files(&f.homes());
+    assert!(files.contains(&claude), "{files:?}");
+    let added = crate::decisions::import::import_once_from(&f.store, &files, 30, None).unwrap();
+    assert_eq!(added, 1);
+    assert!(f
+        .store
+        .pending()
+        .unwrap()
+        .iter()
+        .any(|e| e.text == "Prefer small functions."));
+
+    // Switched off, the section leaves the linked file and the link stays.
+    let report = f.remove_all(&Book::default(), &[]);
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(read(&real), "# Mine\n\n- Prefer small functions.\n");
+    assert!(fs::symlink_metadata(&claude).is_ok());
+}
+
+/// A global link out of the home that ends at a folder, or at nothing, is
+/// refused and reported; nothing is created at its end.
+#[cfg(unix)]
+#[test]
+fn a_global_link_to_a_folder_or_a_missing_file_is_refused() {
+    use std::os::unix::fs::symlink;
+    let f = fixture();
+    f.install_claude_and_codex();
+    let elsewhere = f.home.parent().unwrap().join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let claude = f.home.join(".claude").join("CLAUDE.md");
+    let codex = f.home.join(".codex").join("AGENTS.md");
+    symlink(&elsewhere, &claude).unwrap();
+    let missing = elsewhere.join("missing.md");
+    symlink(&missing, &codex).unwrap();
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+
+    let report = f.regenerate(&Book::default(), &[]);
+    let failed: Vec<&PathBuf> = report.errors.iter().map(|(p, _)| p).collect();
+    assert!(failed.contains(&&claude), "{report:?}");
+    assert!(failed.contains(&&codex), "{report:?}");
+    assert!(!missing.exists());
+    assert!(elsewhere.is_dir());
+    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
 }

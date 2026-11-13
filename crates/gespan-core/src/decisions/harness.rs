@@ -65,7 +65,8 @@
 //! regular files are never read or written.
 use super::entry::{Entry, Kind as EntryKind, Scope};
 use super::files::{
-    ensure_excluded, remove_excluded, replace_section, user_edited_section, write_atomic, BEGIN,
+    ensure_excluded, remove_excluded, replace_section, user_edited_section, write_atomic,
+    write_atomic_global, BEGIN,
 };
 use super::render::{render_block, START_BUDGET};
 use super::scope::{git_common_dir, scope_for, shared_file, TtlCache};
@@ -141,6 +142,23 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+// A scope whose read fails, so tests can make the store fail for one
+// workspace.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_SCOPE: std::cell::RefCell<Option<Scope>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The active entries of `scope`.
+fn active_in(store: &DecisionStore, scope: &Scope) -> Result<Vec<Entry>, super::entry::Error> {
+    #[cfg(test)]
+    if FAIL_SCOPE.with(|f| f.borrow().as_ref() == Some(scope)) {
+        return Err(super::entry::Error::Db("injected failure".into()));
+    }
+    store.active(scope)
+}
+
 /// One regeneration or removal at a time, so two never race on the files or
 /// on the record of what was written.
 static WRITING: Mutex<()> = Mutex::new(());
@@ -207,12 +225,16 @@ pub fn preference_targets(book: &Book, data_dir: &Path, homes: Homes) -> Vec<Tar
     targets
 }
 
-/// The work tree's toplevel, or the workspace itself outside git.
+/// The work tree's toplevel, or the workspace itself outside git;
+/// canonical and without Windows' verbatim prefix, like the paths the
+/// exclude file is worked out from.
 fn toplevel(workspace: &Path) -> PathBuf {
-    crate::git::git_probe(workspace, &["rev-parse", "--show-toplevel"])
+    let top = crate::git::git_probe(workspace, &["rev-parse", "--show-toplevel"])
         .map(|top| PathBuf::from(top.trim()))
         .filter(|top| !top.as_os_str().is_empty())
-        .unwrap_or_else(|| workspace.to_path_buf())
+        .unwrap_or_else(|| workspace.to_path_buf());
+    let canonical = fs::canonicalize(&top).unwrap_or(top);
+    super::files::without_verbatim(&canonical)
 }
 
 /// The files in a workspace that point each harness at the project's
@@ -291,6 +313,9 @@ struct Record {
     created: bool,
     /// The section as last written.
     last: String,
+    /// A global, home-level file (see [`Job::global`]).
+    #[serde(default)]
+    global: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -344,6 +369,9 @@ struct Job {
     workspace: Option<PathBuf>,
     /// Whether the body includes preferences.
     prefs: bool,
+    /// A global, home-level preference file: a symlink there may lead to
+    /// the user's own file elsewhere ([`write_atomic_global`]).
+    global: bool,
 }
 
 /// Reads a regular file of at most [`MAX_FILE_BYTES`]; `None` when missing.
@@ -398,11 +426,10 @@ fn check_project_target(path: &Path, workspace: &Path) -> io::Result<()> {
         .skip(1)
         .find(|a| a.exists())
         .and_then(|a| fs::canonicalize(a).ok());
-    let git_dirs = [
-        crate::git::git_probe(workspace, &["rev-parse", "--absolute-git-dir"])
-            .map(|d| PathBuf::from(d.trim())),
-        git_common_dir(workspace),
-    ];
+    let git_dir = crate::git::git_probe(workspace, &["rev-parse", "--absolute-git-dir"])
+        .map(|d| PathBuf::from(d.trim()));
+    let in_git = git_dir.is_some();
+    let git_dirs = [git_dir, git_common_dir(workspace)];
     for dir in git_dirs.into_iter().flatten() {
         let dir = fs::canonicalize(&dir).unwrap_or(dir);
         if existing.as_ref().is_some_and(|e| e.starts_with(&dir)) {
@@ -414,11 +441,43 @@ fn check_project_target(path: &Path, workspace: &Path) -> io::Result<()> {
     let Some(path_text) = path.to_str() else {
         return Err(refused("path is not valid UTF-8"));
     };
-    if crate::git::git_probe(workspace, &["ls-files", "--error-unmatch", "--", path_text]).is_some()
-    {
-        return Err(refused("is tracked by git; not touching it"));
+    if !in_git {
+        return Ok(());
     }
-    Ok(())
+    // Exit 1 is git's "not tracked"; 0 is tracked, and anything else means
+    // git could not tell, so the file is left alone either way.
+    match ls_files_exit(workspace, path_text) {
+        Some(1) => Ok(()),
+        Some(0) => Err(refused("is tracked by git; not touching it")),
+        other => Err(refused(&format!(
+            "git could not tell whether it is tracked ({}); not touching it",
+            other.map_or_else(|| "it did not run".to_owned(), |c| format!("exit {c}"))
+        ))),
+    }
+}
+
+// The exit code `git ls-files --error-unmatch` gives, when a test sets one.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static LS_FILES_EXIT: std::cell::RefCell<Option<i32>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The exit code of `git ls-files --error-unmatch -- <path>` in
+/// `workspace`; `None` when git did not run or was killed.
+fn ls_files_exit(workspace: &Path, path: &str) -> Option<i32> {
+    #[cfg(test)]
+    if let Some(code) = LS_FILES_EXIT.with(|c| *c.borrow()) {
+        return Some(code);
+    }
+    crate::git::git_answer(
+        workspace,
+        &["ls-files", "--error-unmatch", "--", path],
+        &[],
+        None,
+    )
+    .ok()
+    .and_then(|(code, _)| code)
 }
 
 /// Writes or withdraws one file, recording errors and changes in `report`.
@@ -496,7 +555,11 @@ fn try_apply(
         Some(next) => {
             if current.as_deref() != Some(next.as_str()) {
                 let made = missing_dirs(&job.path, &job.root);
-                write_atomic(&job.path, &next, &job.root)?;
+                if job.global {
+                    write_atomic_global(&job.path, &next, &job.root)?;
+                } else {
+                    write_atomic(&job.path, &next, &job.root)?;
+                }
                 registry.written.dirs.extend(made);
                 report.written.push(job.path.clone());
             }
@@ -512,6 +575,7 @@ fn try_apply(
                         workspace: job.workspace.clone(),
                         created,
                         last: replace_section("", body),
+                        global: job.global,
                     },
                 );
             }
@@ -565,6 +629,7 @@ fn preference_jobs(book: &Book, data_dir: &Path, homes: Homes) -> Vec<Job> {
             root: t.root,
             workspace: None,
             prefs: true,
+            global: true,
         })
         .collect()
 }
@@ -580,12 +645,14 @@ fn project_jobs(workspace: &Path, data_dir: &Path) -> Vec<Job> {
         header: "",
         workspace: None,
         prefs: true,
+        global: false,
     }];
     jobs.extend(project_targets(workspace).into_iter().map(|t| Job {
         header: header(Some(t.harness)),
         workspace: Some(t.root.clone()),
         // Claude Code has its preferences in its global CLAUDE.md.
         prefs: t.harness != Kind::Claude,
+        global: false,
         path: t.path,
         mode: t.mode,
         root: t.root,
@@ -615,6 +682,7 @@ fn recorded_leftovers(registry: &Registry, jobs: &[Job]) -> Vec<Job> {
             header: "",
             workspace: record.workspace.clone(),
             prefs: false,
+            global: record.global,
         })
         .collect()
 }
@@ -664,10 +732,13 @@ pub fn regenerate(
         done.push(job);
     }
     for workspace in workspaces {
-        let entries = match store.active(&scope_for(workspace)) {
+        let entries = match active_in(store, &scope_for(workspace)) {
             Ok(entries) => entries,
             Err(error) => {
                 report.errors.push((workspace.clone(), error.to_string()));
+                // Left as they are: counted as done, so the leftovers pass
+                // below does not withdraw them for want of a body.
+                done.extend(project_jobs(workspace, data_dir));
                 continue;
             }
         };

@@ -2,7 +2,7 @@
 //! files (their global CLAUDE.md, AGENTS.md): each top-level rule becomes a
 //! pending preference, waiting for review in My tasks.
 use super::entry::{derived_title, Kind, NewEntry, Scope, Source};
-use super::files::{closes_fence, fence_opener, replace_section};
+use super::files::{closes_fence, fence_opener, owned_regular_file, replace_section};
 use super::harness::read_capped;
 use super::store::DecisionStore;
 use crate::accounts;
@@ -180,8 +180,10 @@ fn tilde(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
-/// Whether `path` may be read: a regular file, and when it is a symlink, one
-/// that stays inside the folder it sits in.
+/// Whether `path` may be read: a regular file, and when it is a symlink,
+/// one that stays inside the folder it sits in or ends at a regular file
+/// the user owns (a global CLAUDE.md kept in a dotfiles repository), the
+/// same files the harness writer follows.
 fn safe_to_read(path: &Path) -> bool {
     let Ok(meta) = fs::symlink_metadata(path) else {
         return false;
@@ -194,7 +196,7 @@ fn safe_to_read(path: &Path) -> bool {
         .and_then(|dir| fs::canonicalize(dir).ok())
         .zip(fs::canonicalize(path).ok())
         .is_some_and(|(dir, target)| target.starts_with(dir));
-    inside
+    inside || owned_regular_file(path).is_ok()
 }
 
 /// Proposes the preferences in `files` as pending entries that came from

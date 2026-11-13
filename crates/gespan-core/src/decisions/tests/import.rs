@@ -177,20 +177,34 @@ fn unreadable_files_are_skipped() {
     assert!(log.pending().unwrap().is_empty());
 }
 
+/// A global file linked out of its folder (a dotfiles repository) is read
+/// when it ends at the user's own regular file; a link to a folder or to
+/// nothing is not.
 #[cfg(unix)]
 #[test]
-fn a_symlink_out_of_its_folder_is_not_read() {
+fn a_symlink_to_the_users_own_file_is_read_and_others_are_not() {
     let dir = TempDir::new().unwrap();
     let log = store(&dir);
     let home = dir.path().join("home");
     std::fs::create_dir(&home).unwrap();
-    let outside = write(dir.path(), "elsewhere.md", "- secret plans\n");
+    let dotfiles = dir.path().join("dotfiles");
+    std::fs::create_dir(&dotfiles).unwrap();
+    let outside = write(&dotfiles, "CLAUDE.md", "- linked rule\n");
     std::os::unix::fs::symlink(&outside, home.join("CLAUDE.md")).unwrap();
     let inside = write(&home, "real.md", "- inside rule\n");
     std::os::unix::fs::symlink(&inside, home.join("AGENTS.md")).unwrap();
-    let files = [home.join("CLAUDE.md"), home.join("AGENTS.md")];
-    assert_eq!(import_once(&log, &files, 10).unwrap(), 1);
-    assert_eq!(log.pending().unwrap()[0].text, "inside rule");
+    std::os::unix::fs::symlink(&dotfiles, home.join("FOLDER.md")).unwrap();
+    std::os::unix::fs::symlink(dotfiles.join("gone.md"), home.join("GONE.md")).unwrap();
+    let files = [
+        home.join("CLAUDE.md"),
+        home.join("AGENTS.md"),
+        home.join("FOLDER.md"),
+        home.join("GONE.md"),
+    ];
+    assert_eq!(import_once(&log, &files, 10).unwrap(), 2);
+    let mut texts: Vec<String> = log.pending().unwrap().into_iter().map(|e| e.text).collect();
+    texts.sort();
+    assert_eq!(texts, ["inside rule", "linked rule"]);
 }
 
 #[test]
