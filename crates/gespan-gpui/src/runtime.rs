@@ -950,6 +950,10 @@ fn run_turn_using(
             settings,
         };
         let mut tool_rows = std::collections::HashMap::new();
+        // Holds each visual until the provider's own stdout announcement of its
+        // `visual_show` call has been applied, so text written before the call
+        // stays above the visual however far the stdout reader lags.
+        let mut anchors = gespan_core::visual_bridge::Anchors::default();
         // The running-work list attributes the provider and its tools to this session.
         let result = gespan_core::process::owned_by(summary.id, || {
             provider::run_with_controls(request, cancel.clone(), Some(controls), |events| {
@@ -959,10 +963,21 @@ fn run_turn_using(
                     return Err(ProviderError::Stopped.into());
                 }
                 gespan_core::tool_servers::touch(summary.id);
-                let publications = visual_bridge
+                let drained = visual_bridge
                     .as_ref()
                     .map(|bridge| bridge.drain())
                     .unwrap_or_default();
+                // This emit applies its events before the publications, so a
+                // call announced here may release its visual in the same emit.
+                let mut ending = false;
+                for event in &events {
+                    match event {
+                        Event::Tool(call) => anchors.observe(call),
+                        Event::Done => ending = true,
+                        _ => {}
+                    }
+                }
+                let publications = anchors.admit(drained, std::time::Instant::now(), ending);
                 if let Some(tools) = &ticket_tools {
                     tools.refresh_scope();
                     tools.answer_pending();
