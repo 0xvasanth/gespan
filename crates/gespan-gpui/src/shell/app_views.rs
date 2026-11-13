@@ -232,7 +232,13 @@ impl Shell {
     pub(super) fn app_view_body(&self) -> Option<AnyElement> {
         match self.active_app_view? {
             AppView::Home => self.home.clone().map(IntoElement::into_any_element),
-            AppView::MyTasks => self.my_tasks.clone().map(IntoElement::into_any_element),
+            // Cached: the page redraws when it changes, not on every shell
+            // notify (each streamed token in any chat, and the 1 s tick while
+            // an approval waits).
+            AppView::MyTasks => self.my_tasks.clone().map(|view| {
+                view.cached(gpui::StyleRefinement::default().size_full())
+                    .into_any_element()
+            }),
             AppView::Notes => self.notes.clone().map(IntoElement::into_any_element),
             AppView::Inbox => self.inbox.clone().map(IntoElement::into_any_element),
             AppView::Automations => self.automations.clone().map(IntoElement::into_any_element),

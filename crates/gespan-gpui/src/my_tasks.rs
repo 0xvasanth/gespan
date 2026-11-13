@@ -72,7 +72,7 @@ pub(crate) enum Source {
 }
 
 /// What the card shows and answers.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) enum Body {
     Approval {
         approval: Box<Approval>,
@@ -101,7 +101,7 @@ pub(crate) enum Body {
 }
 
 /// One thing waiting on the user.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(crate) struct TaskItem {
     /// Stable across refreshes: kind, source and request.
     pub key: String,
@@ -153,6 +153,13 @@ pub(crate) enum Event {
     },
 }
 
+/// Whether moving the clock from `before` to `now` can change a wait the
+/// page shows. Waits are shown to the minute ("12m", "2h 14m"), so a newer
+/// clock within the same minute changes nothing on screen.
+pub(crate) fn shown_waits_changed(before: u64, now: u64) -> bool {
+    before / 60_000 != now / 60_000
+}
+
 pub(crate) struct MyTasks {
     tasks: Vec<TaskItem>,
     selected: Option<String>,
@@ -197,6 +204,17 @@ pub(crate) struct MyTasks {
     /// A question or choice just answered, offered as a decision.
     offer: Option<TaskRecord>,
     error: Option<String>,
+    /// The queue the list draws, the tab it was built for, its row
+    /// selected, and the list's scroll and measured heights.
+    queue: Vec<list::QueueRow>,
+    queue_tab: Tab,
+    queue_selected: Option<list::QueueRow>,
+    queue_state: gpui::ListState,
+    /// The page's width when last laid out: narrow panes fold the top bar.
+    page_bounds: AnchorSlot,
+    /// How many times the page has rendered, for the redraw tests.
+    #[cfg(test)]
+    pub(crate) renders: usize,
     _search_changed: Subscription,
 }
 
@@ -245,6 +263,13 @@ impl MyTasks {
             writing: None,
             offer: None,
             error: None,
+            queue: Vec::new(),
+            queue_tab: Tab::default(),
+            queue_selected: None,
+            queue_state: gpui::ListState::new(0, gpui::ListAlignment::Top, gpui::px(400.)),
+            page_bounds: AnchorSlot::default(),
+            #[cfg(test)]
+            renders: 0,
             _search_changed,
         }
     }
@@ -277,6 +302,12 @@ impl MyTasks {
         cx: &mut Context<Self>,
     ) {
         gespan_core::tasks::order(&mut tasks, |t| t.since_ms);
+        // The shell hands over a snapshot on every session change, most of
+        // them a streamed token in some chat. When nothing waiting changed
+        // and every wait still reads the same, there is nothing to redraw.
+        if tasks == self.tasks && !shown_waits_changed(self.now_ms, now_ms) {
+            return;
+        }
         let before = self.selected.clone();
         let was = self
             .selected
@@ -417,14 +448,20 @@ impl MyTasks {
 
 impl Render for MyTasks {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        {
+            self.renders += 1;
+        }
         div()
             .id("my-tasks")
             .debug_selector(|| "my-tasks".into())
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::enter))
+            .relative()
             .size_full()
             .flex()
             .text_color(content(1.))
+            .child(self.page_bounds.layout_probe())
             .child(self.list_column(cx))
             .child(match self.tab {
                 Tab::Waiting => self.task_pane(cx),
