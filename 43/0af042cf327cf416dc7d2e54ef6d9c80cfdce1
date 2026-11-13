@@ -1,0 +1,14 @@
+e2e.txt
+  h_7bb0b8336911f0 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "430af042cf327cf416dc7d2e54ef6d9c80cfdce1",
+  "prompts": {},
+  "humans": {
+    "h_7bb0b8336911f0": {
+      "author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
