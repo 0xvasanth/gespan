@@ -4,7 +4,7 @@
 //! the view state, the background calls and the rows.
 use super::{
     Event, Inbox, Tab,
-    ui::{action, error, message},
+    ui::{action, error, loading, message},
 };
 use crate::{glass, right_panel::spinner, runtime::locked, theme::*};
 use gespan_core::inbox::{
@@ -440,7 +440,16 @@ impl Inbox {
             .py(px(20.));
         let Some(checks) = self.checks.clone() else {
             return root
-                .when(self.extra_loading, |d| d.child(message("Loading checks…")))
+                .when(self.extra_loading, |d| {
+                    // The root already holds the 28px column.
+                    d.child(
+                        glass::card()
+                            .debug_selector(|| "inbox-loading-checks".into())
+                            .px(px(20.))
+                            .py(px(18.))
+                            .child(loading("Loading checks…")),
+                    )
+                })
                 .when_some(self.extra_error.clone(), |d, text| {
                     d.child(error(text)).child(
                         selectable_action("inbox-checks-retry", "Retry", "Retry loading checks")
