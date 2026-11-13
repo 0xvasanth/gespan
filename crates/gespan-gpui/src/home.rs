@@ -17,10 +17,12 @@ use gespan_core::automations::{AutomationRun, Service};
 use gespan_core::tasks::Kind;
 use gpui::{
     AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, Role,
-    SharedString, Task, Window, div, prelude::*, px, relative,
+    SharedString, Task, Window, canvas, div, prelude::*, px, relative,
 };
 use std::{
+    cell::Cell,
     collections::HashMap,
+    rc::Rc,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -38,6 +40,44 @@ const RUN_LIMIT: usize = 500;
 /// Rows each list shows before it says how many more there are.
 const WAITING_ROWS: usize = 3;
 const WORKING_ROWS: usize = 4;
+/// The widest Home's content grows. Past this a big screen gets margins,
+/// not stretched panels.
+pub(crate) const MAX_WIDTH: f32 = 1200.;
+/// Narrower than this, the two columns stack into one.
+const COLUMNS_FROM: f32 = 860.;
+/// Narrower than this, the four tiles sit two to a row; narrower than
+/// `ONE_TILE_BELOW`, one to a row.
+const FOUR_TILES_FROM: f32 = 720.;
+const ONE_TILE_BELOW: f32 = 380.;
+
+/// How Home arranges itself in a content area this wide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Layout {
+    /// Waiting and Working on the left, the charts on the right; else one
+    /// column, in that order.
+    pub(crate) columns: bool,
+    pub(crate) tiles_per_row: usize,
+}
+
+/// Before the page has been measured (`width` 0) it lays out as wide.
+pub(crate) fn layout(width: f32) -> Layout {
+    if width <= 0. {
+        return Layout {
+            columns: true,
+            tiles_per_row: 4,
+        };
+    }
+    Layout {
+        columns: width >= COLUMNS_FROM,
+        tiles_per_row: if width >= FOUR_TILES_FROM {
+            4
+        } else if width >= ONE_TILE_BELOW {
+            2
+        } else {
+            1
+        },
+    }
+}
 const TIMELINE_ROWS: usize = 6;
 
 /// The range the header's segmented control scopes the counts to.
@@ -522,6 +562,8 @@ pub(crate) struct Home {
     runs_loaded: bool,
     generation: u64,
     ticker: Option<Task<()>>,
+    /// The content's width at the last paint, for [`layout`].
+    width: Rc<Cell<f32>>,
 }
 
 impl EventEmitter<Event> for Home {}
@@ -544,6 +586,7 @@ impl Home {
             runs_loaded: false,
             generation: 0,
             ticker: None,
+            width: Rc::new(Cell::new(0.)),
         }
     }
 
@@ -955,13 +998,21 @@ impl Home {
             },
             cx,
         );
+        let per_row = layout(self.width.get()).tiles_per_row;
+        let mut tiles = vec![needs, agents, automation, inbox_tile].into_iter();
+        let mut rows = Vec::new();
+        loop {
+            let row: Vec<AnyElement> = tiles.by_ref().take(per_row).collect();
+            if row.is_empty() {
+                break;
+            }
+            rows.push(div().flex().gap(px(12.)).children(row));
+        }
         div()
             .flex()
+            .flex_col()
             .gap(px(12.))
-            .child(needs)
-            .child(agents)
-            .child(automation)
-            .child(inbox_tile)
+            .children(rows)
             .into_any_element()
     }
 
@@ -1160,8 +1211,6 @@ impl Home {
         glass::card()
             .debug_selector(|| "home-working".into())
             .overflow_hidden()
-            .flex_1()
-            .min_h(px(120.))
             .child(
                 panel_head("Working now")
                     .when(!working.is_empty(), |d| {
@@ -1432,8 +1481,6 @@ impl Home {
         glass::card()
             .debug_selector(|| "home-today".into())
             .overflow_hidden()
-            .flex_1()
-            .min_h(px(120.))
             .child(panel_head("Today"))
             .when(moments.is_empty(), |d| {
                 d.child(empty_box("home-today-empty").child(glass::empty_state(
@@ -1523,6 +1570,66 @@ fn violet() -> Hsla {
 impl Render for Home {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = gespan_core::time::now_ms() as i64;
+        let Layout { columns, .. } = layout(self.width.get());
+        let left = |this: &Self, cx: &mut Context<Self>| {
+            [this.waiting_panel(now, cx), this.working_panel(now, cx)]
+        };
+        let right = |this: &Self, cx: &mut Context<Self>| {
+            [
+                this.chart_panel(now, cx),
+                this.usage_panel(now),
+                this.today_panel(now),
+            ]
+        };
+        let body = if columns {
+            div()
+                .flex()
+                .items_start()
+                .gap(px(14.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .children(left(self, cx)),
+                )
+                .child(
+                    div()
+                        .w(relative(0.42))
+                        .flex_none()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(14.))
+                        .children(right(self, cx)),
+                )
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .children(left(self, cx))
+                .children(right(self, cx))
+        };
+        // Measures the content each paint; a new width lays the page out again.
+        let width = self.width.clone();
+        let entity = cx.entity_id();
+        let measure = canvas(
+            move |bounds, _, cx| {
+                let now = bounds.size.width.as_f32();
+                if (now - width.get()).abs() >= 1. {
+                    width.set(now);
+                    cx.notify(entity);
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full();
         div()
             .id("home")
             .track_focus(&self.focus)
@@ -1532,43 +1639,21 @@ impl Render for Home {
             .text_color(content(1.))
             .child(
                 div()
-                    .min_h_full()
                     .w_full()
-                    .flex()
-                    .flex_col()
+                    .max_w(px(MAX_WIDTH + 64.))
+                    .mx_auto()
                     .px(px(32.))
                     .pt(px(26.))
                     .pb(px(24.))
-                    .child(self.header(now, cx))
-                    .child(div().pt(px(18.)).child(self.tiles(now, cx)))
                     .child(
                         div()
-                            .flex_1()
-                            .pt(px(14.))
+                            .relative()
                             .flex()
-                            .gap(px(14.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(14.))
-                                    .child(self.waiting_panel(now, cx))
-                                    .child(self.working_panel(now, cx)),
-                            )
-                            .child(
-                                div()
-                                    .w(relative(0.42))
-                                    .flex_none()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(14.))
-                                    .child(self.chart_panel(now, cx))
-                                    .child(self.usage_panel(now))
-                                    .child(self.today_panel(now)),
-                            ),
+                            .flex_col()
+                            .child(measure)
+                            .child(self.header(now, cx))
+                            .child(div().pt(px(18.)).child(self.tiles(now, cx)))
+                            .child(div().pt(px(14.)).child(body)),
                     ),
             )
     }
