@@ -357,3 +357,63 @@ fn other_session(window: WindowHandle<Shell>, visual: &mut VisualTestContext) ->
         })
         .unwrap()
 }
+
+#[gpui::test]
+fn home_caps_its_width_on_a_big_screen_and_stacks_on_a_narrow_one(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let bounds = |visual: &mut VisualTestContext, selector: &'static str| {
+        visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector}"))
+    };
+    let lay_out = |visual: &mut VisualTestContext, width: f32, height: f32| {
+        visual.simulate_resize(gpui::size(px(width), px(height)));
+        // One frame measures the new width, the next lays out for it.
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+    };
+    open_home(window, visual);
+
+    lay_out(visual, 2600., 1400.);
+    let needs = bounds(visual, "home-tile-needs-you");
+    let inbox = bounds(visual, "home-tile-inbox");
+    let content = (inbox.right() - needs.left()).as_f32();
+    assert!(
+        (crate::home::MAX_WIDTH - 1.0..=crate::home::MAX_WIDTH + 1.).contains(&content),
+        "content stops at the cap on a big screen, got {content}"
+    );
+    assert_eq!(needs.top(), inbox.top(), "four tiles in one row");
+    let waiting = bounds(visual, "home-waiting");
+    let chart = bounds(visual, "home-chart");
+    assert!(chart.left() > waiting.right(), "two columns side by side");
+    let today = bounds(visual, "home-today");
+    assert!(
+        today.bottom().as_f32() < 1400. - 200.,
+        "panels are as tall as what they show, not stretched to the window"
+    );
+
+    // A wider window only widens the margins, half on each side.
+    lay_out(visual, 3000., 1400.);
+    let moved = (bounds(visual, "home-tile-needs-you").left() - needs.left()).as_f32();
+    assert!(
+        (199.0..=201.).contains(&moved),
+        "content stays centred, moved {moved}"
+    );
+
+    // Narrow: one column, Waiting first, the chart under Working; tiles two a row.
+    lay_out(visual, 900., 1400.);
+    let working = bounds(visual, "home-working");
+    let chart = bounds(visual, "home-chart");
+    assert!(chart.top() >= working.bottom(), "columns stack when narrow");
+    assert_eq!(chart.left(), working.left());
+    assert!(
+        bounds(visual, "home-tile-runs").top() > bounds(visual, "home-tile-needs-you").bottom(),
+        "tiles wrap two to a row"
+    );
+    assert_eq!(
+        bounds(visual, "home-tile-runs").top(),
+        bounds(visual, "home-tile-inbox").top()
+    );
+}

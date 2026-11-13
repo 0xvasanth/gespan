@@ -380,3 +380,49 @@ fn only_a_short_lone_command_can_be_allowed_from_home() {
     assert_eq!(one_click(Some(&long)), None);
     assert!(one_click(Some(&"x".repeat(ONE_CLICK_MAX))).is_some());
 }
+
+#[test]
+fn layout_follows_the_content_width() {
+    let wide = Layout {
+        columns: true,
+        tiles_per_row: 4,
+    };
+    assert_eq!(layout(0.), wide, "unmeasured lays out wide");
+    assert_eq!(layout(MAX_WIDTH), wide);
+    assert_eq!(layout(COLUMNS_FROM), wide);
+    assert_eq!(
+        layout(COLUMNS_FROM - 1.),
+        Layout {
+            columns: false,
+            tiles_per_row: 4
+        }
+    );
+    assert_eq!(
+        layout(FOUR_TILES_FROM),
+        Layout {
+            columns: false,
+            tiles_per_row: 4
+        }
+    );
+    assert_eq!(
+        layout(FOUR_TILES_FROM - 1.),
+        Layout {
+            columns: false,
+            tiles_per_row: 2
+        }
+    );
+    assert_eq!(
+        layout(ONE_TILE_BELOW),
+        Layout {
+            columns: false,
+            tiles_per_row: 2
+        }
+    );
+    assert_eq!(
+        layout(ONE_TILE_BELOW - 1.),
+        Layout {
+            columns: false,
+            tiles_per_row: 1
+        }
+    );
+}
