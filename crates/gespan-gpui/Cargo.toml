@@ -5,6 +5,11 @@ edition = "2024"
 license.workspace = true
 publish = false
 
+[features]
+# The app ships with search by meaning: the decision log's Nomic embedder.
+default = ["nomic"]
+nomic = ["gespan-core/nomic"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

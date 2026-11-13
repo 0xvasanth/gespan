@@ -1,0 +1,23 @@
+[package]
+name = "sqlite-vec-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike: sqlite-vec storage, speed and recall for Nomic embeddings"
+
+# Standalone: not a member of the root workspace.
+[workspace]
+
+[dependencies]
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+sqlite-vec = "0.1.9"
+fastembed = "7.7"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+rand_distr = "0.4"
+rayon = "1"
+
+[profile.release]
+debug = false

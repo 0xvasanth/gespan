@@ -75,6 +75,13 @@ pub(crate) struct Preferences {
     /// `gespan_keep_awake::Mode` value, shared with desktop `gespan.keepAwake`.
     pub keep_awake: String,
     pub claude_hooks: bool,
+    /// Keep preferences and project decisions in Gespan and give them to
+    /// every agent. Off until the user turns it on.
+    pub decision_log: bool,
+    /// Find related decisions by meaning (local embeddings), not just by
+    /// words. Only applies while the decision log is on; the model is
+    /// downloaded the first time it is turned on. Off by default.
+    pub decision_meaning: bool,
     pub binary_paths: HashMap<String, String>,
     pub disabled_skill_paths: Vec<String>,
     pub skill_source_paths: Vec<String>,
@@ -184,6 +191,8 @@ impl Default for Preferences {
             idle_agents: 3,
             keep_awake: "off".into(),
             claude_hooks: true,
+            decision_log: false,
+            decision_meaning: false,
             binary_paths: HashMap::new(),
             disabled_skill_paths: Vec::new(),
             skill_source_paths: Vec::new(),
@@ -657,4 +666,33 @@ pub(crate) fn backdrop_colors(p: &Preferences, glass: bool) -> Option<(u32, u32)
         .find(|(id, ..)| *id == p.backdrop_gradient)
         .or(BACKDROPS.first())
         .map(|&(_, _, a, b)| (a, b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Preferences;
+
+    #[test]
+    fn decision_log_is_opt_in() {
+        assert!(!Preferences::default().decision_log);
+        // Preferences saved before the setting existed keep it off.
+        let saved: Preferences = serde_json::from_str(r#"{"claude_hooks":false}"#).unwrap();
+        assert!(!saved.decision_log);
+        let on: Preferences = serde_json::from_str(r#"{"decision_log":true}"#).unwrap();
+        assert!(on.decision_log);
+    }
+
+    #[test]
+    fn related_by_meaning_is_opt_in_and_needs_the_log() {
+        assert!(!Preferences::default().decision_meaning);
+        let saved: Preferences = serde_json::from_str(r#"{"decision_log":true}"#).unwrap();
+        assert!(!saved.decision_meaning, "saved before it existed: off");
+        let both: Preferences =
+            serde_json::from_str(r#"{"decision_log":true,"decision_meaning":true}"#).unwrap();
+        assert!(both.decision_meaning);
+        assert!(crate::decision_log::meaning_wanted(&both));
+        let log_off: Preferences =
+            serde_json::from_str(r#"{"decision_log":false,"decision_meaning":true}"#).unwrap();
+        assert!(!crate::decision_log::meaning_wanted(&log_off));
+    }
 }

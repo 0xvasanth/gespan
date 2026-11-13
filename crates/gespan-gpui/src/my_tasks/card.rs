@@ -295,6 +295,7 @@ impl MyTasks {
                     );
                 }
             }
+            Body::Decision { .. } => self.decision_card(task, &mut body, &mut buttons, cx),
             Body::Choice { options } => {
                 let Source::Pilot { pilot, .. } = &task.source else {
                     return div().into_any_element();

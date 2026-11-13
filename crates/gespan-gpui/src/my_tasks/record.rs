@@ -80,6 +80,7 @@ impl Source {
             Self::FlowRun(run) => format!("flow:{run}"),
             Self::Pilot { pilot, session } => format!("pilot:{pilot}:{session}"),
             Self::DraftReview { run, url } => format!("draft-review:{run}:{url}"),
+            Self::Log => "decision-log:".into(),
         }
     }
 
@@ -121,6 +122,14 @@ impl TaskItem {
                 comments,
                 outside,
             } => json!({ "body": body, "comments": comments, "outside": outside }),
+            Body::Decision { entry, flag, .. } => json!({
+                "id": entry.label(),
+                "title": entry.title,
+                "text": entry.text,
+                "why": entry.why,
+                "user_answer": entry.user_answer,
+                "flag": flag.as_ref().map(|flag| flag.reason.clone()),
+            }),
         };
         TaskRecord::open(
             self.key.clone(),

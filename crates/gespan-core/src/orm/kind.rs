@@ -44,6 +44,8 @@ impl Kind {
     /// the drift test fails until it has one.
     pub fn models(self) -> ModelSet {
         use crate::automations::{AutomationRow, AutomationRunRow, EventClaimRow, ReviewDraftRow};
+        use crate::decisions::store::DecisionFlag;
+        use crate::decisions::vector::DecisionVectorModel;
         use crate::diagnostics::metrics::DiagnosticCounter;
         use crate::flow::store::{FlowRow, FlowRunRow, FlowVisitRow};
         use crate::store::my_tasks::{MyTask, TaskDecision};
@@ -53,6 +55,8 @@ impl Kind {
                 let mut models = toasty::models!(
                     MyTask,
                     TaskDecision,
+                    DecisionFlag,
+                    DecisionVectorModel,
                     SessionRecord,
                     TauriMigration,
                     WorkspaceSnapshot,
@@ -111,6 +115,8 @@ impl Kind {
                         gespan_board_store::CONSTRAINTS,
                         crate::automations::CONSTRAINTS,
                         crate::flow::store::CONSTRAINTS,
+                        crate::decisions::store::CONSTRAINTS,
+                        crate::decisions::vector::CONSTRAINTS,
                     ]
                     .concat()
                 });

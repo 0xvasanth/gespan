@@ -3,6 +3,7 @@
 use super::card::answer as button;
 use super::list::{group_label, kind_status, row_line, row_title, task_row, tile, waited};
 use super::pane::{open_button, top_bar};
+use super::project_display;
 use super::*;
 use crate::glass::{self, Button};
 use crate::workspace::project_name;
@@ -40,6 +41,64 @@ pub(super) fn ago(now: u64, at: u64) -> String {
 
 fn caption(text: impl Into<SharedString>) -> Div {
     glass::eyebrow(text)
+}
+
+/// The Decisions list's group key for preferences: their scope's text.
+pub(super) const PREFERENCES: &str = "global";
+
+/// Where the Decisions list groups a decision, and the name a group of its
+/// own would show: preferences under "Your preferences"; a project decision
+/// under its project's folder name; a repository decision, which can come
+/// from any clone, under its repository's scope, named after the checkout it
+/// was saved in or, for an agent's proposal, after the repository.
+pub(super) fn decision_group(decision: &SavedDecision) -> (String, String) {
+    use gespan_core::decisions::{Kind as EntryKind, Scope};
+    match &decision.scope {
+        _ if decision.kind == EntryKind::Preference => {
+            (PREFERENCES.into(), "Your preferences".into())
+        }
+        Scope::Global => (PREFERENCES.into(), "Your preferences".into()),
+        Scope::Project(path) => (path.clone(), project_name(path)),
+        Scope::Repo(repo) => {
+            let saved_in = decision.project.as_str();
+            let label = if saved_in.starts_with("repo:") || saved_in == PREFERENCES {
+                repo_name(repo)
+            } else {
+                project_name(saved_in)
+            };
+            (format!("repo:{repo}"), label)
+        }
+    }
+}
+
+/// `github.com/o/gespan@0123456789ab` is the repository `gespan`.
+pub(super) fn repo_name(repo: &str) -> String {
+    let path = repo.rsplit_once('@').map_or(repo, |(path, _)| path);
+    path.rsplit('/').next().unwrap_or(path).to_owned()
+}
+
+/// Decisions grouped as [`decision_group`] says, in the order their first
+/// one comes. A group is named after its first member saved in a checkout,
+/// so a repository's decisions all show under one name.
+pub(super) fn decision_groups<'a>(
+    decisions: impl IntoIterator<Item = &'a SavedDecision>,
+) -> Vec<(String, String, Vec<&'a SavedDecision>)> {
+    let mut groups: Vec<(String, String, Vec<&SavedDecision>)> = Vec::new();
+    for decision in decisions {
+        let (key, label) = decision_group(decision);
+        match groups.iter_mut().find(|(k, _, _)| *k == key) {
+            Some((_, name, members)) => {
+                if !decision.project.starts_with("repo:")
+                    && members.iter().all(|m| m.project.starts_with("repo:"))
+                {
+                    *name = label;
+                }
+                members.push(decision);
+            }
+            None => groups.push((key, label, vec![decision])),
+        }
+    }
+    groups
 }
 
 /// The options a question item offered, with the ones picked marked.
@@ -109,12 +168,34 @@ impl MyTasks {
             .collect()
     }
 
+    /// A project's name in the filter menu: on the Decisions tab, the name
+    /// its group shows.
+    pub(super) fn project_label(&self, project: &str) -> String {
+        if self.tab == Tab::Decisions
+            && let Some((_, label, _)) = decision_groups(&self.decisions)
+                .into_iter()
+                .find(|(key, _, _)| key == project)
+        {
+            return label;
+        }
+        project_display(project)
+    }
+
+    /// Every decision's group: its key, its name and its decisions' ids.
+    #[cfg(test)]
+    pub(crate) fn decision_groups_for_test(&self) -> Vec<(String, String, Vec<i64>)> {
+        decision_groups(&self.decisions)
+            .into_iter()
+            .map(|(key, name, members)| (key, name, members.iter().map(|d| d.id).collect()))
+            .collect()
+    }
+
     pub(crate) fn visible_decisions(&self, cx: &gpui::App) -> Vec<&SavedDecision> {
         let query = self.search.read(cx).content.to_lowercase();
         self.decisions
             .iter()
             .filter(|d| {
-                !self.filter.hidden_projects.contains(&d.project)
+                !self.filter.hidden_projects.contains(&decision_group(d).0)
                     && (query.is_empty()
                         || format!("{} {}", d.statement, d.why)
                             .to_lowercase()
@@ -176,53 +257,76 @@ impl MyTasks {
             return;
         };
         let statement = self.statement.read(cx).content.to_string();
-        let Some(store) = &self.store else {
+        let Some(store) = self.store.clone() else {
             return;
         };
-        let saved = crate::runtime::locked(store).and_then(|store| {
-            store.save_decision(
-                &record.project,
-                &statement,
-                "",
-                std::slice::from_ref(&record.key),
-                gespan_core::time::now_ms(),
-            )
+        let key = key.to_owned();
+        // The scope runs git: work it out off the UI thread, before taking
+        // the store's lock.
+        let work = cx.background_spawn(async move {
+            let scope = gespan_core::decisions::scope_for(std::path::Path::new(&record.project));
+            crate::runtime::locked(&store).and_then(|store| {
+                store.save_decision_in(
+                    &scope,
+                    &record.project,
+                    &statement,
+                    "",
+                    std::slice::from_ref(&record.key),
+                    gespan_core::time::now_ms(),
+                )
+            })
         });
-        match saved {
-            Ok(_) => {
-                self.writing = None;
-                if self.offer.as_ref().is_some_and(|o| o.key == key) {
-                    self.offer = None;
+        cx.spawn(async move |this, cx| {
+            let saved = work.await;
+            let _ = this.update(cx, |this, cx| match saved {
+                Ok(_) => {
+                    // The decision is the decision log's too: its harness
+                    // files follow (nothing happens while the log is off).
+                    gespan_core::decisions::service::regenerate();
+                    this.writing = None;
+                    if this.offer.as_ref().is_some_and(|o| o.key == key) {
+                        this.offer = None;
+                    }
+                    this.reload(cx);
                 }
-                self.reload(cx);
-            }
-            Err(error) => {
-                self.error = Some(error);
-                cx.notify();
-            }
-        }
+                Err(error) => {
+                    this.error = Some(error);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
+    /// Edits or archives a saved decision off the UI thread (the store's
+    /// lock is taken there, never here), then shows the result.
     fn change_decision(
         &mut self,
-        change: impl FnOnce(&gespan_core::store::Store, u64) -> Result<(), String>,
+        change: impl FnOnce(&gespan_core::store::Store, u64) -> Result<(), String> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
-        let Some(store) = &self.store else {
+        let Some(store) = self.store.clone() else {
             return;
         };
-        match crate::runtime::locked(store)
-            .and_then(|store| change(&store, gespan_core::time::now_ms()))
-        {
-            Ok(()) => {
-                self.writing = None;
-                self.reload(cx);
-            }
-            Err(error) => {
-                self.error = Some(error);
-                cx.notify();
-            }
-        }
+        let work = cx.background_spawn(async move {
+            crate::runtime::locked(&store)
+                .and_then(|store| change(&store, gespan_core::time::now_ms()))
+        });
+        cx.spawn(async move |this, cx| {
+            let changed = work.await;
+            let _ = this.update(cx, |this, cx| match changed {
+                Ok(()) => {
+                    gespan_core::decisions::service::regenerate();
+                    this.writing = None;
+                    this.reload(cx);
+                }
+                Err(error) => {
+                    this.error = Some(error);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// An answer that just left the Waiting list: offered as a decision when
@@ -257,7 +361,7 @@ impl MyTasks {
     fn group_header(project: &str, count: usize, first: bool) -> AnyElement {
         group_label(
             format!("my-tasks-group-{project}"),
-            format!("{} \u{b7} {count}", project_name(project)),
+            format!("{} \u{b7} {count}", project_display(project)),
             first,
         )
     }
@@ -316,16 +420,19 @@ impl MyTasks {
         let shown = self.visible_decisions(cx);
         let selected = self.selected_decision(&shown).map(|d| d.id);
         let mut rows = Vec::new();
-        for (ix, (project, decisions)) in
-            Self::grouped(shown, |d| &d.project).into_iter().enumerate()
-        {
-            rows.push(Self::group_header(&project, decisions.len(), ix == 0));
+        for (ix, (key, name, decisions)) in decision_groups(shown).into_iter().enumerate() {
+            rows.push(group_label(
+                format!("my-tasks-group-{key}"),
+                format!("{name} \u{b7} {}", decisions.len()),
+                ix == 0,
+            ));
             for decision in decisions {
                 let id = decision.id;
-                let meta = match decision.sources.len() {
-                    0 => "Written by hand".to_owned(),
-                    1 => "From 1 answer".to_owned(),
-                    n => format!("From {n} answers"),
+                let meta = match (decision.sources.len(), decision.session) {
+                    (0, Some(session)) => format!("Proposed in session {session}"),
+                    (0, None) => "Written by hand".to_owned(),
+                    (1, _) => "From 1 answer".to_owned(),
+                    (n, _) => format!("From {n} answers"),
                 };
                 rows.push(
                     task_row(format!("my-tasks-decision-{id}"), selected == Some(id))
@@ -554,6 +661,11 @@ impl MyTasks {
                 }
                 shown
             }
+            Kind::Decision => ["text", "why", "user_answer", "flag"]
+                .iter()
+                .filter_map(|field| request[*field].as_str().filter(|t| !t.is_empty()))
+                .map(|text| mono(text.to_owned()))
+                .collect(),
             Kind::PilotChoice => {
                 let answer = record.answer.as_deref().unwrap_or_default();
                 request["options"]
@@ -748,7 +860,13 @@ impl MyTasks {
                     .into_any_element()
             })
             .collect();
-        let bar = top_bar(&decision.project, "Decision".into());
+        // The name its list header shows.
+        let group = self.project_label(&decision_group(&decision).0);
+        let noun = match decision.kind {
+            gespan_core::decisions::Kind::Preference => "Preference",
+            gespan_core::decisions::Kind::Decision => "Decision",
+        };
+        let bar = top_bar(&group, noun.into());
         let actions = if editing {
             div()
                 .flex()
@@ -808,7 +926,10 @@ impl MyTasks {
                 )
         };
         let card = glass::card_strong()
-            .child(caption(project_name(&decision.project)))
+            .child({
+                let selector = format!("my-tasks-decision-group-{group}");
+                caption(group).debug_selector(move || selector.clone())
+            })
             .child(if editing {
                 glass::field()
                     .debug_selector(|| "my-tasks-statement".into())

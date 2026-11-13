@@ -598,6 +598,18 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "pretooluse settings.json block command notification",
     ),
     (
+        "decision-log",
+        Section::Providers,
+        "Decision log",
+        "decisions preferences memory remember agents project choices",
+    ),
+    (
+        "decision-meaning",
+        Section::Providers,
+        "Find related decisions by meaning",
+        "decisions semantic embeddings vectors similar related nomic search model",
+    ),
+    (
         "idle-agents",
         Section::Providers,
         "Keep idle agents ready",

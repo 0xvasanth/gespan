@@ -156,6 +156,22 @@ impl Shell {
 
     pub(super) fn bind_notices(&mut self, cx: &mut Context<Self>) {
         self.bind_linked_activity(cx);
+        // The decision log says once per file when it replaced a user's edit.
+        let edits = crate::decision_log::edit_notices();
+        cx.spawn(async move |this, cx| {
+            while let Ok(text) = edits.recv().await {
+                if this
+                    .update(cx, |this, cx| {
+                        this.show_action_notice(text, cx);
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         self.observations.push(cx.subscribe(
             &self.notification_state.updater,
             |this, _, event: &UpdaterEvent, cx| {

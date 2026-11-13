@@ -889,6 +889,11 @@ pub(crate) struct Shell {
     draft_forge: Option<review_drafts::DraftForge>,
     /// The last Flow approvals read, for a tick whose store is busy.
     my_task_flows: Vec<crate::my_tasks::TaskItem>,
+    /// The decision log's proposals and flags, as last read off the UI thread.
+    my_task_decisions: Vec<crate::my_tasks::TaskItem>,
+    decision_tasks_loading: bool,
+    /// Another read was asked for while one ran.
+    decision_tasks_again: bool,
     active_app_view: Option<app_views::AppView>,
     app_view_events: Vec<Subscription>,
     automation_state: automation_runs::State,
@@ -1183,6 +1188,7 @@ impl Shell {
                     .update(cx, |this, cx| {
                         this.poll_reminders(cx);
                         this.poll_automations(cx);
+                        this.load_decision_tasks(cx);
                         this.update_chat_visibility(cx);
                         if this.workspace.sidebar_visible {
                             this.notify_sidebar(cx);
@@ -1194,6 +1200,9 @@ impl Shell {
                 }
             }
         });
+        if !secondary {
+            listen_for_decision_changes(cx);
+        }
         let git_project = workspace.project.clone();
         let git = cx.new(|cx| crate::git_status::ProjectGit::new(git_project, cx));
         let git_observation = cx.observe(&git, |this, git, cx| {
@@ -1341,6 +1350,9 @@ impl Shell {
             my_task_sent: HashSet::new(),
             draft_forge: None,
             my_task_flows: Vec::new(),
+            my_task_decisions: Vec::new(),
+            decision_tasks_loading: false,
+            decision_tasks_again: false,
             active_app_view: None,
             app_view_events: Vec::new(),
             automation_state: Default::default(),
@@ -4796,6 +4808,10 @@ impl Shell {
         self.update_usage_provider(cx);
         self.sync_board_projects(cx);
         self.sync_right_panel(cx);
+        // A project opened or closed: its checkouts get their decision files.
+        if crate::decision_log::set_known_projects(&self.workspace.projects) {
+            gespan_core::decisions::service::regenerate();
+        }
         self.invalidate_chrome(cx);
         self.save_state(cx);
     }
@@ -10030,6 +10046,30 @@ fn backdrop_layer(a: u32, b: u32) -> gpui::Div {
         .child(div().absolute().inset_0().bg(shell_fill()))
 }
 
+/// Reads My tasks' decision items again whenever an agent changes the log
+/// (a proposal, a revision or a flag). The hook only sends on a channel, from
+/// whatever thread the agent's tool call runs on; this shell's task does the
+/// reading. The shell's 30 s clock stays as a fallback.
+fn listen_for_decision_changes(cx: &mut Context<Shell>) {
+    let (send, changes) = async_channel::unbounded::<()>();
+    gespan_core::decisions::service::set_changed(Box::new(move || {
+        let _ = send.try_send(());
+    }));
+    cx.spawn(async move |this, cx| {
+        while changes.recv().await.is_ok() {
+            // A burst of changes needs one read.
+            while changes.try_recv().is_ok() {}
+            if this
+                .update(cx, |this, cx| this.load_decision_tasks(cx))
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -12949,7 +12989,11 @@ mod tests {
     ) -> (WindowHandle<Shell>, i64, i64) {
         let mut store = Store::open(path).unwrap();
         let mut a = store.create("codex", "/work/another-project").unwrap();
-        let b = store.create("claude", "/work/gespan").unwrap();
+        let mut b = store.create("claude", "/work/gespan").unwrap();
+        // The sidebar sorts by (updated_at, id), newest first. Both are made
+        // within one millisecond and ids are random, so `b` is made the newer
+        // one outright, as it was when ids grew.
+        b.updated_at = b.updated_at.max(a.updated_at + 1);
         store
             .write_rows(
                 a.id,

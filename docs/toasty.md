@@ -102,6 +102,12 @@ rusqlite-shaped calls.
 
 - Generated DDL has no `DEFAULT`, no `REFERENCES` and no `DESC` index columns.
   The model must set every value. Foreign keys are not enforced by the schema.
+- A new `NOT NULL` column on a table that already shipped is generated as
+  `ALTER TABLE ... ADD COLUMN ... NOT NULL` with no default, which SQLite
+  refuses. Edit the generated `.sql` by hand: add a `DEFAULT` to that
+  `ADD COLUMN`, and end the migration with an `UPDATE` that gives existing
+  rows their real values. `gespan/0001_decision_log.sql` does both. The
+  snapshot stays as generated.
 - An `#[auto]` integer key is stored as a 4-byte `INTEGER ... AUTOINCREMENT`
   column.
 - Field-level `#[index]` cannot be named. Use a struct-level
@@ -111,6 +117,8 @@ rusqlite-shaped calls.
   through `toasty::sql`. Binding a NULL needs `bind_typed`.
 - `select` projects a field or a tuple of up to eight; nest tuples for more.
   `offset` needs a `limit` first.
+- Queries against FTS5 and sqlite-vec virtual tables, which Toasty cannot
+  model, go through `toasty::sql`.
 - Plain upserts are typed: `Model::upsert_by_<key>(..)` replaces the row,
   `.on_create(..)` sets columns only a new row gets, `.on_update(..)` takes
   `toasty::stmt::increment()`, and `.or_ignore()` is `INSERT OR IGNORE`

@@ -10,6 +10,7 @@ pub mod browser;
 pub mod catalog;
 pub mod checkpoint;
 pub mod context;
+pub mod decisions;
 pub mod desktop_preferences;
 pub mod diagnostics;
 pub mod diff;

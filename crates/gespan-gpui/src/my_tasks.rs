@@ -1,10 +1,12 @@
-//! My tasks: every approval, question, Flow approval and Pilot choice waiting
-//! on the user, from every session, answered in place.
+//! My tasks: every approval, question, Flow approval, Pilot choice and
+//! decision to review waiting on the user, from every session, answered in
+//! place.
 use crate::input::{self, Input};
 use crate::popover::AnchorSlot;
 use crate::questions::QuestionCard;
 use crate::theme::*;
 use gespan_core::agent::{Approval, Decision};
+use gespan_core::decisions::{Entry, Flag, Review};
 use gespan_core::tasks::{Filter, History, Kind, SavedDecision, TaskRecord};
 use gpui::{
     Context, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Window, div,
@@ -12,6 +14,7 @@ use gpui::{
 };
 
 mod card;
+mod decision;
 mod filter;
 mod history;
 mod list;
@@ -24,6 +27,31 @@ pub(crate) mod record;
 pub(crate) const HISTORY_PAGE: usize = 4;
 /// The card's largest share of the pane's height.
 const CARD_MAX_HEIGHT: f32 = 0.62;
+
+/// The project key a decision-log task is listed (and filtered) under,
+/// the same key the Decisions tab groups by: a project scope's path,
+/// `repo:<key>` for a repository, or `global` for a preference.
+pub(crate) fn decision_project(entry: &Entry) -> String {
+    use gespan_core::decisions::{Kind as EntryKind, Scope};
+    match &entry.scope {
+        _ if entry.kind == EntryKind::Preference => past::PREFERENCES.into(),
+        Scope::Global => past::PREFERENCES.into(),
+        Scope::Project(path) => path.clone(),
+        Scope::Repo(repo) => format!("repo:{repo}"),
+    }
+}
+
+/// How a project key reads on the page: a folder's name, a repository's
+/// name for `repo:<key>`, and "Your preferences" for `global`.
+pub(crate) fn project_display(project: &str) -> String {
+    if project == past::PREFERENCES {
+        "Your preferences".into()
+    } else if let Some(repo) = project.strip_prefix("repo:") {
+        past::repo_name(repo)
+    } else {
+        crate::workspace::project_name(project)
+    }
+}
 
 /// Where a task comes from, so the page can open it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +67,8 @@ pub(crate) enum Source {
         run: String,
         url: String,
     },
+    /// The decision log itself: an entry no session proposed (an import).
+    Log,
 }
 
 /// What the card shows and answers.
@@ -60,6 +90,13 @@ pub(crate) enum Body {
         body: String,
         comments: Vec<gespan_core::review_draft::ShownComment>,
         outside: usize,
+    },
+    /// A proposal to review, or (with `flag`) an agent's flag on an approved
+    /// entry. `similar` are the active entries approving it might replace.
+    Decision {
+        entry: Box<Entry>,
+        flag: Option<Flag>,
+        similar: Vec<Entry>,
     },
 }
 
@@ -108,6 +145,12 @@ pub(crate) enum Event {
     },
     Open(Source),
     LoadEarlier(String),
+    /// The user's review of decision-log entry `id`, from the task `key`.
+    DecisionReview {
+        key: String,
+        id: i64,
+        review: Review,
+    },
 }
 
 pub(crate) struct MyTasks {
@@ -122,6 +165,20 @@ pub(crate) struct MyTasks {
     filter_anchor: AnchorSlot,
     /// A Flow approval's note.
     pub(crate) note: Entity<Input>,
+    /// A decision's wording while the user edits it, or writes a replacement.
+    pub(crate) decision_title: Entity<Input>,
+    pub(crate) decision_text: Entity<Input>,
+    pub(crate) decision_why: Entity<Input>,
+    decision_editing: bool,
+    /// What the card showed when the edit began: approving the edit is
+    /// refused if the proposal changed since.
+    edit_shown: Option<gespan_core::decisions::ShownHash>,
+    /// "Always include" on the card's proposal.
+    decision_pinned: bool,
+    /// The similar active entries ticked under "Replaces:".
+    decision_replaces: Vec<i64>,
+    /// Why the last review of the card's decision failed, by task key.
+    review_error: Option<(String, String)>,
     history_scroll: ScrollHandle,
     /// When scrolling last asked for earlier turns: one page per gesture.
     last_load: Option<std::time::Instant>,
@@ -168,6 +225,14 @@ impl MyTasks {
             filter_anchor: AnchorSlot::default(),
             note: cx
                 .new(|cx| Input::field("Note for the run", "Note (optional)", content(0.4), cx)),
+            decision_title: cx.new(|cx| Input::field("Title", "Title", content(0.4), cx)),
+            decision_text: cx.new(|cx| Input::multiline_field("Decision", "What to do", cx)),
+            decision_why: cx.new(|cx| Input::field("Why", "Why", content(0.4), cx)),
+            decision_editing: false,
+            edit_shown: None,
+            decision_pinned: false,
+            decision_replaces: Vec::new(),
+            review_error: None,
             history_scroll: ScrollHandle::new(),
             last_load: None,
             tab: Tab::default(),
@@ -311,11 +376,16 @@ impl MyTasks {
         }
     }
 
-    /// A new task is on the card: its note starts empty and its history
-    /// opens on the latest turn.
+    /// A new task is on the card: its note starts empty, a decision starts
+    /// unedited, unpinned and replacing nothing, and its history opens on the
+    /// latest turn.
     fn selection_changed(&mut self, cx: &mut Context<Self>) {
         self.note
             .update(cx, |note, cx| note.set_text(String::new(), cx));
+        self.decision_editing = false;
+        self.edit_shown = None;
+        self.decision_pinned = false;
+        self.decision_replaces.clear();
         self.history_scroll.scroll_to_bottom();
     }
 

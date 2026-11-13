@@ -329,18 +329,20 @@ fn kind_noun(kind: Kind) -> (&'static str, &'static str) {
         Kind::FlowApproval => ("Flow approval", "Flow approvals"),
         Kind::PilotChoice => ("choice", "choices"),
         Kind::DraftReview => ("draft review", "draft reviews"),
+        Kind::Decision => ("decision to review", "decisions to review"),
     }
 }
 
 /// "1 approval · 1 question": the waiting tasks by kind, tool approvals
 /// first as in the mock.
 pub(crate) fn kinds_line(waiting: &[Waiting]) -> String {
-    const ORDER: [Kind; 5] = [
+    const ORDER: [Kind; 6] = [
         Kind::Approval,
         Kind::Question,
         Kind::FlowApproval,
         Kind::PilotChoice,
         Kind::DraftReview,
+        Kind::Decision,
     ];
     let parts: Vec<String> = ORDER
         .iter()

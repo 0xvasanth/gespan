@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Search the decision log by meaning with nomic-embed-text-v1.5 (fastembed).
+nomic = ["dep:fastembed", "dep:ort", "dep:sherpa-onnx-sys"]
+
 [dependencies]
 serde.workspace = true
 # Stored floats must reload exactly, or saved revisions stop matching.
@@ -13,6 +17,19 @@ rusqlite.workspace = true
 toasty.workspace = true
 toasty-core.workspace = true
 toasty-driver-sqlite.workspace = true
+# The decision log's vectors: `vec0`, compiled against the bundled SQLite
+# above and registered on every connection (`orm::register_sqlite_vec`).
+sqlite-vec = "0.1.9"
+# Its embedding model's pinned files and their downloader.
+gespan-models = { path = "../gespan-models" }
+# Nomic embeddings on the CPU, behind the `nomic` feature. Model files come
+# from gespan-models, so no Hugging Face client. ort links no ONNX Runtime of
+# its own (`alternative-backend`): the app has exactly one, the static
+# onnxruntime sherpa-onnx-sys ships for dictation on every target, and
+# `embed::nomic` hands its API to ort.
+fastembed = { version = "7.7", optional = true, default-features = false, features = ["onnx"] }
+ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["alternative-backend", "std", "api-24"] }
+sherpa-onnx-sys = { version = "2.0.0", optional = true }
 # The ORM driver wrapper implements Toasty's async driver traits.
 async-trait = "0.1"
 async-channel = "2"

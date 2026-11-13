@@ -300,9 +300,26 @@ impl SettingsView {
         {
             clis.push(error);
         }
-        let advanced=vec![
+        let mut advanced=vec![
             self.row(Some("idle-agents"),true,"Keep idle agents ready",Some("Keep up to this many idle agents running for faster follow-ups. Uses additional memory.".into()),vec![self.segmented("idle-agents","Keep idle agents ready",&p.idle_agents.to_string(),&[("0","None"),("1","1"),("2","2"),("3","3"),("5","5")],cx,|this,value,cx|if let Ok(value)=value.parse(){this.update(cx,|p|p.idle_agents=value)})]),
-            self.row(Some("claude-hooks"),false,"Claude Code hooks",Some("Run your configured Claude Code hooks. Changes apply on the next turn.".into()),vec![self.toggle("claude-hooks","Claude Code hooks",p.claude_hooks,false,cx,|this,on,cx|this.update(cx,|p|p.claude_hooks=on))])];
+            self.row(Some("claude-hooks"),false,"Claude Code hooks",Some("Run your configured Claude Code hooks. Changes apply on the next turn.".into()),vec![self.toggle("claude-hooks","Claude Code hooks",p.claude_hooks,false,cx,|this,on,cx|this.update(cx,|p|p.claude_hooks=on))]),
+            self.row(Some("decision-log"),false,"Decision log",Some("Keep your preferences and project decisions in Gespan and give them to every agent.".into()),vec![self.toggle("decision-log","Decision log",p.decision_log,false,cx,|this,on,cx|this.update(cx,|p|p.decision_log=on))])];
+        if p.decision_log {
+            advanced.push(self.row(
+                Some("decision-meaning"),
+                false,
+                "Find related decisions by meaning",
+                Some(crate::decision_log::meaning_description().into()),
+                vec![self.toggle(
+                    "decision-meaning",
+                    "Find related decisions by meaning",
+                    p.decision_meaning,
+                    false,
+                    cx,
+                    |this, on, cx| this.update(cx, |p| p.decision_meaning = on),
+                )],
+            ));
+        }
         // The header and its agent cards sit close together, as one section.
         let header = self.glass_group(
             Some("agent-clis"),

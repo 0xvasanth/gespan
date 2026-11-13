@@ -223,6 +223,16 @@ fn tile_lines_break_down_tasks_agents_and_the_inbox() {
     ];
     assert_eq!(kinds_line(&tasks), "2 approvals · 1 question");
     assert_eq!(kinds_line(&[]), "Nothing waiting");
+    // Decision-log proposals count too, after the agents' own requests.
+    let with_decisions = [
+        waiting("d", Kind::Decision, 0),
+        waiting("a", Kind::Approval, 0),
+        waiting("d2", Kind::Decision, 0),
+    ];
+    assert_eq!(
+        kinds_line(&with_decisions),
+        "1 approval · 2 decisions to review"
+    );
 
     let agents = [
         working(1, "Codex", "/a"),

@@ -123,6 +123,11 @@ impl Arg for bool {
         Value::I64(i64::from(self))
     }
 }
+impl Arg for Vec<u8> {
+    fn arg(self) -> Value {
+        Value::Bytes(self)
+    }
+}
 impl<T: Arg> Arg for Option<T> {
     fn arg(self) -> Value {
         self.map_or(Value::Null, Arg::arg)
@@ -146,6 +151,16 @@ fn bind_type(value: &Value) -> Type {
         Value::Bytes(_) => Type::Blob,
         _ => Type::Text,
     }
+}
+
+/// A raw statement with `args` bound, for code that runs it itself (on a
+/// Toasty transaction, say: `statement(..).exec(&mut *tx)`).
+pub(crate) fn statement(sql: &str, args: Vec<Value>) -> toasty::sql::Statement {
+    args.into_iter()
+        .fold(toasty::sql::statement(sql), |s, arg| {
+            let ty = bind_type(&arg);
+            s.bind_typed(arg, ty)
+        })
 }
 
 /// Where a store's SQL runs: its Toasty database.
@@ -189,11 +204,7 @@ impl<'a> Sql<'a> {
 
     /// Runs a statement that returns no rows; the number of rows it changed.
     pub(crate) fn execute(self, sql: &str, args: Vec<Value>) -> Result<usize, String> {
-        let mut statement = toasty::sql::statement(sql);
-        for arg in args {
-            let ty = bind_type(&arg);
-            statement = statement.bind_typed(arg, ty);
-        }
+        let statement = statement(sql, args);
         self.0
             .run(|mut db| async move { statement.exec(&mut db).await })
             .map(|count| count as usize)

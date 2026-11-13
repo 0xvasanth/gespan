@@ -4,7 +4,6 @@
 //! is not faded: any solid fade would show as a band over the glass.
 use super::*;
 use crate::glass::{self, Button, Tone};
-use crate::workspace::project_name;
 use gpui::{AnyElement, Div, px, relative};
 
 /// Every icon the page draws outside the kind marks, so a test can check
@@ -70,7 +69,7 @@ pub(super) fn top_bar(project: &str, source: String) -> Div {
             div()
                 .flex_shrink_0()
                 .text_color(content(0.62))
-                .child(project_name(project)),
+                .child(super::project_display(project)),
         )
         .child(div().flex_shrink_0().text_color(content(0.4)).child("/"))
         .child(
@@ -161,10 +160,12 @@ impl MyTasks {
             return self.empty_pane(banner);
         };
         let open_label = match task.source {
-            Source::Session(_) => "Open thread",
-            Source::FlowRun(_) => "Open run",
-            Source::Pilot { .. } => "Open chat",
-            Source::DraftReview { .. } => "Open draft",
+            Source::Session(_) => Some("Open thread"),
+            Source::FlowRun(_) => Some("Open run"),
+            Source::Pilot { .. } => Some("Open chat"),
+            Source::DraftReview { .. } => Some("Open draft"),
+            // An imported entry: no session to open.
+            Source::Log => None,
         };
         let source = task.source.clone();
         let waited = super::list::waited_long(self.now_ms.saturating_sub(task.since_ms));
@@ -178,9 +179,11 @@ impl MyTasks {
                 )
                 .child(div().flex_1())
                 .children(self.stepper(cx))
-                .child(open_button(open_label).ml(px(6.)).on_click(
-                    cx.listener(move |_, _, _, cx| cx.emit(Event::Open(source.clone()))),
-                ));
+                .when_some(open_label, |bar, label| {
+                    bar.child(open_button(label).ml(px(6.)).on_click(
+                        cx.listener(move |_, _, _, cx| cx.emit(Event::Open(source.clone()))),
+                    ))
+                });
         let history = self.history(&task, cx);
         let card = self.card(&task, cx);
         div()

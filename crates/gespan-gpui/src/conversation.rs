@@ -508,6 +508,12 @@ impl Conversation {
                     cx.notify();
                     return;
                 }
+                // The user's own words, for checking the agent's decision proposals.
+                if let Some(answers) = &reply.answers
+                    && gespan_core::decisions::enabled()
+                {
+                    crate::decision_log::record_answers(this.summary.id, answers);
+                }
                 let record = {
                     let question = card.read(cx);
                     this.task_record(

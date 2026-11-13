@@ -34,6 +34,33 @@ fn applied(path: &Path) -> Vec<(i64, String)> {
     applied
 }
 
+/// A file exactly as a build that shipped only `kind`'s first `count`
+/// migrations left it: those migrations' SQL run, and recorded as applied
+/// the way Toasty records them.
+pub(crate) fn file_at_migration(kind: Kind, path: &Path, count: usize) {
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         CREATE TABLE __toasty_migrations (
+           id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL
+         );",
+    )
+    .unwrap();
+    for migration in &kind.migrations().migrations()[..count] {
+        for statement in migration.sql().split("\n-- #[toasty::breakpoint]\n") {
+            if !statement.trim().is_empty() {
+                conn.execute_batch(statement).unwrap();
+            }
+        }
+        conn.execute(
+            "INSERT INTO __toasty_migrations (id, name, applied_at)
+             VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![migration.id() as i64, migration.name()],
+        )
+        .unwrap();
+    }
+}
+
 /// A `gespan.db` as the hand-written store left it, with other tables and
 /// rows in every column.
 fn legacy_file(path: &Path) {
@@ -90,11 +117,15 @@ fn adopting_keeps_every_row_of_the_hand_made_tables() {
         ]],
         "tables no model names are left alone"
     );
-    let first = Kind::Gespan.migrations().migrations()[0];
-    assert_eq!(
-        applied(&path),
-        [(first.id() as i64, first.name().to_owned())]
-    );
+    // Adoption records the first migration; the later ones then apply.
+    let mut every: Vec<(i64, String)> = Kind::Gespan
+        .migrations()
+        .migrations()
+        .iter()
+        .map(|m| (m.id() as i64, m.name().to_owned()))
+        .collect();
+    every.sort();
+    assert_eq!(applied(&path), every);
 }
 
 #[test]
@@ -160,32 +191,10 @@ fn reopening_applies_nothing_and_leaves_the_file_alone() {
 fn a_pending_migration_is_applied_once() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("gespan.db");
-    open(Kind::Gespan, &path).unwrap();
-    // A file from before the latest migration: forget it was applied.
-    let conn = Connection::open(&path).unwrap();
+    // A file from before the latest migration.
+    let count = Kind::Gespan.migrations().migrations().len();
     let last = *Kind::Gespan.migrations().migrations().last().unwrap();
-    // Every table the migrations made goes (their indexes and triggers with
-    // them), whichever models the kind has.
-    let tables: Vec<String> = conn
-        .prepare(
-            "SELECT name FROM sqlite_master WHERE type = 'table'
-             AND name NOT LIKE 'sqlite_%' AND name <> '__toasty_migrations'",
-        )
-        .unwrap()
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
-    for table in tables {
-        conn.execute_batch(&format!("DROP TABLE \"{table}\""))
-            .unwrap();
-    }
-    conn.execute(
-        "DELETE FROM __toasty_migrations WHERE id = ?1",
-        [last.id() as i64],
-    )
-    .unwrap();
-    drop(conn);
+    file_at_migration(Kind::Gespan, &path, count - 1);
 
     let database = open(Kind::Gespan, &path).unwrap();
     open(Kind::Gespan, &path).unwrap();
