@@ -1,9 +1,6 @@
 //! Settings → MCP's own catalogue: the servers Gespan runs for every agent.
 use crate::{
-    settings::{
-        SettingsView,
-        widgets::{glass_secondary, note},
-    },
+    settings::{SettingsView, widgets::glass_secondary},
     theme::*,
 };
 use gespan_core::{
@@ -140,9 +137,10 @@ impl SettingsView {
             return;
         }
         self.mcp_searching = true;
-        let work = cx
-            .background_executor()
-            .spawn(async move { mcp_registry::search(&query) });
+        let work = cx.background_executor().spawn({
+            let query = query.clone();
+            async move { mcp_registry::search(&query) }
+        });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
@@ -150,6 +148,7 @@ impl SettingsView {
                 match result {
                     Ok(listings) => {
                         this.mcp_listings = listings;
+                        this.mcp_searched = Some(query);
                         this.mcp_catalog_error = None;
                     }
                     Err(error) => this.mcp_catalog_error = Some(error),
@@ -720,6 +719,19 @@ impl SettingsView {
                         .gap(px(10.))
                         .child(search)
                         .when(!self.mcp_listings.is_empty(), |d| d.child(grid))
+                        .when_some(
+                            self.mcp_searched
+                                .clone()
+                                .filter(|_| self.mcp_listings.is_empty() && !self.mcp_searching),
+                            |d, query| {
+                                d.child(crate::settings::widgets::empty_card(
+                                    "settings-catalog-registry-empty",
+                                    "search-01",
+                                    "No servers found",
+                                    format!("Nothing in the MCP Registry matches “{query}”."),
+                                ))
+                            },
+                        )
                         .into_any_element(),
                 ),
                 Vec::new(),
@@ -780,8 +792,11 @@ impl SettingsView {
                     .debug_selector(|| "settings-catalog-empty".into())
                     .border_t_1()
                     .border_color(crate::glass::hairline())
-                    .child(note(
-                        "None yet. Import copies your agents' servers here, without changing their files.",
+                    .child(crate::settings::widgets::empty(
+                        "settings-catalog-empty-state",
+                        "package",
+                        "Your catalog is empty",
+                        "Import copies your agents' servers here, without changing their files.",
                     ))
                     .into_any_element(),
             );

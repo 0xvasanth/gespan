@@ -329,9 +329,37 @@ impl SettingsView {
             },
         ];
         if self.selected_project.is_empty() {
-            page.push(note("Add a project to manage its worktrees."));
+            page.push(
+                div()
+                    .mt_4()
+                    .child(crate::settings::widgets::empty_card(
+                        "settings-worktrees-no-project",
+                        "folder-add",
+                        "No project yet",
+                        "Add a project to manage its worktrees.",
+                    ))
+                    .into_any_element(),
+            );
         } else if self.discovery_loading {
             page.push(note("Loading worktrees…"));
+        } else if self
+            .discovery
+            .worktrees
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("not a git repository"))
+        {
+            page.push(
+                div()
+                    .mt_4()
+                    .child(crate::settings::widgets::empty_card(
+                        "settings-worktrees-not-git",
+                        "git-branch",
+                        "Not a Git repository",
+                        "Worktrees need a Git project. Run git init in this folder, or pick another project.",
+                    ))
+                    .into_any_element(),
+            );
         } else if let Some(error) = &self.discovery.worktrees.error {
             page.push(
                 div()
@@ -347,28 +375,12 @@ impl SettingsView {
             page.push(
                 div()
                     .mt_4()
-                    .rounded(px(14.))
-                    .border_1()
-                    .border_color(crate::glass::edge())
-                    .bg(crate::glass::fill())
-                    .px_4()
-                    .py_8()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap_2()
-                    .child(icon("folder-tree", 20.))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child("No additional worktrees"),
-                    )
-                    .child(
-                        div().text_size(px(12.)).text_color(content(0.5)).child(
-                            "Create a worktree to work on another branch in a separate folder.",
-                        ),
-                    )
+                    .child(crate::settings::widgets::empty_card(
+                        "settings-worktrees-empty",
+                        "folder-tree",
+                        "No additional worktrees",
+                        "Create a worktree to work on another branch in a separate folder.",
+                    ))
                     .into_any_element(),
             );
         } else {

@@ -1,5 +1,5 @@
 use crate::{
-    settings::{SettingsEvent, SettingsView, widgets::note},
+    settings::{SettingsEvent, SettingsView},
     theme::*,
 };
 use gpui::{AnyElement, Context, Role, SharedString, div, prelude::*, px};
@@ -21,9 +21,25 @@ impl SettingsView {
         );
         let mut rows: Vec<AnyElement> = Vec::new();
         if self.ctx.cwd.is_empty() {
-            rows.push(note("Open a project to see its archived conversations."));
+            rows.push(
+                crate::settings::widgets::empty(
+                    "settings-archived-no-project",
+                    "folder-open",
+                    "No project open",
+                    "Open a project to see its archived conversations.",
+                )
+                .into_any_element(),
+            );
         } else if self.ctx.archived.is_empty() {
-            rows.push(note("No archived conversations in this project."));
+            rows.push(
+                crate::settings::widgets::empty(
+                    "settings-archived-empty",
+                    "archive",
+                    "Nothing archived",
+                    "Conversations you archive in this project show here.",
+                )
+                .into_any_element(),
+            );
         }
         for session in &self.ctx.archived {
             let id = session.id;
@@ -171,7 +187,15 @@ impl SettingsView {
             })
             .collect();
         if projects.is_empty() {
-            projects.push(note("No archived projects."));
+            projects.push(
+                crate::settings::widgets::empty(
+                    "settings-archived-projects-empty",
+                    "folder-01",
+                    "No archived projects",
+                    "Archived projects keep their chats here, out of the sidebar.",
+                )
+                .into_any_element(),
+            );
         }
         vec![
             self.group(

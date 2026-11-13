@@ -345,17 +345,22 @@ impl SettingsView {
             let mut rows = Vec::new();
             if skills.is_empty() {
                 rows.push(
-                    div()
-                        .px_3()
-                        .py_3()
-                        .text_size(px(12.))
-                        .text_color(content(0.45))
-                        .child(if self.discovery.skills.is_empty() {
-                            "No skills yet."
-                        } else {
-                            "No matching skills"
-                        })
-                        .into_any_element(),
+                    if self.discovery.skills.is_empty() {
+                        crate::settings::widgets::empty(
+                            "settings-skills-empty",
+                            "sparkles",
+                            "No skills yet",
+                            "Create one, or add skills to this project or your home folder.",
+                        )
+                    } else {
+                        crate::settings::widgets::empty(
+                            "settings-skills-no-match",
+                            "search-01",
+                            "No matching skills",
+                            "Try another name, or clear the search.",
+                        )
+                    }
+                    .into_any_element(),
                 );
             }
             // Project, Personal and Gespan skills each get their own card.

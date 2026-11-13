@@ -957,3 +957,186 @@ fn devices_show_machine_states_the_remove_card_and_away_from_home_in_its_card(
         "the router switch sits on the right"
     );
 }
+
+/// Draws the page again after `seed` and reports which of `ids` are drawn.
+fn drawn<const N: usize>(
+    window: WindowHandle<SettingsView>,
+    visual: &mut VisualTestContext,
+    ids: [&'static str; N],
+    seed: impl FnOnce(&mut SettingsView, &mut Context<SettingsView>),
+) -> [bool; N] {
+    window
+        .update(visual, |view, _, cx| {
+            seed(view, cx);
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    ids.map(|id| visual.debug_bounds(id).is_some())
+}
+
+#[gpui::test]
+fn archive_says_when_no_project_is_open_or_nothing_is_archived(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Archive, Preferences::default(), cx);
+    let visual = &mut visual;
+    let ids = [
+        "settings-archived-no-project",
+        "settings-archived-empty",
+        "settings-archived-projects-empty",
+    ];
+    assert_eq!(
+        drawn(window, visual, ids, |_, _| {}),
+        [true, false, true],
+        "no project: nothing to list either way"
+    );
+    assert_eq!(
+        drawn(window, visual, ids, |view, _| view.ctx.cwd =
+            "/work/api".into()),
+        [false, true, true],
+        "a project with nothing archived"
+    );
+    assert_eq!(
+        drawn(window, visual, ids, |view, _| {
+            view.ctx.archived = vec![ArchivedSession {
+                id: 1,
+                title: "Spike".into(),
+                provider: "claude".into(),
+                updated_at: 0,
+            }];
+            view.ctx.archived_projects = vec![("/work/old".into(), "old".into())];
+        }),
+        [false, false, false],
+        "anything archived replaces its empty state"
+    );
+}
+
+#[gpui::test]
+fn skills_tell_no_skills_from_a_search_with_no_matches(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Skills, Preferences::default(), cx);
+    let visual = &mut visual;
+    let ids = ["settings-skills-empty", "settings-skills-no-match"];
+    assert_eq!(drawn(window, visual, ids, |_, _| {}), [true, false]);
+    assert_eq!(
+        drawn(window, visual, ids, |view, cx| {
+            view.discovery.skills = vec![data::Skill {
+                name: "review".into(),
+                description: String::new(),
+                path: "/skills/review/SKILL.md".into(),
+                scope: "user".into(),
+                provider: "agents".into(),
+            }];
+            view.skill_filter
+                .update(cx, |i, cx| i.set_text("zzz-nothing".into(), cx));
+        }),
+        [false, true]
+    );
+    assert_eq!(
+        drawn(window, visual, ids, |view, cx| view
+            .skill_filter
+            .update(cx, |i, cx| i.set_text(String::new(), cx))),
+        [false, false],
+        "clearing the search lists the skill again"
+    );
+}
+
+#[gpui::test]
+fn worktrees_say_when_there_is_no_project_or_no_extra_worktree(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Worktrees, Preferences::default(), cx);
+    let visual = &mut visual;
+    let ids = ["settings-worktrees-no-project", "settings-worktrees-empty"];
+    assert_eq!(drawn(window, visual, ids, |_, _| {}), [true, false]);
+    assert_eq!(
+        drawn(window, visual, ids, |view, _| view.selected_project =
+            "/work/api".into()),
+        [false, true]
+    );
+    assert_eq!(
+        drawn(window, visual, ids, |view, _| view
+            .discovery
+            .worktrees
+            .error = Some(
+            "fatal: not a git repository (or any of the parent directories): .git".into()
+        )),
+        [false, false]
+    );
+    assert!(
+        visual.debug_bounds("settings-worktrees-not-git").is_some(),
+        "a folder without Git gets a state, not git's error"
+    );
+    assert_eq!(
+        drawn(window, visual, ["settings-worktrees-not-git"], |view, _| {
+            view.discovery.worktrees.error = Some("permission denied".into())
+        }),
+        [false],
+        "any other error still shows as an error"
+    );
+}
+
+#[gpui::test]
+fn mcp_shows_empty_servers_catalog_and_a_registry_search_with_no_results(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Mcp, Preferences::default(), cx);
+    let visual = &mut visual;
+    let ids = [
+        "settings-mcp-empty",
+        "settings-catalog-empty-state",
+        "settings-catalog-registry-empty",
+    ];
+    assert_eq!(
+        drawn(window, visual, ids, |_, _| {}),
+        [true, true, false],
+        "no search yet: the Registry shows only its field"
+    );
+    assert_eq!(
+        drawn(window, visual, ids, |view, _| {
+            view.mcp_searched = Some("zzz".into());
+            view.mcp_searching = true;
+        }),
+        [true, true, false],
+        "a new search is running: no verdict yet"
+    );
+    assert_eq!(
+        drawn(window, visual, ids, |view, _| view.mcp_searching = false),
+        [true, true, true]
+    );
+}
+
+#[gpui::test]
+fn a_keybinding_filter_with_no_matches_says_so(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Keybindings, Preferences::default(), cx);
+    let visual = &mut visual;
+    let ids = ["settings-keybindings-empty"];
+    assert_eq!(drawn(window, visual, ids, |_, _| {}), [false]);
+    assert_eq!(
+        drawn(window, visual, ids, |view, cx| view
+            .keybinding_filter
+            .update(cx, |i, cx| i
+                .set_text("zzz-no-such-binding".into(), cx))),
+        [true]
+    );
+}
+
+#[gpui::test]
+fn devices_without_machines_or_phones_show_their_empty_states(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Devices, Preferences::default(), cx);
+    let visual = &mut visual;
+    let ids = ["settings-machines-empty", "mobile-devices-empty"];
+    assert_eq!(
+        drawn(window, visual, ids, |view, _| {
+            view.seed_machines_for_test(Vec::new(), &[], None);
+            view.ctx.mobile = Some(gespan_core::mobile::Status {
+                enabled: true,
+                listening: false,
+                name: "desk".into(),
+                fingerprint: None,
+                addresses: Vec::new(),
+                devices: Vec::new(),
+                open_router: false,
+                remote_address: String::new(),
+                router_status: String::new(),
+                error: None,
+            });
+        }),
+        [true, true]
+    );
+}

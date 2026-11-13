@@ -281,10 +281,15 @@ impl SettingsView {
         match &self.diagnostics.counters {
             None => vec![message("settings-counters-loading", "Loading…".into())],
             Some(Err(error)) => vec![message("settings-counters-error", error.clone())],
-            Some(Ok(rows)) if rows.is_empty() => vec![message(
-                "settings-counters-empty",
-                "No failures in the last 7 days.".into(),
-            )],
+            Some(Ok(rows)) if rows.is_empty() => vec![
+                crate::settings::widgets::empty(
+                    "settings-counters-empty",
+                    "check-circle",
+                    "No failures",
+                    "Nothing has failed in the last 7 days.",
+                )
+                .into_any_element(),
+            ],
             Some(Ok(rows)) => {
                 let most = rows.iter().map(|r| r.week).max().unwrap_or(1).max(1);
                 let head = |label: &'static str| crate::glass::eyebrow(label);

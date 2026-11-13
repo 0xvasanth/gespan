@@ -170,7 +170,21 @@ impl SettingsView {
             .cloned()
             .collect::<Vec<_>>();
         if servers.is_empty() {
-            page.push(note("No MCP servers configured for this provider."));
+            page.push(
+                div()
+                    .mt_6()
+                    .child(crate::settings::widgets::empty_card(
+                        "settings-mcp-empty",
+                        "package",
+                        "No MCP servers",
+                        if filter == "all" {
+                            "None of your agents has an MCP server configured yet."
+                        } else {
+                            "This agent has no MCP servers configured yet."
+                        },
+                    ))
+                    .into_any_element(),
+            );
         } else {
             page.push(
                 div()

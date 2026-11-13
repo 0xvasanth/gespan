@@ -492,14 +492,12 @@ impl SettingsView {
 
     fn mobile_devices(&self, status: &Status, showing: bool, cx: &mut Context<Self>) -> AnyElement {
         if status.devices.is_empty() {
-            return crate::glass::card()
-                .px_5()
-                .py_8()
-                .text_center()
-                .text_size(px(13.))
-                .text_color(content(0.55))
-                .child("Pair your iPhone or Android phone to get started.")
-                .into_any_element();
+            return crate::settings::widgets::empty_card(
+                "mobile-devices-empty",
+                "smart-phone",
+                "No phones paired",
+                "Pair your iPhone or Android phone to get started.",
+            );
         }
         let last = status.devices.len() == 1;
         let (open_router, remote) = (status.open_router, status.remote_address.clone());

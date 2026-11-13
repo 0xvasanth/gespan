@@ -297,6 +297,9 @@ pub(crate) struct SettingsView {
     mcp_search: Option<Entity<crate::input::Input>>,
     mcp_listings: Vec<gespan_core::mcp_registry::Listing>,
     mcp_searching: bool,
+    /// The Registry query whose results `mcp_listings` holds, once a search
+    /// has come back; an empty result for it shows the no-match state.
+    mcp_searched: Option<String>,
     mcp_secrets: Option<(String, Entity<crate::input::Input>)>,
     /// Servers whose browser sign-in hasn't come back yet.
     mcp_signing_in: std::collections::BTreeSet<String>,
@@ -521,6 +524,7 @@ impl SettingsView {
             mcp_search: None,
             mcp_listings: Vec::new(),
             mcp_searching: false,
+            mcp_searched: None,
             mcp_secrets: None,
             mcp_signing_in: Default::default(),
             mcp_catalog_loaded: false,
