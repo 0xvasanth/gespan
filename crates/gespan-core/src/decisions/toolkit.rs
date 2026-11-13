@@ -439,53 +439,49 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<(String, bool),
     }) {
         return Ok((format!("already decided: {}", line(existing)), false));
     }
-    for existing in candidates
-        .iter()
-        .filter(|e| same_words(&e.title, title) && same_words(&e.text, text))
-    {
-        match existing.status {
-            Status::Pending => {
-                let mine = existing.source.session == Some(session);
-                let sourced = has_user_source(existing);
-                // Only the proposing session rewrites a proposal, and one that
-                // carries a user source needs the same proof a new one would.
-                if !mine || (sourced && !verified) {
-                    return Ok((
-                        format!(
-                            "Already proposed as {} and waiting for the user's review; left as it was.",
-                            existing.label()
-                        ),
-                        false,
-                    ));
-                }
-                if verified && !sourced {
-                    // A draft can't take a user source later: file a fresh one.
-                    continue;
-                }
-                let edit = Edit {
-                    title: title.into(),
-                    text: text.into(),
-                    why: why.into(),
-                };
-                let revised = service::with(|store| {
-                    store.revise_pending(
-                        existing.id,
-                        edit,
-                        answer.as_deref().filter(|_| verified),
-                        &user_source,
-                    )
-                })?
-                .map_err(failed)?;
-                return Ok((
-                    with_note(
-                        format!("Updated your pending proposal {}.", revised.label()),
-                        note,
-                    ),
-                    true,
-                ));
-            }
-            _ => {}
+    // A near match still waiting for review may be this session's own
+    // draft, to rewrite rather than file twice.
+    for existing in candidates.iter().filter(|e| {
+        e.status == Status::Pending && same_words(&e.title, title) && same_words(&e.text, text)
+    }) {
+        let mine = existing.source.session == Some(session);
+        let sourced = has_user_source(existing);
+        // Only the proposing session rewrites a proposal, and one that
+        // carries a user source needs the same proof a new one would.
+        if !mine || (sourced && !verified) {
+            return Ok((
+                format!(
+                    "Already proposed as {} and waiting for the user's review; left as it was.",
+                    existing.label()
+                ),
+                false,
+            ));
         }
+        if verified && !sourced {
+            // A draft can't take a user source later: file a fresh one.
+            continue;
+        }
+        let edit = Edit {
+            title: title.into(),
+            text: text.into(),
+            why: why.into(),
+        };
+        let revised = service::with(|store| {
+            store.revise_pending(
+                existing.id,
+                edit,
+                answer.as_deref().filter(|_| verified),
+                &user_source,
+            )
+        })?
+        .map_err(failed)?;
+        return Ok((
+            with_note(
+                format!("Updated your pending proposal {}.", revised.label()),
+                note,
+            ),
+            true,
+        ));
     }
 
     let source = user_source;

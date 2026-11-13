@@ -100,7 +100,10 @@ fn answers(session: i64) -> Vec<String> {
 /// transcript, then their answers to its agent's questions. A session with no
 /// record of typed messages (opened by an agent, a Pilot, a habit or a Flow)
 /// gives nothing, and so does a remote one: its transcript lives elsewhere.
-pub(crate) fn user_texts(store: &Store, session: i64) -> Vec<String> {
+/// The app reads it in two halves ([`session_rows`] under the store's lock,
+/// [`texts_from`] after); tests read it whole.
+#[cfg(test)]
+fn user_texts(store: &Store, session: i64) -> Vec<String> {
     texts_from(session_rows(store, session), session)
 }
 
