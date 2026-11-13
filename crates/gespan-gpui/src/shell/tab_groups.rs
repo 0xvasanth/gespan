@@ -6,6 +6,9 @@ use super::*;
 use gespan_core::files::path_key;
 use gpui::Hsla;
 
+/// How long the pointer rests on a collapsed chip before its group peeks.
+pub(super) const PEEK_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// A group's padding plus its hairline, on each side.
 const GROUP_INSET: f32 = 4.;
 const GROUP_PLATE: f32 = TAB_PLATE_HEIGHT + 2. * GROUP_INSET - 2.;
@@ -189,7 +192,8 @@ impl Shell {
         // tabs after it open.
         let collapsed = !current;
         let running = collapsed && running;
-        let (peek, open, close, drag) = (
+        let (peek, left, open, close, drag) = (
+            project.to_owned(),
             project.to_owned(),
             project.to_owned(),
             project.to_owned(),
@@ -288,10 +292,16 @@ impl Shell {
                     })),
             )
             // Only real pointer motion peeks: a chip sliding under a still
-            // pointer as the strip lays out again does not.
+            // pointer as the strip lays out again does not. It peeks once the
+            // pointer rests, so passing over a chip leaves the strip still.
             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                 if !current {
-                    this.peek_group(&peek, cx);
+                    this.arm_peek(&peek, cx);
+                }
+            }))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, _| {
+                if !*hovered {
+                    this.disarm_peek(&left);
                 }
             }))
             // Pressed, the chip drags its whole group along the strip.
@@ -306,6 +316,7 @@ impl Shell {
                     return;
                 }
                 this.strip_peek = None;
+                this.peek_pending = None;
                 if !current {
                     this.select_project(open.clone(), window, cx);
                 }
@@ -478,6 +489,49 @@ impl Shell {
             }
         }
         out
+    }
+
+    /// Peeks `project`'s group once the pointer has rested on its chip for
+    /// [`PEEK_DELAY`]. Moving on within the chip keeps the same wait. From
+    /// a group that was just peeking it peeks at once, so the strip still
+    /// holds the chip under the pointer as the other one closes.
+    pub(super) fn arm_peek(&mut self, project: &str, cx: &mut Context<Self>) {
+        if self.strip_peek.as_deref() == Some(project)
+            || self.tab_drag.is_some()
+            || self
+                .peek_pending
+                .as_ref()
+                .is_some_and(|(p, _)| p == project)
+        {
+            return;
+        }
+        if self.drawn_peek.as_deref().is_some_and(|p| p != project) {
+            self.peek_pending = None;
+            self.peek_group(project, cx);
+            return;
+        }
+        let armed = project.to_owned();
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(PEEK_DELAY).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.peek_pending.as_ref().is_some_and(|(p, _)| *p == armed) {
+                    this.peek_pending = None;
+                    this.peek_group(&armed, cx);
+                }
+            });
+        });
+        self.peek_pending = Some((project.to_owned(), task));
+    }
+
+    /// The pointer left `project`'s chip before it peeked.
+    pub(super) fn disarm_peek(&mut self, project: &str) {
+        if self
+            .peek_pending
+            .as_ref()
+            .is_some_and(|(p, _)| p == project)
+        {
+            self.peek_pending = None;
+        }
     }
 
     /// Opens `project`'s group in place while the pointer rests on its

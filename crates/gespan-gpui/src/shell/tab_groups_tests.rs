@@ -3,6 +3,7 @@
 //! only the current project's tabs.
 use super::*;
 use crate::conversation::SessionChanged;
+use crate::shell::tab_groups::PEEK_DELAY;
 use crate::shell::tests::window;
 use crate::strip_groups::StripEntry;
 use crate::workspace::TitleTab;
@@ -223,7 +224,15 @@ fn settle(visual: &mut gpui::VisualTestContext) {
     visual.run_until_parked();
 }
 
+/// Moves the pointer onto `name` and rests there long enough to peek.
 fn hover(visual: &mut gpui::VisualTestContext, name: String) {
+    pass_over(visual, name);
+    visual.executor().advance_clock(PEEK_DELAY);
+    settle(visual);
+}
+
+/// Moves the pointer onto `name` without resting.
+fn pass_over(visual: &mut gpui::VisualTestContext, name: String) {
     let at = visual
         .debug_bounds(selector(name.clone()))
         .unwrap_or_else(|| panic!("{name} drawn"));
@@ -299,7 +308,8 @@ fn one_group_peeks_at_a_time(cx: &mut TestAppContext) {
     assert!(!drawn(visual, format!("title-tab-{third}")));
     hover(visual, "tab-group-chip-another-project".into());
     assert!(drawn(visual, format!("title-tab-{other}")));
-    hover(visual, "tab-group-chip-third-project".into());
+    // From a peeking group the next chip opens without a wait.
+    pass_over(visual, "tab-group-chip-third-project".into());
     assert!(drawn(visual, format!("title-tab-{third}")));
     assert!(
         !drawn(visual, format!("title-tab-{other}")),
@@ -605,10 +615,11 @@ fn crowded_strip_scrolls_instead_of_squeezing(cx: &mut TestAppContext) {
     for id in &ids {
         let w = width(visual, *id);
         assert!(w >= px(TAB_MIN_WIDTH), "tab {id} squeezed to {w:?}");
-        assert!(w < px(SELECTED_TAB_MIN_WIDTH), "tab {id} gave way: {w:?}");
+        assert!(w < px(TAB_CLOSE_MIN_WIDTH), "tab {id} gave way: {w:?}");
     }
+    // The selected tab is a plate like the rest.
     assert!(
-        width(visual, here) >= px(SELECTED_TAB_MIN_WIDTH),
+        (width(visual, here) - px(TAB_MIN_WIDTH)).abs() <= px(1.),
         "selected"
     );
     let max = window
@@ -1256,12 +1267,13 @@ fn hovering_a_chip_mid_drag_does_not_peek(cx: &mut TestAppContext) {
             );
         })
         .unwrap();
-    // Without a drag, the same chip peeks again.
+    // Without a drag, the same chip peeks again once the pointer rests.
     visual.simulate_mouse_move(
         chip + gpui::point(px(-2.), px(0.)),
         None,
         Modifiers::default(),
     );
+    visual.executor().advance_clock(PEEK_DELAY);
     settle(visual);
     window
         .update(visual, |shell, _, _| {
@@ -2027,6 +2039,8 @@ fn resting_on_a_peeking_chips_count_holds_the_peek_while_it_opens(cx: &mut TestA
     assert!(chip.contains(&at));
     visual.simulate_mouse_move(at, None, Default::default());
     visual.run_until_parked();
+    visual.executor().advance_clock(PEEK_DELAY);
+    visual.run_until_parked();
     // While the group's tabs ease open, the chip holds still under the
     // pointer and the peek never drops.
     for _ in 0..8 {
@@ -2099,4 +2113,96 @@ fn moving_on_from_a_peek_holds_the_next_chip_still_while_the_first_eases_shut(
             assert_eq!(shell.strip_peek.as_deref(), Some("/work/third-project"));
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn passing_over_a_chip_does_not_peek(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    let before = visual
+        .debug_bounds(selector(format!("title-tab-{here}")))
+        .unwrap();
+    // Across the chip and on before the wait runs out: nothing opens.
+    pass_over(visual, "tab-group-chip-another-project".into());
+    visual
+        .executor()
+        .advance_clock(PEEK_DELAY - std::time::Duration::from_millis(50));
+    settle(visual);
+    assert!(!drawn(visual, format!("title-tab-{other}")), "not yet");
+    pass_over(visual, format!("title-tab-{here}"));
+    visual.executor().advance_clock(PEEK_DELAY * 2);
+    settle(visual);
+    assert!(!drawn(visual, format!("title-tab-{other}")), "passed over");
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.strip_peek, None);
+            assert!(shell.peek_pending.is_none());
+        })
+        .unwrap();
+    assert_eq!(
+        visual
+            .debug_bounds(selector(format!("title-tab-{here}")))
+            .unwrap(),
+        before,
+        "the strip stayed still"
+    );
+    // Moving within the chip keeps one wait, then it peeks.
+    pass_over(visual, "tab-group-chip-another-project".into());
+    let chip = visual
+        .debug_bounds("tab-group-chip-another-project")
+        .unwrap();
+    visual
+        .executor()
+        .advance_clock(PEEK_DELAY - std::time::Duration::from_millis(50));
+    visual.simulate_mouse_move(
+        chip.center() + gpui::point(px(2.), px(0.)),
+        None,
+        Default::default(),
+    );
+    visual
+        .executor()
+        .advance_clock(std::time::Duration::from_millis(60));
+    settle(visual);
+    assert!(drawn(visual, format!("title-tab-{other}")), "rested, peeks");
+}
+
+#[gpui::test]
+fn switching_tabs_in_a_crowded_strip_moves_nothing(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, here) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(900.), px(700.)));
+    let ids = window
+        .update(visual, |shell, _, cx| {
+            (0..20)
+                .map(|_| add_background_tab(shell, "/work/gespan", cx))
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    settle(visual);
+    let places = |visual: &mut gpui::VisualTestContext| {
+        std::iter::once(here)
+            .chain(ids.iter().copied())
+            .map(|id| {
+                visual
+                    .debug_bounds(selector(format!("title-tab-{id}")))
+                    .unwrap_or_else(|| panic!("tab {id} drawn"))
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = places(visual);
+    assert!(
+        before[0].size.width < px(TAB_CLOSE_MIN_WIDTH),
+        "crowded: {:?}",
+        before[0].size.width
+    );
+    click(visual, format!("title-tab-{}", ids[3]));
+    window
+        .update(visual, |shell, _, cx| {
+            assert_eq!(shell.active_title_tab(cx), Some(TitleTab::Session(ids[3])));
+        })
+        .unwrap();
+    assert_eq!(places(visual), before, "no tab moved or resized");
 }
