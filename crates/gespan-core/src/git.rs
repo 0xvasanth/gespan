@@ -2080,6 +2080,120 @@ mod tests {
         git(&cwd, &["rev-parse", "--verify", "refs/heads/kept"]).unwrap();
     }
 
+    /// A project whose `.env` is ignored and listed in `.worktreeinclude`.
+    fn repo_with_included_env() -> (tempfile::TempDir, PathBuf) {
+        let (temp, cwd) = repo();
+        std::fs::write(cwd.join(".gitignore"), ".env\n").unwrap();
+        std::fs::write(cwd.join(".worktreeinclude"), ".env\n").unwrap();
+        git(&cwd, &["add", ".gitignore", ".worktreeinclude"]).unwrap();
+        commit(&cwd, "ignore .env");
+        std::fs::write(cwd.join(".env"), "TOKEN=main\n").unwrap();
+        (temp, cwd)
+    }
+
+    fn commit(cwd: &Path, message: &str) {
+        git(
+            cwd,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                message,
+            ],
+        )
+        .unwrap();
+    }
+
+    /// Git sees nothing odd in the worktree and its work reaches the main
+    /// checkout's branches.
+    fn assert_usable(cwd: &Path, tree: &Worktree) {
+        let path = Path::new(&tree.path);
+        let branch = tree.branch.as_deref().unwrap();
+        assert_eq!(git(path, &["status", "--porcelain"]).unwrap().trim(), "");
+        std::fs::write(path.join("file"), "changed\n").unwrap();
+        git(path, &["add", "file"]).unwrap();
+        commit(path, "work in the worktree");
+        let tip = git(path, &["rev-parse", "HEAD"]).unwrap();
+        let seen = git(cwd, &["rev-parse", &format!("refs/heads/{branch}")]).unwrap();
+        assert_eq!(tip.trim(), seen.trim());
+        assert_eq!(std::fs::read_to_string(cwd.join("file")).unwrap(), "x\n");
+    }
+
+    #[test]
+    fn a_worktree_with_copied_files_works_like_any_checkout() {
+        let (_temp, cwd) = repo_with_included_env();
+        let tree = create_named_worktree(&cwd, "copied").unwrap();
+        let path = Path::new(&tree.path);
+        assert_eq!(
+            std::fs::read_to_string(path.join(".env")).unwrap(),
+            "TOKEN=main\n"
+        );
+        assert_usable(&cwd, &tree);
+        // The copy is the worktree's own: changing it leaves the original.
+        std::fs::write(path.join(".env"), "TOKEN=worktree\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(cwd.join(".env")).unwrap(),
+            "TOKEN=main\n"
+        );
+        crate::worktree_management::remove(&cwd, path).unwrap();
+        assert!(!path.exists());
+        assert_eq!(
+            std::fs::read_to_string(cwd.join(".env")).unwrap(),
+            "TOKEN=main\n"
+        );
+    }
+
+    #[test]
+    fn a_broken_include_list_still_gives_a_plain_worktree() {
+        let (_temp, cwd) = repo_with_included_env();
+        // A pattern the matcher rejects makes the copy fail outright.
+        std::fs::write(cwd.join(".worktreeinclude"), "[z-a]\n.env\n").unwrap();
+        commit_all(&cwd);
+        let (tree, counts) = capture(|| create_named_worktree(&cwd, "plain"));
+        let tree = tree.unwrap();
+        assert!(!Path::new(&tree.path).join(".env").exists());
+        let counts = counted(counts);
+        assert!(
+            counts.contains(&("worktree.copy".into(), Some(ErrorKind::Other), 1)),
+            "{counts:?}"
+        );
+        assert!(
+            counts.contains(&("worktree.create".into(), None, 1)),
+            "{counts:?}"
+        );
+        assert_usable(&cwd, &tree);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_included_file_still_gives_a_worktree() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_temp, cwd) = repo_with_included_env();
+        let env = cwd.join(".env");
+        std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&env).is_ok() {
+            return; // Running as root, which reads anything.
+        }
+        let (tree, counts) = capture(|| create_named_worktree(&cwd, "unreadable"));
+        std::fs::set_permissions(&env, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let tree = tree.unwrap();
+        let counts = counted(counts);
+        assert!(
+            counts.contains(&("worktree.copy".into(), Some(ErrorKind::Other), 1)),
+            "{counts:?}"
+        );
+        assert!(!Path::new(&tree.path).join(".env").exists());
+        assert_usable(&cwd, &tree);
+    }
+
+    fn commit_all(cwd: &Path) {
+        git(cwd, &["add", "-A"]).unwrap();
+        commit(cwd, "update");
+    }
+
     #[test]
     fn a_failed_named_worktree_create_is_logged() {
         let (_temp, cwd) = repo();

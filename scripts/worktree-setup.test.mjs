@@ -262,6 +262,83 @@ test("on macOS, a volume that isn't APFS is never copied, since cp -c would fall
   assert.equal(existsSync(calls), false, "cp ran");
 });
 
+test("git works as usual in a seeded worktree: clean status, commit, push, fetch and remove", {
+  skip: cloneSkip,
+}, async (t) => {
+  const repo = await repository(t);
+  const remote = join(repo.directory, "remote.git");
+  git(repo.directory, "init", "-q", "--bare", remote);
+  git(repo.main, "remote", "add", "origin", remote);
+  const source = await repo.worktree("source");
+  for (const relative of TARGETS) await build(source, relative, 1, "source");
+  const fresh = await repo.worktree("fresh");
+  // Seeding is ours alone: a worktrunk binary on PATH is never run.
+  const called = join(repo.directory, "wt-called");
+  await stub(repo.bin, "wt", `touch "${called}"; exit 1`);
+
+  const result = runSetup(fresh, repo.bin);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(called), false, "worktrunk ran");
+  for (const relative of TARGETS) assert.equal(await marker(fresh, relative), "source");
+  assert.equal(git(fresh, "status", "--porcelain"), "");
+  git(fresh, "switch", "-q", "-c", "feature");
+  await writeFile(join(fresh, "change"), "change\n");
+  git(fresh, "add", "change");
+  git(fresh, "commit", "-qm", "change");
+  git(fresh, "push", "-q", "origin", "feature");
+  git(repo.main, "fetch", "-q", "origin");
+  assert.equal(git(repo.main, "rev-parse", "origin/feature"), git(fresh, "rev-parse", "HEAD"));
+  assert.equal(git(repo.main, "rev-parse", "feature"), git(fresh, "rev-parse", "HEAD"));
+  // The clones are the worktree's own: writing one leaves the source alone...
+  await writeFile(join(fresh, "target/debug/deps/marker.rlib"), "rebuilt");
+  assert.equal(await marker(source, "target"), "source");
+  // ...and so does removing the worktree with them.
+  git(repo.main, "worktree", "remove", fresh);
+  assert.equal(existsSync(fresh), false);
+  for (const relative of TARGETS) assert.equal(await marker(source, relative), "source");
+  assert.equal(git(source, "status", "--porcelain"), "");
+});
+
+test("with no build output anywhere, the worktree is left to build and the hook says nothing", { skip }, async (t) => {
+  const repo = await repository(t);
+  await repo.worktree("other");
+  const fresh = await repo.worktree("fresh");
+  await mkdir(join(fresh, "node_modules"));
+
+  const result = runSetup(fresh, repo.bin);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, "");
+  for (const relative of TARGETS) assert.equal(existsSync(join(fresh, relative)), false, relative);
+  assert.deepEqual(await leftovers(fresh), []);
+});
+
+test("on macOS, a source on another volume is never copied, since clonefile can't cross volumes", {
+  skip: process.platform === "darwin" ? false : "macOS only",
+}, async (t) => {
+  const repo = await repository(t);
+  const source = await repo.worktree("source");
+  await build(source, "target", 1, "source");
+  const fresh = await repo.worktree("fresh");
+  const calls = join(repo.directory, "cp-calls");
+  // The source reports a different device from the new worktree.
+  await stub(
+    repo.bin,
+    "stat",
+    `if [ "$1" = -f ] && [ "$2" = %d ]; then case "$3" in *source*) echo 1 ;; *) echo 2 ;; esac; else exec /usr/bin/stat "$@"; fi`,
+  );
+  await stub(repo.bin, "cp", `echo "$@" >> "${calls}"; exec /bin/cp "$@"`);
+
+  const result = runSetup(fresh, repo.bin);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(join(fresh, "target")), false);
+  assert.equal(existsSync(calls), false, "cp ran");
+  assert.deepEqual(await leftovers(fresh), []);
+  assert.match(result.stderr, /could not clone/);
+});
+
 test("GESPAN_NO_TARGET_SEED=1 skips seeding", { skip }, async (t) => {
   const repo = await repository(t);
   const source = await repo.worktree("source");
