@@ -508,6 +508,9 @@ pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
 /// ink. Light themes take a deeper shade to keep the glyph's contrast on white.
 pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
     let (dark, light) = match label {
+        // Home is the bright ink (`#ebebeb` in the dark design), not a
+        // hue: it follows the theme's ink so it stays bright in both.
+        "Home" => return Some(content(1.)),
         "New thread" => (0x3DD68C, 0x15874F),
         "My tasks" => (0xFFB900, 0xA86B00),
         "Inbox" => (0x8B95FF, 0x4F5BD5),
@@ -1081,6 +1084,23 @@ mod nav_tint_tests {
         "Runs",
         "Settings",
     ];
+
+    #[test]
+    fn home_is_drawn_in_the_bright_ink_not_the_muted_grey() {
+        let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
+        for theme in ["dark", "light"] {
+            with_theme(theme);
+            let home = nav_tint("Home").expect("Home has a colour like the other rows");
+            assert_eq!(home, content(1.), "{theme}: Home is the full ink");
+            // Unselected rows without a tint get content(0.35); Home never does.
+            assert_eq!(nav_icon_color("Home", false), home);
+            assert_eq!(nav_icon_color("Home", true), home);
+            assert_ne!(nav_icon_color("Home", false), content(0.35));
+        }
+        with_theme("dark");
+        let dark: Hsla = rgb(0xebebeb).into();
+        assert_eq!(nav_tint("Home"), Some(dark), "the design's #ebebeb");
+    }
 
     #[test]
     fn every_navigation_row_gets_its_own_colour() {
