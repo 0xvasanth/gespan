@@ -31,7 +31,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let active = self.active_app_view == Some(view);
-        let close = active || width >= TAB_CLOSE_MIN_WIDTH;
+        let close = width >= TAB_CLOSE_MIN_WIDTH;
         div()
             .id(SharedString::from(format!(
                 "app-title-tab-{}",
