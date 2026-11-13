@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod anchor;
+pub use anchor::{Anchors, GRACE as ANNOUNCEMENT_GRACE};
+
 const MAX_WIRE_BYTES: usize = 1_048_576;
 const MAX_SOURCE_BYTES: usize = visual::MAX_SOURCE_BYTES;
 

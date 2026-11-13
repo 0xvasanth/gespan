@@ -251,3 +251,102 @@ for line in sys.stdin:
         .collect::<Vec<_>>();
     assert_eq!(order, ["intro", "before", "visual", "after"]);
 }
+
+/// The text arrives over stdout and the visual over the tool endpoint. When the
+/// app's stdout reader falls behind, the publication reaches the app before the
+/// text the provider wrote ahead of its call; the visual still lands below that
+/// text because it waits for the call's own announcement on stdout.
+#[test]
+fn a_visual_waits_for_its_announced_call_while_stdout_lags() {
+    let fixture = Fixture(std::env::temp_dir().join(format!(
+        "gespan-runtime-visual-anchor-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    )));
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    let binary = fixture.0.join("mock-provider");
+    std::fs::write(&binary, concat!(include_str!("mcp_stub.py"), r#"
+import threading
+def frame(value):
+    return json.dumps(value)
+for line in sys.stdin:
+    value = json.loads(line)
+    if value.get('id') == 1:
+        print(frame({'id': 1, 'result': {}}), flush=True)
+    elif value.get('id') == 2:
+        hub = Hub(value['params']['config']['mcp_servers']['gespan'])
+        print(frame({'id': 2, 'result': {'thread': {'id': 'native-visual-anchor'}}}), flush=True)
+    elif value.get('id') == 3:
+        arguments = {'id': 'anchored', 'title': 'Anchored', 'requestId': 'anchored-request',
+                     'source': 'return () => visual.text("Ready");'}
+        # The text and the call's announcement are written before the call,
+        # but the app's reader is held back: it cannot finish the text frame
+        # until its newline arrives, as if it were starved of CPU.
+        sys.stdout.write(frame({'method': 'item/agentMessage/delta', 'params': {'itemId': 'before', 'delta': 'Before the visual.'}}))
+        sys.stdout.flush()
+        replies = []
+        call = threading.Thread(target=lambda: replies.append(hub.call('visual_show', arguments)))
+        call.start()
+        # Long enough for the app to apply a publication it does not hold,
+        # shorter than the grace a silent provider gets.
+        deadline = time.monotonic() + 0.4
+        while not os.path.exists('visual-observed') and time.monotonic() < deadline:
+            time.sleep(0.005)
+        sys.stdout.write('\n' + frame({'method': 'item/started', 'params': {'item': {
+            'id': 'call-anchored', 'type': 'mcpToolCall', 'server': 'gespan', 'tool': 'visual_show',
+            'arguments': arguments, 'status': 'inProgress'}}}) + '\n')
+        sys.stdout.flush()
+        call.join()
+        assert replies[0]['ok'] is True, replies
+        print(frame({'method': 'item/agentMessage/delta', 'params': {'itemId': 'after', 'delta': 'After the visual.'}}), flush=True)
+        print(frame({'method': 'turn/completed', 'params': {'turn': {'status': 'completed'}}}), flush=True)
+        break
+"#)).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let store = Store::open_gespan(&fixture.0.join("sessions.db")).unwrap();
+    let summary = store.create("codex", fixture.0.to_str().unwrap()).unwrap();
+    let session = summary.id;
+    let store = Arc::new(Mutex::new(store));
+    let worker_store = store.clone();
+    let (updates, receive) = async_channel::bounded(64);
+    let (_controls, control_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        run_turn_using(
+            TurnInput {
+                summary,
+                prompt: "Show a native visual".into(),
+                settings: Settings::default(),
+            },
+            control_rx,
+            worker_store,
+            Arc::new(AtomicBool::new(false)),
+            updates,
+            |_| Some(binary),
+        );
+    });
+    let final_status = loop {
+        let update = receive
+            .recv_blocking()
+            .expect("Runtime closed before its final update");
+        if update.rows.iter().any(|row| row.role == "visual") {
+            std::fs::write(fixture.0.join("visual-observed"), "shown").unwrap();
+        }
+        if update.finished {
+            break update.status;
+        }
+    };
+    worker.join().unwrap();
+    assert_eq!(final_status, "Ready");
+    let saved = locked(&store).unwrap().load(session).unwrap();
+    let order = saved
+        .rows
+        .iter()
+        .filter_map(|row| match row.role.as_str() {
+            "visual" => Some("visual"),
+            "assistant" if row.text.contains("Before the visual.") => Some("before"),
+            "assistant" if row.text.contains("After the visual.") => Some("after"),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["before", "visual", "after"]);
+}
