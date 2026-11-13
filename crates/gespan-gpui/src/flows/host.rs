@@ -197,6 +197,11 @@ impl Host {
         !stopped
     }
 
+    /// Whether `session` is a visit of a run still going.
+    pub(crate) fn runs(&self, session: i64) -> bool {
+        self.sessions.contains_key(&session)
+    }
+
     /// The launched session's prompt was submitted; its turn can settle.
     pub(crate) fn submitted(&mut self, session: i64) {
         if let Some(turn) = self.awaiting.get_mut(&session) {

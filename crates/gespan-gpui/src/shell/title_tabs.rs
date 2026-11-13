@@ -1,5 +1,6 @@
 //! All title-strip commands operate on the same visible, ordered snapshot.
 use super::*;
+use crate::settings::TabLayout;
 use crate::strip_groups::{StripEntry, entries, idle, make_contiguous};
 use crate::workspace::TitleTab;
 use gespan_core::files::path_key;
@@ -142,6 +143,8 @@ impl Shell {
             }
             TitleTab::Session(tab) => {
                 self.workspace.tabs.contains(tab)
+                    && (!self.workspace.background_tabs.contains(tab)
+                        || self.background_tab_running(*tab, cx))
                     && self.session_summaries.contains_key(
                         &self
                             .workspace
@@ -204,12 +207,22 @@ impl Shell {
         &self,
         cx: &App,
     ) -> (Vec<StripEntry<TitleTab>>, HashMap<TitleTab, String>) {
-        let tabs = self.global_strip_tabs(cx);
+        let layout = self.workspace.preferences.tab_layout();
+        let tabs = match layout {
+            TabLayout::Project => self.strip_tabs(cx),
+            TabLayout::All | TabLayout::Grouped => self.global_strip_tabs(cx),
+        };
         let projects: HashMap<TitleTab, String> = tabs
             .iter()
             .filter_map(|tab| Some((tab.clone(), self.tab_project(tab, cx)?)))
             .collect();
-        (entries(&tabs, |tab| projects.get(tab).cloned()), projects)
+        let entries = match layout {
+            TabLayout::Grouped => entries(&tabs, |tab| projects.get(tab).cloned()),
+            TabLayout::Project | TabLayout::All => {
+                tabs.into_iter().map(StripEntry::Loose).collect()
+            }
+        };
+        (entries, projects)
     }
 
     /// `tab`'s project from a frame's `projects`, else worked out, as for a
@@ -335,6 +348,26 @@ impl Shell {
     ) {
         // Opening a tab ends any peek; its group is the open one now.
         self.strip_peek = None;
+        let before = self.workspace.project.clone();
+        self.open_title_tab_in_place(tab, window, cx);
+        // Another project's tab moves the sidebar to that project, as
+        // picking the project there does.
+        if path_key(&self.workspace.project) != path_key(&before) {
+            self.selected_sessions.clear();
+            self.selection_anchor = None;
+            self.sidebar_target = None;
+            let project = self.workspace.project.clone();
+            self.show_project_in_sidebar(&project);
+            self.notify_sidebar(cx);
+        }
+    }
+
+    fn open_title_tab_in_place(
+        &mut self,
+        tab: &TitleTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match tab {
             TitleTab::App(view) => match view {
                 app_views::AppView::Home => self.open_home(window, cx),
@@ -619,6 +652,74 @@ impl Shell {
         }
         self.persist(cx);
         cx.notify();
+    }
+
+    /// Whether a run still works in background tab `tab`: an automation or
+    /// flow run holds one of its chats, or one of them is busy.
+    pub(super) fn background_tab_running(&self, tab: i64, cx: &App) -> bool {
+        self.workspace.layout(tab).leaf_ids().into_iter().any(|id| {
+            self.automation_state.running.contains_key(&id)
+                || self
+                    .flows_state
+                    .host
+                    .as_ref()
+                    .is_some_and(|host| host.runs(id))
+                || self.session_summaries.contains_key(&id) && self.session_metadata(id, cx).busy
+        })
+    }
+
+    /// Closes the background tabs whose run is done: their chats stay in
+    /// the sidebar, nothing is archived.
+    pub(super) fn retire_background_tabs(&mut self, cx: &mut Context<Self>) {
+        let done: Vec<i64> = self
+            .workspace
+            .background_tabs
+            .iter()
+            .copied()
+            .filter(|tab| !self.background_tab_running(*tab, cx))
+            .collect();
+        if done.is_empty() {
+            return;
+        }
+        for tab in done {
+            self.workspace.close(tab);
+        }
+        self.workspace.normalize_title_order();
+        self.persist(cx);
+        self.invalidate_chrome(cx);
+    }
+
+    /// Tabs saved before background tabs existed: automation chats among
+    /// them, other than the one on screen, become background tabs, once.
+    pub(super) fn sort_saved_automation_tabs(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.background_tabs_sorted {
+            return;
+        }
+        let open = self
+            .workspace
+            .active
+            .and_then(|id| self.workspace.tab_of(id));
+        let automations = &self.automation_state.session_automations;
+        let found: Vec<i64> = self
+            .workspace
+            .tabs
+            .iter()
+            .copied()
+            .filter(|tab| {
+                Some(*tab) != open
+                    && !self.tab_pinned(&TitleTab::Session(*tab))
+                    && self
+                        .workspace
+                        .layout(*tab)
+                        .leaf_ids()
+                        .iter()
+                        .all(|id| automations.contains_key(id))
+            })
+            .collect();
+        self.workspace.background_tabs.extend(found);
+        self.workspace.background_tabs_sorted = true;
+        self.retire_background_tabs(cx);
+        self.persist(cx);
     }
 
     /// Records that `tab` is focused now.

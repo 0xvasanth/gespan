@@ -150,6 +150,14 @@ pub(crate) struct Workspace {
         deserialize_with = "lenient_focused_at"
     )]
     pub tab_focused_at: HashMap<TitleTab, i64>,
+    /// Chat tabs an automation or flow run opened, not you. They show in
+    /// the strip only while their run works and leave it once it is done;
+    /// opening one yourself makes it an ordinary tab.
+    pub background_tabs: HashSet<i64>,
+    /// Whether tabs saved before `background_tabs` existed were sorted:
+    /// automation chats among them, other than the open one, became
+    /// background tabs. Done once.
+    pub background_tabs_sorted: bool,
     /// Sidebar narrowing belongs to this run. Reopen on the full project,
     /// while saved conversations retain their own execution directories.
     #[serde(skip)]
@@ -234,6 +242,7 @@ impl Workspace {
             title_order: Vec::new(),
             scope_focus: HashMap::new(),
             tab_focused_at: HashMap::new(),
+            background_tabs: HashSet::new(),
             worktree_focus: HashMap::new(),
             tab_workspaces: HashMap::new(),
             active: None,
@@ -271,6 +280,8 @@ impl Workspace {
         self.title_order = own.title_order;
         self.scope_focus = own.scope_focus;
         self.tab_focused_at = own.tab_focused_at;
+        self.background_tabs = own.background_tabs;
+        self.background_tabs_sorted = own.background_tabs_sorted;
         self.worktree_focus = own.worktree_focus;
         self.tab_workspaces = own.tab_workspaces;
         self.active = own.active;
@@ -516,6 +527,8 @@ impl Default for Workspace {
             pinned_tabs: Vec::new(),
             scope_focus: HashMap::new(),
             tab_focused_at: HashMap::new(),
+            background_tabs: HashSet::new(),
+            background_tabs_sorted: false,
             worktree_focus: HashMap::new(),
             tab_workspaces: HashMap::new(),
             active: None,
@@ -900,6 +913,7 @@ impl Workspace {
         let layout = self.layout(tab);
         self.tabs.remove(ix);
         self.tab_workspaces.remove(&tab);
+        self.background_tabs.remove(&tab);
         self.title_order
             .retain(|entry| *entry != TitleTab::Session(tab));
         self.scope_focus
@@ -1237,6 +1251,7 @@ impl Workspace {
     }
     pub fn normalize_title_order(&mut self) {
         self.tab_workspaces.retain(|tab, _| self.tabs.contains(tab));
+        self.background_tabs.retain(|tab| self.tabs.contains(tab));
         let mut seen = HashSet::new();
         self.title_order.retain(|tab| {
             tab.session().is_none_or(|id| self.tabs.contains(&id)) && seen.insert(tab.clone())

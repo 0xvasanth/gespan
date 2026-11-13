@@ -34,6 +34,20 @@ impl Running {
             title: "acme/app#7 Fix the login".into(),
         }
     }
+
+    /// A run with no review policy, still submitting its prompt, so a chat
+    /// change does not settle it.
+    pub(super) fn submitting_for_test(run_id: &str, automation_id: &str, cwd: &str) -> Self {
+        Self {
+            run_id: run_id.into(),
+            submitting: true,
+            generation_before: 0,
+            review: None,
+            automation_id: automation_id.into(),
+            cwd: cwd.into(),
+            title: "Check the build".into(),
+        }
+    }
 }
 
 pub(super) struct State {
@@ -46,7 +60,7 @@ pub(super) struct State {
     recovered: bool,
     started_before: i64,
     pending: HashSet<String>,
-    running: HashMap<i64, Running>,
+    pub running: HashMap<i64, Running>,
     reserved: HashSet<i64>,
     writes: Option<gpui::Task<()>>,
     event_retries: HashMap<String, gespan_core::inbox::Item>,
@@ -121,6 +135,7 @@ impl Shell {
             let _ = this.update(cx, |this, cx| match result {
                 Ok(sessions) => {
                     this.automation_state.session_automations = sessions;
+                    this.sort_saved_automation_tabs(cx);
                     this.notify_sidebar(cx);
                 }
                 Err(error) => tracing::warn!(%error, "automation runs failed to load"),
@@ -151,6 +166,7 @@ impl Shell {
                 match result {
                     Ok((service, retries, sessions)) => {
                         this.automation_state.session_automations = sessions;
+                        this.sort_saved_automation_tabs(cx);
                         // Their sessions move into the Automation runs folder.
                         this.notify_sidebar(cx);
                         this.automation_state.service = Some(service);
@@ -891,11 +907,18 @@ impl Shell {
         settings: gespan_core::agent::Settings,
         cx: &mut Context<Self>,
     ) {
+        self.add_run_tab(id);
+        self.sessions[&id].update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
+    }
+
+    /// Gives a run's chat a tab without changing the focused project. Not
+    /// opened by you, it shows only while the run works.
+    pub(super) fn add_run_tab(&mut self, id: i64) {
         if !self.workspace.tabs.contains(&id) {
             self.workspace.tabs.push(id);
             self.workspace.title_order.push(TitleTab::Session(id));
+            self.workspace.background_tabs.insert(id);
         }
-        self.sessions[&id].update(cx, |view, cx| view.quick_submit(prompt, settings, cx));
     }
 
     fn persist_automation_folder(&mut self, cwd: &str, cx: &mut Context<Self>) {

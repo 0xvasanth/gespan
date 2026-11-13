@@ -64,6 +64,8 @@ mod report;
 mod review_drafts;
 #[cfg(test)]
 mod review_drafts_tests;
+#[cfg(test)]
+mod run_tabs_tests;
 mod search;
 mod session_filters;
 mod session_folders;
@@ -81,6 +83,8 @@ mod surface_tests;
 mod tab_groups;
 #[cfg(test)]
 mod tab_groups_tests;
+#[cfg(test)]
+mod tab_layout_tests;
 mod terminal_dock;
 mod terminal_panes;
 #[cfg(test)]
@@ -1795,6 +1799,7 @@ impl Shell {
                 this.orchestration_session_changed(id, cx);
                 this.automation_session_changed(id, cx);
                 this.flow_session_changed(id, cx);
+                this.retire_background_tabs(cx);
                 this.sync_review_locks(cx);
                 this.refresh_session_mark(id, cx);
                 this.sync_keep_awake();
@@ -4900,6 +4905,10 @@ impl Shell {
         self.sessions.get(&id).cloned()
     }
     pub(crate) fn open(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        // Opened by you: a run's tab becomes an ordinary one and stays.
+        if let Some(tab) = self.workspace.tab_of(id) {
+            self.workspace.background_tabs.remove(&tab);
+        }
         if self.workspace.review_owners.contains_key(&id) {
             self.open_file_pane(id, window, cx);
             return;
@@ -5123,6 +5132,11 @@ impl Shell {
         self.open_app_search(window, cx);
     }
 
+    /// Opens `path`'s session list in the sidebar.
+    pub(super) fn show_project_in_sidebar(&mut self, path: &str) {
+        self.workspace.collapsed.remove(path);
+    }
+
     pub(super) fn select_project(
         &mut self,
         path: String,
@@ -5141,7 +5155,7 @@ impl Shell {
         }
         self.workspace.project = path.clone();
         self.workspace.active = None;
-        self.workspace.collapsed.remove(&path);
+        self.show_project_in_sidebar(&path);
         // Each project restores its selected tab, including Pilots.
         if self.restore_scope_tab(window, cx) {
             return;

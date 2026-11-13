@@ -363,6 +363,12 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "files editor long lines horizontal scroll wrapping",
     ),
     (
+        "title-tabs",
+        Section::Appearance,
+        "Top bar tabs",
+        "tab strip title bar group grouping projects all this project chips",
+    ),
+    (
         "tab-animations",
         Section::Appearance,
         "Tab animations",
@@ -849,6 +855,7 @@ mod tests {
             ("word wrap", "file-word-wrap", Section::Chat),
             ("show excluded files", "show-excluded-files", Section::Chat),
             ("tab animations", "tab-animations", Section::Appearance),
+            ("top bar tabs", "title-tabs", Section::Appearance),
         ] {
             let hit = search(query, "")
                 .into_iter()
