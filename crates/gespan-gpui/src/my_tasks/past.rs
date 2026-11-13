@@ -1,8 +1,8 @@
 //! The Answered and Decisions tabs: every request answered or withdrawn,
 //! kept in the database with the answer, and the decisions saved from them.
 use super::card::answer as button;
-use super::list::{group_label, kind_status, row_line, row_title, task_row, tile, waited};
-use super::pane::{open_button, top_bar};
+use super::list::{QueueRow, kind_status, row_line, row_title, task_row, tile, waited};
+use super::pane::{bar_frame, open_button, top_bar};
 use super::project_display;
 use super::*;
 use crate::glass::{self, Button};
@@ -357,102 +357,112 @@ impl MyTasks {
         groups
     }
 
-    /// A project's label over its rows, with how many there are.
-    fn group_header(project: &str, count: usize, first: bool) -> AnyElement {
-        group_label(
-            format!("my-tasks-group-{project}"),
-            format!("{} \u{b7} {count}", project_display(project)),
-            first,
-        )
-    }
-
-    pub(super) fn past_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The Answered tab's queue, grouped by project, and the row selected.
+    pub(super) fn past_queue(&self, cx: &gpui::App) -> (Vec<QueueRow>, Option<QueueRow>) {
         let shown = self.visible_past(cx);
-        let selected = self.selected_past(&shown).map(|t| t.key.clone());
-        let now = self.now_ms;
+        let selected = self
+            .selected_past(&shown)
+            .map(|t| QueueRow::Past(t.key.clone()));
         let mut rows = Vec::new();
         for (ix, (project, tasks)) in Self::grouped(shown, |t| &t.project).into_iter().enumerate() {
-            rows.push(Self::group_header(&project, tasks.len(), ix == 0));
-            for task in tasks {
-                let key = task.key.clone();
-                let (answer, tone) = match task.status {
-                    Status::Answered => (
-                        format!("You: {}", task.answer.as_deref().unwrap_or_default()),
-                        glass::Tone::Ok,
-                    ),
-                    _ => ("Not answered".into(), glass::Tone::Muted),
-                };
-                let (word, _) = kind_status(task.kind);
-                let ago = waited(now.saturating_sub(task.closed_at.unwrap_or(now)));
-                rows.push(
-                    task_row(
-                        format!("my-tasks-past-{}", task.key),
-                        selected.as_ref() == Some(&task.key),
-                    )
-                    .aria_label(SharedString::from(task.headline.clone()))
-                    .child(tile(task.kind, 32.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(row_title(task.headline.clone(), Some((ago, content(0.45)))))
-                            .child(row_line(answer))
-                            .child(
-                                div()
-                                    .mt(px(4.))
-                                    .flex()
-                                    .gap(px(6.))
-                                    .child(glass::status(word, tone)),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.select_past(key.clone(), cx)))
-                    .into_any_element(),
-                );
-            }
+            // A project's label over its rows, with how many there are.
+            rows.push(QueueRow::Group {
+                selector: format!("my-tasks-group-{project}"),
+                label: format!("{} \u{b7} {}", project_display(&project), tasks.len()),
+                first: ix == 0,
+            });
+            rows.extend(tasks.iter().map(|t| QueueRow::Past(t.key.clone())));
         }
-        rows
+        (rows, selected)
     }
 
-    pub(super) fn decision_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(super) fn past_row(
+        &self,
+        task: &TaskRecord,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let now = self.now_ms;
+        let key = task.key.clone();
+        let (answer, tone) = match task.status {
+            Status::Answered => (
+                format!("You: {}", task.answer.as_deref().unwrap_or_default()),
+                glass::Tone::Ok,
+            ),
+            _ => ("Not answered".into(), glass::Tone::Muted),
+        };
+        let (word, _) = kind_status(task.kind);
+        let ago = waited(now.saturating_sub(task.closed_at.unwrap_or(now)));
+        task_row(format!("my-tasks-past-{}", task.key), on)
+            .aria_label(SharedString::from(task.headline.clone()))
+            .child(tile(task.kind, 32.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(row_title(task.headline.clone(), Some((ago, content(0.45)))))
+                    .child(row_line(answer))
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .flex()
+                            .gap(px(6.))
+                            .child(glass::status(word, tone)),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.select_past(key.clone(), cx)))
+            .into_any_element()
+    }
+
+    /// The Decisions tab's queue, grouped by where each applies, and the row
+    /// selected.
+    pub(super) fn decision_queue(&self, cx: &gpui::App) -> (Vec<QueueRow>, Option<QueueRow>) {
         let shown = self.visible_decisions(cx);
-        let selected = self.selected_decision(&shown).map(|d| d.id);
+        let selected = self
+            .selected_decision(&shown)
+            .map(|d| QueueRow::Decision(d.id));
         let mut rows = Vec::new();
         for (ix, (key, name, decisions)) in decision_groups(shown).into_iter().enumerate() {
-            rows.push(group_label(
-                format!("my-tasks-group-{key}"),
-                format!("{name} \u{b7} {}", decisions.len()),
-                ix == 0,
-            ));
-            for decision in decisions {
-                let id = decision.id;
-                let meta = match (decision.sources.len(), decision.session) {
-                    (0, Some(session)) => format!("Proposed in session {session}"),
-                    (0, None) => "Written by hand".to_owned(),
-                    (1, _) => "From 1 answer".to_owned(),
-                    (n, _) => format!("From {n} answers"),
-                };
-                rows.push(
-                    task_row(format!("my-tasks-decision-{id}"), selected == Some(id))
-                        .aria_label(SharedString::from(decision.statement.clone()))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(3.))
-                                .child(row_title(decision.statement.clone(), None))
-                                .child(row_line(meta)),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| this.select_decision(id, cx)))
-                        .into_any_element(),
-                );
-            }
+            rows.push(QueueRow::Group {
+                selector: format!("my-tasks-group-{key}"),
+                label: format!("{name} \u{b7} {}", decisions.len()),
+                first: ix == 0,
+            });
+            rows.extend(decisions.iter().map(|d| QueueRow::Decision(d.id)));
         }
-        rows
+        (rows, selected)
+    }
+
+    pub(super) fn decision_row(
+        &self,
+        decision: &SavedDecision,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = decision.id;
+        let meta = match (decision.sources.len(), decision.session) {
+            (0, Some(session)) => format!("Proposed in session {session}"),
+            (0, None) => "Written by hand".to_owned(),
+            (1, _) => "From 1 answer".to_owned(),
+            (n, _) => format!("From {n} answers"),
+        };
+        task_row(format!("my-tasks-decision-{id}"), on)
+            .aria_label(SharedString::from(decision.statement.clone()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(row_title(decision.statement.clone(), None))
+                    .child(row_line(meta)),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.select_decision(id, cx)))
+            .into_any_element()
     }
 
     /// "Remember this for <project>?": the statement field with Save as
@@ -690,7 +700,7 @@ impl MyTasks {
             .h_full()
             .flex()
             .flex_col()
-            .child(bar)
+            .child(bar_frame(bar))
             .child(
                 div()
                     .id(id)
@@ -718,7 +728,7 @@ impl MyTasks {
     pub(super) fn past_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let shown = self.visible_past(cx);
         let Some(record) = self.selected_past(&shown).cloned() else {
-            return self.empty_pane(None);
+            return self.empty_pane(None, cx);
         };
         let now = self.now_ms;
         let closed = record.closed_at.unwrap_or(record.asked_at);
@@ -736,10 +746,10 @@ impl MyTasks {
         let remember = record.can_remember().then(|| self.remember(&record, cx));
         let open = Source::from_origin(&record.origin);
         let bar =
-            top_bar(&record.project, record.source_label.clone())
+            top_bar(&record.project, record.source_label.clone(), self.compact())
                 .child(div().flex_1())
                 .when_some(open, |d, source| {
-                    d.child(open_button("Open").on_click(
+                    d.child(open_button("Open", self.compact()).on_click(
                         cx.listener(move |_, _, _, cx| cx.emit(Event::Open(source.clone()))),
                     ))
                 });
@@ -813,7 +823,7 @@ impl MyTasks {
     pub(super) fn decision_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let shown = self.visible_decisions(cx);
         let Some(decision) = self.selected_decision(&shown).cloned() else {
-            return self.empty_pane(None);
+            return self.empty_pane(None, cx);
         };
         let id = decision.id;
         let now = self.now_ms;
@@ -866,7 +876,7 @@ impl MyTasks {
             gespan_core::decisions::Kind::Preference => "Preference",
             gespan_core::decisions::Kind::Decision => "Decision",
         };
-        let bar = top_bar(&group, noun.into());
+        let bar = top_bar(&group, noun.into(), self.compact());
         let actions = if editing {
             div()
                 .flex()
