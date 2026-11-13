@@ -1940,3 +1940,49 @@ fn a_busy_pilot_pane_in_a_split_keeps_its_tab(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+#[gpui::test]
+fn a_pilot_in_the_current_folder_draws_before_the_sidebar_lists_it(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, _) = window(cx);
+    let pilot = window
+        .update(cx, |shell, w, cx| {
+            shell.select_project("/work/loose-folder".into(), w, cx);
+            let manager = shell.pilot_manager();
+            manager.update(cx, |m, cx| m.create(Vec::new(), w, cx));
+            manager.read(cx).active.clone().unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let tab = window
+        .update(cx, |shell, _, cx| {
+            let tab = shell.pilot_tab(pilot.clone());
+            // Entering a folder lists it, so its Pilot draws.
+            assert!(shell.tab_drawable(&tab, cx));
+            assert!(has_group(shell, "/work/loose-folder", cx));
+            // The current folder isn't listed yet (first-run setup, or before
+            // its blank chat lands): its Pilot still draws.
+            shell
+                .workspace
+                .projects
+                .retain(|p| !p.contains("loose-folder"));
+            assert_eq!(shell.workspace.project, "/work/loose-folder");
+            assert!(shell.tab_drawable(&tab, cx));
+            assert!(has_group(shell, "/work/loose-folder", cx));
+            assert!(shell.visible_tabs(cx).contains(&tab));
+            shell.invalidate_chrome(cx);
+            tab
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    assert!(drawn(visual, "tab-group-chip-loose-folder".into()));
+    // Left behind unlisted, it is a stale tab and hides like one.
+    window
+        .update(cx, |shell, w, cx| {
+            shell.select_project("/work/gespan".into(), w, cx);
+            assert!(!shell.tab_drawable(&tab, cx));
+            assert!(!has_group(shell, "/work/loose-folder", cx));
+        })
+        .unwrap();
+}
