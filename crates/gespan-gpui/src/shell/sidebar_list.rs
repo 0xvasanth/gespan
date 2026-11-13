@@ -862,7 +862,6 @@ impl Shell {
                     ("Flows", "git-merge"),
                     ("Board", "kanban"),
                     ("Notes", "note"),
-                    ("Settings", "settings"),
                 ]
                 .into_iter()
                 .filter(|(label, _)| match *label {
@@ -918,7 +917,6 @@ impl Shell {
                         .child(div().flex_1().child(label))
                         .when_some(
                             match label {
-                                "Settings" => Some(format!("{MOD},").into_any_element()),
                                 "My tasks" if waiting > 0 => Some(
                                     div()
                                         .debug_selector(|| {
@@ -982,9 +980,6 @@ impl Shell {
                             )
                         })
                         .on_click(cx.listener(move |this, _, window, cx| match label {
-                            "Settings" => {
-                                this.open_settings(crate::settings::Section::General, window, cx)
-                            }
                             "Home" => this.open_home(window, cx),
                             "My tasks" => this.open_my_tasks(window, cx),
                             "Inbox" => this.open_inbox(window, cx),
@@ -1004,6 +999,61 @@ impl Shell {
                             this.notify_navigation(cx);
                         }))
                 }),
+            )
+            .into_any()
+    }
+    /// Settings, the sidebar's last row, below the agents footer. It is
+    /// styled like the navigation rows, with a neutral gear.
+    pub(super) fn sidebar_settings_row(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        const LABEL: &str = "Settings";
+        let hovered = self.sidebar_hover == Some(LABEL);
+        div()
+            .flex_shrink_0()
+            .w_full()
+            .px_2()
+            .pb(px(8.))
+            .child(
+                div()
+                    .id("sidebar-settings")
+                    .debug_selector(|| "sidebar-navigation-Settings".into())
+                    .role(Role::Button)
+                    .aria_label(LABEL)
+                    .cursor_pointer()
+                    .h(px(32.))
+                    .px_2()
+                    .rounded_md()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(14.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(content(if hovered { 1. } else { 0.5 }))
+                    .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
+                    .child(icon("settings", 16.).text_color(content(0.55)))
+                    .child(div().flex_1().child(LABEL))
+                    .child(
+                        div()
+                            .debug_selector(|| "sidebar-navigation-trailing-Settings".into())
+                            .w(px(TRAILING_SLOT))
+                            .flex_shrink_0()
+                            .flex()
+                            .justify_center()
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::NORMAL)
+                            .text_color(content(0.35))
+                            .child(format!("{MOD},")),
+                    )
+                    .on_hover(cx.listener(|this, hovered, _, cx| {
+                        if *hovered {
+                            this.sidebar_hover = Some(LABEL);
+                        } else if this.sidebar_hover == Some(LABEL) {
+                            this.sidebar_hover = None;
+                        }
+                        this.notify_navigation(cx);
+                    }))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_settings(crate::settings::Section::General, window, cx)
+                    })),
             )
             .into_any()
     }
@@ -1148,7 +1198,6 @@ mod tests {
             ("Flows", "sidebar-navigation-Flows"),
             ("Board", "sidebar-navigation-Board"),
             ("Notes", "sidebar-navigation-Notes"),
-            ("Settings", "sidebar-navigation-Settings"),
         ]
         .into_iter()
         .filter_map(|(label, selector)| {
@@ -1182,7 +1231,6 @@ mod tests {
         if cx_flows_visible(window, visual) {
             expected.insert(3, "Flows");
         }
-        expected.push("Settings");
         let order = nav_order(visual);
         assert_eq!(order, expected);
         let first = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
@@ -1191,7 +1239,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn hidden_entries_stay_hidden_but_settings_is_always_shown(cx: &mut TestAppContext) {
+    fn hidden_entries_stay_hidden_and_settings_stays_at_the_bottom(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         window
@@ -1208,7 +1256,173 @@ mod tests {
         assert!(!order.contains(&"Inbox"));
         assert!(!order.contains(&"Automations"));
         assert!(!order.contains(&"Notes"));
-        assert_eq!(order.last(), Some(&"Settings"));
+        assert_eq!(order.last(), Some(&"Board"));
+        // Settings is not part of the top block: it stays the sidebar's
+        // last row however many entries are hidden.
+        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        let board = visual.debug_bounds("sidebar-navigation-Board").unwrap();
+        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
+        assert!(new.bottom() <= settings.top());
+        assert!(board.bottom() <= settings.top());
+    }
+
+    /// The rows that can end the sidebar, by selector.
+    fn bottom_rows(
+        visual: &mut gpui::VisualTestContext,
+    ) -> Vec<(&'static str, gpui::Bounds<Pixels>)> {
+        [
+            "sidebar-navigation-Notes",
+            "sidebar-new-thread",
+            "agents-footer",
+            "sidebar-navigation-Settings",
+        ]
+        .into_iter()
+        .filter_map(|selector| visual.debug_bounds(selector).map(|b| (selector, b)))
+        .collect()
+    }
+
+    #[gpui::test]
+    fn settings_is_the_last_row_below_the_agents_footer(cx: &mut TestAppContext) {
+        let (window, a, _) = super::super::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.preferences.working_agents = true;
+                shell.sessions[&a].update(cx, |session, _| session.busy = true);
+                shell.invalidate_chrome(cx);
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let sidebar = visual.debug_bounds("sidebar-content").unwrap();
+        let footer = visual.debug_bounds("agents-footer").unwrap();
+        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        // Directly below the pill, with only a small gap, and lowest of all.
+        assert!(footer.bottom() <= settings.top());
+        assert!(settings.top() - footer.bottom() <= px(8.));
+        for (selector, bounds) in bottom_rows(visual) {
+            if selector != "sidebar-navigation-Settings" {
+                assert!(
+                    bounds.bottom() <= settings.top(),
+                    "{selector} above Settings"
+                );
+            }
+        }
+        assert!(settings.bottom() <= sidebar.bottom());
+        assert!(
+            sidebar.bottom() - settings.bottom() <= px(12.),
+            "pinned to the bottom"
+        );
+        // Lined up with the pill, and its hint in the shared trailing column.
+        assert_eq!(settings.left(), footer.left());
+        assert_eq!(settings.right(), footer.right());
+        assert!(
+            visual
+                .debug_bounds("sidebar-navigation-trailing-Settings")
+                .is_some()
+        );
+        // With Activity off there is no pill, and Settings still ends the
+        // sidebar.
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.preferences.working_agents = false;
+                shell.invalidate_chrome(cx);
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(visual.debug_bounds("agents-footer").is_none());
+        let alone = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        assert_eq!(alone.bottom(), settings.bottom());
+    }
+
+    #[gpui::test]
+    fn the_bottom_settings_row_opens_settings(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        visual.simulate_click(settings.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, cx| {
+                let view = shell.settings.clone().expect("Settings opened");
+                assert_eq!(view.read(cx).section, crate::settings::Section::General);
+            })
+            .unwrap();
+        // The settings nav replaces the sidebar, so the row is gone until
+        // Settings closes, then back in its place.
+        assert!(visual.debug_bounds("sidebar-navigation-Settings").is_none());
+        window
+            .update(visual, |shell, w, cx| shell.close_settings(w, cx))
+            .unwrap();
+        visual.run_until_parked();
+        assert_eq!(
+            visual.debug_bounds("sidebar-navigation-Settings").unwrap(),
+            settings
+        );
+    }
+
+    #[gpui::test]
+    fn the_project_spaces_bar_is_gone_and_the_chip_still_switches(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        window
+            .update(cx, |shell, _, cx| {
+                shell.workspace.projects = ["/work/gespan", "/work/a", "/work/b", "/work/c"]
+                    .map(str::to_owned)
+                    .to_vec();
+                shell.invalidate_chrome(cx);
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        // Several projects, and still no strip of project spaces.
+        for ix in 0..4 {
+            let selector = Box::leak(format!("project-space-{ix}").into_boxed_str());
+            assert!(visual.debug_bounds(selector).is_none(), "{selector}");
+        }
+        // The chip under the divider is the way to another project.
+        let chip = visual.debug_bounds("sidebar-project-button").unwrap();
+        visual.simulate_click(chip.center(), gpui::Modifiers::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert!(shell.menu_open(&MenuTarget::Header), "the picker opens");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_project_menu_and_shortcut_still_reorder_projects(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |shell, window, cx| {
+                shell.workspace.projects = ["/work/a", "/work/b", "/work/c", "/work/d"]
+                    .map(str::to_owned)
+                    .to_vec();
+                let target = MenuTarget::Project {
+                    path: "/work/c".into(),
+                };
+                shell.run_menu(target.clone(), "move:start", None, window, cx);
+                assert_eq!(shell.workspace.projects[0], "/work/c");
+                shell.run_menu(target, "move:end", None, window, cx);
+                assert_eq!(shell.workspace.projects[3], "/work/c");
+                shell.select_project("/work/c".into(), window, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, cx| shell.move_current_project(-1, cx))
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.workspace.projects[2], "/work/c");
+                let saved = locked(&shell.store).unwrap().ui_state().unwrap().unwrap();
+                let restored = Workspace::restore(Some(&saved), &[], "/work/c");
+                assert_eq!(restored.projects, shell.workspace.projects);
+            })
+            .unwrap();
     }
 
     #[gpui::test]
@@ -1227,13 +1441,13 @@ mod tests {
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
         let all = visual.debug_bounds("sidebar-all-projects").unwrap();
-        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
         let divider = visual.debug_bounds("sidebar-project-divider").unwrap();
         let project = visual.debug_bounds("sidebar-project-button").unwrap();
         let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
         let new = visual.debug_bounds("sidebar-new-thread").unwrap();
-        assert!(all.bottom() <= settings.top());
-        assert!(settings.bottom() <= divider.top());
+        assert!(all.bottom() <= notes.top());
+        assert!(notes.bottom() <= divider.top());
         assert!(divider.size.height <= px(1.));
         assert!(divider.bottom() <= project.top());
         assert!(project.bottom() <= new.top());
