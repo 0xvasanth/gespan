@@ -259,6 +259,29 @@ fn menu_row(
         )
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
+/// A one-shot command in a menu: an icon and a label.
+fn menu_action(id: &'static str, label: &'static str, path: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .role(Role::MenuItem)
+        .aria_label(label)
+        .h(px(28.))
+        .px(px(8.))
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .rounded(px(6.))
+        .text_size(px(12.))
+        .text_color(content(0.8))
+        .cursor_pointer()
+        .hover(|s| s.bg(content(0.06)))
+        .child(icon(path, 14.).text_color(content(0.6)))
+        .child(div().flex_1().min_w_0().truncate().child(label))
+}
+fn divider() -> Div {
+    div().mx(px(8.)).my(px(6.)).h(px(1.)).bg(content(0.08))
+}
 fn caption(text: impl Into<SharedString>) -> Div {
     div()
         .px(px(8.))
@@ -649,49 +672,6 @@ impl Inbox {
                 this.filters_open = false;
                 cx.emit(super::Event::OpenConnections);
             }));
-        let tools = div()
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(2.))
-            .when(!connected.is_empty(), |d| {
-                d.child(
-                    icon_button("inbox-filter", "Filter inbox", "filter")
-                        .relative()
-                        .child(self.filter_anchor.probe())
-                        .when(self.filters_open, |d| d.bg(content(0.1)))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.filters_open = !this.filters_open;
-                            this.connections_open = false;
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    icon_button("inbox-read-all", "Mark all as read", "check-2").on_click(
-                        cx.listener(|this, _, _, cx| {
-                            for item in &this.snapshot.items {
-                                if item.provider == this.state.source {
-                                    this.state.seen.mark(item);
-                                }
-                            }
-                            this.save();
-                            cx.notify();
-                        }),
-                    ),
-                )
-                .child(
-                    icon_button(
-                        "inbox-refresh",
-                        "Refresh",
-                        if self.loading { "loader" } else { "refresh-cw" },
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.refresh(cx);
-                        this.load_detail(false, cx);
-                    })),
-                )
-            })
-            .child(add_connection);
         let header = div()
             .flex()
             .items_start()
@@ -704,7 +684,7 @@ impl Inbox {
                 .flex_1()
                 .min_w_0(),
             )
-            .child(tools);
+            .child(add_connection);
         let view = current_view(&self.state);
         let review_count = self
             .snapshot
@@ -795,11 +775,33 @@ impl Inbox {
                     )
                 })
         });
+        // The header holds only the title and "+", as in the design; the
+        // filter sits at the end of the search field, and its menu also
+        // carries Mark all as read and Refresh. The search glyph turns into
+        // the loader while a refresh runs.
+        let filter = icon_button("inbox-filter", "Filter inbox", "filter")
+            .debug_selector(|| "inbox-filter".into())
+            .relative()
+            .child(self.filter_anchor.probe())
+            .when(self.filters_open || self.filters_active(), |d| {
+                d.bg(content(0.1)).text_color(content(1.))
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.filters_open = !this.filters_open;
+                this.connections_open = false;
+                cx.notify();
+            }));
         let search = (!connected.is_empty()).then(|| {
             glass::field()
-                .child(icon("search", 14.).text_color(content(0.55)))
+                .debug_selector(|| "inbox-search".into())
+                .pr(px(4.))
+                .child(
+                    icon(if self.loading { "loader" } else { "search" }, 14.)
+                        .text_color(content(0.55)),
+                )
                 .child(div().flex_1().min_w_0().child(self.search.clone()))
                 .children(source_pill)
+                .child(filter)
         });
         let no_connection = connected.is_empty() && !self.loading;
         let empty = if no_connection {
@@ -2527,6 +2529,16 @@ impl Inbox {
         }
         cx.notify();
     }
+    /// Marks every item from the current source as read.
+    fn mark_source_read(&mut self, cx: &mut Context<Self>) {
+        for item in &self.snapshot.items {
+            if item.provider == self.state.source {
+                self.state.seen.mark(item);
+            }
+        }
+        self.save();
+        cx.notify();
+    }
     fn filters_menu(&self, cx: &mut Context<Self>) -> AnyElement {
         let weak = cx.entity().downgrade();
         let f = &self.state.filters;
@@ -2724,6 +2736,32 @@ impl Inbox {
                     this.filters_changed(true, cx);
                 }))
                 .into_any_element(),
+        );
+        rows.push(divider().into_any_element());
+        rows.push(
+            menu_action("inbox-read-all", "Mark all as read", "check-2")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.filters_open = false;
+                    this.mark_source_read(cx);
+                }))
+                .into_any_element(),
+        );
+        rows.push(
+            menu_action(
+                "inbox-refresh",
+                if self.loading {
+                    "Refreshing…"
+                } else {
+                    "Refresh"
+                },
+                if self.loading { "loader" } else { "refresh-cw" },
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.filters_open = false;
+                this.refresh(cx);
+                this.load_detail(false, cx);
+            }))
+            .into_any_element(),
         );
         popover(
             "inbox-filter-menu",
@@ -4095,5 +4133,78 @@ mod glass_view_tests {
         assert!(visual.debug_bounds("inbox-description-card").is_some());
         assert!(visual.debug_bounds("inbox-checks-card").is_none());
         assert!(visual.debug_bounds("inbox-ask-bar").is_some());
+    }
+
+    fn click(visual: &mut VisualTestContext, selector: &'static str) {
+        let bounds = visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is not on screen"));
+        visual.simulate_click(bounds.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    }
+
+    #[gpui::test]
+    fn the_header_holds_only_add_connection_and_filter_sits_in_search(cx: &mut TestAppContext) {
+        let window = open(cx, |inbox| {
+            connect(inbox);
+            inbox.snapshot.items = vec![pr("acme/web", 1, "one")];
+        });
+        let mut visual = visual(window, cx);
+        let plus = visual.debug_bounds("inbox-add-connection").unwrap();
+        let search = visual.debug_bounds("inbox-search").unwrap();
+        let filter = visual.debug_bounds("inbox-filter").unwrap();
+        // The filter is inside the search field, at its trailing end, and
+        // the header row above holds nothing else beside "+".
+        assert!(search.contains(&filter.origin) && search.contains(&filter.bottom_right()));
+        assert!(filter.right() > search.center().x);
+        assert!(plus.bottom() < search.top());
+        // Mark all as read and Refresh are no longer header buttons.
+        assert!(visual.debug_bounds("inbox-read-all").is_none());
+        assert!(visual.debug_bounds("inbox-refresh").is_none());
+    }
+
+    #[gpui::test]
+    fn the_filter_menu_marks_only_this_source_read_and_closes(cx: &mut TestAppContext) {
+        let one = pr("acme/web", 1, "one");
+        let two = pr("acme/web", 2, "two");
+        let linear = Item {
+            provider: "linear".into(),
+            kind: "issue".into(),
+            ..pr("", 3, "tracker issue")
+        };
+        let items = vec![one.clone(), two.clone(), linear.clone()];
+        let window = open(cx, move |inbox| {
+            connect(inbox);
+            inbox.snapshot.items = items;
+            // Seeded with nothing seen yet: every item reads as unread.
+            inbox.state.seen.seeded = true;
+        });
+        let mut visual = visual(window, cx);
+        let unseen = |visual: &mut VisualTestContext| {
+            window
+                .update(visual, |inbox, _, _| {
+                    inbox
+                        .snapshot
+                        .items
+                        .iter()
+                        .filter(|item| inbox.state.seen.unseen(item))
+                        .map(|item| item.number)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap()
+        };
+        assert_eq!(unseen(&mut visual), vec![1, 2, 3]);
+        click(&mut visual, "inbox-filter");
+        assert!(visual.debug_bounds("inbox-refresh").is_some());
+        click(&mut visual, "inbox-read-all");
+        // GitHub's items are read; the Linear issue, another source, is not.
+        assert_eq!(unseen(&mut visual), vec![3]);
+        assert!(
+            !window
+                .update(&mut visual, |inbox, _, _| inbox.filters_open)
+                .unwrap()
+        );
+        assert!(visual.debug_bounds("inbox-read-all").is_none());
     }
 }
