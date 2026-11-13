@@ -5,7 +5,7 @@ pub const START_BUDGET: usize = 8192;
 /// The per-turn related block is capped here.
 pub const TURN_BUDGET: usize = 2048;
 
-pub const STANDING_INSTRUCTION: &str = "Gespan decision log. Follow every approved decision below. If one seems wrong for the case in front of you, still follow it, say so in your reply, and call decisions_flag with its id and your reason; never stop to ask about it. After the user answers a design question, call decisions_propose with the question, the user's exact answer, the decision and why. Entries marked not yet approved come from the user's own words but have not been reviewed.";
+pub const STANDING_INSTRUCTION: &str = "Gespan decision log. Follow every approved decision below. If one seems wrong for the case in front of you, still follow it, say so in your reply, and call decisions_flag with its id and your reason; never stop to ask about it. After the user answers a design question, call decisions_propose with the question, the user's exact answer, the decision and why. Entries marked not yet approved quote the user's own words; the rest of each is an agent's summary and has not been reviewed.";
 
 /// A rendered block and what went into it.
 #[derive(Debug, Clone)]
@@ -25,7 +25,12 @@ enum Section {
     Pending,
 }
 
-const PENDING_HEADING: &str = "Not yet approved (from the user's own words, not reviewed)";
+const PENDING_HEADING: &str =
+    "Not yet approved (each is an agent's summary of the user's quoted answer, not reviewed)";
+
+/// The most characters of the user's answer a pending line quotes, so one
+/// long answer cannot take the block's budget.
+pub const ANSWER_QUOTE_CHARS: usize = 200;
 
 struct Line {
     id: i64,
@@ -172,25 +177,53 @@ pub fn render_ranked(entries: &[Entry], budget_bytes: usize) -> Block {
     unreachable!("k == 0 always returns")
 }
 
-/// `- D-14 (title): text. Why: why.` on one line. A pending entry carries its
-/// marker straight after the label, before any field text.
+/// `- D-14 (title): text. Why: why.` on one line (no `Why:` when it is
+/// empty). A pending entry carries its marker straight after the label,
+/// before any field text.
 fn line(e: &Entry) -> String {
     let marker = if e.status == Status::Pending {
-        match e.source.session {
-            Some(s) => format!(" [not yet approved — the user said this in session {s}]"),
-            None => " [not yet approved — the user said this]".to_string(),
-        }
+        format!(" [{}]", pending_note(e))
     } else {
         String::new()
     };
+    let why = flat(&e.why);
+    let why = strip_one_dot(&why);
+    let why = if why.is_empty() {
+        String::new()
+    } else {
+        format!(" Why: {why}.")
+    };
     format!(
-        "- {}{} ({}): {}. Why: {}.",
+        "- {}{} ({}): {}.{why}",
         e.label(),
         marker,
         flat(&e.title),
         strip_one_dot(&flat(&e.text)),
-        strip_one_dot(&flat(&e.why)),
     )
+}
+
+/// What marks a pending entry: `not yet approved — the user said "<their
+/// answer>" in session N`, quoting the user's own words (flattened, capped
+/// at [`ANSWER_QUOTE_CHARS`]) so a reader can tell them from the agent's
+/// summary that follows. An entry with no stored answer says "the user said
+/// this" instead.
+pub(crate) fn pending_note(e: &Entry) -> String {
+    let said = match e.user_answer.as_deref().map(flat).filter(|a| !a.is_empty()) {
+        Some(answer) => format!("\"{}\"", capped(&answer, ANSWER_QUOTE_CHARS)),
+        None => "this".to_owned(),
+    };
+    match e.source.session {
+        Some(s) => format!("not yet approved — the user said {said} in session {s}"),
+        None => format!("not yet approved — the user said {said}"),
+    }
+}
+
+/// `s` cut to `max` characters, with an ellipsis when it was longer.
+fn capped(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((cut, _)) => format!("{}…", s[..cut].trim_end()),
+        None => s.to_owned(),
+    }
 }
 
 fn strip_one_dot(s: &str) -> &str {
@@ -198,7 +231,18 @@ fn strip_one_dot(s: &str) -> &str {
 }
 
 /// Collapse every run of whitespace, newlines included, to one space, so an
-/// entry can never span lines or forge another entry's line.
-fn flat(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
+/// entry can never span lines or forge another entry's line; and turn `<`
+/// and `>` into `‹` and `›`, so no entry can open or close a tag (the
+/// `<gespan_context>` block a turn wraps it in, or any other).
+///
+/// Every angle bracket goes, not only `gespan_` tags: harnesses and models
+/// read other tags too (`</system>`, `<user>`), a partial escape is easy to
+/// get around (`</ gespan_context>`, case), and entries are prose, where
+/// `‹›` reads the same.
+pub(crate) fn flat(s: &str) -> String {
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('<', "‹")
+        .replace('>', "›")
 }

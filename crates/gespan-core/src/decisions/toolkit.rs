@@ -1,8 +1,8 @@
 //! The `decisions` tools: how an agent reads, searches, proposes and flags
 //! entries in the decision log. Agents can never approve, replace or reject.
 use super::entry::{Edit, Entry, Error, Kind, NewEntry, Scope, Source, Status};
-use super::render::{render_block, START_BUDGET};
-use super::scope::scope_for;
+use super::render::{pending_note, render_block, START_BUDGET};
+use super::scope::cached_scope;
 use super::service;
 use crate::tool_servers::{DECISIONS, DECISIONS_READ};
 use mcp_hub::Grant;
@@ -216,9 +216,10 @@ fn now_ms() -> i64 {
 }
 
 /// The decision scope of the session's checkout. Every worktree of one
-/// repository resolves to the same scope.
+/// repository resolves to the same scope. Cached, so a tool call does not
+/// run git each time.
 fn scope(grant: &Grant) -> Scope {
-    scope_for(&grant.workspace)
+    cached_scope(&grant.workspace)
 }
 
 fn failed(error: impl std::fmt::Display) -> String {
@@ -258,12 +259,10 @@ fn parse_id(id: &str) -> Result<(Option<Kind>, i64), String> {
 /// One entry as a line of text.
 fn line(entry: &Entry) -> String {
     let state = match entry.status {
-        Status::Pending => match entry.source.session {
-            Some(session) if has_user_source(entry) => {
-                format!("not yet approved — the user said this in session {session}")
-            }
-            _ => "not yet approved".to_owned(),
-        },
+        Status::Pending if entry.source.session.is_some() && has_user_source(entry) => {
+            pending_note(entry)
+        }
+        Status::Pending => "not yet approved".to_owned(),
         other => other.as_str().to_owned(),
     };
     format!(
@@ -431,14 +430,20 @@ fn propose(grant: &Grant, fields: &Map<String, Value>) -> Result<(String, bool),
         Ok(found)
     })?
     .map_err(failed)?;
+    // Already decided only when an active entry of this project says
+    // exactly this (case and spacing aside): a near match may be a reversal
+    // ("Do not use tabs" against "Do use tabs"), which the user must see.
+    let said = collapse(text).to_lowercase();
+    if let Some(existing) = candidates.iter().find(|e| {
+        e.status == Status::Active && e.scope == scope && collapse(&e.text).to_lowercase() == said
+    }) {
+        return Ok((format!("already decided: {}", line(existing)), false));
+    }
     for existing in candidates
         .iter()
         .filter(|e| same_words(&e.title, title) && same_words(&e.text, text))
     {
         match existing.status {
-            Status::Active => {
-                return Ok((format!("already decided: {}", line(existing)), false));
-            }
             Status::Pending => {
                 let mine = existing.source.session == Some(session);
                 let sourced = has_user_source(existing);

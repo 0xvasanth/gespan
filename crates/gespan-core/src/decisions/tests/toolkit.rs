@@ -948,3 +948,61 @@ fn search_finds_by_meaning_when_it_is_on() {
     assert!(found.contains("Rebasing keeps history linear"), "{found}");
     assert!(!found.contains("elsewhere"), "{found}");
 }
+
+/// Nearly the same words can mean the opposite: only an exact match (case
+/// and spacing aside) of an active decision of this project is "already
+/// decided"; a reversal is filed for the user to review.
+#[test]
+fn a_reversal_is_filed_and_only_an_exact_match_is_already_decided() {
+    let _guard = isolated();
+    let dir = tempfile::tempdir().unwrap();
+    let active = seed(
+        &scope(dir.path()),
+        Kind::Decision,
+        "Tabs",
+        "Do use tabs",
+        true,
+    );
+    let g = grant(5, dir.path(), DECISIONS);
+    let said = call(
+        &FULL,
+        &g,
+        "decisions_propose",
+        json!({"title": "Tabs", "text": "Do not use tabs", "why": "w"}),
+    );
+    assert!(!said.contains("already decided"), "{said}");
+    assert_eq!(pending().len(), 1, "the reversal is filed");
+    let said = call(
+        &FULL,
+        &g,
+        "decisions_propose",
+        json!({"title": "Tabs again", "text": "  do USE\ntabs ", "why": "w"}),
+    );
+    assert!(
+        said.starts_with(&format!("already decided: {}", active.label())),
+        "{said}"
+    );
+    assert_eq!(pending().len(), 1);
+}
+
+/// Listed and searched pending entries quote what the user said, then the
+/// agent's summary.
+#[test]
+fn pending_entries_quote_the_users_answer_in_list_and_search() {
+    let _guard = isolated();
+    users_said(&[(5, &["Let's keep it in one SQLite file, please"])]);
+    let dir = tempfile::tempdir().unwrap();
+    propose(5, dir.path(), "keep it in one SQLite file");
+    let g = grant(6, dir.path(), DECISIONS);
+    let marker = "not yet approved — the user said \"keep it in one SQLite file\" in session 5";
+    let listed = call(&FULL, &g, "decisions_list", json!({}));
+    assert!(
+        listed.contains(&format!("[{marker}] (Store decisions in SQLite)")),
+        "{listed}"
+    );
+    let found = call(&FULL, &g, "decisions_search", json!({"query": "SQLite"}));
+    assert!(
+        found.contains(&format!("({marker}): Store decisions in SQLite")),
+        "{found}"
+    );
+}
