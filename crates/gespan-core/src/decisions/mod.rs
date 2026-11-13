@@ -22,7 +22,7 @@ pub use entry::{
 };
 pub use render::{render_block, Block, STANDING_INSTRUCTION, START_BUDGET, TURN_BUDGET};
 pub use review::Review;
-pub use scope::{normalize_remote, scope_for, shared_file};
+pub use scope::{cached_scope, normalize_remote, scope_for, shared_file};
 pub use service::{enabled, init, set_enabled};
 pub use store::DecisionStore;
 

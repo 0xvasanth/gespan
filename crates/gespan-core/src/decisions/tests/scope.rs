@@ -318,3 +318,41 @@ fn shared_file_outside_git_goes_to_data_dir() {
     assert_eq!(a, shared_file(dir.path(), data.path()));
     assert_ne!(a, shared_file(other.path(), data.path()));
 }
+
+/// A turn and the decision tools ask for the scope every time; git runs once
+/// per workspace within the cache's lifetime, and a remote added later is
+/// picked up once it expires.
+#[test]
+fn cached_scope_runs_git_once_and_notices_a_new_remote_after_the_ttl() {
+    use crate::decisions::scope::{cached_scope_with, GIT_CACHE_TTL};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    let dir = TempDir::new().unwrap();
+    init_repo(dir.path());
+    commit_empty(dir.path());
+    let computed = AtomicUsize::new(0);
+    let counted = |ws: &Path| {
+        computed.fetch_add(1, Ordering::SeqCst);
+        scope_for(ws)
+    };
+    let start = Instant::now();
+    let first = cached_scope_with(dir.path(), start, counted);
+    assert!(matches!(first, Scope::Project(_)), "{first:?}");
+    git(
+        dir.path(),
+        &["remote", "add", "origin", "git@github.com:o/r.git"],
+    );
+    let soon = cached_scope_with(dir.path(), start + Duration::from_secs(5), counted);
+    assert_eq!(soon, first, "within the TTL the cached scope is kept");
+    assert_eq!(computed.load(Ordering::SeqCst), 1, "no git within the TTL");
+    let later = cached_scope_with(
+        dir.path(),
+        start + GIT_CACHE_TTL + Duration::from_secs(1),
+        counted,
+    );
+    assert_eq!(
+        later,
+        Scope::Repo(format!("github.com/o/r@{}", root_of(dir.path())))
+    );
+    assert_eq!(computed.load(Ordering::SeqCst), 2);
+}

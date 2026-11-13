@@ -101,19 +101,34 @@ fn answers(session: i64) -> Vec<String> {
 /// record of typed messages (opened by an agent, a Pilot, a habit or a Flow)
 /// gives nothing, and so does a remote one: its transcript lives elsewhere.
 pub(crate) fn user_texts(store: &Store, session: i64) -> Vec<String> {
+    texts_from(session_rows(store, session), session)
+}
+
+/// What [`user_texts`] needs from the app database: the session's rows and
+/// the hashes of its typed messages; `None` for a session with no record or
+/// a remote one. The only part that needs the store, so the caller can
+/// release its lock before the rows are rejoined, hashed and filtered.
+fn session_rows(store: &Store, session: i64) -> Option<(Vec<Row>, HashSet<String>)> {
     if matches!(store.remote_session(session), Ok(Some(_))) {
-        return Vec::new();
+        return None;
     }
-    let Some(typed_hashes) = typed_record(store, session) else {
-        return Vec::new();
-    };
-    let mut texts = match store.load(session) {
-        Ok(transcript) => typed(&transcript.rows, &typed_hashes),
+    let typed_hashes = typed_record(store, session)?;
+    match store.load(session) {
+        Ok(transcript) => Some((transcript.rows, typed_hashes)),
         Err(error) => {
             tracing::warn!(session, %error, "the decision log could not read a transcript");
-            Vec::new()
+            Some((Vec::new(), typed_hashes))
         }
+    }
+}
+
+/// The user's typed messages among `rows`, then their answers; nothing for
+/// a session [`session_rows`] gave nothing for.
+fn texts_from(rows: Option<(Vec<Row>, HashSet<String>)>, session: i64) -> Vec<String> {
+    let Some((rows, typed_hashes)) = rows else {
+        return Vec::new();
     };
+    let mut texts = typed(&rows, &typed_hashes);
     texts.extend(answers(session));
     texts
 }
@@ -150,14 +165,20 @@ fn typed(rows: &[Row], typed_hashes: &HashSet<String>) -> Vec<String> {
 
 /// Registers [`user_texts`] as the decision log's source of the user's words,
 /// and the harness writer as its regeneration hook.
-/// The hub calls it on its own thread, so it reads the app database itself.
 pub(crate) fn install(store: Database) {
     install_harness_writer(store.clone());
+    install_user_text_source(store);
+}
+
+/// The hub calls the source on its own thread, so it reads the app database
+/// itself: the rows under the store's lock, the rest after releasing it.
+fn install_user_text_source(store: Database) {
     gespan_core::decisions::service::set_user_text_source(Box::new(move |session| {
-        match locked(&store) {
-            Ok(store) => user_texts(&store, session),
-            Err(_) => Vec::new(),
-        }
+        let rows = match locked(&store) {
+            Ok(store) => session_rows(&store, session),
+            Err(_) => None,
+        };
+        texts_from(rows, session)
     }));
 }
 
@@ -246,55 +267,125 @@ pub(crate) fn note_session_workspace(workspace: &Path) -> bool {
 /// What the harness writer should do when the log's switch is applied.
 #[derive(Debug, PartialEq, Eq)]
 enum SwitchAction {
-    /// Turned on by the user: offer their existing harness preferences for
-    /// review, then write the files.
+    /// Turned on by the user: move old decisions to their project's scope,
+    /// offer their existing harness preferences for review, then write the
+    /// files.
     ImportThenRegenerate,
+    /// On at startup: move old decisions to their project's scope, then
+    /// write the files.
     Regenerate,
     RemoveAll,
+    /// Off at startup: remove what an earlier run wrote, if it recorded
+    /// anything (it was turned off while Gespan could not clean up).
+    RemoveLeftovers,
 }
 
-/// The first apply at startup regenerates when the log is on; turning it on
-/// imports the user's existing preferences once, then regenerates; turning
-/// it off removes what Gespan wrote. An unchanged switch, or the log off from
-/// the start, does nothing.
+/// The first apply at startup regenerates when the log is on and removes
+/// leftovers when it is off; turning it on imports the user's existing
+/// preferences once, then regenerates; turning it off removes what Gespan
+/// wrote. An unchanged switch does nothing.
 fn switch_action(previous: Option<bool>, on: bool) -> Option<SwitchAction> {
     match (previous, on) {
         (Some(was), now) if was == now => None,
         (Some(false), true) => Some(SwitchAction::ImportThenRegenerate),
         (_, true) => Some(SwitchAction::Regenerate),
         (Some(true), false) => Some(SwitchAction::RemoveAll),
-        (_, false) => None,
+        (None, false) => Some(SwitchAction::RemoveLeftovers),
+        (Some(false), false) => None,
+    }
+}
+
+/// The work behind each [`SwitchAction`]. The real steps touch the log, git
+/// and the harness homes; tests record the calls.
+struct SwitchSteps<'a> {
+    rescope: &'a dyn Fn(),
+    import: &'a dyn Fn(),
+    regenerate: &'a dyn Fn(),
+    remove: &'a dyn Fn(),
+    has_leftovers: &'a dyn Fn() -> bool,
+}
+
+/// Runs `action`'s steps in order. Old decisions are rescoped only while
+/// the log is on, and before the import and the files read them.
+fn run_switch(action: &SwitchAction, steps: &SwitchSteps) {
+    match action {
+        SwitchAction::Regenerate => {
+            (steps.rescope)();
+            (steps.regenerate)();
+        }
+        SwitchAction::ImportThenRegenerate => {
+            (steps.rescope)();
+            (steps.import)();
+            (steps.regenerate)();
+        }
+        SwitchAction::RemoveAll => (steps.remove)(),
+        SwitchAction::RemoveLeftovers => {
+            if (steps.has_leftovers)() {
+                (steps.remove)();
+            }
+        }
     }
 }
 
 static SWITCH: Mutex<Option<bool>> = Mutex::new(None);
 static HARNESS_STORE: Mutex<Option<Database>> = Mutex::new(None);
 
+fn harness_store() -> Option<Database> {
+    HARNESS_STORE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// Decisions saved before the log, still keyed by their project's path,
+/// move to the scope that project has now (a repo, a main checkout). Runs
+/// git, so never on the UI thread.
+fn rescope_old_decisions() {
+    let moved = gespan_core::decisions::service::with(|log| {
+        log.rescope_project_rows(gespan_core::decisions::scope_for)
+    });
+    if let Ok(Err(error)) = moved {
+        tracing::warn!(%error, "the decision log could not rescope old decisions");
+    }
+}
+
+/// Whether an earlier run recorded writing harness files.
+fn recorded_leftovers() -> bool {
+    let data_dir = harness_store().and_then(|store| {
+        locked(&store)
+            .ok()
+            .and_then(|s| s.data_dir().map(Path::to_path_buf))
+    });
+    data_dir.is_some_and(|dir| gespan_core::decisions::harness::has_recorded_files(&dir))
+}
+
 /// Applies the log's switch to the harness files: called with every
-/// preferences apply, including the first one at startup.
+/// preferences apply, including the first one at startup. The work runs on
+/// its own thread, never the UI's, and not under `locked`.
 pub(crate) fn decision_log_switched(on: bool) {
     let previous = SWITCH.lock().unwrap_or_else(|e| e.into_inner()).replace(on);
-    match switch_action(previous, on) {
-        Some(SwitchAction::Regenerate) => gespan_core::decisions::service::regenerate(),
-        Some(SwitchAction::ImportThenRegenerate) => {
-            // Off the UI thread, and not under `locked`: it reads files and
-            // writes through the decision log's own handle.
-            std::thread::spawn(|| {
-                import_global_preferences(&gespan_core::decisions::harness::default_homes);
-                gespan_core::decisions::service::regenerate();
-            });
-        }
-        Some(SwitchAction::RemoveAll) => {
-            let store = HARNESS_STORE
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            if let Some(store) = store {
-                std::thread::spawn(move || write_harness_files(&store, false));
+    let Some(action) = switch_action(previous, on) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        let remove = || {
+            if let Some(store) = harness_store() {
+                write_harness_files(&store, false);
             }
-        }
-        None => {}
-    }
+        };
+        run_switch(
+            &action,
+            &SwitchSteps {
+                rescope: &rescope_old_decisions,
+                import: &|| {
+                    import_global_preferences(&gespan_core::decisions::harness::default_homes)
+                },
+                regenerate: &gespan_core::decisions::service::regenerate,
+                remove: &remove,
+                has_leftovers: &recorded_leftovers,
+            },
+        );
+    });
 }
 
 /// Offers the user's existing global harness preferences as pending entries
@@ -830,7 +921,8 @@ mod tests {
             &mut store,
             &[(row("user", "Ship it on Friday", true), true)],
         );
-        install(std::sync::Arc::new(std::sync::Mutex::new(store)));
+        // Only the source: the harness writer would write to the real homes.
+        install_user_text_source(std::sync::Arc::new(std::sync::Mutex::new(store)));
         let texts = std::thread::spawn(move || gespan_core::decisions::service::user_texts(id))
             .join()
             .unwrap();
@@ -865,9 +957,13 @@ mod tests {
 
     #[test]
     fn decision_switch_regenerates_when_on_and_cleans_up_only_when_turned_off() {
-        // At startup: on writes the files, off leaves the disk alone.
+        // At startup: on writes the files, off removes only what an earlier
+        // run recorded.
         assert_eq!(switch_action(None, true), Some(SwitchAction::Regenerate));
-        assert_eq!(switch_action(None, false), None);
+        assert_eq!(
+            switch_action(None, false),
+            Some(SwitchAction::RemoveLeftovers)
+        );
         // Turning it off removes what Gespan wrote; on writes it back.
         assert_eq!(
             switch_action(Some(true), false),
@@ -880,6 +976,52 @@ mod tests {
         // Other preference changes re-apply an unchanged switch: nothing.
         assert_eq!(switch_action(Some(true), true), None);
         assert_eq!(switch_action(Some(false), false), None);
+    }
+
+    /// Each action's steps, in the order they ran.
+    fn steps_of(action: SwitchAction, leftovers: bool) -> Vec<&'static str> {
+        let ran = std::cell::RefCell::new(Vec::new());
+        {
+            let step = |name: &'static str| {
+                let ran = &ran;
+                move || ran.borrow_mut().push(name)
+            };
+            let (rescope, import, regenerate, remove) = (
+                step("rescope"),
+                step("import"),
+                step("regenerate"),
+                step("remove"),
+            );
+            run_switch(
+                &action,
+                &SwitchSteps {
+                    rescope: &rescope,
+                    import: &import,
+                    regenerate: &regenerate,
+                    remove: &remove,
+                    has_leftovers: &|| leftovers,
+                },
+            );
+        }
+        ran.into_inner()
+    }
+
+    /// Old decisions move to their project's scope only while the log is
+    /// on, before the import and the files read them; off at startup cleans
+    /// up only what an earlier run recorded writing.
+    #[test]
+    fn decision_switch_rescopes_only_when_on_and_cleans_leftovers_when_off() {
+        assert_eq!(
+            steps_of(SwitchAction::Regenerate, false),
+            ["rescope", "regenerate"]
+        );
+        assert_eq!(
+            steps_of(SwitchAction::ImportThenRegenerate, false),
+            ["rescope", "import", "regenerate"]
+        );
+        assert_eq!(steps_of(SwitchAction::RemoveAll, false), ["remove"]);
+        assert_eq!(steps_of(SwitchAction::RemoveLeftovers, true), ["remove"]);
+        assert!(steps_of(SwitchAction::RemoveLeftovers, false).is_empty());
     }
 
     #[test]

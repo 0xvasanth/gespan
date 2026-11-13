@@ -947,3 +947,79 @@ fn shared_file_with_embeddings_on_has_only_prefs_and_pinned() {
         assert!(body.contains("Use sqlite text"), "{harness:?}: {body}");
     }
 }
+
+/// Whether a harness finds Gespan's project file is asked every turn; the
+/// git checks behind it run once per (workspace, harness) within the cache's
+/// lifetime, and a regeneration makes the next turn look again.
+#[test]
+fn project_file_ready_is_cached_until_a_regeneration_writes() {
+    use crate::decisions::harness::{project_file_ready, project_file_ready_with};
+    use crate::decisions::scope::GIT_CACHE_TTL;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+    let f = fixture();
+    f.approve(EntryKind::Decision, scope_for(&f.repo), "Use sqlite");
+    let checks = AtomicUsize::new(0);
+    let counted = |kind: Kind, ws: &Path| {
+        checks.fetch_add(1, Ordering::SeqCst);
+        project_targets(ws)
+            .iter()
+            .any(|t| t.harness == kind && t.path.is_file())
+    };
+    let now = Instant::now();
+    assert!(!project_file_ready_with(
+        Kind::Cursor,
+        &f.repo,
+        now,
+        counted
+    ));
+    let soon = now + Duration::from_secs(5);
+    assert!(!project_file_ready_with(
+        Kind::Cursor,
+        &f.repo,
+        soon,
+        counted
+    ));
+    assert_eq!(checks.load(Ordering::SeqCst), 1, "no git within the TTL");
+    // Another harness is its own entry.
+    project_file_ready_with(Kind::Kiro, &f.repo, soon, counted);
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
+    // A regeneration writes the files and forgets every answer.
+    let report = f.regenerate(&Book::default(), std::slice::from_ref(&f.repo));
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert!(project_file_ready_with(
+        Kind::Cursor,
+        &f.repo,
+        soon,
+        counted
+    ));
+    assert_eq!(checks.load(Ordering::SeqCst), 3);
+    // Past the TTL it is checked again even without a regeneration.
+    let late = soon + GIT_CACHE_TTL + Duration::from_secs(1);
+    assert!(project_file_ready_with(
+        Kind::Cursor,
+        &f.repo,
+        late,
+        counted
+    ));
+    assert_eq!(checks.load(Ordering::SeqCst), 4);
+    // The real check agrees.
+    assert!(project_file_ready(Kind::Cursor, &f.repo));
+}
+
+/// At startup with the log off, Gespan cleans up only when an earlier run
+/// recorded files it wrote; once they are removed, nothing is recorded.
+#[test]
+fn recorded_files_are_known_until_removed() {
+    use crate::decisions::harness::has_recorded_files;
+    let f = fixture();
+    f.install_claude_and_codex();
+    assert!(!has_recorded_files(&f.data), "nothing written yet");
+    f.approve(EntryKind::Preference, Scope::Global, "Answer tersely");
+    let report = f.regenerate(&Book::default(), &[]);
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert!(has_recorded_files(&f.data));
+    let report = f.remove_all(&Book::default(), &[]);
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert!(!has_recorded_files(&f.data));
+}

@@ -68,7 +68,7 @@ use super::files::{
     ensure_excluded, remove_excluded, replace_section, user_edited_section, write_atomic, BEGIN,
 };
 use super::render::{render_block, START_BUDGET};
-use super::scope::{git_common_dir, scope_for, shared_file};
+use super::scope::{git_common_dir, scope_for, shared_file, TtlCache};
 use super::service;
 use super::store::DecisionStore;
 use crate::accounts::{Book, Profile};
@@ -78,7 +78,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 /// One file a harness reads, and how Gespan writes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,9 +235,33 @@ pub fn project_targets(workspace: &Path) -> Vec<Target> {
     .collect()
 }
 
+/// Whether each (workspace, harness) has Gespan's project file, remembered
+/// for [`GIT_CACHE_TTL`](super::scope::GIT_CACHE_TTL) and forgotten after
+/// every regeneration or removal.
+static READY: LazyLock<TtlCache<(PathBuf, Kind), bool>> = LazyLock::new(TtlCache::new);
+
 /// Whether `kind` will find Gespan's project file in `workspace`: it exists
 /// and is Gespan's. When it is not, the session needs the injected block.
+/// Checking runs git, so the answer is kept for a while (see [`READY`]).
 pub fn project_file_ready(kind: Kind, workspace: &Path) -> bool {
+    project_file_ready_with(kind, workspace, Instant::now(), project_file_ready_now)
+}
+
+/// [`project_file_ready`] at `now`, checking a missing or stale answer with
+/// `check` (tests count its calls).
+pub(crate) fn project_file_ready_with(
+    kind: Kind,
+    workspace: &Path,
+    now: Instant,
+    check: impl FnOnce(Kind, &Path) -> bool,
+) -> bool {
+    READY.get_or((workspace.to_path_buf(), kind), now, || {
+        check(kind, workspace)
+    })
+}
+
+/// [`project_file_ready`] without the cache.
+fn project_file_ready_now(kind: Kind, workspace: &Path) -> bool {
     project_targets(workspace)
         .into_iter()
         .find(|t| t.harness == kind)
@@ -299,6 +324,13 @@ impl Registry {
         }
         write_atomic(&self.path, &text, data_dir)
     }
+}
+
+/// Whether Gespan recorded writing any harness file under `data_dir` that
+/// it has not removed since: at startup with the log off, these are left
+/// over from a run that could not clean up.
+pub fn has_recorded_files(data_dir: &Path) -> bool {
+    !Registry::load(data_dir).written.files.is_empty()
 }
 
 /// A file to bring in line with a body (an empty body withdraws it).
@@ -660,6 +692,8 @@ pub fn regenerate(
     for job in recorded_leftovers(&registry, &done) {
         apply(&job, "", &mut registry, &mut report);
     }
+    // Project files may have appeared or gone: sessions look again.
+    READY.clear();
     if let Err(error) = registry.save(data_dir) {
         report
             .errors
@@ -689,6 +723,7 @@ pub fn remove_all(book: &Book, data_dir: &Path, homes: Homes, workspaces: &[Path
     for job in &jobs {
         apply(job, "", &mut registry, &mut report);
     }
+    READY.clear();
     if registry.path.exists() {
         if let Err(error) = registry.save(data_dir) {
             report

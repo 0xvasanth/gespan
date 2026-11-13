@@ -246,10 +246,14 @@ fn related_block_within_turn_budget() {
         false,
     );
     // Search by meaning off: there is no per-turn block.
-    assert_eq!(related_context(dir.path(), "tabs", TIMELY), None);
+    assert_eq!(
+        related_context(&scope_for(dir.path()), "tabs", TIMELY),
+        None
+    );
     embed_with(Arc::new(HashEmbedder::new()));
 
-    let block = related_context(dir.path(), "Should I indent with tabs?", TIMELY).unwrap();
+    let block =
+        related_context(&scope_for(dir.path()), "Should I indent with tabs?", TIMELY).unwrap();
     assert!(block.len() <= TURN_BUDGET, "{} bytes", block.len());
     // The start block and the harness files carry the standing instruction;
     // repeating it every turn would cost a quarter of the turn's budget.
@@ -260,10 +264,16 @@ fn related_block_within_turn_budget() {
     assert!(!block.contains("Deploy on Fridays"), "{block}");
     assert!(block.contains("use decisions_search"), "{block}");
     // Nothing related: no block at all.
-    assert_eq!(related_context(dir.path(), "zebra", TIMELY), None);
+    assert_eq!(
+        related_context(&scope_for(dir.path()), "zebra", TIMELY),
+        None
+    );
     // The log off: nothing.
     service::set_enabled(false);
-    assert_eq!(related_context(dir.path(), "tabs", TIMELY), None);
+    assert_eq!(
+        related_context(&scope_for(dir.path()), "tabs", TIMELY),
+        None
+    );
     service::set_enabled(true);
     drained();
 }
@@ -310,7 +320,7 @@ fn excludes_entries_already_in_the_start_block() {
     let (start, _) = start_context(Kind::Codex, dir.path(), None).unwrap();
     assert!(start.contains("Pinned tabs") && start.contains("Preferred tabs"));
 
-    let block = related_context(dir.path(), "tabs", TIMELY).unwrap();
+    let block = related_context(&scope_for(dir.path()), "tabs", TIMELY).unwrap();
     assert!(block.contains("Makefile tabs"), "{block}");
     assert!(!block.contains("Pinned tabs"), "{block}");
     assert!(!block.contains("Preferred tabs"), "{block}");
@@ -325,7 +335,7 @@ fn excludes_entries_already_in_the_start_block() {
 
     // Only entries already in the start block are related: no block.
     let (none, counts) =
-        metrics::capture(|| related_context(dir.path(), "Pinned preferred", TIMELY));
+        metrics::capture(|| related_context(&scope_for(dir.path()), "Pinned preferred", TIMELY));
     assert_eq!(none, None);
     assert!(skipped(&counts).is_empty(), "nothing related is no skip");
     drained();
@@ -375,7 +385,7 @@ fn slow_embedder_past_deadline_returns_none_and_counts_skip() {
     }));
     let ((block, took), counts) = metrics::capture(|| {
         let start = Instant::now();
-        let block = related_context(dir.path(), "tabs", Duration::from_millis(150));
+        let block = related_context(&scope_for(dir.path()), "tabs", Duration::from_millis(150));
         (block, start.elapsed())
     });
     assert_eq!(block, None);
@@ -388,7 +398,8 @@ fn slow_embedder_past_deadline_returns_none_and_counts_skip() {
     drained();
     // A quick lookup afterwards is not counted.
     embed_with(Arc::new(HashEmbedder::new()));
-    let (block, counts) = metrics::capture(|| related_context(dir.path(), "tabs", TIMELY));
+    let (block, counts) =
+        metrics::capture(|| related_context(&scope_for(dir.path()), "tabs", TIMELY));
     assert!(block.unwrap().contains("Makefile tabs"));
     assert!(skipped(&counts).is_empty());
 }
@@ -454,7 +465,7 @@ fn a_stuck_embedder_does_not_spawn_a_thread_per_turn() {
     let turns = 3 * MAX_RELATED_WORKERS;
     let (blocks, counts) = metrics::capture(|| {
         (0..turns)
-            .map(|_| related_context(dir.path(), "tabs", Duration::from_millis(30)))
+            .map(|_| related_context(&scope_for(dir.path()), "tabs", Duration::from_millis(30)))
             .collect::<Vec<_>>()
     });
     assert!(blocks.iter().all(Option::is_none));
@@ -472,7 +483,7 @@ fn a_stuck_embedder_does_not_spawn_a_thread_per_turn() {
     stuck.release();
     drained();
     // Once they finish, the next turn gets its block again.
-    let block = related_context(dir.path(), "tabs", TIMELY).unwrap();
+    let block = related_context(&scope_for(dir.path()), "tabs", TIMELY).unwrap();
     assert!(block.contains("Makefile tabs"), "{block}");
     assert_eq!(
         stuck.started.load(Ordering::SeqCst),
@@ -519,7 +530,8 @@ fn the_best_match_survives_the_budget_and_comes_first() {
         .unwrap();
     }
     embed_with(Arc::new(HashEmbedder::new()));
-    let block = related_context(dir.path(), "makefile indentation tabs", TIMELY).unwrap();
+    let block =
+        related_context(&scope_for(dir.path()), "makefile indentation tabs", TIMELY).unwrap();
     assert!(block.len() <= TURN_BUDGET, "{} bytes", block.len());
     assert!(
         block.contains("use decisions_search"),
@@ -570,7 +582,7 @@ fn ranked_render_keeps_search_order_and_marks_pending() {
             "{RELATED_HEADING}\n\n## Decisions\n\
              - D-3 (Third id first): Third id first text. Why: why.\n\
              - D-1 (Lowest id third): Lowest id third text. Why: why.\n\n\
-             ## Not yet approved (from the user's own words, not reviewed)\n\
+             ## Not yet approved (each is an agent's summary of the user's quoted answer, not reviewed)\n\
              - D-9 [not yet approved — the user said this in session 4] (Pending second): Pending second text. Why: why."
         )
     );
@@ -636,7 +648,7 @@ fn a_panicking_embedder_frees_its_slot_and_counts_a_panic_skip() {
     let (blocks, counts) = metrics::capture(|| {
         (0..turns)
             .map(|_| {
-                let block = related_context(dir.path(), "tabs", TIMELY);
+                let block = related_context(&scope_for(dir.path()), "tabs", TIMELY);
                 // The slot goes back as the worker unwinds.
                 drained();
                 block
@@ -647,7 +659,7 @@ fn a_panicking_embedder_frees_its_slot_and_counts_a_panic_skip() {
     // More turns than slots, and each one still got to run: no slot leaked.
     assert_eq!(skipped(&counts), [(Some(ErrorKind::Panic), turns as u64)]);
     embed_with(Arc::new(HashEmbedder::new()));
-    let block = related_context(dir.path(), "tabs", TIMELY).unwrap();
+    let block = related_context(&scope_for(dir.path()), "tabs", TIMELY).unwrap();
     assert!(block.contains("Makefile tabs"), "{block}");
 }
 
@@ -687,7 +699,7 @@ fn a_pending_entry_without_a_user_source_is_never_related() {
     })
     .unwrap();
     embed_with(Arc::new(HashEmbedder::new()));
-    let block = related_context(dir.path(), "tabs in yaml", TIMELY).unwrap();
+    let block = related_context(&scope_for(dir.path()), "tabs in yaml", TIMELY).unwrap();
     assert!(block.contains("Makefile tabs"), "{block}");
     assert!(!block.contains("Agent tabs idea"), "{block}");
     assert!(!block.contains("[not yet approved"), "{block}");

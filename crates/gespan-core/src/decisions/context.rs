@@ -1,9 +1,9 @@
 //! The session-start block: what a session of a harness that reads no
 //! decision file is told about the log, once, and again only after it changes.
 //! And, with search by meaning on, each turn's related block.
-use super::entry::{Entry, Kind as EntryKind};
+use super::entry::{Entry, Kind as EntryKind, Scope};
 use super::render::{render_block, render_ranked, START_BUDGET, TURN_BUDGET};
-use super::scope::scope_for;
+use super::scope::cached_scope;
 use super::service;
 use crate::diagnostics::metrics::{self, ErrorKind};
 use crate::provider::Kind;
@@ -35,7 +35,7 @@ pub fn start_context(
     {
         return None;
     }
-    let scope = scope_for(workspace);
+    let scope = cached_scope(workspace);
     // With search by meaning on, the start block holds the preferences and
     // the pinned decisions; the rest come per turn or through search.
     let entries = match service::with(|store| {
@@ -121,10 +121,11 @@ pub fn related_in_flight() -> usize {
 /// instruction, and lists entries in search order
 /// ([`render_ranked`](super::render::render_ranked)).
 ///
-/// The lookup (the project's scope, which asks git, then hybrid search
-/// with its relevance cut-off) runs on its own thread; this waits for it
-/// at most `deadline`, so the turn is never held longer.
-pub fn related_context(workspace: &Path, user_message: &str, deadline: Duration) -> Option<String> {
+/// `scope` is the session's project scope, worked out once per turn by the
+/// caller ([`cached_scope`](super::scope::cached_scope)). The lookup (hybrid
+/// search with its relevance cut-off) runs on its own thread; this waits for
+/// it at most `deadline`, so the turn is never held longer.
+pub fn related_context(scope: &Scope, user_message: &str, deadline: Duration) -> Option<String> {
     if !service::enabled() || !matches!(service::with(|s| s.embedder().is_some()), Ok(true)) {
         return None;
     }
@@ -133,13 +134,13 @@ pub fn related_context(workspace: &Path, user_message: &str, deadline: Duration)
         return None;
     };
     let (tx, rx) = mpsc::sync_channel(1);
-    let workspace = workspace.to_path_buf();
+    let scope = scope.clone();
     let message = user_message.to_owned();
     let spawned = std::thread::Builder::new()
         .name("decisions-related".into())
         .spawn(move || {
             let _slot = slot;
-            let _ = tx.send(related_block(&workspace, &message));
+            let _ = tx.send(related_block(&scope, &message));
         });
     if let Err(error) = spawned {
         tracing::warn!(%error, "the related decisions lookup could not start");
@@ -160,13 +161,12 @@ pub fn related_context(workspace: &Path, user_message: &str, deadline: Duration)
 }
 
 /// The lookup itself, on the worker thread.
-fn related_block(workspace: &Path, message: &str) -> Option<String> {
-    let scope = scope_for(workspace);
+fn related_block(scope: &Scope, message: &str) -> Option<String> {
     let found = service::with(|store| {
         if store.embedder().is_none() {
             return Ok(Vec::new());
         }
-        store.search(&scope, message, RELATED_LIMIT)
+        store.search(scope, message, RELATED_LIMIT)
     });
     let entries = match found {
         Ok(Ok(entries)) => entries,

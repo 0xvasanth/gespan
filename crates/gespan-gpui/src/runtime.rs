@@ -318,14 +318,8 @@ fn run_turn_using(
         // The decision log counts only what the human typed. The session's
         // first message decides whether anything in it ever counts.
         if !settings.replay_failed_turn && crate::decision_log::typed_by_user(&settings) {
-            let store = locked(&store)?;
-            let opens = !transcript.rows[..start].iter().any(Row::is_prompt)
-                && store.history_before(summary.id)?.is_none();
-            if let Err(error) =
-                crate::decision_log::record_typed(&store, summary.id, &prompt, opens)
-            {
-                tracing::warn!(%error, "could not record the typed message");
-            }
+            let earlier = transcript.rows[..start].iter().any(Row::is_prompt);
+            record_typed_message(&store, summary.id, &prompt, Some(earlier));
         }
         let mut info =
             settings
@@ -736,29 +730,31 @@ fn run_turn_using(
         let decision_key = format!("decision-context:{}", summary.id);
         let mut decision_hash = None;
         if decision_toolkit.is_some() {
+            // A fresh conversation has seen nothing; an unreadable record
+            // gives `None`, and the start block waits for a later turn.
             let already = match provider_id {
-                Some(_) => locked(&store)?.setting(&decision_key)?,
-                None => None,
+                Some(_) => delivered_decision_context(&store, &decision_key),
+                None => Some(None),
             };
-            let workspace = settings.worktree_cwd.as_deref().unwrap_or(&summary.cwd);
+            let workspace =
+                std::path::Path::new(settings.worktree_cwd.as_deref().unwrap_or(&summary.cwd));
             // A checkout Gespan has not written for gets its files soon; this
             // session gets the block meanwhile.
-            crate::decision_log::note_session_workspace(std::path::Path::new(workspace));
+            crate::decision_log::note_session_workspace(workspace);
+            // Once per turn, and remembered between turns: it asks git.
+            let scope = gespan_core::decisions::cached_scope(workspace);
             // With search by meaning on, the decisions related to this
             // message, after the start block. Best effort: the turn waits at
             // most RELATED_DEADLINE for it, and goes without it otherwise.
-            if let Some(block) = gespan_core::decisions::related_context(
-                std::path::Path::new(workspace),
-                &user_message,
-                RELATED_DEADLINE,
-            ) {
+            if let Some(block) =
+                gespan_core::decisions::related_context(&scope, &user_message, RELATED_DEADLINE)
+            {
                 prompt = with_decision_context(&block, &prompt);
             }
-            if let Some((block, hash)) = gespan_core::decisions::start_context(
-                kind,
-                std::path::Path::new(workspace),
-                already.as_deref(),
-            ) {
+            if let Some(already) = already
+                && let Some((block, hash)) =
+                    gespan_core::decisions::start_context(kind, workspace, already.as_deref())
+            {
                 prompt = with_decision_context(&block, &prompt);
                 decision_hash = Some(hash);
             }
@@ -1023,15 +1019,8 @@ fn run_turn_using(
                         }
                         Event::FollowUp(message) => {
                             // A steer the human typed; app and agent ones are not.
-                            if message.typed
-                                && let Err(error) = crate::decision_log::record_typed(
-                                    &*locked(&store)?,
-                                    summary.id,
-                                    &message.text,
-                                    false,
-                                )
-                            {
-                                tracing::warn!(%error, "could not record the typed message");
+                            if message.typed {
+                                record_typed_message(&store, summary.id, &message.text, None);
                             }
                             let at = transcript.begin("user");
                             transcript.rows[at].sent_at =
@@ -1362,7 +1351,7 @@ fn run_turn_using(
         if result.is_ok()
             && let Some(hash) = &decision_hash
         {
-            locked(&store)?.save_setting(&decision_key, hash)?;
+            save_decision_delivered(&store, &decision_key, hash);
         }
         if result.is_ok()
             && let Some(fingerprint) = &pilot_fingerprint
@@ -1975,6 +1964,45 @@ fn actions_toolkit(read_only: bool, remote: bool, worker: bool) -> Option<&'stat
     Some(if read_only { ACTIONS_READ } else { ACTIONS })
 }
 
+/// Records a message the human typed for the decision log. `earlier_prompt`
+/// says whether the transcript already had a prompt before it (`None` for a
+/// steer mid-turn, which never opens a session). Bookkeeping only: a store
+/// that fails is logged and the turn goes on without the record.
+fn record_typed_message(store: &Database, session: i64, text: &str, earlier_prompt: Option<bool>) {
+    let recorded = locked(store).and_then(|store| {
+        let opens = match earlier_prompt {
+            Some(earlier) => !earlier && store.history_before(session)?.is_none(),
+            None => false,
+        };
+        crate::decision_log::record_typed(&store, session, text, opens)
+    });
+    if let Err(error) = recorded {
+        tracing::warn!(%error, "could not record the typed message");
+    }
+}
+
+/// The hash of the decision block this conversation last received, stored
+/// under `key`: `Some(None)` when it has none. `None` when the record cannot
+/// be read: the caller then leaves the start block out rather than fail the
+/// turn (a later turn sends it).
+fn delivered_decision_context(store: &Database, key: &str) -> Option<Option<String>> {
+    match locked(store).and_then(|store| store.setting(key)) {
+        Ok(hash) => Some(hash),
+        Err(error) => {
+            tracing::warn!(%error, "could not read which decision block the session has");
+            None
+        }
+    }
+}
+
+/// Records that the conversation received the decision block `hash`. A
+/// failure is logged; the block is sent again next turn.
+fn save_decision_delivered(store: &Database, key: &str, hash: &str) {
+    if let Err(error) = locked(store).and_then(|store| store.save_setting(key, hash)) {
+        tracing::warn!(%error, "could not record the delivered decision block");
+    }
+}
+
 /// The decision log toolkit a turn mounts: none while the log is off or for
 /// a remote project, read tools and flags for orchestration workers (their
 /// environment is cleared, so the settings flag tells them apart), and the
@@ -2001,6 +2029,73 @@ fn with_decision_context(block: &str, prompt: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The app database, as a turn holds it.
+    fn decision_database() -> super::Database {
+        let store =
+            gespan_core::store::Store::open_gespan(std::path::Path::new(":memory:")).unwrap();
+        std::sync::Arc::new(std::sync::Mutex::new(store))
+    }
+
+    /// A database whose lock a crashed thread left poisoned: every
+    /// `locked` call fails, as a broken store would.
+    fn failing_database() -> super::Database {
+        let database = decision_database();
+        let held = database.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = held.lock().unwrap();
+            panic!("poison the store");
+        })
+        .join();
+        assert!(super::locked(&database).is_err());
+        database
+    }
+
+    /// Recording what the user typed, and which decision block a session
+    /// got, is bookkeeping: a failing store must not fail the turn.
+    #[test]
+    fn decision_bookkeeping_with_a_failing_store_lets_the_turn_go_on() {
+        use super::{delivered_decision_context, record_typed_message, save_decision_delivered};
+        let store = failing_database();
+        record_typed_message(&store, 7, "Use tabs", Some(false));
+        record_typed_message(&store, 7, "Use tabs", None);
+        save_decision_delivered(&store, "decision-context:7", "abc");
+        // An unreadable record leaves the start block out this turn.
+        assert_eq!(
+            delivered_decision_context(&store, "decision-context:7"),
+            None
+        );
+    }
+
+    #[test]
+    fn decision_bookkeeping_records_with_a_working_store() {
+        use super::{delivered_decision_context, record_typed_message, save_decision_delivered};
+        let store = decision_database();
+        let id = super::locked(&store)
+            .unwrap()
+            .create("codex", "/project")
+            .unwrap()
+            .id;
+        let key = format!("decision-context:{id}");
+        assert_eq!(delivered_decision_context(&store, &key), Some(None));
+        save_decision_delivered(&store, &key, "abc");
+        assert_eq!(
+            delivered_decision_context(&store, &key),
+            Some(Some("abc".into()))
+        );
+        // The session's first message opens its record; a steer adds to it.
+        record_typed_message(&store, id, "Use tabs", Some(false));
+        record_typed_message(&store, id, "Keep it short", None);
+        let typed = super::locked(&store)
+            .unwrap()
+            .setting(&format!("decision-typed:{id}"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(&typed).unwrap().len(),
+            2
+        );
+    }
+
     #[test]
     fn decision_log_off_mounts_nothing() {
         use super::decisions_toolkit;

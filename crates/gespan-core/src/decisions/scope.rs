@@ -4,7 +4,76 @@
 //! comes from the remote, not from the checkout's path.
 use super::entry::Scope;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
+/// How long a workspace's scope (and whether its project files are in
+/// place) is trusted before git is asked again. The root commit never
+/// changes; this only bounds how late a newly added remote is noticed.
+pub const GIT_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Values worked out by running git, kept for [`GIT_CACHE_TTL`] so a turn,
+/// or an agent's tool call, does not spawn git each time.
+pub(crate) struct TtlCache<K, V> {
+    entries: Mutex<HashMap<K, (Instant, V)>>,
+}
+
+impl<K: Eq + Hash, V: Clone> TtlCache<K, V> {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The value for `key` worked out less than [`GIT_CACHE_TTL`] before
+    /// `now`, or `compute`'s, which is kept. `compute` runs without the
+    /// cache's lock held.
+    pub(crate) fn get_or(&self, key: K, now: Instant, compute: impl FnOnce() -> V) -> V {
+        {
+            let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((at, value)) = entries.get(&key) {
+                if now.saturating_duration_since(*at) < GIT_CACHE_TTL {
+                    return value.clone();
+                }
+            }
+        }
+        let value = compute();
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, (now, value.clone()));
+        value
+    }
+
+    /// Forgets everything, so the next lookup asks again.
+    pub(crate) fn clear(&self) {
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+}
+
+static SCOPES: LazyLock<TtlCache<PathBuf, Scope>> = LazyLock::new(TtlCache::new);
+
+/// [`scope_for`], remembered per workspace for [`GIT_CACHE_TTL`]: what a
+/// turn and the decision tools use, so they do not run git every time.
+pub fn cached_scope(workspace: &Path) -> Scope {
+    cached_scope_with(workspace, Instant::now(), scope_for)
+}
+
+/// [`cached_scope`] at `now`, working a missing or stale scope out with
+/// `compute` (tests count its calls).
+pub(crate) fn cached_scope_with(
+    workspace: &Path,
+    now: Instant,
+    compute: impl FnOnce(&Path) -> Scope,
+) -> Scope {
+    SCOPES.get_or(workspace.to_path_buf(), now, || compute(workspace))
+}
 
 /// Reduces a remote URL to `host/owner/repo`: lowercase, with no scheme, user,
 /// `.git` suffix or trailing slash. A port stays, since another port can be
