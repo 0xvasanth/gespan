@@ -85,12 +85,16 @@ struct Slot;
 
 impl Slot {
     fn take() -> Option<Slot> {
-        IN_FLIGHT
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                (n < MAX_RELATED_WORKERS).then_some(n + 1)
-            })
-            .ok()
-            .map(|_| Slot)
+        // A compare-exchange loop rather than `fetch_update`, which newer
+        // toolchains deprecate under a name older ones don't have.
+        let mut n = IN_FLIGHT.load(Ordering::SeqCst);
+        while n < MAX_RELATED_WORKERS {
+            match IN_FLIGHT.compare_exchange_weak(n, n + 1, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return Some(Slot),
+                Err(now) => n = now,
+            }
+        }
+        None
     }
 }
 
