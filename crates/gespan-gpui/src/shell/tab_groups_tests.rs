@@ -2206,3 +2206,45 @@ fn switching_tabs_in_a_crowded_strip_moves_nothing(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(places(visual), before, "no tab moved or resized");
 }
+
+#[gpui::test]
+fn a_group_box_holds_its_chip_and_tabs_while_a_tab_eases_open(cx: &mut TestAppContext) {
+    let (window, _, _) = window(cx);
+    animated(window, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    let before = visual.debug_bounds("tab-group-gespan").unwrap();
+    let id = window
+        .update(visual, |shell, _, cx| {
+            add_background_tab(shell, "/work/gespan", cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    // Every frame of the new tab easing open, the box spans its chip and
+    // only ever grows.
+    let mut widths = vec![before.size.width];
+    for _ in 0..12 {
+        next_frame(window, visual, 20);
+        let group = visual.debug_bounds("tab-group-gespan").unwrap();
+        let chip = visual.debug_bounds("tab-group-chip-gespan").unwrap();
+        assert!(
+            group.right() >= chip.right() + px(4.),
+            "{group:?} is short of its chip {chip:?}"
+        );
+        let last = *widths.last().unwrap();
+        assert!(group.size.width >= last, "{group:?} shrank from {last:?}");
+        widths.push(group.size.width);
+    }
+    // Settled, it ends just past its new tab.
+    let tab = visual
+        .debug_bounds(selector(format!("title-tab-{id}")))
+        .unwrap();
+    let group = visual.debug_bounds("tab-group-gespan").unwrap();
+    assert_eq!(group.right(), tab.right() + px(4.));
+    assert!(
+        widths
+            .iter()
+            .any(|w| *w > before.size.width && *w < group.size.width),
+        "the tab eased open over several frames: {widths:?}"
+    );
+}
