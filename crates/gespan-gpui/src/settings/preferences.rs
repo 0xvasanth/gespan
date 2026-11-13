@@ -46,6 +46,11 @@ pub(crate) struct Preferences {
     pub body_glass: bool,
     pub chat_background: Option<String>,
     pub chat_background_effect: String,
+    /// What shows behind the glass: `desktop` (the native window blur) or
+    /// `gradient`, a soft fixed backdrop that looks the same on any desktop.
+    pub backdrop: String,
+    /// The gradient behind the glass when `backdrop` is `gradient`.
+    pub backdrop_gradient: String,
     pub chat_background_scope: String,
     pub chat_background_empty: u32,
     pub chat_background_session: u32,
@@ -163,6 +168,8 @@ impl Default for Preferences {
             body_glass: true,
             chat_background: None,
             chat_background_effect: "none".into(),
+            backdrop: "desktop".into(),
+            backdrop_gradient: "aurora".into(),
             chat_background_scope: "all".into(),
             chat_background_empty: 24,
             chat_background_session: 24,
@@ -273,6 +280,8 @@ impl Preferences {
     /// SettingsView's Restore defaults: the Appearance page only.
     pub(crate) fn restore_appearance(&mut self) {
         let d = Self::default();
+        self.backdrop = d.backdrop.clone();
+        self.backdrop_gradient = d.backdrop_gradient.clone();
         self.theme = d.theme;
         self.wayland_window_decorations = d.wayland_window_decorations;
         self.accent_color = d.accent_color;
@@ -636,6 +645,27 @@ mod worktree_default_tests {
         assert!(read.deletes_merged_branch("/a"));
         assert!(!read.deletes_worktree_sessions("/a"));
     }
+}
+
+/// A backdrop gradient: its id, name and the two colours it blends.
+pub(crate) const BACKDROPS: [(&str, &str, u32, u32); 3] = [
+    ("aurora", "Aurora", 0x8f64f6, 0x459bf7),
+    ("dusk", "Dusk", 0xf2a6ba, 0x8f64f6),
+    ("dune", "Dune", 0xf0d696, 0xf2a6ba),
+];
+
+/// The gradient to paint behind the glass, if any: only with Gradient
+/// chosen, and only where the window is see-through (dark theme on a glass
+/// platform). Light themes keep their opaque window.
+pub(crate) fn backdrop_colors(p: &Preferences, glass: bool) -> Option<(u32, u32)> {
+    if !glass || p.backdrop != "gradient" {
+        return None;
+    }
+    BACKDROPS
+        .iter()
+        .find(|(id, ..)| *id == p.backdrop_gradient)
+        .or(BACKDROPS.first())
+        .map(|&(_, _, a, b)| (a, b))
 }
 
 #[cfg(test)]

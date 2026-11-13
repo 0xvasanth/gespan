@@ -1,6 +1,6 @@
 //! The speech model, custom words and the shortcut.
 use crate::{
-    conversation::dictation::{DICTATE_COMMAND, model_spec, speech},
+    conversation::dictation::{model_spec, speech},
     input::{self, Input},
     settings::{
         Section, SettingsView,
@@ -179,26 +179,22 @@ impl SettingsView {
                                     d.child(div().size(px(6.)).rounded_full().bg(accent_color()))
                                 }),
                         )
-                        .child(div().min_w_0().child(spec.label))
-                        // A pill only for what is true now: on this device,
-                        // or coming down.
-                        .when(running.is_some(), |d| {
-                            d.child(crate::glass::status(
-                                "Downloading",
-                                crate::glass::Tone::Running,
-                            ))
+                        // The name, its pill and its state stacked beside the
+                        // radio, which centres on them.
+                        .child({
+                            let line = div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(div().min_w_0().child(spec.label));
+                            let line = with_pill(line, spec.id, status, running.is_some());
+                            div()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(line)
+                                .child(self.description(status_label(spec, status, running)))
                         })
-                        .when(
-                            running.is_none() && matches!(status, ModelStatus::Ready),
-                            |d| {
-                                d.child(
-                                    crate::glass::status("Ready", crate::glass::Tone::Ok)
-                                        .debug_selector(move || {
-                                            format!("dictation-ready-{}", spec.id)
-                                        }),
-                                )
-                            },
-                        )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if this.prefs.dictation_model != spec.id {
                                 this.update(cx, |p| p.dictation_model = spec.id.into());
@@ -269,13 +265,7 @@ impl SettingsView {
                             ]
                         }
                     };
-                    rows.push(self.row(
-                        None,
-                        ix == 0,
-                        label,
-                        Some(status_label(spec, status, running).into()),
-                        controls,
-                    ));
+                    rows.push(self.row_parts(None, ix == 0, label, None, controls, false));
                 }
             }
         }
@@ -286,7 +276,7 @@ impl SettingsView {
             .flex_col()
             .child(self.group(
                 Some("dictation-model"),
-                false,
+                true,
                 "Speech model",
                 Some("Downloaded once to this device, and recognition runs here too.".into()),
                 None,
@@ -322,48 +312,8 @@ impl SettingsView {
                 )
                 .into_any_element()
         });
-        let shortcut = crate::settings::command_shortcut(&self.prefs, DICTATE_COMMAND)
-            .unwrap_or_else(|| "Off".into());
-        let shortcut_row = self.row(
-            Some("dictation-shortcut"),
-            true,
-            div()
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .child(
-                    div()
-                        .size(px(32.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(9.))
-                        .bg(content(0.07))
-                        .border_1()
-                        .border_color(crate::glass::edge())
-                        .child(icon("mic-01", 16.).text_color(content(0.8))),
-                )
-                .child("Shortcut"),
-            Some("In the composer, tap to start and tap again to stop, or hold to talk and release to stop. Change it under Keybindings.".into()),
-            vec![
-                div()
-                    .debug_selector(|| "dictation-shortcut-keys".into())
-                    .rounded(px(5.))
-                    .border_1()
-                    .border_color(crate::glass::edge())
-                    .bg(content(0.07))
-                    .px_2()
-                    .py(px(2.))
-                    .text_size(px(12.))
-                    .text_color(content(0.7))
-                    .child(shortcut)
-                    .into_any_element(),
-            ],
-        );
-        // The shortcut first: it's how dictation starts.
+        // Keybindings owns the shortcut; this page starts with the model.
         vec![
-            self.group(None, true, "Shortcut", None, None, vec![shortcut_row]),
             model_group,
             self.group(
                 Some("dictation-words"),
@@ -382,6 +332,23 @@ impl SettingsView {
                 .child(ATTRIBUTION)
                 .into_any_element(),
         ]
+    }
+}
+
+/// A model's pill: only for what is true now, on this device or coming down.
+fn with_pill(line: gpui::Div, id: &'static str, status: ModelStatus, running: bool) -> gpui::Div {
+    if running {
+        line.child(crate::glass::status(
+            "Downloading",
+            crate::glass::Tone::Running,
+        ))
+    } else if matches!(status, ModelStatus::Ready) {
+        line.child(
+            crate::glass::status("Ready", crate::glass::Tone::Ok)
+                .debug_selector(move || format!("dictation-ready-{id}")),
+        )
+    } else {
+        line
     }
 }
 

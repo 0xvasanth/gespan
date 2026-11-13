@@ -422,7 +422,7 @@ impl Shell {
 
     /// Sends an answer from the page where the request came from, then
     /// refreshes the list so the answered task leaves it.
-    fn route_my_task(
+    pub(super) fn route_my_task(
         &mut self,
         event: &my_tasks::Event,
         window: &mut Window,

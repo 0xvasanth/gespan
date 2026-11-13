@@ -107,16 +107,6 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         "reads Cursor's database",
     ),
     (
-        "gespan-core/src/store.rs",
-        10,
-        "legacy native fixtures store",
-    ),
-    (
-        "gespan-core/src/store/gespan_import.rs",
-        2,
-        "reads the Tauri database",
-    ),
-    (
         "gespan-core/src/store/my_tasks.rs",
         4,
         "legacy shape for adoption",
@@ -125,16 +115,6 @@ const ALLOWED: &[(&str, usize, &str)] = &[
         "gespan-core/src/store/schema.rs",
         6,
         "constraints Toasty cannot express",
-    ),
-    (
-        "gespan-core/src/store/shared/settings.rs",
-        1,
-        "legacy JSON settings import",
-    ),
-    (
-        "gespan-core/src/store/shared.rs",
-        3,
-        "the shared store's rusqlite connection, to move to Toasty",
     ),
     ("gespan-graph/src/db.rs", 1, "the graph's own Toasty driver"),
     (
@@ -275,6 +255,11 @@ const QUERIES: &[(&str, usize, &str)] = &[
     ),
     ("gespan-core/src/orm/adopt.rs", 8, "the ORM's adoption"),
     (
+        "gespan-core/src/orm.rs",
+        2,
+        "the ORM's migration ledger, which Toasty does not model",
+    ),
+    (
         "gespan-core/src/provider/cursor_store.rs",
         4,
         "reads Cursor's database",
@@ -285,35 +270,14 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "reads Cursor's database",
     ),
     (
-        "gespan-core/src/store.rs",
-        57,
-        "native_* fixture tables on rusqlite, to move to Toasty",
-    ),
-    ("gespan-core/src/store/edit.rs", 2, "to move to Toasty"),
-    (
-        "gespan-core/src/store/gespan_import.rs",
-        8,
-        "reads the Tauri database",
-    ),
-    ("gespan-core/src/store/in_flight.rs", 5, "to move to Toasty"),
-    ("gespan-core/src/store/inbox_ask.rs", 1, "to move to Toasty"),
-    (
-        "gespan-core/src/store/managed_sessions.rs",
-        1,
-        "to move to Toasty",
-    ),
-    ("gespan-core/src/store/my_tasks.rs", 3, "to move to Toasty"),
-    ("gespan-core/src/store/notes.rs", 6, "to move to Toasty"),
-    ("gespan-core/src/store/pilots.rs", 8, "to move to Toasty"),
-    (
-        "gespan-core/src/store/provider_ids.rs",
-        2,
-        "to move to Toasty",
+        "gespan-core/src/store/my_tasks.rs",
+        3,
+        "a conditional upsert and a counted update",
     ),
     (
-        "gespan-core/src/store/remote_legacy.rs",
-        6,
-        "to move to Toasty",
+        "gespan-core/src/store/pilots.rs",
+        3,
+        "json1 reads of Pilot blocks",
     ),
     (
         "gespan-core/src/store/schema.rs",
@@ -322,29 +286,23 @@ const QUERIES: &[(&str, usize, &str)] = &[
     ),
     (
         "gespan-core/src/store/session_metadata.rs",
-        2,
-        "to move to Toasty",
+        1,
+        "bounded substr projections",
     ),
     (
         "gespan-core/src/store/session_preview.rs",
-        2,
-        "to move to Toasty",
-    ),
-    ("gespan-core/src/store/shared.rs", 50, "to move to Toasty"),
-    (
-        "gespan-core/src/store/shared/edit.rs",
         1,
-        "to move to Toasty",
+        "bounded substr projections",
     ),
     (
-        "gespan-core/src/store/shared/settings.rs",
-        3,
-        "to move to Toasty",
+        "gespan-core/src/store/shared.rs",
+        7,
+        "covering-index sidebar list, snapshot read, counted updates",
     ),
     (
         "gespan-core/src/store/shared/window.rs",
-        6,
-        "to move to Toasty",
+        1,
+        "a json1 filter",
     ),
     ("gespan-graph/src/db.rs", 2, "the graph's own Toasty driver"),
     (

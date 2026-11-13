@@ -38,9 +38,13 @@ The pool has one connection. Inside a transaction, run everything through
 call from inside another tokio runtime, but not from inside a future that
 `run` is already driving.
 
-`Store` holds the gespan database next to its rusqlite connection.
-`Store::orm()` opens it on first use. Store code calls
-`self.orm()?.run(...)`.
+`Store` holds the gespan database and no other connection to it. Store code
+calls `self.orm()?.run(...)`. `Store::open` (tests and fixtures) opens the
+same schema as `Store::open_gespan`. A read-only store (`Store::read_gespan`,
+the search reader) opens the file with `orm::open_read_only`: the typed API
+reads it as usual and SQLite refuses every write. A file Gespan has not
+adopted yet is read through an adopted copy, so the file itself never
+changes.
 
 Queries use the typed API. `tests/toasty_only.rs` counts every file's raw
 query lines in `QUERIES`: the count can only go down, so a change that moves a
@@ -49,11 +53,14 @@ file's queries to the typed API lowers its number there.
 Store code that still needs raw SQL uses `Store::sql()` (`store/db.rs`): `query`,
 `row`, `optional`, `value` and `execute` with `args![...]`, and `begin()`
 for a `BEGIN IMMEDIATE` transaction that the store's other statements join
-(the pool has one connection). Run only raw SQL inside `begin()`: some typed
-statements start their own transaction, which SQLite refuses there. A
-read-only store (`Store::read_gespan`, the search reader) runs the same SQL
-on a read-only SQLite connection, and reads a file not adopted yet through
-an adopted copy, so the file itself never changes.
+(the pool has one connection). Inside `begin()`, a typed statement must be a
+single database operation (one select, insert, update, delete or upsert):
+Toasty wraps a plan of several in its own transaction, which SQLite refuses
+there.
+
+Tests arrange rows the store's API cannot make with `store.conn()`
+(`store/conn_tests.rs`), which runs raw SQL on the store's database with
+rusqlite-shaped calls.
 
 ## Adding a model
 
@@ -105,8 +112,11 @@ an adopted copy, so the file itself never changes.
   column.
 - Field-level `#[index]` cannot be named. Use a struct-level
   `#[index(name = "...", field)]` to keep an existing index name.
-- Conditional upserts (`ON CONFLICT ... WHERE`), CTEs, `json_*` and window
-  functions go through `toasty::sql`. Binding a NULL needs `bind_typed`.
+- Conditional upserts (`ON CONFLICT ... WHERE`), CTEs, `json_*`, `substr`,
+  scalar subqueries in a projection, `INDEXED BY` and window functions go
+  through `toasty::sql`. Binding a NULL needs `bind_typed`.
+- `select` projects a field or a tuple of up to eight; nest tuples for more.
+  `offset` needs a `limit` first.
 - Queries against FTS5 and sqlite-vec virtual tables, which Toasty cannot
   model, go through `toasty::sql`.
 - Plain upserts are typed: `Model::upsert_by_<key>(..)` replaces the row,

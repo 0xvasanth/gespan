@@ -319,7 +319,7 @@ impl DecisionStore {
     }
 
     fn sql(&self) -> Sql<'_> {
-        Sql::Orm(&self.db)
+        Sql(&self.db)
     }
 
     /// Redact, then cap (`Config::clean`, which My tasks uses too).

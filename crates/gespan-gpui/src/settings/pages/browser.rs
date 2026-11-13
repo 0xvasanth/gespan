@@ -74,34 +74,58 @@ fn ready(state: &BrowserState) -> bool {
     state.toggle_on && state.connection.state == gespan_core::browser::ConnectionState::Connected
 }
 
-/// The switch's label; `ready` adds the pill that says agents can use the
-/// browser now, shown only while it is connected.
+/// The switch's label: a 40pt globe tile with the title (and `ready`'s
+/// pill, shown only while the browser is connected) and its help beside it.
 fn switch_label(ready: bool) -> AnyElement {
     div()
         .flex()
         .items_center()
-        .gap_2()
+        .gap(px(14.))
         .child(
             div()
-                .size(px(32.))
+                .debug_selector(|| "settings-browser-tile".into())
+                .size(px(40.))
                 .flex_none()
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(9.))
+                .rounded(px(11.))
                 .bg(content(0.07))
                 .border_1()
                 .border_color(crate::glass::edge())
-                .child(icon("globe", 16.).text_color(content(0.8))),
+                .child(icon("internet", 18.).text_color(content(0.8))),
         )
-        .child("Let agents use the browser")
-        .when(ready, |d| {
-            d.child(
-                crate::glass::status("Ready", crate::glass::Tone::Ok)
-                    .debug_selector(|| "settings-browser-ready".into()),
-            )
-        })
-        .child(crate::glass::beta("Beta").debug_selector(|| "settings-browser-beta".into()))
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child("Let agents use the browser")
+                        .when(ready, |d| {
+                            d.child(
+                                crate::glass::status("Ready", crate::glass::Tone::Ok)
+                                    .debug_selector(|| "settings-browser-ready".into()),
+                            )
+                        })
+                        .child(
+                            crate::glass::beta("Beta")
+                                .debug_selector(|| "settings-browser-beta".into()),
+                        ),
+                )
+                .child(
+                    div()
+                        .mt(px(2.))
+                        .text_size(px(12.))
+                        .line_height(px(18.))
+                        .font_weight(gpui::FontWeight::NORMAL)
+                        .text_color(content(0.62))
+                        .child(SWITCH_HELP),
+                ),
+        )
         .into_any_element()
 }
 
@@ -169,7 +193,7 @@ impl SettingsView {
             Some("browser-toggle"),
             true,
             switch_label(ready(state)),
-            Some(SWITCH_HELP.into()),
+            None,
             vec![self.toggle(
                 "browser-toggle",
                 "Let agents use the browser",
@@ -260,11 +284,15 @@ impl SettingsView {
             true,
             "Upload folders",
             Some("Agents can upload files from the thread's project folder and from these folders.".into()),
-            vec![crate::glass::button("browser-add-roots", "Add folder…", crate::glass::Button::Glass)
+            vec![crate::settings::widgets::icon_button_labelled(
+                "browser-add-roots",
+                "plus",
+                "Add folder…",
+                crate::glass::Button::Glass,
+            )
                 .role(gpui::Role::Button)
                 .aria_label("Add folder…")
                 .h(px(30.))
-                .child(icon("plus", 14.).text_color(content(0.7)))
                 .on_click(cx.listener(|this, _, _, cx| this.pick_upload_roots(cx)))
                 .into_any_element()],
         )];

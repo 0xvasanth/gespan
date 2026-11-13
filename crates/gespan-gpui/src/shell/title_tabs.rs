@@ -1,7 +1,15 @@
 //! All title-strip commands operate on the same visible, ordered snapshot.
 use super::*;
+use crate::strip_groups::{StripEntry, entries, idle, make_contiguous};
 use crate::workspace::TitleTab;
 use gespan_core::files::path_key;
+
+/// The wall clock in unix seconds, as `Workspace::tab_focused_at` keeps it.
+pub(super) fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
 
 impl Shell {
     /// The workspace keys a tab by one of its sessions. Replacing that session
@@ -20,6 +28,9 @@ impl Shell {
             if selected.as_ref() == Some(&previous) {
                 *selected = Some(next.clone());
             }
+        }
+        if let Some(at) = self.workspace.tab_focused_at.remove(&previous) {
+            self.workspace.tab_focused_at.insert(next.clone(), at);
         }
         let shift = self.tab_shifts.remove(&previous);
         self.tab_shifts.remove(&next);
@@ -45,7 +56,15 @@ impl Shell {
         if std::mem::take(&mut self.skip_tab_click) {
             return;
         }
-        self.open_title_tab(&self.pilot_tab(id.into()), window, cx);
+        // A Pilot tab of a peeking group belongs to that project, not this one.
+        let peeked = self.strip_peek.as_ref().and_then(|project| {
+            self.workspace.title_order.iter().find(|tab| {
+                matches!(tab, TitleTab::Pilot { id: pilot, project: p, .. }
+                    if pilot == id && path_key(p) == path_key(project))
+            })
+        });
+        let tab = peeked.cloned().unwrap_or_else(|| self.pilot_tab(id.into()));
+        self.open_title_tab(&tab, window, cx);
     }
     pub(super) fn tab_scope(&self) -> String {
         format!(
@@ -86,41 +105,171 @@ impl Shell {
         self.workspace
             .title_order
             .iter()
-            .filter(|tab| match tab {
-                TitleTab::App(view) => {
-                    (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
-                        && (*view != app_views::AppView::Board || self.workspace.preferences.board)
-                        && (*view != app_views::AppView::Flows || crate::flows::visible(cx))
-                }
-                TitleTab::Session(tab) => {
-                    self.workspace.tabs.contains(tab) && {
-                        let id = self.workspace.scope_pane(*tab);
-                        self.session_summaries
-                            .contains_key(&self.workspace.session_for_pane(id))
-                            && self
-                                .session_metadata(self.workspace.session_for_pane(id), cx)
+            .filter(|tab| {
+                self.tab_drawable(tab, cx)
+                    && match tab {
+                        TitleTab::App(_) => true,
+                        TitleTab::Session(tab) => {
+                            let id = self.workspace.scope_pane(*tab);
+                            self.session_metadata(self.workspace.session_for_pane(id), cx)
                                 .summary
                                 .cwd
                                 == self.workspace.project
-                            && self.in_worktree_scope(id, cx)
+                                && self.in_worktree_scope(id, cx)
+                        }
+                        TitleTab::Pilot {
+                            project, worktree, ..
+                        } => {
+                            *project == self.workspace.project
+                                && path_key(worktree) == path_key(self.working_copy())
+                        }
                     }
-                }
-                TitleTab::Pilot {
-                    id,
-                    project,
-                    worktree,
-                } => {
-                    *project == self.workspace.project
-                        && path_key(worktree) == path_key(self.working_copy())
-                        && self.workspace.preferences.pilots
-                        && self
-                            .pilots
-                            .as_ref()
-                            .is_some_and(|m| m.read(cx).roster.get(id).is_some())
-                }
             })
             .cloned()
             .collect()
+    }
+
+    /// Whether `tab` can draw at all, whichever project it belongs to: its
+    /// app view is turned on, its session's summary is loaded, its pilot
+    /// still exists in a project the sidebar lists. A removed project's
+    /// Pilot tab, saved by an older build, stays hidden.
+    pub(super) fn tab_drawable(&self, tab: &TitleTab, cx: &App) -> bool {
+        match tab {
+            TitleTab::App(view) => {
+                (*view != app_views::AppView::Notes || self.workspace.preferences.notes)
+                    && (*view != app_views::AppView::Board || self.workspace.preferences.board)
+                    && (*view != app_views::AppView::Flows || crate::flows::visible(cx))
+            }
+            TitleTab::Session(tab) => {
+                self.workspace.tabs.contains(tab)
+                    && self.session_summaries.contains_key(
+                        &self
+                            .workspace
+                            .session_for_pane(self.workspace.scope_pane(*tab)),
+                    )
+            }
+            TitleTab::Pilot { id, project, .. } => {
+                self.workspace.preferences.pilots
+                    && self
+                        .workspace
+                        .projects
+                        .iter()
+                        .any(|p| path_key(p) == path_key(project))
+                    && self
+                        .pilots
+                        .as_ref()
+                        .is_some_and(|m| m.read(cx).roster.get(id).is_some())
+            }
+        }
+    }
+
+    /// The project folder `tab` belongs to: a session's working folder, a
+    /// pilot's project. App tabs, and sessions whose summary isn't loaded,
+    /// have none.
+    pub(super) fn tab_project(&self, tab: &TitleTab, cx: &App) -> Option<String> {
+        match tab {
+            TitleTab::App(_) => None,
+            TitleTab::Session(tab) => {
+                let session = self
+                    .workspace
+                    .session_for_pane(self.workspace.scope_pane(*tab));
+                self.session_summaries
+                    .contains_key(&session)
+                    .then(|| self.session_metadata(session, cx).summary.cwd.clone())
+            }
+            TitleTab::Pilot { project, .. } => Some(project.clone()),
+        }
+    }
+
+    /// Every drawable tab of every project, in strip order, pins left out.
+    pub(super) fn global_strip_tabs(&self, cx: &App) -> Vec<TitleTab> {
+        self.workspace
+            .title_order
+            .iter()
+            .filter(|tab| self.tab_drawable(tab, cx) && !self.tab_pinned(tab))
+            .cloned()
+            .collect()
+    }
+
+    /// The strip for every project: each project's tabs as one group, where
+    /// its first tab is, and app tabs loose between them.
+    pub(super) fn strip_entries(&self, cx: &App) -> Vec<StripEntry<TitleTab>> {
+        self.strip_frame(cx).0
+    }
+
+    /// [`Self::strip_entries`], with each grouped tab's project worked out
+    /// once so a frame can look it up again.
+    pub(super) fn strip_frame(
+        &self,
+        cx: &App,
+    ) -> (Vec<StripEntry<TitleTab>>, HashMap<TitleTab, String>) {
+        let tabs = self.global_strip_tabs(cx);
+        let projects: HashMap<TitleTab, String> = tabs
+            .iter()
+            .filter_map(|tab| Some((tab.clone(), self.tab_project(tab, cx)?)))
+            .collect();
+        (entries(&tabs, |tab| projects.get(tab).cloned()), projects)
+    }
+
+    /// `tab`'s project from a frame's `projects`, else worked out, as for a
+    /// tab easing off the strip.
+    pub(super) fn frame_project(
+        &self,
+        projects: &HashMap<TitleTab, String>,
+        tab: &TitleTab,
+        cx: &App,
+    ) -> Option<String> {
+        projects
+            .get(tab)
+            .cloned()
+            .or_else(|| self.tab_project(tab, cx))
+    }
+
+    /// The worktree `tab` runs in when that isn't its project folder, named
+    /// as the sidebar names it. The strip itself looks the project up once
+    /// a frame and calls [`Self::tab_worktree_label_in`].
+    #[cfg(test)]
+    pub(super) fn tab_worktree_label(&self, tab: &TitleTab, cx: &App) -> Option<String> {
+        let project = self.tab_project(tab, cx)?;
+        self.tab_worktree_label_in(tab, &project, cx)
+    }
+
+    /// [`Self::tab_worktree_label`] for a tab whose `project` is known.
+    pub(super) fn tab_worktree_label_in(
+        &self,
+        tab: &TitleTab,
+        project: &str,
+        cx: &App,
+    ) -> Option<String> {
+        let worktree = match tab {
+            TitleTab::App(_) => return None,
+            TitleTab::Session(tab) => self.workspace.tab_workspaces.get(tab).map_or_else(
+                || self.session_working_copy(self.workspace.scope_pane(*tab), cx),
+                String::as_str,
+            ),
+            TitleTab::Pilot { worktree, .. } => worktree.as_str(),
+        };
+        (path_key(worktree) != path_key(project)).then(|| self.worktree_label_in(project, worktree))
+    }
+
+    /// Keeps each project's tabs side by side in `title_order`, so a tab
+    /// opened for a project joins its group; the session list follows.
+    pub(super) fn group_title_order(&mut self, cx: &App) {
+        let projects: HashMap<TitleTab, Option<String>> = self
+            .workspace
+            .title_order
+            .iter()
+            .map(|tab| (tab.clone(), self.tab_project(tab, cx)))
+            .collect();
+        make_contiguous(&mut self.workspace.title_order, |tab| {
+            projects.get(tab).cloned().flatten()
+        });
+        self.workspace.tabs = self
+            .workspace
+            .title_order
+            .iter()
+            .filter_map(TitleTab::session)
+            .collect();
     }
 
     pub(super) fn active_title_tab(&self, cx: &App) -> Option<TitleTab> {
@@ -183,8 +332,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Opening a tab ends any peek; its group is the open one now.
+        self.strip_peek = None;
         match tab {
             TitleTab::App(view) => match view {
+                app_views::AppView::Home => self.open_home(window, cx),
                 app_views::AppView::MyTasks => self.open_my_tasks(window, cx),
                 app_views::AppView::Inbox => self.open_inbox(window, cx),
                 app_views::AppView::Notes => self.open_notes(window, cx),
@@ -205,12 +357,59 @@ impl Shell {
                     review.update(cx, |r, cx| r.focus_active(window, cx));
                 }
             }
-            TitleTab::Pilot { id, .. } => {
+            TitleTab::Pilot {
+                id,
+                project,
+                worktree,
+            } => {
+                // A Pilot gone from the roster can't open; land on its project.
+                let exists = self
+                    .pilots
+                    .as_ref()
+                    .is_some_and(|m| m.read(cx).roster.get(id).is_some());
+                if !exists {
+                    if path_key(project) != path_key(&self.workspace.project) {
+                        self.select_project(project.clone(), window, cx);
+                    }
+                    return;
+                }
+                self.enter_pilot_scope(project, worktree);
                 if let Some(pilots) = self.pilots.clone() {
                     pilots.update(cx, |m, cx| m.open(id, window, cx));
                 }
             }
         }
+    }
+
+    /// Switches to the project and worktree a Pilot tab belongs to, so
+    /// opening it lands in its own group, as a chat tab does.
+    fn enter_pilot_scope(&mut self, project: &str, worktree: &str) {
+        if path_key(project) == path_key(&self.workspace.project)
+            && path_key(worktree) == path_key(self.working_copy())
+        {
+            return;
+        }
+        self.workspace.project = project.to_owned();
+        self.workspace.collapsed.remove(project);
+        if path_key(worktree) == path_key(project) {
+            self.worktree_focus.remove(project);
+        } else {
+            let branch = crate::git_cache::get(project).and_then(|git| {
+                git.worktrees
+                    .into_iter()
+                    .find(|tree| path_key(&tree.path) == path_key(worktree))
+                    .and_then(|tree| tree.branch)
+            });
+            self.worktree_focus.insert(
+                project.to_owned(),
+                crate::worktree_switcher::WorktreeFocus {
+                    path: worktree.to_owned(),
+                    branch,
+                },
+            );
+        }
+        // The Pilot takes the window; the old project's chat is not active.
+        self.workspace.active = None;
     }
 
     pub(super) fn restore_scope_tab(
@@ -293,14 +492,17 @@ impl Shell {
             .collect::<Vec<_>>();
         let tabs = tabs.to_vec();
         self.confirm_close_terminal_panes(&panes, window, cx, move |this, window, cx| {
-            this.finish_close_title_tabs(&tabs, preferred, window, cx);
+            this.finish_close_title_tabs(&tabs, preferred, false, window, cx);
         });
     }
 
+    /// Closes `tabs`. A `sweep` closes only tabs in the background, so it
+    /// leaves menus, drags, hover and focus as they are.
     fn finish_close_title_tabs(
         &mut self,
         tabs: &[TitleTab],
         preferred: Option<TitleTab>,
+        sweep: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -323,9 +525,20 @@ impl Shell {
         let pins_left = before
             .iter()
             .any(|tab| !closing.contains(tab) && self.workspace.pinned_tabs.contains(tab));
-        let next = if replace && pins_left && !strip_left {
+        // Closing a whole group may name a tab of another project to open.
+        let elsewhere = preferred.clone().filter(|tab| {
+            !before.contains(tab)
+                && !closing.contains(tab)
+                && self.workspace.title_order.contains(tab)
+                && self.tab_drawable(tab, cx)
+        });
+        let next = if !replace {
             None
-        } else if replace {
+        } else if elsewhere.is_some() {
+            elsewhere
+        } else if pins_left && !strip_left {
+            None
+        } else {
             preferred
                 .filter(|tab| before.contains(tab) && !closing.contains(tab))
                 .or_else(|| {
@@ -337,16 +550,24 @@ impl Shell {
                         .find(|tab| !closing.contains(*tab))
                         .cloned()
                 })
-        } else {
-            None
         };
         self.navigation_revision += 1;
-        self.close_menu(cx);
-        self.tab_drag = None;
-        self.tab_shifts.clear();
-        self.tab_hover = None;
-        self.tab_scroll_task = None;
-        self.cancel_pane_drag(cx);
+        if sweep {
+            self.tab_shifts.retain(|tab, _| !closing.contains(tab));
+            if self
+                .tab_hover
+                .is_some_and(|id| closing.contains(&TitleTab::Session(id)))
+            {
+                self.tab_hover = None;
+            }
+        } else {
+            self.close_menu(cx);
+            self.tab_drag = None;
+            self.tab_shifts.clear();
+            self.tab_hover = None;
+            self.tab_scroll_task = None;
+            self.cancel_pane_drag(cx);
+        }
         let session_active = self.workspace.active;
         let threads = self.shown_threads();
         for tab in &closing {
@@ -388,23 +609,161 @@ impl Shell {
         self.history
             .prune(&self.workspace.open_sessions(), self.workspace.active);
         self.leave_closed_dictation(cx);
-        if self.workspace.active.is_none() && !self.pilot_active(cx) && !self.app_view_open() {
+        if !sweep
+            && self.workspace.active.is_none()
+            && !self.pilot_active(cx)
+            && !self.app_view_open()
+        {
             self.focus_active(window, cx);
         }
         self.persist(cx);
         cx.notify();
     }
 
-    /// Moves `tab` to strip slot `to`; pinned tabs keep their places.
+    /// Records that `tab` is focused now.
+    pub(super) fn note_tab_focus(&mut self, tab: &TitleTab) {
+        self.workspace
+            .tab_focused_at
+            .insert(tab.clone(), unix_now());
+    }
+
+    /// Closes tabs unfocused for `IDLE_AFTER_SECS` from the strip, without
+    /// asking: their chats stay in the sidebar, nothing is archived. Returns
+    /// the closed tabs. While a tab or pane drag or a menu is open it closes
+    /// nothing; the next tick tries again.
+    pub(super) fn close_idle_tabs(
+        &mut self,
+        now: i64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<TitleTab> {
+        if self.tab_drag.is_some() || self.pane_drag.is_some() || self.menu.is_some() {
+            return Vec::new();
+        }
+        let active = self.active_title_tab(cx);
+        if let Some(tab) = &active {
+            self.workspace.tab_focused_at.insert(tab.clone(), now);
+        }
+        self.workspace.start_tab_clocks(now);
+        let closing = idle(
+            &self.workspace.title_order,
+            &self.workspace.tab_focused_at,
+            now,
+            |tab| active.as_ref() == Some(tab) || self.idle_keeps(tab, cx),
+        );
+        if !closing.is_empty() {
+            self.finish_close_title_tabs(&closing, None, true, window, cx);
+        }
+        closing
+    }
+
+    /// A tab the idle cleanup leaves alone: pinned, a Pilot whose chat is
+    /// running, or a chat tab with any pane that is a terminal (closing one
+    /// would have to ask), a running Pilot, a file pane with unsaved edits,
+    /// or a chat that is busy or holds unsent input or a saved draft.
+    fn idle_keeps(&self, tab: &TitleTab, cx: &App) -> bool {
+        if self.tab_pinned(tab) {
+            return true;
+        }
+        let key = match tab {
+            TitleTab::Session(key) => key,
+            TitleTab::Pilot { id, .. } => return self.pilot_busy(id, cx),
+            TitleTab::App(_) => return false,
+        };
+        self.workspace.layout(*key).leaf_ids().iter().any(|id| {
+            self.workspace.terminal_panes.contains_key(id)
+                || self
+                    .workspace
+                    .pilot_panes
+                    .get(id)
+                    .is_some_and(|pilot| match pilot {
+                        TitleTab::Pilot { id, .. } => self.pilot_busy(id, cx),
+                        _ => false,
+                    })
+                || self
+                    .reviews
+                    .get(id)
+                    .is_some_and(|review| review.read(cx).unsaved_files(cx))
+                || self.session_summaries.contains_key(id) && {
+                    let s = self.session_metadata(*id, cx);
+                    s.busy
+                        || s.has_saved_draft()
+                        || self
+                            .sessions
+                            .get(id)
+                            .is_some_and(|v| !v.read(cx).input.read(cx).content.is_empty())
+                }
+        })
+    }
+
+    /// Whether Pilot `id`'s chat is running.
+    fn pilot_busy(&self, id: &str, cx: &App) -> bool {
+        self.pilots.as_ref().is_some_and(|m| {
+            m.read(cx)
+                .chat_for(id)
+                .is_some_and(|chat| chat.read(cx).busy)
+        })
+    }
+
+    /// Moves `tab` to slot `to` among its own kind: a grouped tab among its
+    /// group's tabs, a loose tab among the strip's top-level entries. A tab
+    /// never leaves its group, and nothing lands inside another group.
     pub(super) fn reorder_title_tab(&mut self, tab: &TitleTab, to: usize, cx: &App) {
+        let entries = self.strip_entries(cx);
+        for (ix, entry) in entries.iter().enumerate() {
+            match entry {
+                StripEntry::Loose(loose) if loose == tab => {
+                    return self.reorder_entry(ix, to, cx);
+                }
+                StripEntry::Group { tabs, .. } => {
+                    if let Some(from) = tabs.iter().position(|t| t == tab) {
+                        let mut tabs = tabs.clone();
+                        let moved = tabs.remove(from);
+                        tabs.insert(to.min(tabs.len()), moved);
+                        return self.write_strip_order(tabs);
+                    }
+                }
+                StripEntry::Loose(_) => {}
+            }
+        }
+    }
+
+    /// Moves the strip's top-level entry `from` (a loose tab, or a whole
+    /// group with its tabs in their order) to entry slot `to`.
+    pub(super) fn reorder_entry(&mut self, from: usize, to: usize, cx: &App) {
+        let mut entries = self.strip_entries(cx);
+        if from >= entries.len() {
+            return;
+        }
+        let moved = entries.remove(from);
+        entries.insert(to.min(entries.len()), moved);
+        let tabs = entries
+            .into_iter()
+            .flat_map(|entry| match entry {
+                StripEntry::Loose(tab) => vec![tab],
+                StripEntry::Group { tabs, .. } => tabs,
+            })
+            .collect();
+        self.write_strip_order(tabs);
+    }
+
+    /// Moves `tab` to slot `to` of the current scope's strip tabs, the
+    /// slots a pane dropped on the strip counts; pinned tabs keep their places.
+    pub(super) fn place_in_strip_slot(&mut self, tab: &TitleTab, to: usize, cx: &App) {
         let mut visible = self.strip_tabs(cx);
         let Some(from) = visible.iter().position(|entry| entry == tab) else {
             return;
         };
         let entry = visible.remove(from);
         visible.insert(to.min(visible.len()), entry);
-        let set: HashSet<_> = visible.iter().cloned().collect();
-        let mut ordered = visible.into_iter();
+        self.write_strip_order(visible);
+    }
+
+    /// Writes `tabs` back over their own places in `title_order`, in the
+    /// given order; every other tab keeps its place. The session list follows.
+    fn write_strip_order(&mut self, tabs: Vec<TitleTab>) {
+        let set: HashSet<_> = tabs.iter().cloned().collect();
+        let mut ordered = tabs.into_iter();
         for entry in &mut self.workspace.title_order {
             if set.contains(entry) {
                 *entry = ordered.next().unwrap();

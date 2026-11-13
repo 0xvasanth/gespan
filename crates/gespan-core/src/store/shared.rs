@@ -13,13 +13,16 @@ mod window;
 pub use window::{HistoryPage, PAGE_TURNS};
 
 use super::db::{args, Sql, SqlRow};
+use super::schema::{
+    InFlightSession, OrchestrationRun, OrchestrationSidebar, OrchestrationWorker, PilotBlock,
+    PilotTranscript, PilotTurn, SessionRecord, SessionReminder, WorkspaceSnapshot,
+};
 use super::{Reminder, Session, Store};
 use crate::{
     agent::Settings,
     context::Usage,
     transcript::{Row, Transcript},
 };
-use rusqlite::{Connection, OpenFlags};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -113,8 +116,51 @@ impl HistoryRevision {
     }
 }
 
-fn sql<T>(result: rusqlite::Result<T>) -> Result<T, String> {
-    result.map_err(|e| e.to_string())
+/// The one row a single-row read found; none is an error, as it was for the
+/// raw read this replaces.
+fn one<T>(rows: Vec<T>) -> Result<T, String> {
+    rows.into_iter()
+        .next()
+        .ok_or_else(|| "Query returned no rows".to_owned())
+}
+/// A session column's value, converted as the raw update converted it:
+/// booleans are flags, numbers integers.
+struct Column<'a> {
+    name: &'a str,
+    value: &'a Value,
+}
+impl Column<'_> {
+    fn text(&self) -> Result<String, String> {
+        match self.value {
+            Value::Null => Err(format!("{} cannot be empty", self.name)),
+            Value::String(text) => Ok(text.clone()),
+            Value::Bool(flag) => Ok(i64::from(*flag).to_string()),
+            Value::Number(number) => Ok(number.as_i64().unwrap_or(i64::MAX).to_string()),
+            other => Ok(other.to_string()),
+        }
+    }
+    fn optional_text(&self) -> Result<Option<String>, String> {
+        match self.value {
+            Value::Null => Ok(None),
+            _ => self.text().map(Some),
+        }
+    }
+    fn integer(&self) -> Result<i64, String> {
+        match self.value {
+            Value::Bool(flag) => Ok(i64::from(*flag)),
+            Value::Number(number) => Ok(number.as_i64().unwrap_or(i64::MAX)),
+            _ => Err(format!("{} must be a number", self.name)),
+        }
+    }
+    fn optional_integer(&self) -> Result<Option<i64>, String> {
+        match self.value {
+            Value::Null => Ok(None),
+            _ => self.integer().map(Some),
+        }
+    }
+    fn flag(&self) -> Result<bool, String> {
+        self.integer().map(|number| number != 0)
+    }
 }
 fn parse<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, String> {
     serde_json::from_str(raw).map_err(|e| e.to_string())
@@ -135,38 +181,10 @@ pub(crate) fn handle(id: &str) -> i64 {
     let bytes = Sha256::digest(id.as_bytes());
     (i64::from_le_bytes(bytes[..8].try_into().unwrap()) & ((1_i64 << 53) - 1)).max(1)
 }
-/// Whether every Gespan migration has been applied to the file `conn` reads.
-/// A file Gespan never opened, or one an older build left, has not.
-fn adopted(conn: &Connection) -> Result<bool, String> {
-    let tracked: bool = sql(conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='__toasty_migrations')",
-        [],
-        |r| r.get(0),
-    ))?;
-    if !tracked {
-        return Ok(false);
-    }
-    let applied = sql(sql(conn.prepare("SELECT id FROM __toasty_migrations"))?
-        .query_map([], |r| r.get::<_, i64>(0)))?
-    .collect::<rusqlite::Result<HashSet<_>>>()
-    .map_err(|e| e.to_string())?;
-    Ok(crate::orm::Kind::Gespan
-        .migrations()
-        .migrations()
-        .iter()
-        .all(|migration| applied.contains(&(migration.id() as i64))))
-}
 /// The columns `shared_session` reads, in its order: twelve of them, so a
 /// query's own extra columns start at index 12.
 const SESSION_COLUMNS: &str = "id,title,harness,cwd,provider_session_id,updated_at,\
     has_user_message,archived,pinned,linked_work_item_json,sidebar_hidden,created_at";
-/// The `sessions` columns a new row names, ending with the ones whose values
-/// [`INSERT_DEFAULTS`] gives: Toasty's DDL has no DEFAULT.
-const INSERT_COLUMNS: &str = "id,cwd,harness,model,model_settings,runtime_mode,title,\
-    blocks_json,created_at,updated_at,archived,has_user_message,pinned,worktree_removed,is_draft,\
-    queued_messages_json,sidebar_hidden";
-/// The values Tauri's schema defaulted, in [`INSERT_COLUMNS`] order.
-const INSERT_DEFAULTS: &str = "0,0,0,0,0,'[]',0";
 /// Clock slack between a prompt's send time and its run's start.
 const START_SLACK_MS: u64 = 1_000;
 /// A prompt's run start. No run starts before its prompt was sent: an earlier
@@ -289,57 +307,36 @@ impl Store {
         preferences: Option<std::sync::Arc<crate::desktop_preferences::DesktopPreferences>>,
     ) -> Result<Self, String> {
         let memory = path == Path::new(":memory:");
-        let (conn, orm_path, database, snapshot) = if read_only {
-            let open = |path: &Path| {
-                let conn = sql(Connection::open_with_flags(
-                    path,
-                    OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-                ))?;
-                sql(conn.busy_timeout(std::time::Duration::from_secs(5)))?;
-                Ok::<_, String>(conn)
-            };
-            let conn = open(path)?;
-            if adopted(&conn)? {
-                (conn, path.to_path_buf(), None, None)
+        let (database, snapshot) = if read_only {
+            let database = crate::orm::open_read_only(crate::orm::Kind::Gespan, path)?;
+            if database.is_current()? {
+                (database, None)
             } else {
                 let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
                 let copy = dir.path().join("gespan.db");
-                sql(conn.execute("VACUUM INTO ?1", [copy.to_string_lossy()]))?;
-                drop(conn);
+                let target = copy.to_string_lossy().into_owned();
+                database.run(|mut db| async move {
+                    toasty::sql::statement("VACUUM INTO ?1")
+                        .bind(target)
+                        .exec(&mut db)
+                        .await
+                })?;
+                drop(database);
                 drop(crate::orm::open(crate::orm::Kind::Gespan, &copy)?);
-                (open(&copy)?, copy, None, Some(dir))
+                (
+                    crate::orm::open_read_only(crate::orm::Kind::Gespan, &copy)?,
+                    Some(dir),
+                )
             }
         } else {
             let fresh = memory || !path.exists();
-            let orm_path = if memory {
-                super::memory_path()
-            } else {
-                path.to_path_buf()
-            };
-            // In memory, this connection keeps the shared database alive.
-            let keeper = if memory {
-                Some(sql(Connection::open(&orm_path))?)
-            } else {
-                None
-            };
-            let database = open_database(&orm_path, fresh)?;
-            let conn = match keeper {
-                Some(conn) => conn,
-                None => sql(Connection::open_with_flags(
-                    path,
-                    OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI,
-                ))?,
-            };
-            sql(conn.busy_timeout(std::time::Duration::from_secs(5)))?;
-            sql(conn.execute_batch("PRAGMA foreign_keys=ON;"))?;
-            (conn, orm_path, Some(database), None)
+            let database = open_database(path, fresh)?;
+            (database, None)
         };
         let (extras, extras_db) = settings::open(path, read_only)?;
         let store = Self {
-            conn,
             path: path.into(),
-            orm_path,
-            shared: Some(Shared {
+            shared: Shared {
                 ids: RefCell::new(HashMap::new()),
                 extras: RefCell::new(extras),
                 extras_db,
@@ -356,57 +353,47 @@ impl Store {
                     )
                 }),
                 read_only,
-            }),
-            orm: database.map(std::cell::OnceCell::from).unwrap_or_default(),
+            },
+            orm: database,
             _snapshot: snapshot,
         };
         // Register only identities here. No blocks_json is read at startup.
-        for row in store.sql()?.query("SELECT id FROM sessions", args![])? {
-            store.shared_register(&row.get::<String>(0)?)?;
+        for id in store.orm.run(|mut db| async move {
+            SessionRecord::all()
+                .select(SessionRecord::fields().id())
+                .exec(&mut db)
+                .await
+        })? {
+            store.shared_register(&id)?;
         }
         Ok(store)
     }
-    pub fn uses_gespan_schema(&self) -> bool {
-        self.shared.is_some()
+    /// Whether the session row `original` exists. Reads only its key.
+    fn shared_exists(&self, original: &str) -> Result<bool, String> {
+        let original = original.to_owned();
+        self.orm()?.run(|mut db| async move {
+            SessionRecord::filter_by_id(original)
+                .select(SessionRecord::fields().id())
+                .exec(&mut db)
+                .await
+                .map(|ids| !ids.is_empty())
+        })
     }
     /// A read-only snapshot of desktop preferences, shared by this store's
     /// consumers. Reopening the store refreshes it without per-message WebKit I/O.
     pub fn desktop_preferences(&self) -> Option<&crate::desktop_preferences::DesktopPreferences> {
-        self.shared
-            .as_ref()
-            .map(|shared| shared.preferences.as_ref())
+        Some(self.shared.preferences.as_ref())
     }
 
     pub(super) fn shared_search_reader(&self) -> Result<Self, String> {
-        Self::open_shared(
-            &self.path,
-            true,
-            self.shared
-                .as_ref()
-                .map(|shared| shared.preferences.clone()),
-        )
+        Self::open_shared(&self.path, true, Some(self.shared.preferences.clone()))
     }
 
     /// Resolve only a persisted identity; unlike CLI handle parsing this never
     /// treats a stale numeric-looking desktop ID as an existing session.
     pub fn resolve_existing_session_id(&self, id: &str) -> Option<i64> {
-        if self.shared.is_some() {
-            let exists = self
-                .sql()
-                .ok()?
-                .value::<bool>(
-                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
-                    args![id],
-                )
-                .ok()?;
-            return exists.then(|| self.shared_register(id).ok()).flatten();
-        }
-        let id = id.parse::<i64>().ok()?;
-        self.sessions()
-            .ok()?
-            .iter()
-            .any(|s| s.id == id)
-            .then_some(id)
+        let exists = self.shared_exists(id).ok()?;
+        exists.then(|| self.shared_register(id).ok()).flatten()
     }
     /// UI handles are stable hashes; the database always retains its original IDs.
     pub fn persisted_session_id(&self, id: i64) -> Result<String, String> {
@@ -419,39 +406,31 @@ impl Store {
                 ));
             }
         }
-        if let Some(shared) = &self.shared {
-            shared
-                .ids
-                .borrow()
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| "Session no longer exists".into())
-        } else {
-            Ok(id.to_string())
-        }
+        self.shared
+            .ids
+            .borrow()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| "Session no longer exists".into())
     }
     pub fn resolve_session_id(&self, id: &str) -> Result<i64, String> {
-        if let Some(shared) = &self.shared {
-            if let Some((key, _)) = shared
-                .ids
-                .borrow()
-                .iter()
-                .find(|(_, value)| value.as_str() == id)
-            {
-                return Ok(*key);
-            }
-            if self.sql()?.value::<bool>(
-                "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
-                args![id],
-            )? {
-                return self.shared_register(id);
-            }
+        if let Some((key, _)) = self
+            .shared
+            .ids
+            .borrow()
+            .iter()
+            .find(|(_, value)| value.as_str() == id)
+        {
+            return Ok(*key);
+        }
+        if self.shared_exists(id)? {
+            return self.shared_register(id);
         }
         id.parse::<i64>().map_err(|_| "Unknown session ID".into())
     }
     pub(super) fn shared_register(&self, id: &str) -> Result<i64, String> {
         let key = handle(id);
-        let mut ids = self.shared.as_ref().unwrap().ids.borrow_mut();
+        let mut ids = self.shared.ids.borrow_mut();
         if ids.get(&key).is_some_and(|existing| existing != id) {
             return Err("Session identity collision; the database has not been modified".into());
         }
@@ -459,7 +438,7 @@ impl Store {
         Ok(key)
     }
     pub(super) fn shared_writable(&self) -> Result<(), String> {
-        if self.shared.as_ref().unwrap().read_only {
+        if self.shared.read_only {
             Err("This Gespan store is read-only".into())
         } else {
             Ok(())
@@ -475,41 +454,61 @@ impl Store {
         id: i64,
     ) -> Result<Option<crate::session_groups::WorkItem>, String> {
         let original = self.persisted_session_id(id)?;
-        let raw: Option<String> = self
-            .db()?
-            .optional(
-                "SELECT linked_work_item_json FROM sessions WHERE id=?1",
-                args![&original],
-            )?
-            .ok_or("Session no longer exists")?
-            .get(0)?;
+        let raw = self
+            .orm()?
+            .run(|mut db| async move {
+                SessionRecord::filter_by_id(original)
+                    .select(SessionRecord::fields().linked_work_item_json())
+                    .exec(&mut db)
+                    .await
+            })?
+            .into_iter()
+            .next()
+            .ok_or("Session no longer exists")?;
         Ok(raw.and_then(|raw| parse(&raw).ok()))
     }
+    /// Sets `fields` of one session row, each named by its column.
     pub(super) fn shared_patch(&self, id: i64, fields: &[(&str, Value)]) -> Result<(), String> {
         self.shared_writable()?;
         let id = self.persisted_session_id(id)?;
         if fields.is_empty() {
             return Ok(());
         }
-        let updates = fields
-            .iter()
-            .enumerate()
-            .map(|(ix, (name, _))| format!("{name}=?{}", ix + 2))
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut values = vec![toasty::stmt::Value::String(id)];
-        values.extend(fields.iter().map(|(_, v)| match v {
-            Value::Null => toasty::stmt::Value::Null,
-            Value::Bool(v) => toasty::stmt::Value::I64(i64::from(*v)),
-            Value::Number(v) => toasty::stmt::Value::I64(v.as_i64().unwrap_or(i64::MAX)),
-            Value::String(v) => toasty::stmt::Value::String(v.clone()),
-            v => toasty::stmt::Value::String(v.to_string()),
-        }));
-        self.db()?.execute(
-            &format!("UPDATE sessions SET {updates} WHERE id=?1"),
-            values,
-        )?;
-        Ok(())
+        let mut update = SessionRecord::filter_by_id(id).update();
+        for (name, value) in fields {
+            let column = Column { name, value };
+            update = match *name {
+                "cwd" => update.cwd(column.text()?),
+                "harness" => update.harness(column.text()?),
+                "model" => update.model(column.text()?),
+                "model_settings" => update.model_settings(column.text()?),
+                "runtime_mode" => update.runtime_mode(column.text()?),
+                "title" => update.title(column.text()?),
+                "blocks_json" => update.blocks_json(column.text()?),
+                "queued_messages_json" => update.queued_messages_json(column.text()?),
+                "provider_session_id" => update.provider_session_id(column.optional_text()?),
+                "branch" => update.branch(column.optional_text()?),
+                "worktree_cwd" => update.worktree_cwd(column.optional_text()?),
+                "linked_work_item_json" => update.linked_work_item_json(column.optional_text()?),
+                "provider_account_id" => update.provider_account_id(column.optional_text()?),
+                "automation_id" => update.automation_id(column.optional_text()?),
+                "queue_status" => update.queue_status(column.optional_text()?),
+                "inbox_ask" => update.inbox_ask(column.optional_text()?),
+                "created_at" => update.created_at(column.integer()?),
+                "updated_at" => update.updated_at(column.integer()?),
+                "context_used" => update.context_used(column.optional_integer()?),
+                "context_window" => update.context_window(column.optional_integer()?),
+                "archived" => update.archived(column.flag()?),
+                "has_user_message" => update.has_user_message(column.flag()?),
+                "pinned" => update.pinned(column.flag()?),
+                "worktree_removed" => update.worktree_removed(column.flag()?),
+                "is_draft" => update.is_draft(column.flag()?),
+                "sidebar_hidden" => update.sidebar_hidden(column.flag()?),
+                other => return Err(format!("Unknown session column {other}")),
+            };
+        }
+        self.orm()?
+            .run(|mut db| async move { update.exec(&mut db).await })
     }
     pub(super) fn shared_setting(&self, key: &str) -> Result<Option<String>, String> {
         if let Some((id, message)) = key
@@ -522,18 +521,11 @@ impl Store {
                 }
             }
         }
-        Ok(self
-            .shared
-            .as_ref()
-            .unwrap()
-            .extras
-            .borrow()
-            .get(key)
-            .cloned())
+        Ok(self.shared.extras.borrow().get(key).cloned())
     }
     pub(super) fn shared_save_setting(&self, key: &str, value: &str) -> Result<(), String> {
         self.shared_writable()?;
-        let shared = self.shared.as_ref().unwrap();
+        let shared = &self.shared;
         if shared
             .extras
             .borrow()
@@ -576,19 +568,60 @@ impl Store {
     }
     /// Ask sessions with their raw context, which `shared_sessions` hides.
     pub(super) fn shared_inbox_asks(&self) -> Result<Vec<(Session, String)>, String> {
-        let rows = self.db()?.query(
-            &format!(
-                "SELECT {SESSION_COLUMNS},inbox_ask FROM sessions WHERE inbox_ask IS NOT NULL ORDER BY updated_at DESC,id"
-            ),
-            args![],
-        )?;
+        let rows = self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter(session.inbox_ask().is_some())
+                .order_by((session.updated_at().desc(), session.id().asc()))
+                .select((
+                    (
+                        session.id(),
+                        session.title(),
+                        session.harness(),
+                        session.cwd(),
+                    ),
+                    (session.provider_session_id(), session.updated_at()),
+                    (
+                        session.has_user_message(),
+                        session.archived(),
+                        session.pinned(),
+                    ),
+                    (session.linked_work_item_json(), session.created_at()),
+                    session.inbox_ask(),
+                ))
+                .exec(&mut db)
+                .await
+        })?;
         let mut result = Vec::new();
-        for row in &rows {
-            result.push((self.shared_session(row)?.0, row.get(12)?));
+        for (
+            (original, title, provider, cwd),
+            (provider_id, updated_at),
+            (has_messages, archived, pinned),
+            (work_item, created_at),
+            ask,
+        ) in rows
+        {
+            let Some(ask) = ask else { continue };
+            let session = Session {
+                id: self.shared_register(&original)?,
+                title,
+                provider,
+                cwd,
+                provider_id,
+                updated_at: updated_at.max(0) as u64,
+                has_messages,
+                archived,
+                pinned,
+                created_at: created_at.max(0) as u64,
+                work_item: work_item.and_then(|raw| parse(&raw).ok()),
+            };
+            result.push((session, ask));
         }
         Ok(result)
     }
     pub(super) fn shared_sessions(&self) -> Result<Vec<Session>, String> {
+        // Raw: the sidebar list must read only the covering index
+        // (`INDEXED BY`), never a row with its blocks_json, and Toasty 0.11
+        // cannot name an index.
         let rows = self.db()?.query(
             &format!(
                 "SELECT {SESSION_COLUMNS} FROM sessions INDEXED BY sessions_cwd_cover_idx
@@ -640,11 +673,7 @@ impl Store {
             .ok_or_else(|| format!("Unknown provider: {provider}"))?
             .label();
         let id = self.shared_register(original)?;
-        let exists: bool = self.db()?.value(
-            "SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1)",
-            args![original],
-        )?;
-        if exists {
+        if self.shared_exists(original)? {
             let existing = self
                 .shared_sessions()?
                 .into_iter()
@@ -659,20 +688,28 @@ impl Store {
         }
         let now = crate::time::now_ms().min(i64::MAX as u64) as i64;
         let title = format!("New {label} session");
-        self.db()?.execute(
-            &format!(
-                "INSERT INTO sessions({INSERT_COLUMNS})
-            VALUES(?1,?2,?3,?4,'{{}}','supervised',?5,'[]',?6,?6,{INSERT_DEFAULTS})"
-            ),
-            args![
-                original,
-                cwd,
-                provider,
-                format!("{provider}:default"),
-                &title,
-                now
-            ],
-        )?;
+        // Toasty's DDL has no DEFAULT: every column Tauri's schema defaulted
+        // gets that value here.
+        let create = SessionRecord::create()
+            .id(original)
+            .cwd(cwd)
+            .harness(provider)
+            .model(format!("{provider}:default"))
+            .model_settings("{}")
+            .runtime_mode("supervised")
+            .title(&title)
+            .blocks_json("[]")
+            .created_at(now)
+            .updated_at(now)
+            .archived(false)
+            .has_user_message(false)
+            .pinned(false)
+            .worktree_removed(false)
+            .is_draft(false)
+            .queued_messages_json("[]")
+            .sidebar_hidden(false);
+        self.orm()?
+            .run(|mut db| async move { create.exec(&mut db).await.map(drop) })?;
         Ok((
             Session {
                 id,
@@ -691,38 +728,29 @@ impl Store {
         ))
     }
     pub(super) fn shared_agent(&self, id: i64) -> Result<Option<Settings>, String> {
+        let original = self.persisted_session_id(id)?;
         let raw = self
-            .db()?
-            .optional(
-                "SELECT harness,model,model_settings,runtime_mode,worktree_cwd,worktree_removed,
-                 provider_account_id,cwd,provider_session_id,has_user_message FROM sessions WHERE id=?1",
-                args![self.persisted_session_id(id)?],
-            )?
-            .map(|r| {
-                Ok::<_, String>((
-                    r.get::<String>(0)?,
-                    r.get::<String>(1)?,
-                    r.get::<String>(2)?,
-                    r.get::<String>(3)?,
-                    r.get::<Option<String>>(4)?,
-                    r.get::<Option<bool>>(5)?,
-                    r.get::<Option<String>>(6)?,
-                    r.get::<String>(7)?,
-                    r.get::<Option<String>>(8)?,
-                    r.get::<bool>(9)?,
-                ))
-            })
-            .transpose()?;
+            .orm()?
+            .run(|mut db| async move {
+                let session = SessionRecord::fields();
+                SessionRecord::filter_by_id(original)
+                    .select((
+                        (session.harness(), session.model(), session.model_settings()),
+                        (session.runtime_mode(), session.worktree_cwd()),
+                        (session.worktree_removed(), session.provider_account_id()),
+                        (session.cwd(), session.provider_session_id()),
+                        session.has_user_message(),
+                    ))
+                    .exec(&mut db)
+                    .await
+            })?
+            .into_iter()
+            .next();
         let Some((
-            provider,
-            model,
-            controls,
-            access,
-            cwd,
-            removed,
-            account,
-            project,
-            provider_id,
+            (provider, model, controls),
+            (access, cwd),
+            (removed, account),
+            (project, provider_id),
             has_messages,
         )) = raw
         else {
@@ -769,7 +797,7 @@ impl Store {
         settings.thinking = controls.get("thinking").and_then(|s| s.parse().ok());
         settings.model_settings = controls;
         settings.worktree_cwd = cwd;
-        settings.worktree_removed = removed.unwrap_or(false);
+        settings.worktree_removed = removed;
         settings.account.id = account.unwrap_or_else(|| crate::accounts::DEFAULT.into());
         // Desktop blocks are authoritative. Native-only legacy metadata remains
         // available, but cannot override a saved desktop turn's identity/time.
@@ -858,11 +886,15 @@ impl Store {
             ("worktree_removed", json!(settings.worktree_removed)),
             ("provider_account_id", json!(settings.account.id)),
         ];
-        let row = self.db()?.row(
-            "SELECT harness,model FROM sessions WHERE id=?1",
-            args![self.persisted_session_id(id)?],
-        )?;
-        let (provider, saved_model): (String, String) = (row.get(0)?, row.get(1)?);
+        let original = self.persisted_session_id(id)?;
+        let row = one(self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter_by_id(original)
+                .select((session.harness(), session.model()))
+                .exec(&mut db)
+                .await
+        })?)?;
+        let (provider, saved_model) = row;
         if settings.model != super::gespan_import::native_model(&saved_model, &provider) {
             let model = settings.model.as_deref().unwrap_or("default");
             let model = if provider == "claude" {
@@ -890,8 +922,6 @@ impl Store {
         let mut blocks = self.shared_blocks(id)?;
         if self
             .shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow()
             .get(&id)
@@ -899,11 +929,15 @@ impl Store {
         {
             return Err("This conversation changed in another window. Reopen it before saving; its data was preserved.".into());
         }
-        let row = self.db()?.row(
-            "SELECT harness,model FROM sessions WHERE id=?1",
-            args![self.persisted_session_id(id)?],
-        )?;
-        let (session_provider, session_model): (String, String) = (row.get(0)?, row.get(1)?);
+        let original = self.persisted_session_id(id)?;
+        let row = one(self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter_by_id(original)
+                .select((session.harness(), session.model()))
+                .exec(&mut db)
+                .await
+        })?)?;
+        let (session_provider, session_model) = row;
         let mut offset = 0;
         let mut changed = false;
         for block in &mut blocks {
@@ -997,8 +1031,6 @@ impl Store {
         tx.commit()?;
         if changed {
             self.shared
-                .as_ref()
-                .unwrap()
                 .snapshots
                 .borrow_mut()
                 .insert(id, HistoryRevision::of(&blocks));
@@ -1006,11 +1038,14 @@ impl Store {
         Ok(())
     }
     pub(super) fn shared_context(&self, id: i64) -> Result<Option<Usage>, String> {
-        let row = self.db()?.row(
-            "SELECT context_used,context_window FROM sessions WHERE id=?1",
-            args![self.persisted_session_id(id)?],
-        )?;
-        let (used, window) = (row.get::<Option<i64>>(0)?, row.get::<Option<i64>>(1)?);
+        let original = self.persisted_session_id(id)?;
+        let (used, window) = one(self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter_by_id(original)
+                .select((session.context_used(), session.context_window()))
+                .exec(&mut db)
+                .await
+        })?)?;
         Ok(used.filter(|u| *u >= 0).map(|used| Usage {
             used: used as u64,
             window: window.filter(|w| *w > 0).map(|w| w as u64),
@@ -1024,10 +1059,12 @@ impl Store {
         if let Some(from) = self.shared_window(id, &original)? {
             self.shared_indexed_blocks(&original, from, i64::MAX)
         } else {
-            let raw: String = self.db()?.value(
-                "SELECT blocks_json FROM sessions WHERE id=?1",
-                args![original],
-            )?;
+            let raw = one(self.orm()?.run(|mut db| async move {
+                SessionRecord::filter_by_id(original)
+                    .select(SessionRecord::fields().blocks_json())
+                    .exec(&mut db)
+                    .await
+            })?)?;
             parse(&raw)
         }
     }
@@ -1036,7 +1073,8 @@ impl Store {
         if let Some(from) = self.shared_window(id, &original)? {
             // Project one source block at a time. A long Pilot must not retain
             // a second complete JSON history alongside its display rows.
-            // The scalar count and the rows share one SQLite read snapshot.
+            // The scalar count and the rows share one SQLite read snapshot:
+            // one raw statement, as Toasty 0.11 cannot project a subquery.
             let records = self.db()?.query(
                 "SELECT block_json,(SELECT count(*) FROM pilot_blocks WHERE session_id=?1 AND seq>=?2)
                  FROM pilot_blocks WHERE session_id=?1 AND seq>=?2 ORDER BY seq",
@@ -1056,8 +1094,6 @@ impl Store {
                 rows.extend(blocks::project(std::slice::from_ref(&block))?);
             }
             self.shared
-                .as_ref()
-                .unwrap()
                 .snapshots
                 .borrow_mut()
                 .insert(id, HistoryRevision(digest.finalize().into()));
@@ -1068,8 +1104,6 @@ impl Store {
         let mut rows = blocks::project(&blocks)?;
         self.restore_claude_shell(id, &mut rows);
         self.shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow_mut()
             .insert(id, HistoryRevision::of(&blocks));
@@ -1082,12 +1116,21 @@ impl Store {
         let Ok(original) = self.persisted_session_id(id) else {
             return;
         };
-        let session = self.db().and_then(|db| {
-            db.value::<Option<String>>(
-                "SELECT provider_session_id FROM sessions WHERE id=?1 AND harness='claude'",
-                args![original],
-            )
+        let session = self.orm().and_then(|database| {
+            database.run(|mut db| async move {
+                let session = SessionRecord::fields();
+                SessionRecord::filter(
+                    session
+                        .id()
+                        .eq(original)
+                        .and(session.harness().eq("claude")),
+                )
+                .select(session.provider_session_id())
+                .exec(&mut db)
+                .await
+            })
         });
+        let session = session.and_then(one);
         let (Ok(Some(session)), Ok(Some(settings))) = (session, self.shared_agent(id)) else {
             return;
         };
@@ -1105,12 +1148,24 @@ impl Store {
         let (has_user, draft) = if let Some(from) = self.shared_window(id, &original)? {
             self.shared_store_indexed_blocks(&original, from, blocks)?;
             // Blocks before the window count too, and were never read.
-            let row = self.db()?.row(
-                "SELECT EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND is_user=1),
-                 EXISTS(SELECT 1 FROM pilot_blocks WHERE session_id=?1 AND is_user=1 AND is_draft=1)",
-                args![&original],
-            )?;
-            (row.get::<bool>(0)?, row.get::<bool>(1)?)
+            let session = original.clone();
+            self.orm()?.run(|mut db| async move {
+                let block = PilotBlock::fields();
+                let user = block.session_id().eq(session).and(block.is_user().eq(true));
+                let has_user = !PilotBlock::filter(user.clone())
+                    .limit(1)
+                    .select(block.seq())
+                    .exec(&mut db)
+                    .await?
+                    .is_empty();
+                let draft = !PilotBlock::filter(user.and(block.is_draft().eq(true)))
+                    .limit(1)
+                    .select(block.seq())
+                    .exec(&mut db)
+                    .await?
+                    .is_empty();
+                Ok((has_user, draft))
+            })?
         } else {
             self.shared_patch(id, &[("blocks_json", json!(encode(&blocks)?))])?;
             (
@@ -1136,25 +1191,29 @@ impl Store {
         from: i64,
         blocks: &[Value],
     ) -> Result<(), String> {
-        let db = self.db()?;
+        let database = self.orm()?;
         let mut old = HashMap::new();
         // New blocks always land inside the window, after everything stored.
         let first = from.max(1);
-        let mut max_seq = db
-            .value::<i64>(
-                "SELECT coalesce(max(seq),0) FROM pilot_blocks WHERE session_id=?1",
-                args![original],
-            )?
-            .max(first - 1);
-        for row in db.query(
-            "SELECT seq,block_id,block_json FROM pilot_blocks WHERE session_id=?1 AND seq>=?2 ORDER BY seq",
-            args![original, from],
-        )? {
-            let (seq, id, raw) = (
-                row.get::<i64>(0)?,
-                row.get::<String>(1)?,
-                row.get::<String>(2)?,
-            );
+        let session = original.to_owned();
+        let (last, window) = database.run(|mut db| async move {
+            let block = PilotBlock::fields();
+            let last = PilotBlock::filter(block.session_id().eq(&session))
+                .order_by(block.seq().desc())
+                .limit(1)
+                .select(block.seq())
+                .exec(&mut db)
+                .await?;
+            let window =
+                PilotBlock::filter(block.session_id().eq(&session).and(block.seq().ge(from)))
+                    .order_by(block.seq().asc())
+                    .select((block.seq(), block.block_id(), block.block_json()))
+                    .exec(&mut db)
+                    .await?;
+            Ok((last, window))
+        })?;
+        let mut max_seq = last.into_iter().next().unwrap_or(0).max(first - 1);
+        for (seq, id, raw) in window {
             old.insert(id, (seq, parse::<Value>(&raw)?));
         }
         let retained: HashSet<_> = blocks.iter().filter_map(|b| b["id"].as_str()).collect();
@@ -1177,27 +1236,39 @@ impl Store {
         if resequence {
             // An explicit insertion/reorder changes turn positions. Payloads
             // and block identities survive, in one enclosing transaction.
-            db.execute(
-                "DELETE FROM pilot_turns WHERE session_id=?1 AND seq>=?2",
-                args![original, from],
-            )?;
-            db.execute(
-                "DELETE FROM pilot_blocks WHERE session_id=?1 AND seq>=?2",
-                args![original, from],
-            )?;
+            let session = original.to_owned();
+            database.run(|mut db| async move {
+                let turn = PilotTurn::fields();
+                PilotTurn::filter(turn.session_id().eq(&session).and(turn.seq().ge(from)))
+                    .delete()
+                    .exec(&mut db)
+                    .await?;
+                let block = PilotBlock::fields();
+                PilotBlock::filter(block.session_id().eq(&session).and(block.seq().ge(from)))
+                    .delete()
+                    .exec(&mut db)
+                    .await
+            })?;
             old.clear();
             max_seq = first - 1;
         } else {
             for (id, (seq, _)) in &old {
                 if !retained.contains(id.as_str()) {
-                    db.execute(
-                        "DELETE FROM pilot_turns WHERE session_id=?1 AND seq=?2",
-                        args![original, seq],
-                    )?;
-                    db.execute(
-                        "DELETE FROM pilot_blocks WHERE session_id=?1 AND block_id=?2",
-                        args![original, id],
-                    )?;
+                    let (session, id, seq) = (original.to_owned(), id.clone(), *seq);
+                    database.run(|mut db| async move {
+                        let turn = PilotTurn::fields();
+                        PilotTurn::filter(turn.session_id().eq(&session).and(turn.seq().eq(seq)))
+                            .delete()
+                            .exec(&mut db)
+                            .await?;
+                        let block = PilotBlock::fields();
+                        PilotBlock::filter(
+                            block.session_id().eq(&session).and(block.block_id().eq(id)),
+                        )
+                        .delete()
+                        .exec(&mut db)
+                        .await
+                    })?;
                 }
             }
         }
@@ -1227,20 +1298,22 @@ impl Store {
                 .collect::<Vec<_>>()
                 .join("\n")
                 .to_lowercase();
-                db.execute("INSERT INTO pilot_blocks(session_id,seq,block_id,block_json,search_text,is_user,is_draft)
-                    VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(session_id,seq) DO UPDATE SET block_json=excluded.block_json,
-                    search_text=excluded.search_text,is_user=excluded.is_user,is_draft=excluded.is_draft",
-                    args![original,seq,id,encode(block)?,search,block["role"]=="user",block["draft"]==true])?;
+                // A block keeps its id at its sequence: only its content changes.
+                let upsert = PilotBlock::upsert_by_session_id_and_seq(original, seq)
+                    .on_create(|created| created.block_id(id))
+                    .block_json(encode(block)?)
+                    .search_text(search)
+                    .is_user(block["role"] == "user")
+                    .is_draft(block["draft"] == true);
+                database.run(|mut db| async move { upsert.exec(&mut db).await.map(drop) })?;
             }
             if ix == 0
                 || after_handoff
                 || (block["role"] == "user" && block["internal"] != true)
                 || block.get("pilotHabit").is_some()
             {
-                db.execute(
-                    "INSERT OR IGNORE INTO pilot_turns(session_id,seq) VALUES(?1,?2)",
-                    args![original, seq],
-                )?;
+                let turn = PilotTurn::upsert_by_session_id_and_seq(original, seq).or_ignore();
+                database.run(|mut db| async move { turn.exec(&mut db).await.map(drop) })?;
             }
             after_handoff = block["role"] == "handoff";
         }
@@ -1258,8 +1331,6 @@ impl Store {
         let current = self.shared_blocks(id)?;
         if self
             .shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow()
             .get(&id)
@@ -1281,10 +1352,7 @@ impl Store {
         self.shared_store_blocks(id, &next)?;
         let mut next_queue = None;
         if let Some(message) = message_id {
-            let raw: String = self.db()?.value(
-                "SELECT queued_messages_json FROM sessions WHERE id=?1",
-                args![self.persisted_session_id(id)?],
-            )?;
+            let raw = self.shared_queue(id)?;
             let mut queued: Vec<Value> = parse(&raw)?;
             queued.retain(|m| m["id"].as_str() != Some(message));
             let encoded = encode(&queued)?;
@@ -1297,16 +1365,9 @@ impl Store {
         }
         tx.commit()?;
         if let Some(queue) = next_queue {
-            self.shared
-                .as_ref()
-                .unwrap()
-                .queues
-                .borrow_mut()
-                .insert(id, queue);
+            self.shared.queues.borrow_mut().insert(id, queue);
         }
         self.shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow_mut()
             .insert(id, HistoryRevision::of(&next));
@@ -1320,8 +1381,6 @@ impl Store {
         self.shared_store_blocks(id, &next)?;
         tx.commit()?;
         self.shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow_mut()
             .insert(id, HistoryRevision::of(&next));
@@ -1333,17 +1392,39 @@ impl Store {
         expected: Option<&str>,
     ) -> Result<(), String> {
         self.shared_writable()?;
-        self.db()?.execute("UPDATE sessions SET provider_session_id=NULL WHERE id=?1 AND provider_session_id IS ?2",
-            args![self.persisted_session_id(id)?,expected])?;
-        Ok(())
+        let original = self.persisted_session_id(id)?;
+        let expected = expected.map(str::to_owned);
+        self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            let current = match expected {
+                Some(expected) => session.provider_session_id().eq(Some(expected)),
+                None => session.provider_session_id().is_none(),
+            };
+            SessionRecord::filter(session.id().eq(original).and(current))
+                .update()
+                .provider_session_id(None::<String>)
+                .exec(&mut db)
+                .await
+        })
     }
     pub(super) fn shared_change_provider(&self, id: i64, provider: &str) -> Result<(), String> {
         self.shared_writable()?;
-        self.db()?.execute(
-            "UPDATE sessions SET harness=?2,provider_session_id=NULL WHERE id=?1 AND harness<>?2",
-            args![self.persisted_session_id(id)?, provider],
-        )?;
-        Ok(())
+        let original = self.persisted_session_id(id)?;
+        let provider = provider.to_owned();
+        self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter(
+                session
+                    .id()
+                    .eq(original)
+                    .and(session.harness().ne(&provider)),
+            )
+            .update()
+            .harness(provider)
+            .provider_session_id(None::<String>)
+            .exec(&mut db)
+            .await
+        })
     }
     pub(super) fn shared_replace_title(
         &self,
@@ -1352,6 +1433,8 @@ impl Store {
         title: &str,
     ) -> Result<bool, String> {
         self.shared_writable()?;
+        // Raw: a compare-and-swap that must report whether it changed the
+        // row, and Toasty 0.11's typed update returns no count.
         self.db()?
             .execute(
                 "UPDATE sessions SET title=?3 WHERE id=?1 AND title=?2",
@@ -1359,34 +1442,50 @@ impl Store {
             )
             .map(|n| n == 1)
     }
+    /// Moves every session saved in `from` to `to`; only the folder changes.
+    pub(super) fn shared_rebase_project(&self, from: &str, to: &str) -> Result<(), String> {
+        self.shared_writable()?;
+        let (from, to) = (from.to_owned(), to.to_owned());
+        self.orm()?.run(|mut db| async move {
+            SessionRecord::filter(SessionRecord::fields().cwd().eq(from))
+                .update()
+                .cwd(to)
+                .exec(&mut db)
+                .await
+        })
+    }
     pub(super) fn shared_worktrees(&self) -> Result<HashMap<i64, Option<String>>, String> {
+        let rows = self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::all()
+                .select((session.id(), session.worktree_cwd()))
+                .exec(&mut db)
+                .await
+        })?;
         let mut out = HashMap::new();
-        for row in self
-            .db()?
-            .query("SELECT id,worktree_cwd FROM sessions", args![])?
-        {
-            let (id, path) = (row.get::<String>(0)?, row.get::<Option<String>>(1)?);
+        for (id, path) in rows {
             out.insert(self.shared_register(&id)?, path);
         }
         Ok(out)
     }
     pub(super) fn shared_sidebar_hidden(&self) -> Result<HashSet<i64>, String> {
-        let mut out = HashSet::new();
-        for row in self
-            .db()?
-            .query("SELECT id FROM sessions WHERE sidebar_hidden!=0", args![])?
-        {
-            out.insert(self.shared_register(&row.get::<String>(0)?)?);
-        }
-        Ok(out)
+        let ids = self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter(session.sidebar_hidden().eq(true))
+                .select(session.id())
+                .exec(&mut db)
+                .await
+        })?;
+        ids.iter().map(|id| self.shared_register(id)).collect()
     }
     pub(super) fn shared_started_links(&self) -> Result<HashMap<i64, i64>, String> {
-        let rows: Vec<(String, bool)> = self
-            .db()?
-            .query("SELECT id,sidebar_hidden FROM sessions", args![])?
-            .iter()
-            .map(|r| Ok((r.get(0)?, r.get(1)?)))
-            .collect::<Result<_, String>>()?;
+        let rows: Vec<(String, bool)> = self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::all()
+                .select((session.id(), session.sidebar_hidden()))
+                .exec(&mut db)
+                .await
+        })?;
         let ids = rows.iter().map(|(id, _)| id.clone()).collect();
         let shown = rows
             .iter()
@@ -1413,8 +1512,6 @@ impl Store {
     ) -> Result<Vec<(i64, String)>, String> {
         Ok(self
             .shared
-            .as_ref()
-            .unwrap()
             .extras
             .borrow()
             .iter()
@@ -1424,14 +1521,14 @@ impl Store {
             .collect())
     }
     pub(super) fn shared_drafts(&self) -> Result<HashSet<i64>, String> {
-        let mut out = HashSet::new();
-        for row in self
-            .db()?
-            .query("SELECT id FROM sessions WHERE is_draft!=0", args![])?
-        {
-            out.insert(self.shared_register(&row.get::<String>(0)?)?);
-        }
-        Ok(out)
+        let ids = self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter(session.is_draft().eq(true))
+                .select(session.id())
+                .exec(&mut db)
+                .await
+        })?;
+        ids.iter().map(|id| self.shared_register(id)).collect()
     }
     pub(super) fn shared_groups(&self, cwd: &str) -> Result<crate::session_groups::Groups, String> {
         if let Some(raw) = self.shared_setting(&format!("groups:{cwd}"))? {
@@ -1448,14 +1545,16 @@ impl Store {
         let saved = self.shared_setting("workspace")?;
         let mut workspace = saved.as_deref().map(parse::<Value>).transpose()?;
         {
-            let raw: Option<String> = self
-                .db()?
-                .optional(
-                    "SELECT snapshot_json FROM workspace_snapshot WHERE id=1",
-                    args![],
-                )?
-                .map(|row| row.get(0))
-                .transpose()?;
+            let raw = self
+                .orm()?
+                .run(|mut db| async move {
+                    WorkspaceSnapshot::filter_by_id(1)
+                        .select(WorkspaceSnapshot::fields().snapshot_json())
+                        .exec(&mut db)
+                        .await
+                })?
+                .into_iter()
+                .next();
             if let Some(raw) = raw {
                 let snapshot: Value = parse(&raw)?;
                 if workspace.is_none() {
@@ -1485,16 +1584,20 @@ impl Store {
         }
     }
     pub(super) fn shared_reminders(&self) -> Result<Vec<Reminder>, String> {
+        let rows = self.orm()?.run(|mut db| async move {
+            let reminder = SessionReminder::fields();
+            SessionReminder::all()
+                .order_by((reminder.due_at().asc(), reminder.session_id().asc()))
+                .select((
+                    reminder.session_id(),
+                    reminder.due_at(),
+                    reminder.fired_at(),
+                ))
+                .exec(&mut db)
+                .await
+        })?;
         let mut out = Vec::new();
-        for row in self.db()?.query(
-            "SELECT session_id,due_at,fired_at FROM session_reminders ORDER BY due_at,session_id",
-            args![],
-        )? {
-            let (id, due, fired) = (
-                row.get::<String>(0)?,
-                row.get::<i64>(1)?,
-                row.get::<Option<i64>>(2)?,
-            );
+        for (id, due, fired) in rows {
             out.push(Reminder {
                 session_id: self.shared_register(&id)?,
                 due_at: due.max(0) as u64,
@@ -1507,14 +1610,11 @@ impl Store {
         self.shared_writable()?;
         let tx = self.db()?.begin()?;
         for id in ids {
-            self.db()?.execute(
-                "INSERT INTO session_reminders(session_id,due_at,fired_at) VALUES(?1,?2,NULL)
-                ON CONFLICT(session_id) DO UPDATE SET due_at=excluded.due_at,fired_at=NULL",
-                args![
-                    self.persisted_session_id(*id)?,
-                    due.min(i64::MAX as u64) as i64
-                ],
-            )?;
+            let upsert = SessionReminder::upsert_by_session_id(self.persisted_session_id(*id)?)
+                .due_at(due.min(i64::MAX as u64) as i64)
+                .fired_at(None::<i64>);
+            self.orm()?
+                .run(|mut db| async move { upsert.exec(&mut db).await.map(drop) })?;
         }
         tx.commit()
     }
@@ -1525,6 +1625,8 @@ impl Store {
         new_due: u64,
     ) -> Result<bool, String> {
         self.shared_writable()?;
+        // Raw: a conditional update that must report whether it matched, and
+        // Toasty 0.11's typed update returns no count.
         self.db()?.execute("UPDATE session_reminders SET due_at=?3,fired_at=NULL WHERE session_id=?1 AND due_at=?2",
             args![self.persisted_session_id(id)?, expected_due.min(i64::MAX as u64) as i64, new_due.min(i64::MAX as u64) as i64]).map(|changed|changed==1)
     }
@@ -1535,13 +1637,16 @@ impl Store {
     ) -> Result<(), String> {
         self.shared_writable()?;
         for id in ids {
-            self.db()?.execute(
-                "DELETE FROM session_reminders WHERE session_id=?1 AND (?2 IS NULL OR due_at=?2)",
-                args![
-                    self.persisted_session_id(*id)?,
-                    expected.map(|at| at.min(i64::MAX as u64) as i64)
-                ],
-            )?;
+            let original = self.persisted_session_id(*id)?;
+            let expected = expected.map(|at| at.min(i64::MAX as u64) as i64);
+            self.orm()?.run(|mut db| async move {
+                let reminder = SessionReminder::fields();
+                let mut which = reminder.session_id().eq(original);
+                if let Some(due) = expected {
+                    which = which.and(reminder.due_at().eq(due));
+                }
+                SessionReminder::filter(which).delete().exec(&mut db).await
+            })?;
         }
         Ok(())
     }
@@ -1554,6 +1659,8 @@ impl Store {
         let tx = self.db()?.begin()?;
         let mut fired = Vec::new();
         for reminder in due {
+            // Raw: each reminder fires once, so the update must report
+            // whether it matched; Toasty 0.11's typed update returns no count.
             let changed=self.db()?.execute("UPDATE session_reminders SET fired_at=?2 WHERE session_id=?1 AND fired_at IS NULL AND due_at=?3",
                 args![self.persisted_session_id(reminder.session_id)?, now.min(i64::MAX as u64) as i64, reminder.due_at.min(i64::MAX as u64) as i64])?;
             if changed == 1 {
@@ -1563,38 +1670,90 @@ impl Store {
         tx.commit()?;
         Ok(fired)
     }
+    /// Removes the settings saved for session `id`: its agent, context,
+    /// queue, delivery receipts, links and runs.
+    fn shared_forget_settings(&self, id: i64) -> Result<(), String> {
+        let exact = [
+            "agent",
+            "context",
+            "follow-up",
+            "started-by",
+            "orchestration",
+            "orchestration-run",
+            "inbox-ask",
+            "automation",
+        ]
+        .map(|prefix| format!("{prefix}:{id}"));
+        let delivered = format!("pilot-delivered:{id}:");
+        let keys: Vec<String> = self
+            .shared
+            .extras
+            .borrow()
+            .keys()
+            .filter(|key| exact.contains(key) || key.starts_with(&delivered))
+            .cloned()
+            .collect();
+        if keys.is_empty() {
+            return Ok(());
+        }
+        if let Some(database) = &self.shared.extras_db {
+            settings::remove(database, keys.clone())?;
+        }
+        let mut extras = self.shared.extras.borrow_mut();
+        for key in keys {
+            extras.remove(&key);
+        }
+        Ok(())
+    }
     pub(super) fn shared_delete(&self, id: i64) -> Result<(), String> {
         self.shared_writable()?;
         let original = self.persisted_session_id(id)?;
-        let db = self.db()?;
-        let tx = db.begin()?;
+        let tx = self.begin()?;
         // The cascade triggers (`store::schema::CONSTRAINTS`) would remove
         // most of these; deleting each explicitly keeps tables with no
         // foreign key (in-flight, orchestration) clean too.
-        for (table, column) in [
-            ("session_reminders", "session_id"),
-            ("pilot_blocks", "session_id"),
-            ("pilot_turns", "session_id"),
-            ("pilot_transcripts", "session_id"),
-            ("in_flight_sessions", "session_id"),
-            ("orchestration_workers", "session_id"),
-            ("orchestration_sidebar", "lead_id"),
-            ("orchestration_runs", "lead_id"),
-        ] {
-            db.execute(
-                &format!("DELETE FROM {table} WHERE {column}=?1"),
-                args![&original],
-            )?;
-        }
-        db.execute("DELETE FROM sessions WHERE id=?1", args![original])?;
+        self.orm()?.run(|mut db| async move {
+            let id = &original;
+            SessionReminder::filter(SessionReminder::fields().session_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            PilotBlock::filter(PilotBlock::fields().session_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            PilotTurn::filter(PilotTurn::fields().session_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            PilotTranscript::filter(PilotTranscript::fields().session_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            InFlightSession::filter(InFlightSession::fields().session_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            OrchestrationWorker::filter(OrchestrationWorker::fields().session_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            OrchestrationSidebar::filter(OrchestrationSidebar::fields().lead_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            OrchestrationRun::filter(OrchestrationRun::fields().lead_id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await?;
+            SessionRecord::filter(SessionRecord::fields().id().eq(id))
+                .delete()
+                .exec(&mut db)
+                .await
+        })?;
         tx.commit()?;
-        self.shared
-            .as_ref()
-            .unwrap()
-            .snapshots
-            .borrow_mut()
-            .remove(&id);
-        Ok(())
+        self.shared.snapshots.borrow_mut().remove(&id);
+        self.shared_forget_settings(id)
     }
     pub(super) fn shared_detach_worktree(
         &self,
@@ -1640,15 +1799,7 @@ impl Store {
         if query.trim().is_empty() || cancel.load(Ordering::Acquire) {
             return Ok((Vec::new(), false));
         }
-        // A read-only search reader can interrupt a long statement; the
-        // Toasty database is checked between sessions and rows.
-        let reader = self.shared.as_ref().unwrap().read_only;
-        let flag = cancel.clone();
-        if reader {
-            sql(self
-                .conn
-                .progress_handler(2000, Some(move || flag.load(Ordering::Acquire))))?;
-        }
+        // Cancellation is checked between sessions and rows.
         let result = (|| {
             let summaries = self.shared_sessions()?;
             let mut hits = Vec::new();
@@ -1702,32 +1853,37 @@ impl Store {
             hits.extend(crate::search::titles(&summaries, query));
             Ok((hits, truncated))
         })();
-        if reader {
-            sql(self.conn.progress_handler(0, None::<fn() -> bool>))?;
-        }
         if cancel.load(Ordering::Acquire) {
             Ok((Vec::new(), false))
         } else {
             result
         }
     }
+    /// The session's queued messages, as stored.
+    pub(super) fn shared_queue(&self, id: i64) -> Result<String, String> {
+        let original = self.persisted_session_id(id)?;
+        one(self.orm()?.run(|mut db| async move {
+            SessionRecord::filter_by_id(original)
+                .select(SessionRecord::fields().queued_messages_json())
+                .exec(&mut db)
+                .await
+        })?)
+    }
     pub(crate) fn shared_follow_ups(&self, id: i64) -> Result<crate::follow_up::State, String> {
-        let row = self.db()?.row(
-            "SELECT queued_messages_json,queue_status FROM sessions WHERE id=?1",
-            args![self.persisted_session_id(id)?],
-        )?;
-        let (raw, status) = (row.get::<String>(0)?, row.get::<Option<String>>(1)?);
+        let original = self.persisted_session_id(id)?;
+        let (raw, status) = one(self.orm()?.run(|mut db| async move {
+            let session = SessionRecord::fields();
+            SessionRecord::filter_by_id(original)
+                .select((session.queued_messages_json(), session.queue_status()))
+                .exec(&mut db)
+                .await
+        })?)?;
         let mut state: crate::follow_up::State = self
             .shared_setting(&format!("follow-up:{id}"))?
             .map(|raw| parse(&raw))
             .transpose()?
             .unwrap_or_default();
-        self.shared
-            .as_ref()
-            .unwrap()
-            .queues
-            .borrow_mut()
-            .insert(id, raw.clone());
+        self.shared.queues.borrow_mut().insert(id, raw.clone());
         state.messages = parse::<Vec<Value>>(&raw)?.iter().map(follow_up).collect();
         let blocks = self.shared_blocks(id)?;
         state.draft = None;
@@ -1754,14 +1910,9 @@ impl Store {
             return Ok(());
         }
         let tx = self.db()?.begin()?;
-        let raw: String = self.db()?.value(
-            "SELECT queued_messages_json FROM sessions WHERE id=?1",
-            args![self.persisted_session_id(id)?],
-        )?;
+        let raw = self.shared_queue(id)?;
         if self
             .shared
-            .as_ref()
-            .unwrap()
             .queues
             .borrow()
             .get(&id)
@@ -1796,8 +1947,6 @@ impl Store {
         let mut blocks = self.shared_blocks(id)?;
         if self
             .shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow()
             .get(&id)
@@ -1827,14 +1976,10 @@ impl Store {
         self.shared_store_blocks(id, &blocks)?;
         tx.commit()?;
         self.shared
-            .as_ref()
-            .unwrap()
             .snapshots
             .borrow_mut()
             .insert(id, HistoryRevision::of(&blocks));
         self.shared
-            .as_ref()
-            .unwrap()
             .queues
             .borrow_mut()
             .insert(id, encode(&messages)?);

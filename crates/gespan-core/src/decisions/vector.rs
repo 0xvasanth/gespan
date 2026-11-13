@@ -113,7 +113,7 @@ pub(crate) fn blob(v: &[f32]) -> Vec<u8> {
 /// Every stored vector's entry id, with its scope and fingerprint.
 pub(crate) fn stored(db: &crate::orm::Database) -> Result<HashMap<i64, (String, String)>, String> {
     // A vec0 virtual table, which Toasty cannot model: raw SQL.
-    Sql::Orm(db)
+    Sql(db)
         .query(
             "SELECT rowid, scope, fingerprint FROM task_decisions_vec",
             args![],
@@ -126,7 +126,7 @@ pub(crate) fn stored(db: &crate::orm::Database) -> Result<HashMap<i64, (String, 
 /// How many vectors partition `scope` holds.
 pub(crate) fn partition_size(db: &crate::orm::Database, scope: &str) -> Result<i64, String> {
     // A vec0 virtual table, which Toasty cannot model: raw SQL.
-    Sql::Orm(db).value(
+    Sql(db).value(
         "SELECT COUNT(*) FROM task_decisions_vec WHERE scope = ?1",
         args![scope],
     )
@@ -142,7 +142,7 @@ pub(crate) fn knn(
 ) -> Result<Vec<(i64, f64)>, String> {
     // sqlite-vec's nearest-neighbour MATCH on a vec0 virtual table, which
     // Toasty cannot model: raw SQL.
-    Sql::Orm(db)
+    Sql(db)
         .query(
             "SELECT rowid, distance FROM task_decisions_vec \
              WHERE embedding MATCH ?1 AND k = ?2 AND scope = ?3 ORDER BY distance",

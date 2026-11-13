@@ -313,9 +313,10 @@ impl SettingsView {
     }
 
     fn services_empty(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let suggestions = SERVICES
+        // In the suggested order, not the catalogue's.
+        let suggestions = SUGGESTED
             .iter()
-            .filter(|s| SUGGESTED.contains(&s.id))
+            .filter_map(|id| SERVICES.iter().find(|s| s.id == *id))
             .map(|s| {
                 let id = s.id;
                 div()

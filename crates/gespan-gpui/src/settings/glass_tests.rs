@@ -388,14 +388,35 @@ fn providers_draw_one_card_per_agent_and_hide_controls_an_absent_cli_cannot_use(
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    assert!(visual.debug_bounds("settings-agents-missing").is_some());
     for kind in Kind::ALL {
         let id = kind.id();
-        assert!(
+        let installed = kind == Kind::Codex;
+        // An installed CLI has a full card; the rest a compact one in the
+        // Not installed grid, with the command to install it where known.
+        assert_eq!(
             visual
                 .debug_bounds(format!("settings-agent-{id}").leak())
                 .is_some(),
-            "{id} has its card"
+            installed,
+            "{id} full card"
         );
+        assert_eq!(
+            visual
+                .debug_bounds(format!("settings-agent-missing-{id}").leak())
+                .is_some(),
+            !installed,
+            "{id} in the Not installed grid"
+        );
+        if !installed {
+            assert_eq!(
+                visual
+                    .debug_bounds(format!("settings-agent-install-{id}").leak())
+                    .is_some(),
+                super::pages::install_command(&kind.unavailable_hint()).is_some(),
+                "{id} install command"
+            );
+        }
         let select = visual
             .debug_bounds(format!("settings-select-{id}").leak())
             .is_some();
@@ -465,6 +486,11 @@ fn the_keybinding_filter_narrows_areas_and_a_chip_jumps_to_one(cx: &mut TestAppC
                 Some("Terminal"),
                 "the area flashes"
             );
+            assert_eq!(
+                view.keybinding_area,
+                Some("Terminal"),
+                "and its chip stays selected"
+            );
         })
         .unwrap();
     window
@@ -491,14 +517,19 @@ fn the_keybinding_filter_narrows_areas_and_a_chip_jumps_to_one(cx: &mut TestAppC
 }
 
 #[gpui::test]
-fn dictation_leads_with_its_shortcut(cx: &mut TestAppContext) {
+fn dictation_starts_with_the_speech_model_and_has_no_shortcut_card(cx: &mut TestAppContext) {
     let (_, mut visual) = window(Section::Dictation, Preferences::default(), cx);
     let visual = &mut visual;
-    let shortcut = visual
-        .debug_bounds("settings-row-dictation-shortcut")
-        .unwrap();
+    // The shortcut lives on Keybindings now.
+    assert!(
+        visual
+            .debug_bounds("settings-row-dictation-shortcut")
+            .is_none()
+    );
+    assert!(visual.debug_bounds("dictation-shortcut-keys").is_none());
+    let header = visual.debug_bounds("settings-page-header").unwrap();
     let model = visual.debug_bounds("dictation-model-group").unwrap();
-    assert!(shortcut.bottom() <= model.top(), "Shortcut comes first");
+    assert!(header.bottom() <= model.top());
 }
 
 #[gpui::test]
@@ -567,4 +598,362 @@ fn archive_lists_its_projects_and_conversations_and_deletes_them(cx: &mut TestAp
     click(visual, "settings-delete-7");
     click(visual, "settings-delete-project-0");
     assert_eq!(*seen.borrow(), ["delete:7", "delete-project:/work/old"]);
+}
+
+#[gpui::test]
+fn the_mcp_registry_lists_results_as_cards_even_while_providers_load(cx: &mut TestAppContext) {
+    use gespan_core::mcp_registry::{Install, Listing};
+    let (window, mut visual) = window(Section::Mcp, Preferences::default(), cx);
+    let visual = &mut visual;
+    window
+        .update(visual, |view, _, cx| {
+            view.discovery_loading = true;
+            view.mcp_listings = [
+                "postgres-tools",
+                "sqlite-explorer",
+                "mysql-mcp",
+                "duckdb-local",
+            ]
+            .map(|name| Listing {
+                name: name.into(),
+                description: format!("{name} for your data"),
+                version: "1.0.0".into(),
+                install: Install::Command {
+                    command: "npx".into(),
+                    args: vec![name.into()],
+                },
+                inputs: Vec::new(),
+            })
+            .to_vec();
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual
+            .debug_bounds("settings-catalog-registry-results")
+            .is_some()
+    );
+    let first = visual.debug_bounds("settings-catalog-listing-0").unwrap();
+    let second = visual.debug_bounds("settings-catalog-listing-1").unwrap();
+    let fourth = visual.debug_bounds("settings-catalog-listing-3").unwrap();
+    // Three to a row: the second sits beside the first, the fourth below it.
+    assert_eq!(first.top(), second.top());
+    assert!(second.left() > first.right());
+    assert!(fourth.top() > first.bottom());
+    assert!(visual.debug_bounds("settings-catalog-add-3").is_some());
+    // The managed switch now sits in the Gespan servers card with a title.
+    assert!(
+        visual
+            .debug_bounds("settings-row-catalog-managed")
+            .is_some()
+    );
+}
+
+#[test]
+fn an_install_hint_yields_its_command() {
+    use super::pages::install_command;
+    assert_eq!(
+        install_command(
+            "Grok Build CLI not found (`curl -fsSL https://x.ai/cli/install.sh | bash`). Install it."
+        ),
+        Some("curl -fsSL https://x.ai/cli/install.sh | bash")
+    );
+    assert_eq!(
+        install_command("Antigravity ACP server not found. Install it."),
+        None
+    );
+    assert_eq!(install_command("broken `unterminated"), None);
+    assert_eq!(install_command("empty ``"), None);
+    // Guidance in backticks stays prose.
+    assert_eq!(
+        install_command("Hermes not found (`Install from example.com, then run hermes model`)."),
+        None
+    );
+}
+
+#[gpui::test]
+fn accept_connections_shows_once_a_phone_is_paired_and_reachable_only_while_listening(
+    cx: &mut TestAppContext,
+) {
+    let (window, mut visual) = window(Section::Devices, Preferences::default(), cx);
+    let visual = &mut visual;
+    let set = |visual: &mut VisualTestContext, phones: usize, listening: bool| {
+        window
+            .update(visual, |view, _, cx| {
+                view.ctx.mobile = Some(gespan_core::mobile::Status {
+                    enabled: true,
+                    listening,
+                    name: "desk".into(),
+                    fingerprint: None,
+                    addresses: Vec::new(),
+                    devices: (0..phones)
+                        .map(|ix| gespan_core::mobile::Device {
+                            id: format!("p{ix}"),
+                            name: format!("Phone {ix}"),
+                            fingerprint: String::new(),
+                        })
+                        .collect(),
+                    open_router: false,
+                    remote_address: String::new(),
+                    router_status: String::new(),
+                    error: None,
+                });
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        (
+            visual.debug_bounds("mobile-access-card").is_some(),
+            visual.debug_bounds("mobile-reachable").is_some(),
+        )
+    };
+    // Nothing paired: there is nothing to accept yet.
+    assert_eq!(set(visual, 0, true), (false, false));
+    assert_eq!(set(visual, 1, true), (true, true));
+    // Paired but not listening: the switch stays, Reachable doesn't.
+    assert_eq!(set(visual, 1, false), (true, false));
+}
+
+#[gpui::test]
+fn diagnostics_kind_chips_hug_their_text_and_a_panic_is_red(cx: &mut TestAppContext) {
+    use super::pages::kind_tone;
+    use crate::glass::Tone;
+    assert_eq!(kind_tone("panic"), Tone::Bad);
+    assert_eq!(kind_tone("timeout"), Tone::Muted);
+    let (window, mut visual) = window(Section::Diagnostics, Preferences::default(), cx);
+    let visual = &mut visual;
+    window
+        .update(visual, |view, _, cx| {
+            view.diagnostics.counters = Some(Ok(vec![
+                super::pages::CounterRow {
+                    name: "git.command".into(),
+                    kind: "exit_status",
+                    today: 3,
+                    week: 9,
+                },
+                super::pages::CounterRow {
+                    name: "panic".into(),
+                    kind: "panic",
+                    today: 0,
+                    week: 1,
+                },
+            ]));
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let long = visual
+        .debug_bounds("settings-counter-kind-exit_status")
+        .unwrap();
+    let short = visual.debug_bounds("settings-counter-kind-panic").unwrap();
+    // Each chip is as wide as its word, not the column.
+    assert!(short.size.width < long.size.width);
+    assert!(long.size.width < px(120.));
+    // The report tile sits centred against its card's text.
+    assert!(visual.debug_bounds("settings-report-tile").is_some());
+    assert!(
+        visual.debug_bounds("settings-counters-today").is_some(),
+        "3 today"
+    );
+}
+
+#[test]
+fn the_settings_rail_tints_each_page_as_designed() {
+    let dark = |s: Section| s.tint().map(|(d, _)| d);
+    assert_eq!(dark(Section::Appearance), Some(0xf9a8d4));
+    assert_eq!(dark(Section::Services), Some(0xa5b4fc));
+    assert_eq!(dark(Section::Devices), Some(0x5eead4));
+    assert_eq!(dark(Section::Chat), Some(0xc0affc));
+    assert_eq!(dark(Section::Providers), Some(0xd97757));
+    assert_eq!(dark(Section::Browser), Some(0x7dd3fc));
+    assert_eq!(dark(Section::Skills), Some(0xe8c547));
+    assert_eq!(dark(Section::Inbox), Some(0xa5b4fc));
+    assert_eq!(dark(Section::Worktrees), Some(0x6ee7b7));
+    // The rest stay grey, as in the design.
+    for quiet in [
+        Section::General,
+        Section::Keybindings,
+        Section::Dictation,
+        Section::Diagnostics,
+        Section::Mcp,
+        Section::Archive,
+    ] {
+        assert_eq!(quiet.tint(), None, "{quiet:?}");
+    }
+}
+
+#[test]
+fn a_gradient_backdrop_paints_only_behind_a_see_through_window() {
+    use super::backdrop_colors;
+    let mut p = Preferences {
+        backdrop: "gradient".into(),
+        backdrop_gradient: "dusk".into(),
+        ..Default::default()
+    };
+    assert_eq!(backdrop_colors(&p, true), Some((0xf2a6ba, 0x8f64f6)));
+    // An opaque window (light theme, Transparent window off) keeps its look.
+    assert_eq!(backdrop_colors(&p, false), None);
+    p.backdrop_gradient = "gone".into();
+    assert_eq!(
+        backdrop_colors(&p, true),
+        Some((0x8f64f6, 0x459bf7)),
+        "falls back to Aurora"
+    );
+    p.backdrop = "desktop".into();
+    assert_eq!(backdrop_colors(&p, true), None);
+}
+
+#[gpui::test]
+fn picking_a_backdrop_gradient_saves_it_and_desktop_switches_back(cx: &mut TestAppContext) {
+    let prefs = Preferences {
+        theme: "dark".into(),
+        inset_glass: true,
+        ..Default::default()
+    };
+    let (window, mut visual) = window(Section::Appearance, prefs, cx);
+    let visual = &mut visual;
+    click(visual, "settings-backdrop-dune");
+    let saved = super::glass_tests::prefs(window, visual);
+    assert_eq!(
+        (saved.backdrop.as_str(), saved.backdrop_gradient.as_str()),
+        ("gradient", "dune")
+    );
+    click(visual, "settings-backdrop-desktop");
+    let saved = super::glass_tests::prefs(window, visual);
+    assert_eq!(saved.backdrop, "desktop");
+    assert_eq!(
+        saved.backdrop_gradient, "dune",
+        "the gradient is remembered"
+    );
+    // Restore defaults puts the desktop back.
+    window
+        .update(visual, |view, _, cx| {
+            view.update(cx, |p| p.backdrop = "gradient".into());
+            view.restore_defaults(cx)
+        })
+        .unwrap();
+    assert_eq!(
+        super::glass_tests::prefs(window, visual).backdrop,
+        "desktop"
+    );
+}
+
+#[gpui::test]
+fn chat_background_controls_write_their_preferences(cx: &mut TestAppContext) {
+    let (window, mut visual) = window(Section::Appearance, Preferences::default(), cx);
+    let visual = &mut visual;
+    // Every field shows before an image is picked.
+    for selector in [
+        "settings-segmented-background-effect",
+        "settings-segmented-background-scope",
+        "settings-slider-background-empty",
+        "settings-slider-background-session",
+    ] {
+        assert!(visual.debug_bounds(selector).is_some(), "{selector}");
+    }
+    click(visual, "settings-background-effect-halftone");
+    assert_eq!(prefs(window, visual).chat_background_effect, "halftone");
+    click(visual, "settings-background-scope-all");
+    assert_eq!(prefs(window, visual).chat_background_scope, "all");
+    let track = visual
+        .debug_bounds("settings-slider-background-empty")
+        .unwrap();
+    let (min, max) = SliderKind::BackgroundEmpty.range();
+    visual.simulate_click(
+        point(track.right() - px(8.), track.center().y),
+        Default::default(),
+    );
+    visual.run_until_parked();
+    assert_eq!(prefs(window, visual).chat_background_empty, max);
+    visual.simulate_click(
+        point(track.left() + px(8.), track.center().y),
+        Default::default(),
+    );
+    visual.run_until_parked();
+    assert_eq!(prefs(window, visual).chat_background_empty, min);
+    // With an image, Remove clears it.
+    let image = tempfile::NamedTempFile::new().unwrap();
+    window
+        .update(visual, |view, _, cx| {
+            view.prefs.chat_background = Some(image.path().display().to_string());
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    click(visual, "settings-remove-chat-background");
+    assert_eq!(prefs(window, visual).chat_background, None);
+}
+
+#[gpui::test]
+fn devices_show_machine_states_the_remove_card_and_away_from_home_in_its_card(
+    cx: &mut TestAppContext,
+) {
+    use gespan_core::remote::{Machine, SshTarget};
+    let (window, mut visual) = window(Section::Devices, Preferences::default(), cx);
+    let visual = &mut visual;
+    let machine = |id: &str, name: &str| Machine {
+        id: id.into(),
+        name: name.into(),
+        endpoint: String::new(),
+        environment_id: String::new(),
+        ssh: Some(SshTarget {
+            target: format!("me@{id}"),
+            port: None,
+            remote_port: 3774,
+        }),
+    };
+    window
+        .update(visual, |view, _, cx| {
+            view.seed_machines_for_test(
+                vec![
+                    machine("mini", "Home Mac mini"),
+                    machine("box", "Build box"),
+                ],
+                &[
+                    ("mini", "Connected"),
+                    (
+                        "box",
+                        "Connected · host update needed for Explorer and Changes",
+                    ),
+                ],
+                Some("box"),
+            );
+            view.ctx.mobile = Some(gespan_core::mobile::Status {
+                enabled: true,
+                listening: true,
+                name: "desk".into(),
+                fingerprint: Some("7f3a9c21d4e5".into()),
+                addresses: Vec::new(),
+                devices: Vec::new(),
+                open_router: true,
+                remote_address: String::new(),
+                router_status: String::new(),
+                error: None,
+            });
+            view.open_away_for_test();
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // One pill per machine, matching what its host reported.
+    assert!(visual.debug_bounds("remote-remove-confirmation").is_some());
+    let card = visual.debug_bounds("mobile-away-card").unwrap();
+    let details = visual.debug_bounds("mobile-away-details").unwrap();
+    assert!(
+        card.contains(&details.center()),
+        "the details open inside the card"
+    );
+    let router = visual
+        .debug_bounds("settings-toggle-mobile-open-router")
+        .unwrap();
+    assert!(
+        router.left() > card.center().x,
+        "the router switch sits on the right"
+    );
 }

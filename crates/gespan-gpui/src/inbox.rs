@@ -573,6 +573,32 @@ impl Inbox {
         self.save();
         cx.notify();
     }
+    /// Home's Inbox tile and timeline: what the last load holds. `None`
+    /// while the first load is still running.
+    pub(crate) fn home_counts(&self) -> Option<crate::home::InboxCounts> {
+        if self.loading && self.snapshot.items.is_empty() {
+            return None;
+        }
+        let items = &self.snapshot.items;
+        let reason = |item: &&Item, want: &str| item.attention_reason.eq_ignore_ascii_case(want);
+        Some(crate::home::InboxCounts {
+            total: items.len(),
+            unread: self.unread_count(),
+            review: items
+                .iter()
+                .filter(|i| reason(i, "review_requested"))
+                .count(),
+            assigned: items.iter().filter(|i| reason(i, "assigned")).count(),
+            reviews: items
+                .iter()
+                .filter(|i| reason(i, "review_requested"))
+                .filter_map(|item| {
+                    let at = chrono::DateTime::parse_from_rfc3339(&item.updated_at).ok()?;
+                    Some((crate::home::item_reference(item), at.timestamp_millis()))
+                })
+                .collect(),
+        })
+    }
     pub(crate) fn unread_count(&self) -> usize {
         self.snapshot
             .items

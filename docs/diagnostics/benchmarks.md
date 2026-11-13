@@ -48,6 +48,31 @@ not paint at all; the summary warns when steps ran in the background or the
 load average was above the core count. Several sessions building at once
 inflate every timing.
 
+### Narrowing a soak to one action group
+
+When the soak's footprint grows, find the action that drives it by running
+the soak with only one group:
+
+```bash
+GESPAN_BENCH_SOAK_ONLY=splits bun run bench --only soak --soak 3m --no-build
+```
+
+| Value | Each round |
+|---|---|
+| `tabs` | `NextTab` and `ActivateTab` across every tab |
+| `scroll` | Scrolls the long chat down and back up |
+| `panes` | The full pane cycle |
+| `splits` | `SplitRight`, then `CloseTab` |
+| `splits_down` | `SplitRight`, `SplitDown`, then `CloseTab` twice |
+| `terminal` | Opens and closes the dock terminal |
+| `panel` | Opens and closes the right panel |
+| `reload` | Opens four extra tabs once, then tab rounds and long-chat scrolls, so chat histories unload and reload |
+| `idle` | Waits a second |
+
+Unset, the soak rotates tabs, scroll and panes. A group that is flat alone
+can still grow in the rotation: the leak fixed with this table only showed
+when splits ran between tab rounds.
+
 ## What you get
 
 Each run writes `results.json` (everything, including per-sample memory and

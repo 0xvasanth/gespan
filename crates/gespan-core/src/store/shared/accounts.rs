@@ -19,7 +19,7 @@ impl Store {
 
     pub(in crate::store) fn shared_accounts(&self) -> Result<Book, String> {
         if let Some(mut desktop) = self.shared_desktop_accounts() {
-            *self.shared.as_ref().unwrap().account_source.borrow_mut() = Some(desktop.clone());
+            *self.shared.account_source.borrow_mut() = Some(desktop.clone());
             if let Some(raw) = self.shared_setting("provider-account-overrides")? {
                 desktop.apply_desktop_overrides(parse::<DesktopOverrides>(&raw)?);
             }
@@ -76,8 +76,6 @@ impl Store {
     pub(in crate::store) fn shared_save_accounts(&self, book: &Book) -> Result<(), String> {
         let source = self
             .shared
-            .as_ref()
-            .unwrap()
             .account_source
             .borrow()
             .clone()

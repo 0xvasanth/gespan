@@ -479,6 +479,7 @@ impl SettingsView {
                 )
             });
         crate::glass::card()
+            .debug_selector(|| "mobile-access-card".into())
             .overflow_hidden()
             .when(stuck, |d| {
                 let mut amber: gpui::Hsla = rgb(AMBER).into();
@@ -650,9 +651,14 @@ impl SettingsView {
     }
 
     /// The "Connect away from home" details.
+    #[cfg(test)]
+    pub(in crate::settings) fn open_away_for_test(&mut self) {
+        self.mobile.away = true;
+    }
+
     fn mobile_away(&mut self, status: &Status, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let open = self.mobile.away;
-        let mut page = vec![
+        let page = vec![
             div()
                 .id("mobile-away")
                 .relative()
@@ -665,10 +671,6 @@ impl SettingsView {
                 .flex()
                 .items_center()
                 .gap_2()
-                .rounded(px(14.))
-                .border_1()
-                .border_color(crate::glass::edge())
-                .bg(crate::glass::fill())
                 .text_size(px(12.5))
                 .text_color(content(0.62))
                 .cursor_pointer()
@@ -689,7 +691,13 @@ impl SettingsView {
                 .into_any_element(),
         ];
         if !open {
-            return page;
+            return vec![
+                crate::glass::card()
+                    .debug_selector(|| "mobile-away-card".into())
+                    .overflow_hidden()
+                    .children(page)
+                    .into_any_element(),
+            ];
         }
         let field = self.remote_field(status, cx);
         let unsaved = field.read(cx).content.trim() != status.remote_address;
@@ -697,8 +705,8 @@ impl SettingsView {
         let paragraph = |text: SharedString| {
             div()
                 .text_size(px(12.))
-                .line_height(px(19.5))
-                .text_color(content(0.45))
+                .line_height(px(18.))
+                .text_color(content(0.62))
                 .child(text)
         };
         let addresses = status
@@ -707,103 +715,106 @@ impl SettingsView {
             .map(|a| format!("{}:{}", a.host, a.port))
             .collect::<Vec<_>>()
             .join(", ");
-        page.push(
+        // As designed: the explanation, then each setting as a row, then
+        // this desktop's details, all inside the disclosure's card.
+        let router = self.toggle(
+            "mobile-open-router",
+            "Open the router port automatically",
+            status.open_router,
+            false,
+            cx,
+            move |this, on, cx| this.configure_mobile(enabled, on, remote.clone(), cx),
+        );
+        let address = div()
+            .w(px(360.))
+            .max_w_full()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                crate::glass::field()
+                    .min_w_0()
+                    .flex_1()
+                    .child(div().min_w_0().flex_1().child(field)),
+            )
+            .child(
+                glass_secondary("mobile-save-remote", "Save", false, !unsaved)
+                    .h(px(32.))
+                    .child("Save")
+                    .when(unsaved, |d| {
+                        d.on_click(cx.listener(|this, _, _, cx| this.save_remote_address(cx)))
+                    }),
+            )
+            .into_any_element();
+        let mut rows = vec![
             div()
-                .mt_4()
-                .flex()
-                .flex_col()
-                .gap_3()
+                .px_4()
+                .pb(px(12.))
                 .child(paragraph(
                     "On the same Wi-Fi, phones connect without any setup. To reach this desktop from anywhere else, it needs a public address. Keep the desktop awake.".into(),
                 ))
+                .into_any_element(),
+            self.row(
+                Some("mobile-open-router"),
+                false,
+                "Open the router port automatically",
+                (!status.router_status.is_empty()).then(|| status.router_status.clone().into()),
+                vec![router],
+            ),
+            self.row(
+                Some("mobile-remote-address"),
+                false,
+                "Remote address",
+                Some("Automatic mapping needs a public IP. Otherwise, forward UDP port 38416 to this desktop or use a VPN address. Set the address before making a pairing code.".into()),
+                vec![address],
+            ),
+        ];
+        let kv = |key: &'static str, value: String, mono: bool| {
+            div()
+                .flex()
+                .gap(px(6.))
+                .text_size(px(12.))
+                .line_height(px(19.5))
+                .text_color(content(0.62))
+                .child(key)
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(13.))
-                        .text_color(content(0.7))
-                        .child(self.toggle(
-                            "mobile-open-router",
-                            "Open the router port automatically",
-                            status.open_router,
-                            false,
-                            cx,
-                            move |this, on, cx| {
-                                this.configure_mobile(enabled, on, remote.clone(), cx)
-                            },
-                        ))
-                        .child("Open the router port automatically"),
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(content(1.))
+                        .when(mono, |d| d.font_family(crate::fonts::monospace()))
+                        .child(value),
                 )
-                .when(!status.router_status.is_empty(), |d| {
-                    d.child(paragraph(status.router_status.clone().into()))
+        };
+        rows.push(
+            div()
+                .debug_selector(|| "mobile-away-details".into())
+                .px_4()
+                .py(px(12.))
+                .border_t_1()
+                .border_color(crate::glass::hairline())
+                .child(kv("This desktop:", status.name.clone(), false))
+                .when_some(status.fingerprint.as_deref(), |d, fingerprint| {
+                    d.child(kv("Fingerprint:", short_fingerprint(fingerprint), true))
                 })
-                .child(
+                .child(if addresses.is_empty() {
                     div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .text_size(px(12.))
-                        .text_color(content(0.65))
-                        .child("Remote address")
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .h(px(32.))
-                                        .min_w_0()
-                                        .flex_1()
-                                        .rounded_md()
-                                        .border_1()
-                                        .border_color(content(0.1))
-                                        .px_2()
-                                        .flex()
-                                        .items_center()
-                                        .child(field),
-                                )
-                                .child(
-                                    glass_secondary(
-                                        "mobile-save-remote",
-                                        "Save",
-                                        false,
-                                        !unsaved,
-                                    )
-                                    .child("Save")
-                                    .when(unsaved, |d| {
-                                        d.on_click(cx.listener(|this, _, _, cx| {
-                                            this.save_remote_address(cx)
-                                        }))
-                                    }),
-                                ),
-                        ),
-                )
-                .child(paragraph(
-                    "Automatic mapping needs a public IP. Otherwise, forward UDP port 38416 to this desktop or use a VPN address. Set the address before making a pairing code.".into(),
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
                         .text_size(px(12.))
                         .line_height(px(19.5))
-                        .text_color(content(0.45))
-                        .child(format!("This desktop: {}", status.name))
-                        .when_some(status.fingerprint.as_deref(), |d, fingerprint| {
-                            d.child(format!("Fingerprint: {}", short_fingerprint(fingerprint)))
-                        })
-                        .child(if addresses.is_empty() {
-                            "Not reachable on any network yet.".to_owned()
-                        } else {
-                            format!("Reachable at {addresses}")
-                        }),
-                )
+                        .text_color(content(0.62))
+                        .child("Not reachable on any network yet.")
+                } else {
+                    kv("Reachable at", addresses, true)
+                })
                 .into_any_element(),
         );
-        page
+        vec![
+            crate::glass::card()
+                .debug_selector(|| "mobile-away-card".into())
+                .overflow_hidden()
+                .children(page)
+                .children(rows)
+                .into_any_element(),
+        ]
     }
 
     /// The pairing dialog, presented by Shell alongside the other window

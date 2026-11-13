@@ -340,7 +340,7 @@ impl SettingsView {
                 .gap_3()
                 .px_4()
                 .py(px(14.))
-                .border_b_1()
+                .border_t_1()
                 .border_color(crate::glass::hairline())
                 .child(
                     div()
@@ -605,69 +605,126 @@ impl SettingsView {
                 })
             })
             .clone();
-        let mut section = vec![
-            subheading("Add from the MCP Registry"),
-            div()
-                .mt_2()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(div().flex_1().child(input))
-                .child(
-                    glass_secondary("catalog-search", "Search", false, self.mcp_searching)
-                        .child("Search")
-                        .on_click(cx.listener(|this, _, _, cx| this.catalog_search(cx))),
-                )
-                .into_any_element(),
-        ];
+        let search = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                crate::glass::field()
+                    .flex_1()
+                    .child(icon("search-01", 14.).text_color(content(0.5)))
+                    .child(div().min_w_0().flex_1().child(input)),
+            )
+            .child(
+                glass_secondary("catalog-search", "Search", false, self.mcp_searching)
+                    .h(px(32.))
+                    .child("Search")
+                    .on_click(cx.listener(|this, _, _, cx| this.catalog_search(cx))),
+            )
+            .into_any_element();
         let listings = self.mcp_listings.clone();
-        section.extend(listings.into_iter().enumerate().map(|(ix, listing)| {
+        let cards = listings.into_iter().enumerate().map(|(ix, listing)| {
             let adding: Listing = listing.clone();
-            div()
+            crate::glass::card()
                 .id(SharedString::from(format!("catalog-listing-{ix}")))
-                .mt_2()
+                .debug_selector(move || format!("settings-catalog-listing-{ix}"))
+                .p(px(14.))
                 .flex()
-                .items_center()
-                .gap_3()
+                .flex_col()
+                .gap(px(10.))
                 .child(
                     div()
-                        .min_w_0()
-                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
                         .child(
                             div()
-                                .text_size(px(13.))
-                                .child(format!("{} {}", listing.name, listing.version)),
+                                .size(px(28.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(8.))
+                                .bg(content(0.07))
+                                .border_1()
+                                .border_color(crate::glass::edge())
+                                .child(icon("package", 14.).text_color(content(0.8))),
                         )
                         .child(
                             div()
-                                .truncate()
-                                .text_size(px(12.))
-                                .text_color(content(0.45))
-                                .child(listing.description),
+                                .min_w_0()
+                                .flex_1()
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .text_size(px(13.))
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(listing.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .font_family(crate::fonts::monospace())
+                                        .text_size(px(11.))
+                                        .text_color(content(0.55))
+                                        .child(listing.version.clone()),
+                                ),
                         ),
                 )
                 .child(
-                    glass_secondary(
-                        SharedString::from(format!("catalog-add-{ix}")),
-                        "Add",
-                        false,
-                        false,
-                    )
-                    .debug_selector(move || format!("settings-catalog-add-{ix}"))
-                    .child("Add")
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let adding = adding.clone();
-                        this.catalog_edit(
-                            Box::new(move |catalog, data_dir| {
-                                catalog.install(data_dir, &adding).map(|_| ())
-                            }),
-                            cx,
-                        );
-                    })),
+                    div()
+                        .flex_1()
+                        .text_size(px(12.))
+                        .line_height(px(17.))
+                        .text_color(content(0.62))
+                        .child(listing.description),
                 )
-                .into_any_element()
-        }));
-        section
+                .child(
+                    div().flex().justify_end().child(
+                        glass_secondary(
+                            SharedString::from(format!("catalog-add-{ix}")),
+                            "Add",
+                            false,
+                            false,
+                        )
+                        .debug_selector(move || format!("settings-catalog-add-{ix}"))
+                        .child("Add")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let adding = adding.clone();
+                            this.catalog_edit(
+                                Box::new(move |catalog, data_dir| {
+                                    catalog.install(data_dir, &adding).map(|_| ())
+                                }),
+                                cx,
+                            );
+                        })),
+                    ),
+                )
+        });
+        let grid = div()
+            .debug_selector(|| "settings-catalog-registry-results".into())
+            .grid()
+            .grid_cols(3)
+            .gap(px(10.))
+            .children(cards)
+            .into_any_element();
+        vec![
+            self.glass_group(
+                Some("mcp-registry"),
+                "Add from the MCP Registry",
+                None,
+                None,
+                Some(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .child(search)
+                        .when(!self.mcp_listings.is_empty(), |d| d.child(grid))
+                        .into_any_element(),
+                ),
+                Vec::new(),
+            ),
+        ]
     }
 
     pub(in crate::settings) fn catalog_section(
@@ -679,70 +736,30 @@ impl SettingsView {
             self.load_catalog(cx);
         }
         let managed = self.mcp_catalog.managed;
-        let mut section = vec![
-            div()
-                .mt_6()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .child(
-                    div()
-                        .child(
-                            div()
-                                .text_size(px(14.))
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("Gespan servers"),
-                        )
-                        .child(
-                            div()
-                                .mt_1()
-                                .text_size(px(12.))
-                                .text_color(content(0.55))
-                                .child(
-                                    "Install once here. Every agent in every worktree shares them.",
-                                ),
-                        ),
-                )
-                .child(
-                    glass_secondary("catalog-import", "Import from agents", false, false)
-                        .debug_selector(|| "settings-catalog-import".into())
-                        .child(icon("plus", 14.))
-                        .child("Import from agents")
-                        .on_click(cx.listener(|this, _, _, cx| this.catalog_import(cx))),
-                )
-                .into_any_element(),
-            div()
-                .mt_3()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap_3()
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(content(0.55))
-                        .child("Agents load only these servers, not their own."),
-                )
-                .child(self.toggle(
-                    "catalog-managed",
-                    "Agents load only Gespan's servers",
-                    managed,
-                    false,
-                    cx,
-                    |this, on, cx| {
-                        this.catalog_edit(
-                            Box::new(move |catalog, _| {
-                                catalog.managed = on;
-                                Ok(())
-                            }),
-                            cx,
-                        );
-                    },
-                ))
-                .into_any_element(),
-        ];
+        let mut section = Vec::new();
+        // The switch, then each server, all in one card.
+        let mut card_rows = vec![self.row(
+            Some("catalog-managed"),
+            true,
+            "Agents load only Gespan's servers",
+            Some("Agents load only these servers, not their own.".into()),
+            vec![self.toggle(
+                "catalog-managed",
+                "Agents load only Gespan's servers",
+                managed,
+                false,
+                cx,
+                |this, on, cx| {
+                    this.catalog_edit(
+                        Box::new(move |catalog, _| {
+                            catalog.managed = on;
+                            Ok(())
+                        }),
+                        cx,
+                    );
+                },
+            )],
+        )];
         if let Some(error) = &self.mcp_catalog_error {
             section.push(
                 div()
@@ -758,28 +775,39 @@ impl SettingsView {
         }
         let entries = self.mcp_catalog.entries.clone();
         if entries.is_empty() {
-            section.push(note(
-                "None yet. Import copies your agents' servers here, without changing their files.",
-            ));
-            section.extend(self.running_section());
-            return section;
+            card_rows.push(
+                div()
+                    .debug_selector(|| "settings-catalog-empty".into())
+                    .border_t_1()
+                    .border_color(crate::glass::hairline())
+                    .child(note(
+                        "None yet. Import copies your agents' servers here, without changing their files.",
+                    ))
+                    .into_any_element(),
+            );
         }
-        let rows: Vec<_> = entries
-            .into_iter()
-            .enumerate()
-            .map(|(ix, entry)| self.catalog_row(ix, entry, cx))
-            .collect();
-        section.push(
-            div()
-                .mt_3()
-                .overflow_hidden()
-                .rounded(px(14.))
-                .border_1()
-                .border_color(crate::glass::edge())
-                .bg(crate::glass::fill())
-                .bg(content(0.03))
-                .children(rows)
-                .into_any_element(),
+        card_rows.extend(
+            entries
+                .into_iter()
+                .enumerate()
+                .map(|(ix, entry)| self.catalog_row(ix, entry, cx)),
+        );
+        let import = glass_secondary("catalog-import", "Import from agents", false, false)
+            .debug_selector(|| "settings-catalog-import".into())
+            .child(icon("plus", 14.))
+            .child("Import from agents")
+            .on_click(cx.listener(|this, _, _, cx| this.catalog_import(cx)))
+            .into_any_element();
+        section.insert(
+            0,
+            self.glass_group(
+                None,
+                "Gespan servers",
+                Some("Install once here. Every agent in every worktree shares them.".into()),
+                Some(import),
+                None,
+                card_rows,
+            ),
         );
         if let Some((id, input)) = self.mcp_secrets.clone() {
             section.push(subheading(format!("Settings for {id}")));

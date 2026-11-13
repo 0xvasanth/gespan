@@ -106,6 +106,28 @@ pub(crate) fn register_sqlite_vec() {
     });
 }
 
+/// Opens `path` as a `kind` database that only reads: no adoption, no
+/// migrations, no constraints, and SQLite refuses every write. The file must
+/// exist. [`Database::is_current`] tells whether Gespan has adopted and
+/// migrated it, so the typed API reads it correctly.
+pub fn open_read_only(kind: Kind, path: &Path) -> Result<Database, String> {
+    register_sqlite_vec();
+    let db = run(async {
+        toasty::Db::builder()
+            .models(kind.models())
+            .max_pool_size(1)
+            .pool_health_check_interval(None)
+            .build(driver::Driver::read_only(path))
+            .await
+    })
+    .map_err(|e| format!("Cannot read the {} database: {e}", kind.name()))?;
+    Ok(Database {
+        db,
+        kind,
+        path: path.into(),
+    })
+}
+
 impl Database {
     pub fn kind(&self) -> Kind {
         self.kind
@@ -118,6 +140,43 @@ impl Database {
     /// A handle for async code; clones share the one connection.
     pub fn db(&self) -> toasty::Db {
         self.db.clone()
+    }
+
+    /// Whether every migration of this kind has been applied to the file. A
+    /// file Gespan never opened, or one an older build left, has not.
+    pub fn is_current(&self) -> Result<bool, String> {
+        // Toasty keeps its migration ledger out of the models.
+        let tracked = self.run(|mut db| async move {
+            toasty::sql::query(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='__toasty_migrations'",
+            )
+            .exec(&mut db)
+            .await
+        })?;
+        if tracked.is_empty() {
+            return Ok(false);
+        }
+        let applied: std::collections::HashSet<i64> = self
+            .run(|mut db| async move {
+                toasty::sql::query("SELECT id FROM __toasty_migrations")
+                    .exec(&mut db)
+                    .await
+            })?
+            .into_iter()
+            .filter_map(|row| match row {
+                toasty::stmt::Value::Record(record) => match record.fields.first() {
+                    Some(toasty::stmt::Value::I64(id)) => Some(*id),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        Ok(self
+            .kind
+            .migrations()
+            .migrations()
+            .iter()
+            .all(|migration| applied.contains(&(migration.id() as i64))))
     }
 
     /// Runs `work` with a database handle and waits for it.
@@ -137,7 +196,7 @@ impl Database {
     }
 
     /// Runs `work` in one transaction that takes the write lock up front
-    /// (`BEGIN IMMEDIATE`, like `store::write_transaction`). It commits when
+    /// (`BEGIN IMMEDIATE`, like `store::db::Sql::begin`). It commits when
     /// `work` returns `Ok` and rolls back otherwise. Inside, use `tx` as the
     /// executor: the database has one connection, which the transaction holds.
     ///

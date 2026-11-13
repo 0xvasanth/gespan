@@ -54,7 +54,58 @@ impl Shell {
         self.add_loaded(summary, cx);
         self.sessions.get(&id).cloned()
     }
+    /// A blank chat whose split pane closed has nothing worth keeping live:
+    /// release its entity and subscriptions and keep only its summary, which
+    /// `ensure_session` turns back into a chat if it is opened again. Each
+    /// split creates a session, so without this every split/close cycle kept a
+    /// whole chat (composer, transcript, dictation) alive for good.
+    pub(super) fn release_closed_panes(&mut self, shown: &HashSet<i64>, cx: &mut Context<Self>) {
+        if self.closed_panes.is_empty() {
+            return;
+        }
+        let preview = self.session_preview.as_ref().map(|p| p.id);
+        let leaving: HashSet<i64> = self
+            .pane_motion
+            .iter()
+            .flat_map(|motion| motion.leaving.iter().map(|(leaf, _, _)| leaf.id))
+            .collect();
+        let closed: Vec<i64> = self.closed_panes.iter().copied().collect();
+        for id in closed {
+            // Opened again: it is an ordinary chat now.
+            if self.workspace.tab_of(id).is_some() || !self.sessions.contains_key(&id) {
+                self.closed_panes.remove(&id);
+                continue;
+            }
+            // Still on screen, sliding out, or previewed: try again later.
+            if shown.contains(&id) || leaving.contains(&id) || preview == Some(id) {
+                continue;
+            }
+            let releasable = {
+                let chat = self.sessions[&id].read(cx);
+                !chat.summary.has_messages
+                    && !chat.busy
+                    && !chat.needs_approval()
+                    && !chat.has_saved_draft()
+                    && chat.input.read(cx).content.is_empty()
+                    && !crate::windows::is_running(id, cx)
+                    && !self.flows_state.awaits(id)
+                    && !self.in_live_orchestration(id)
+            };
+            // Anything in it now makes it a chat worth keeping.
+            self.closed_panes.remove(&id);
+            if !releasable {
+                continue;
+            }
+            if let Some(chat) = self.sessions.remove(&id) {
+                let summary = chat.read(cx).summary.clone();
+                self.session_summaries.insert(id, summary);
+            }
+            self.session_observations.remove(&id);
+            crate::windows::release(id, cx.entity_id(), cx);
+        }
+    }
     pub(super) fn trim_session_histories(&mut self, shown: &HashSet<i64>, cx: &mut Context<Self>) {
+        self.release_closed_panes(shown, cx);
         const INACTIVE_COUNT: usize = 8;
         const INACTIVE_BYTES: usize = 32 * 1024 * 1024;
         let preview = self.session_preview.as_ref().map(|p| p.id);

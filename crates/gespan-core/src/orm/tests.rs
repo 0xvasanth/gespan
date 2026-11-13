@@ -732,3 +732,81 @@ fn every_migration_splits_into_statements_on_every_platform() {
         }
     }
 }
+
+#[test]
+fn a_read_only_database_reads_through_the_models_and_refuses_writes() {
+    use crate::store::schema::Setting;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.sqlite3");
+    let database = open(Kind::Settings, &path).unwrap();
+    database
+        .run(|mut db| async move {
+            Setting::create()
+                .key("kept")
+                .value("1")
+                .exec(&mut db)
+                .await
+                .map(drop)
+        })
+        .unwrap();
+    drop(database);
+    let before = super::settled_bytes(&path);
+
+    let reader = super::open_read_only(Kind::Settings, &path).unwrap();
+    assert!(reader.is_current().unwrap());
+    let rows = reader
+        .run(|mut db| async move { Setting::all().exec(&mut db).await })
+        .unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.key.as_str(), row.value.as_str()))
+            .collect::<Vec<_>>(),
+        [("kept", "1")]
+    );
+    let write = reader.run(|mut db| async move {
+        Setting::create()
+            .key("new")
+            .value("2")
+            .exec(&mut db)
+            .await
+            .map(drop)
+    });
+    assert!(
+        write
+            .as_ref()
+            .is_err_and(|error| error.contains("readonly")),
+        "{write:?}"
+    );
+    drop(reader);
+    assert_eq!(super::settled_bytes(&path), before, "the file is unchanged");
+}
+
+#[test]
+fn a_file_gespan_never_migrated_is_not_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.sqlite3");
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        .unwrap();
+    let reader = super::open_read_only(Kind::Settings, &path).unwrap();
+    assert!(!reader.is_current().unwrap(), "no migration ledger");
+    drop(reader);
+
+    // A ledger missing the newest migration is not current either.
+    drop(open(Kind::Settings, &path).unwrap());
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM __toasty_migrations", [])
+        .unwrap();
+    let reader = super::open_read_only(Kind::Settings, &path).unwrap();
+    assert!(!reader.is_current().unwrap(), "an incomplete ledger");
+}
+
+#[test]
+fn a_read_only_open_of_a_missing_file_fails_without_creating_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("missing.sqlite3");
+    assert!(super::open_read_only(Kind::Settings, &path).is_err());
+    assert!(!path.exists());
+}

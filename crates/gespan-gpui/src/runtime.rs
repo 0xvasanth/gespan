@@ -185,9 +185,7 @@ fn run_turn_using(
     let user_request = prompt.clone();
     let mut transcript = Transcript::default();
     let mut history_loaded = false;
-    let shared = locked(&store)
-        .map(|s| s.uses_gespan_schema())
-        .unwrap_or(false);
+    let shared = locked(&store).is_ok();
     let mut pending = PendingSave::new(shared, std::time::Instant::now());
     pending.own_context(&summary.provider, &source_account);
     let mut initial_delivery = None;

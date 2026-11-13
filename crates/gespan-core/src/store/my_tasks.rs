@@ -138,7 +138,8 @@ impl Store {
     /// as it is; one withdrawn is open again, since it is waiting again (a
     /// Pilot's choices outlive a restart).
     pub fn open_task(&self, task: &TaskRecord) -> Result<(), String> {
-        // A conditional upsert: raw SQL on the same database.
+        // A conditional upsert (`ON CONFLICT ... WHERE`), which Toasty 0.11's
+        // typed upsert cannot express: raw SQL on the same database.
         let insert = toasty::sql::statement(
             "INSERT INTO my_tasks (key, kind, project, origin, source_label,
                headline, request_json, asked_at, status)
@@ -223,6 +224,8 @@ impl Store {
 
     /// Requests left open by an earlier run of Gespan: their agents are gone.
     pub fn withdraw_tasks_before(&self, at: u64) -> Result<usize, String> {
+        // Raw: the caller needs the count, and Toasty 0.11's typed update
+        // returns none.
         let withdraw = toasty::sql::statement(
             "UPDATE my_tasks SET status = 'withdrawn', closed_at = ?1
              WHERE status = 'open' AND asked_at < ?1",

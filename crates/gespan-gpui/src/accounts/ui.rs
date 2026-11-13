@@ -223,9 +223,12 @@ impl Accounts {
 
     /// Settings › Providers: one agent's accounts, then the button that
     /// adds another where the provider supports more than one.
+    /// `compact` is for a CLI that isn't installed: one quiet line per
+    /// account under its card, without meters.
     pub(crate) fn settings_accounts(
         &mut self,
         kind: Kind,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> (Vec<AnyElement>, Option<AnyElement>) {
         let accounts = self.book.list(kind);
@@ -305,12 +308,14 @@ impl Accounts {
                     })),
                 );
             }
+            // Indented under the agent's name, past its tile.
             let row = div()
                 .min_h_12()
                 .border_t_1()
                 .border_color(crate::glass::hairline())
-                .px_4()
-                .py_2()
+                .pl(px(if compact { 14. } else { 60. }))
+                .pr_4()
+                .py(px(10.))
                 .flex()
                 .items_center()
                 .gap_3()
@@ -325,28 +330,35 @@ impl Accounts {
                                 .gap(px(6.))
                                 .child(
                                     div()
-                                        .text_size(px(12.))
+                                        .text_size(px(13.))
+                                        .font_weight(FontWeight::MEDIUM)
                                         .truncate()
                                         .child(account.label.clone()),
                                 )
-                                .children(org.map(|org| {
-                                    div()
-                                        .px_1()
-                                        .rounded_sm()
-                                        .bg(content(0.07))
-                                        .text_size(px(9.))
-                                        .text_color(content(0.5))
-                                        .child(org)
-                                })),
+                                .child(status_pill(&status)),
                         )
                         .child(
                             div()
                                 .mt(px(2.))
                                 .flex()
                                 .items_center()
-                                .gap(px(10.))
-                                .text_size(px(10.))
-                                .child(status_label(&status).flex_shrink_0())
+                                .gap(px(6.))
+                                .text_size(px(11.5))
+                                .when(status.tone == Tone::Unknown, |d| {
+                                    // The pill says usage is unavailable; why goes here.
+                                    d.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_color(content(0.55))
+                                            .child(format!("{} ·", status.label)),
+                                    )
+                                })
+                                .children(org.map(|org| {
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_color(content(0.55))
+                                        .child(format!("{org} ·"))
+                                }))
                                 .child(
                                     div()
                                         .id(SharedString::from(format!(
@@ -366,7 +378,7 @@ impl Accounts {
                                                 })
                                             },
                                         )
-                                        .text_color(content(0.3))
+                                        .text_color(content(0.55))
                                         .relative()
                                         .truncate()
                                         .child(masked_text(subtitle, masked))
@@ -379,7 +391,7 @@ impl Accounts {
                                 ),
                         ),
                 )
-                .child(self.meters(kind, &id))
+                .when(!compact, |d| d.child(self.meters(kind, &id)))
                 .child(controls);
             rows.push(row.into_any_element());
         }
@@ -387,18 +399,30 @@ impl Accounts {
             rows.push(self.editor_row(cx));
         }
         let add = accounts::supports_profiles(kind).then(|| {
-            secondary_button(
-                SharedString::from(format!("add-account-{}", kind.id())),
-                "Add account",
-                false,
-                self.working,
-            )
-            .child(icon("plus", 14.))
-            .child("Add account")
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.start_edit(kind, None, Surface::Settings, window, cx)
-            }))
-            .into_any_element()
+            // A plain link under the accounts, as the design draws it.
+            div()
+                .id(SharedString::from(format!("add-account-{}", kind.id())))
+                .role(Role::Button)
+                .aria_label("Add account")
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .px(px(6.))
+                .py(px(2.))
+                .rounded(px(6.))
+                .text_size(px(12.5))
+                .text_color(content(0.62))
+                .when(self.working, |d| d.opacity(0.4))
+                .when(!self.working, |d| {
+                    d.cursor_pointer()
+                        .hover(|s| s.text_color(content(1.)).bg(content(0.06)))
+                })
+                .child(icon("plus", 13.).text_color(content(0.62)))
+                .child("Add account")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.start_edit(kind, None, Surface::Settings, window, cx)
+                }))
+                .into_any_element()
         });
         (rows, add)
     }
@@ -438,35 +462,43 @@ impl Accounts {
                 } else {
                     used
                 };
+                // As designed: the window and what's left (or used) over a
+                // bar that turns amber, then red, as it runs out.
+                let ink: gpui::Hsla = if used >= 100. {
+                    crate::glass::Tone::Bad.ink()
+                } else if used >= 70. {
+                    crate::glass::Tone::Waiting.ink()
+                } else {
+                    crate::glass::Tone::Ok.ink()
+                };
                 div()
-                    .w(px(64.))
+                    .debug_selector(|| "account-meter".into())
+                    .w(px(118.))
                     .child(
                         div()
                             .flex()
                             .justify_between()
-                            .text_size(px(9.))
-                            .text_color(content(0.4))
+                            .text_size(px(11.))
+                            .text_color(content(0.55))
                             .child(w.label())
-                            .child(format!("{percent:.0}%")),
+                            .child(if self.show_remaining {
+                                format!("{percent:.0}% left")
+                            } else {
+                                format!("{percent:.0}% used")
+                            }),
                     )
                     .child(
                         div()
-                            .mt_1()
-                            .h(px(3.))
+                            .mt(px(5.))
+                            .h(px(4.))
                             .rounded_full()
                             .bg(content(0.08))
                             .child(
                                 div()
                                     .h_full()
-                                    .w(px(64. * percent as f32 / 100.))
+                                    .w(px(118. * percent.clamp(0., 100.) as f32 / 100.))
                                     .rounded_full()
-                                    .bg(if used >= 100. {
-                                        gpui::rgb(0xf87171).into()
-                                    } else if used >= 80. {
-                                        gpui::rgb(0xfbbf24).into()
-                                    } else {
-                                        content(0.55)
-                                    }),
+                                    .bg(ink),
                             ),
                     )
             }))
@@ -769,6 +801,21 @@ fn accent(alpha: f32) -> gpui::Hsla {
 }
 
 /// AccountStatusLabel: "● Ready" or "● Exhausted back in 31m".
+/// Settings' account status: a pill. Usage that couldn't be read says so,
+/// and the reason goes beside the account's details.
+pub(crate) fn status_pill(status: &Status) -> Div {
+    use crate::glass::Tone as Pill;
+    let (label, tone) = match status.tone {
+        Tone::Ready => (status.label.clone(), Pill::Ok),
+        Tone::Low => (status.label.clone(), Pill::Waiting),
+        Tone::Exhausted => (status.label.clone(), Pill::Bad),
+        Tone::SignedOut => (status.label.clone(), Pill::Waiting),
+        Tone::Checking => (status.label.clone(), Pill::Muted),
+        Tone::Unknown => ("Usage unavailable".into(), Pill::Bad),
+    };
+    crate::glass::status(label, tone)
+}
+
 pub(crate) fn status_label(status: &Status) -> Div {
     let tinted = |hex: u32, alpha: f32| {
         let mut color: gpui::Hsla = gpui::rgb(hex).into();

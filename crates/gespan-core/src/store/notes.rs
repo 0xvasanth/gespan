@@ -1,8 +1,8 @@
 //! Desktop-compatible note persistence, deliberately separate from session handles.
-use super::db::{args, Sql, SqlRow};
 use super::schema::NoteRecord;
 use super::Store;
 use crate::notes::{Note, NoteImageAsset, NoteUpsert, MAX_BODY};
+use crate::orm::Database;
 use std::path::{Component, Path, PathBuf};
 const TITLE_MAX: usize = 200;
 const TAG_MAX: usize = 48;
@@ -10,35 +10,40 @@ const TAGS_MAX: usize = 20;
 fn now_millis() -> i64 {
     crate::time::now_ms().min(i64::MAX as u64) as i64
 }
-fn get_content(sql: Sql<'_>, id: &str, kind: &str) -> Result<Option<Note>, String> {
-    sql.optional(
-        "SELECT id, slug, title, body, source_session_id, source_cwd, tags_json,
-                created_at, updated_at, slug_pending
-         FROM notes
-         WHERE id = ?1 AND content_kind = ?2",
-        args![id, kind],
-    )?
-    .map(|row| read_note(&row))
-    .transpose()
+fn get_content(database: &Database, id: &str, kind: &str) -> Result<Option<Note>, String> {
+    let (id, kind) = (id.to_owned(), kind.to_owned());
+    database
+        .run(|mut db| async move {
+            let note = NoteRecord::fields();
+            NoteRecord::filter(note.id().eq(id).and(note.content_kind().eq(kind)))
+                .first()
+                .exec(&mut db)
+                .await
+        })
+        .map(|record| record.map(read_note))
 }
 
-fn upsert_note(sql: Sql<'_>, note: &NoteUpsert) -> Result<Note, String> {
-    upsert_content(sql, note, "note", None)
+fn upsert_note(database: &Database, note: &NoteUpsert) -> Result<Note, String> {
+    upsert_content(database, note, "note", None)
 }
 
 pub(crate) fn upsert_content(
-    sql: Sql<'_>,
+    database: &Database,
     note: &NoteUpsert,
     kind: &str,
     artifact_kind: Option<&str>,
 ) -> Result<Note, String> {
-    let existing_kind: Option<(String, Option<String>)> = sql
-        .optional(
-            "SELECT content_kind, artifact_kind FROM notes WHERE id = ?1",
-            args![&note.id],
-        )?
-        .map(|row| Ok::<_, String>((row.get(0)?, row.get(1)?)))
-        .transpose()?;
+    let id = note.id.clone();
+    let existing_kind = database
+        .run(|mut db| async move {
+            let note = NoteRecord::fields();
+            NoteRecord::filter_by_id(id)
+                .select((note.content_kind(), note.artifact_kind()))
+                .exec(&mut db)
+                .await
+        })?
+        .into_iter()
+        .next();
     if existing_kind
         .as_ref()
         .is_some_and(|(category, subtype)| category != kind || subtype.as_deref() != artifact_kind)
@@ -61,7 +66,7 @@ pub(crate) fn upsert_content(
         .filter(|value| !value.is_empty());
     let now = now_millis();
 
-    if let Some(existing) = get_content(sql, &note.id, kind)? {
+    if let Some(existing) = get_content(database, &note.id, kind)? {
         let project_cwd = source_cwd.map(str::to_string).or(existing.source_cwd);
         // Project changes keep the note in its current position in the list.
         let updated_at =
@@ -75,7 +80,7 @@ pub(crate) fn upsert_content(
         // working. Nothing here sets pending back on.
         let (slug, slug_pending) =
             if note.finalize_slug && existing.slug_pending && !is_placeholder_title(&title) {
-                (unique_slug(sql, &title)?, false)
+                (unique_slug(database, &title)?, false)
             } else {
                 (existing.slug, existing.slug_pending)
             };
@@ -88,8 +93,7 @@ pub(crate) fn upsert_content(
             .source_cwd(project_cwd.clone())
             .slug(slug.clone())
             .slug_pending(slug_pending);
-        sql.orm()?
-            .run(|mut db| async move { update.exec(&mut db).await })?;
+        database.run(|mut db| async move { update.exec(&mut db).await })?;
         Ok(Note {
             id: note.id.clone(),
             slug,
@@ -106,7 +110,7 @@ pub(crate) fn upsert_content(
         // Decided before normalization: a blank title gets a generated slug,
         // while an explicit "Untitled" or "Untitled 2" owns the slug it gets.
         let slug_pending = note.title.trim().is_empty();
-        let slug = unique_slug(sql, &title)?;
+        let slug = unique_slug(database, &title)?;
         let create = NoteRecord::create()
             .id(note.id.clone())
             .slug(slug.clone())
@@ -120,8 +124,7 @@ pub(crate) fn upsert_content(
             .slug_pending(slug_pending)
             .content_kind(kind.to_owned())
             .artifact_kind(artifact_kind.map(str::to_owned));
-        sql.orm()?
-            .run(|mut db| async move { create.exec(&mut db).await.map(drop) })?;
+        database.run(|mut db| async move { create.exec(&mut db).await.map(drop) })?;
         Ok(Note {
             id: note.id.clone(),
             slug,
@@ -137,7 +140,7 @@ pub(crate) fn upsert_content(
     }
 }
 
-fn delete_note(sql: Sql<'_>, id: &str) -> Result<(), String> {
+fn delete_note(database: &Database, id: &str) -> Result<(), String> {
     let note = NoteRecord::fields();
     let delete = NoteRecord::filter(
         note.id()
@@ -145,25 +148,23 @@ fn delete_note(sql: Sql<'_>, id: &str) -> Result<(), String> {
             .and(note.content_kind().eq("note")),
     )
     .delete();
-    sql.orm()?
-        .run(|mut db| async move { delete.exec(&mut db).await })
+    database.run(|mut db| async move { delete.exec(&mut db).await })
 }
 
-fn read_note(row: &SqlRow) -> Result<Note, String> {
-    let tags_json: String = row.get(6)?;
-    let tags = serde_json::from_str::<Vec<String>>(&tags_json).unwrap_or_default();
-    Ok(Note {
-        id: row.get(0)?,
-        slug: row.get(1)?,
-        title: row.get(2)?,
-        body: row.get(3)?,
+fn read_note(record: NoteRecord) -> Note {
+    let tags = serde_json::from_str::<Vec<String>>(&record.tags_json).unwrap_or_default();
+    Note {
+        id: record.id,
+        slug: record.slug,
+        title: record.title,
+        body: record.body,
         tags,
-        source_session_id: row.get(4)?,
-        source_cwd: row.get(5)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
-        slug_pending: row.get(9)?,
-    })
+        source_session_id: record.source_session_id,
+        source_cwd: record.source_cwd,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+        slug_pending: record.slug_pending,
+    }
 }
 
 fn normalize_tags(tags: &[String]) -> Vec<String> {
@@ -242,7 +243,7 @@ fn is_placeholder_title(title: &str) -> bool {
     }
 }
 
-fn unique_slug(sql: Sql<'_>, title: &str) -> Result<String, String> {
+fn unique_slug(database: &Database, title: &str) -> Result<String, String> {
     let base = slugify(title);
     for index in 0..1000 {
         let candidate = if index == 0 {
@@ -250,10 +251,13 @@ fn unique_slug(sql: Sql<'_>, title: &str) -> Result<String, String> {
         } else {
             format!("{base}-{}", index + 1)
         };
-        let taken: i64 = sql.value(
-            "SELECT COUNT(*) FROM notes WHERE slug = ?1",
-            args![&candidate],
-        )?;
+        let slug = candidate.clone();
+        let taken = database.run(|mut db| async move {
+            NoteRecord::filter(NoteRecord::fields().slug().eq(slug))
+                .count()
+                .exec(&mut db)
+                .await
+        })?;
         if taken == 0 {
             return Ok(candidate);
         }
@@ -276,38 +280,18 @@ fn valid_id(id: &str) -> Result<(), String> {
 impl Store {
     /// Full-fidelity desktop notes. Artifacts in the same table are excluded.
     pub fn list_notes(&self) -> Result<Vec<Note>, String> {
-        let mut notes = self
-            .sql()?
-            .query(
-                "SELECT id,slug,title,body,source_session_id,source_cwd,tags_json,created_at,updated_at,slug_pending
-                 FROM notes WHERE content_kind='note' ORDER BY updated_at DESC,id ASC",
-                args![],
-            )?
-            .iter()
+        let mut notes: Vec<Note> = self
+            .orm()?
+            .run(|mut db| async move {
+                let note = NoteRecord::fields();
+                NoteRecord::filter(note.content_kind().eq("note"))
+                    .order_by((note.updated_at().desc(), note.id().asc()))
+                    .exec(&mut db)
+                    .await
+            })?
+            .into_iter()
             .map(read_note)
-            .collect::<Result<Vec<_>, _>>()?;
-        // Keep early native prototype notes accessible without modifying data on read.
-        if self.shared.is_none() {
-            for note in self.legacy_notes()? {
-                let id = format!("gpui-note-{}", note.id);
-                if notes.iter().any(|saved| saved.id == id) {
-                    continue;
-                }
-                notes.push(Note {
-                    id,
-                    slug: format!("note-{}", note.id),
-                    title: note.title,
-                    body: note.body,
-                    tags: note.tags,
-                    source_session_id: (note.source_session != 0)
-                        .then(|| note.source_session.to_string()),
-                    source_cwd: (!note.source_cwd.is_empty()).then_some(note.source_cwd),
-                    slug_pending: false,
-                    created_at: note.id.min(i64::MAX as u64) as i64,
-                    updated_at: note.id.min(i64::MAX as u64) as i64,
-                });
-            }
-        }
+            .collect();
         notes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
         Ok(notes)
     }
@@ -341,28 +325,14 @@ impl Store {
         {
             valid_id(id)?;
         }
-        if self.shared.is_some() {
-            self.shared_writable()?;
-        }
-        upsert_note(self.sql()?, note)
+        self.shared_writable()?;
+        upsert_note(self.orm()?, note)
     }
 
     pub fn delete_note(&self, id: &str) -> Result<(), String> {
         valid_id(id)?;
-        if self.shared.is_some() {
-            self.shared_writable()?;
-        }
-        delete_note(self.sql()?, id)?;
-        if self.shared.is_none() {
-            if let Some(id) = id.strip_prefix("gpui-note-") {
-                self.conn
-                    .execute(
-                        "DELETE FROM native_settings WHERE key=?1",
-                        [format!("note:{id}")],
-                    )
-                    .map_err(|e| e.to_string())?;
-            }
-        }
+        self.shared_writable()?;
+        delete_note(self.orm()?, id)?;
         // A deleted row stays deleted even if best-effort asset cleanup fails.
         if let Some(root) = self.data_dir() {
             let _ = std::fs::remove_dir_all(root.join("note-assets").join(id));
@@ -415,19 +385,20 @@ impl Store {
         // The legacy facade also edits older note rows carrying an artifact
         // subtype. Preserve it instead of reclassifying or duplicating the row.
         if existing.is_some() {
-            if self.shared.is_some() {
-                self.shared_writable()?;
-            }
-            let sql = self.sql()?;
-            let subtype: Option<String> = sql
-                .optional(
-                    "SELECT artifact_kind FROM notes WHERE id=?1",
-                    args![&update.id],
-                )?
-                .map(|row| row.get::<Option<String>>(0))
-                .transpose()?
+            self.shared_writable()?;
+            let database = self.orm()?;
+            let id = update.id.clone();
+            let subtype = database
+                .run(|mut db| async move {
+                    NoteRecord::filter_by_id(id)
+                        .select(NoteRecord::fields().artifact_kind())
+                        .exec(&mut db)
+                        .await
+                })?
+                .into_iter()
+                .next()
                 .flatten();
-            upsert_content(sql, &update, "note", subtype.as_deref())?;
+            upsert_content(database, &update, "note", subtype.as_deref())?;
         } else {
             self.upsert_note(&update)?;
         }
@@ -436,9 +407,7 @@ impl Store {
 
     pub fn save_note_image(&self, note_id: &str, source: &Path) -> Result<NoteImageAsset, String> {
         valid_id(note_id)?;
-        if self.shared.is_some() {
-            self.shared_writable()?;
-        }
+        self.shared_writable()?;
         if self.get_note(note_id)?.is_none() {
             return Err("Note no longer exists".into());
         }
@@ -552,7 +521,7 @@ mod tests {
             "design-notes".into(),
             "Rust".into(),
         ];
-        request.source_session_id = Some(session.id.to_string());
+        request.source_session_id = Some(store.persisted_session_id(session.id).unwrap());
         request.source_cwd = Some("/project".into());
         let saved = store.upsert_note(&request).unwrap();
         assert_eq!(saved.title, "A title");
@@ -560,7 +529,7 @@ mod tests {
         assert_eq!(saved.tags, ["design-notes", "rust"]);
         assert_eq!(store.note_source_session(&saved), Some(session.id));
         store
-            .conn
+            .conn()
             .execute("UPDATE notes SET updated_at=42 WHERE id=?1", [&saved.id])
             .unwrap();
         let saved = store.get_note(&saved.id).unwrap().unwrap();
@@ -617,7 +586,7 @@ mod tests {
         let store = store();
         let artifact = input("artifact", "Document", "Artifact text");
         upsert_content(
-            store.sql().unwrap(),
+            store.orm().unwrap(),
             &artifact,
             "artifact",
             Some("document"),
@@ -631,7 +600,7 @@ mod tests {
         assert!(store.upsert_note(&artifact).is_err());
         store.delete_note("artifact").unwrap();
         let count: i64 = store
-            .conn
+            .conn()
             .query_row(
                 "SELECT COUNT(*) FROM notes WHERE id='artifact'",
                 [],
@@ -658,7 +627,7 @@ mod tests {
     }
 
     #[test]
-    fn response_note_facade_and_legacy_settings_share_one_saved_identity() {
+    fn response_note_facade_keeps_one_saved_identity() {
         let store = store();
         let session = store.create("codex", "/project").unwrap();
         let mut response = crate::response::Note {
@@ -669,15 +638,8 @@ mod tests {
             source_session: session.id,
             source_cwd: "/project".into(),
         };
-        store
-            .conn
-            .execute(
-                "INSERT INTO native_settings(key,value) VALUES('note:123',?1)",
-                [serde_json::to_string(&response).unwrap()],
-            )
-            .unwrap();
-        assert_eq!(store.list_notes().unwrap().len(), 1);
         store.save_note(&response).unwrap();
+        assert_eq!(store.list_notes().unwrap().len(), 1);
         response.body = "Edited response".into();
         store.save_note(&response).unwrap();
         assert_eq!(store.list_notes().unwrap().len(), 1);
@@ -694,7 +656,7 @@ mod tests {
     fn shared_response_bridge_preserves_original_identity_slug_and_subtype() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::open_gespan(&directory.path().join("gespan.db")).unwrap();
-        store.conn.execute("INSERT INTO notes(id,slug,title,body,tags_json,slug_pending,created_at,updated_at,content_kind,artifact_kind) VALUES('source-id','stable','Saved','Body','[]',0,1,2,'note','document')", []).unwrap();
+        store.conn().execute("INSERT INTO notes(id,slug,title,body,tags_json,slug_pending,created_at,updated_at,content_kind,artifact_kind) VALUES('source-id','stable','Saved','Body','[]',0,1,2,'note','document')", []).unwrap();
         let mut compatible = store.notes().unwrap().pop().unwrap();
         compatible.body = "Changed".into();
         store.save_note(&compatible).unwrap();
@@ -703,7 +665,7 @@ mod tests {
         assert_eq!(saved.body, "Changed");
         assert_eq!(store.list_notes().unwrap().len(), 1);
         let subtype: String = store
-            .conn
+            .conn()
             .query_row(
                 "SELECT artifact_kind FROM notes WHERE id='source-id'",
                 [],
