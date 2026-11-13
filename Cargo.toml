@@ -4,7 +4,7 @@ members = ["crates/mobile-link", "crates/keep-awake", "crates/gespan-redact", "c
 exclude = ["vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-linux", "vendor/gpui-pre-windows", "crates/gespan-core", "crates/gespan-first-launch", "crates/gespan-gpui"]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 

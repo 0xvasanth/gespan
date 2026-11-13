@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14
+
+### Added
+
+- **New glass design:** a redesigned app shell with a glass Home page that
+  fits the window, a redesigned Inbox, and every Settings page, Connections
+  and Automations restyled to match. Settings moved to the bottom of the
+  sidebar.
+- **My tasks:** one place for everything waiting on you (approvals,
+  questions and draft reviews), answered from its card. Answered and
+  Decisions tabs keep each request and its answer.
+- **Two-click PR reviews:** a setup sheet turns on automatic pull request
+  reviews. Review runs are locked to read-only for Claude, Codex, Devin,
+  opencode, Pi and ACP agents, and findings are left as inline draft reviews
+  on GitHub and GitLab for you to submit or keep.
+- **Decision log:** your preferences and project decisions are kept in one
+  place and given to every agent.
+- **Tabs grouped by project:** the title strip groups tabs by project across
+  all projects, with a choice of tab layout and an option to show only your
+  tabs.
+- **Pilot chats survive restarts:** a Pilot's chat is recovered after a quit,
+  crash or restart.
+
+### Changed
+
+- **Storage:** every Gespan database now goes through the Toasty ORM with
+  checked migrations.
+- **My tasks performance:** the list is virtualized and stays responsive
+  while the shell redraws.
+
+### Fixed
+
+- A blank split's chat is released once its pane closes, which stops memory
+  growth in long sessions.
+- Streamed text stays above a visual published right after it, and each
+  visual stays anchored to its own call.
+- Render panics are caught in CI by drawing every Settings page and shell
+  layout.
+
 ## [0.1.3] - 2026-11-12
 
 ### Changed
@@ -2296,7 +2335,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/0xvasanth/gespan/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/0xvasanth/gespan/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/0xvasanth/gespan/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/0xvasanth/gespan/compare/v0.1.0...v0.1.1
