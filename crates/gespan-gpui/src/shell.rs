@@ -8496,25 +8496,27 @@ impl Shell {
             + extra.values().sum::<f32>()
             + Self::group_room(&chips.widths)
             - 2.;
-        // What each other project's open tabs take this frame, so a group
-        // easing shut left of the pointer can hold the rest still.
+        // What each project's tabs take this frame, gap before each
+        // included: every group box is sized by it, and a group easing shut
+        // left of the pointer holds the rest still by what its own give up.
+        let mut group_tabs: HashMap<String, f32> = HashMap::new();
         let mut open_widths: HashMap<String, f32> = HashMap::new();
         for slot in &slots {
             let (crate::tab_motion::Slot::Live { key, open }
             | crate::tab_motion::Slot::Closing { key, open, .. }) = slot;
-            if !away.contains(key) {
-                continue;
-            }
             let Some(project) = self.frame_project(&projects, key, cx) else {
                 continue;
             };
             let width = if *open >= 1. {
-                base_width(key) + 2.
+                tab_width(key) + 2.
             } else {
                 let (w, give) = slot_size(key, *open);
                 w + 2. - give
             };
-            *open_widths.entry(project).or_default() += width;
+            *group_tabs.entry(project.clone()).or_default() += width;
+            if away.contains(key) {
+                *open_widths.entry(project).or_default() += width;
+            }
         }
         self.hold_strip_still(open_widths);
         let dragging = self.tab_drag.as_ref().filter(|d| d.active && !d.armed);
@@ -8953,7 +8955,7 @@ impl Shell {
             .grouped_strip(
                 &entries,
                 elements,
-                &chips,
+                (&chips, &group_tabs),
                 (&group_shifts, dragged_group.as_deref()),
                 cx,
             )
