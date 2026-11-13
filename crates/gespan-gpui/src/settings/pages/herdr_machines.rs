@@ -16,7 +16,7 @@ use gpui::{
 use std::collections::{HashMap, HashSet};
 
 pub(super) const TARGET: &str = "herdr ssh target";
-const EMPTY: &str = "No herdr machines yet. Add one to run agents on another computer.";
+const EMPTY: &str = "Add one to run agents on another computer.";
 const NOT_BUNDLED: &str = "herdr isn't bundled with this build";
 
 #[derive(Default)]
@@ -621,17 +621,12 @@ impl SettingsView {
                 card = card.child(self.herdr_machine_row(view, cx));
             }
         } else if loaded && list_error.is_none() {
-            card = card.child(
-                div()
-                    .id("herdr-machines-empty")
-                    .debug_selector(|| "herdr-machines-empty".into())
-                    .px_5()
-                    .py(px(22.))
-                    .text_center()
-                    .text_size(px(13.))
-                    .text_color(content(0.55))
-                    .child(EMPTY),
-            );
+            card = card.child(crate::settings::widgets::empty(
+                "herdr-machines-empty",
+                "terminal",
+                "No herdr machines yet",
+                EMPTY,
+            ));
         }
         let input = self.herdr_target_field(cx);
         let not_bundled = found == Some(false);
@@ -887,10 +882,7 @@ mod tests {
         visual.run_until_parked();
         assert!(visual.debug_bounds("herdr-machines").is_some());
         assert!(visual.debug_bounds("herdr-machines-empty").is_some());
-        assert_eq!(
-            EMPTY,
-            "No herdr machines yet. Add one to run agents on another computer."
-        );
+        assert!(visual.debug_bounds("herdr-add-row").is_some());
     }
 
     #[gpui::test]

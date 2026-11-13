@@ -136,6 +136,34 @@ pub(super) fn note(text: impl Into<SharedString>) -> AnyElement {
         .into_any_element()
 }
 
+/// A section with nothing in it: the glass empty state (orb, title, hint),
+/// padded to sit inside a card. `id` names it for tests. Wrap it in
+/// [`empty_card`] where it stands alone.
+pub(super) fn empty(
+    id: &'static str,
+    icon: &'static str,
+    title: impl Into<SharedString>,
+    hint: impl Into<SharedString>,
+) -> Div {
+    div()
+        .debug_selector(move || id.into())
+        .px(px(24.))
+        .py(px(28.))
+        .child(crate::glass::empty_state(icon, title, hint))
+}
+
+/// [`empty`] on its own glass card, for a section whose list is the card.
+pub(super) fn empty_card(
+    id: &'static str,
+    icon: &'static str,
+    title: impl Into<SharedString>,
+    hint: impl Into<SharedString>,
+) -> AnyElement {
+    crate::glass::card()
+        .child(empty(id, icon, title, hint))
+        .into_any_element()
+}
+
 /// A glass button with its icon before the label, as the mocks draw
 /// "+ Add …" actions. [`crate::glass::button`] puts its label first.
 pub(in crate::settings) fn icon_button_labelled(

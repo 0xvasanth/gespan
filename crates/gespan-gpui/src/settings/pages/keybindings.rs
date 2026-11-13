@@ -597,7 +597,15 @@ impl SettingsView {
                     .into_any_element(),
             ),
             if rows.is_empty() {
-                vec![super::super::widgets::note("No matching bindings")]
+                vec![
+                    super::super::widgets::empty(
+                        "settings-keybindings-empty",
+                        "keyboard",
+                        "No matching bindings",
+                        "Try another command, key or area.",
+                    )
+                    .into_any_element(),
+                ]
             } else {
                 Vec::new()
             },

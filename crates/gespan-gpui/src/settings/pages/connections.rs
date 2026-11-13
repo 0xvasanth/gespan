@@ -812,20 +812,12 @@ impl SettingsView {
             }
             page.push(list.into_any_element());
         } else if self.connections.loaded && !self.connections.adding {
-            page.push(
-                div()
-                    .rounded(px(14.))
-                    .border_1()
-                    .border_color(crate::glass::edge())
-                    .bg(crate::glass::fill())
-                    .px_5()
-                    .py_8()
-                    .text_center()
-                    .text_size(px(13.))
-                    .text_color(content(0.45))
-                    .child("Add your always-on Windows, Mac, or Linux machine to get started.")
-                    .into_any_element(),
-            );
+            page.push(crate::settings::widgets::empty_card(
+                "settings-machines-empty",
+                "terminal",
+                "No machines yet",
+                "Add your always-on Windows, Mac, or Linux machine to get started.",
+            ));
         }
         if self.connections.adding {
             let target = self.connection_field(TARGET, "SSH address", disabled, cx);
