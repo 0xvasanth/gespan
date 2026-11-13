@@ -1,0 +1,31 @@
+crates/gespan-gpui/Cargo.toml
+  s_017e87d2e70fe1::t_83b0f6dd3b186f 125
+Cargo.toml
+  s_017e87d2e70fe1::t_83b0f6dd3b186f 7
+CHANGELOG.md
+  s_017e87d2e70fe1::t_fb363fdc96ed03 10-48,2338-2339
+README.md
+  s_017e87d2e70fe1::t_83b0f6dd3b186f 215,219-222
+package.json
+  s_017e87d2e70fe1::t_83b0f6dd3b186f 16
+Cargo.lock
+  s_017e87d2e70fe1::t_e714d567c81cda 1309,1383,1406
+crates/gespan-gpui/Cargo.lock
+  s_017e87d2e70fe1::t_52204722a7c195 2814,2834,2907,2915,3038,3058
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26afd69f6e37609dd1674fbe26008d7bb69232d1",
+  "prompts": {},
+  "sessions": {
+    "s_017e87d2e70fe1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "946dca12-f300-441b-8a8a-a334a98a91df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
