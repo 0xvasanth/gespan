@@ -17,6 +17,7 @@ node_modules/
 dist/
 build/
 target/
+target.seeding.*/
 coverage/
 test-results/
 .turbo/

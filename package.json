@@ -26,7 +26,7 @@
     "set-version": "node scripts/bump-version.mjs",
     "dev": "node scripts/dev.mjs",
     "bench": "node scripts/bench.mjs",
-    "test:scripts": "node --test scripts/dev.test.mjs scripts/bench.test.mjs scripts/bundle-macos.test.mjs scripts/cargo-workspaces.test.mjs scripts/dependencies.test.mjs scripts/desktop-release.test.mjs scripts/fetch-herdr.test.mjs scripts/fetch-sherpa-onnx.test.mjs scripts/package.test.mjs scripts/readme-release.test.mjs",
+    "test:scripts": "node --test scripts/dev.test.mjs scripts/bench.test.mjs scripts/bundle-macos.test.mjs scripts/cargo-workspaces.test.mjs scripts/dependencies.test.mjs scripts/desktop-release.test.mjs scripts/fetch-herdr.test.mjs scripts/fetch-sherpa-onnx.test.mjs scripts/package.test.mjs scripts/readme-release.test.mjs scripts/worktree-setup.test.mjs",
     "build": "node scripts/build.mjs",
     "test:rust": "cargo test --locked -p gespan-tracker-client && cargo test --locked -p gespan-board-store && bun run test:app",
     "test:app": "cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev && cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --profile native-dev -- --test-threads=1 && cargo build --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --profile native-dev && cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-first-launch --profile native-dev",
