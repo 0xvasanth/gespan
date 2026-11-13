@@ -101,6 +101,7 @@ mod settings;
 mod setup;
 mod shell;
 mod sound;
+mod strip_groups;
 mod syntax;
 mod tab_label;
 mod tab_motion;

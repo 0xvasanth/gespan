@@ -189,7 +189,7 @@ impl Shell {
         self.terminal_pane_views.insert(pane, terminal);
         if let Some(to) = insert {
             self.workspace.open(pane);
-            self.reorder_title_tab(&TitleTab::Session(pane), to, cx);
+            self.place_in_strip_slot(&TitleTab::Session(pane), to, cx);
             self.pane_motion = None;
         } else if let Some((target, edge)) = over {
             self.workspace.place(pane, target, edge);

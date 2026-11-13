@@ -79,6 +79,9 @@ mod sidebar_peek;
 mod space_reorder;
 #[cfg(test)]
 mod surface_tests;
+mod tab_groups;
+#[cfg(test)]
+mod tab_groups_tests;
 mod terminal_dock;
 mod terminal_panes;
 #[cfg(test)]
@@ -97,6 +100,7 @@ pub(crate) use tray::reopen;
 mod window_chrome;
 mod worktrees;
 
+use crate::strip_groups::StripEntry;
 use crate::{
     conversation::{Conversation, SessionChanged},
     input,
@@ -324,6 +328,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
 /// that Linux tests get from server decorations.
 #[cfg(target_os = "windows")]
 const WINDOWS_CONTROLS: bool = cfg!(not(test));
+/// How often idle title tabs are looked for after launch.
+const IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 pub(crate) fn client_controls_width(window: &Window) -> f32 {
     #[cfg(target_os = "linux")]
@@ -451,6 +457,9 @@ const STRIP_TRAIL: f32 = 6.;
 const STRIP_PAD: f32 = STRIP_LEAD + STRIP_TRAIL;
 /// The selected title tab shrinks with the others only down to this.
 const SELECTED_TAB_MIN_WIDTH: f32 = 112.;
+/// The others shrink down to a select-only plate this wide; past that the
+/// strip scrolls instead of squeezing.
+const TAB_MIN_WIDTH: f32 = TAB_PLATE_HEIGHT;
 /// Narrower tabs drop their close button.
 const TAB_CLOSE_MIN_WIDTH: f32 = 72.;
 /// The new-tab button and its leading margin.
@@ -498,16 +507,82 @@ const REVEAL_LABEL: &str = if cfg!(target_os = "macos") {
     "Open Containing Folder"
 };
 
+/// What a title strip drag moves among.
+#[derive(Clone, Debug, PartialEq)]
+enum DragScope {
+    /// A tab in this project's group: it moves among the group's tabs.
+    Group(String),
+    /// A loose tab, or a whole group by its chip: it moves among the
+    /// strip's top-level entries.
+    TopLevel,
+}
+
 struct TabDrag {
-    id: TitleTab,
+    /// The tab, or the group by its chip, being dragged.
+    item: tab_groups::StripChild,
+    scope: DragScope,
+    /// What the drag moves among, in strip order, and where each was drawn
+    /// when it began.
+    items: Vec<tab_groups::StripChild>,
     from: usize,
     to: usize,
     origin: Pixels,
     offset: Pixels,
     active: bool,
     bounds: Vec<Bounds<Pixels>>,
+    /// Whether pulling it down can drop it on a pane: the current scope's
+    /// tabs only.
+    to_pane: bool,
     /// Pulled far enough below the strip to drop on a pane.
     armed: bool,
+}
+
+impl TabDrag {
+    /// The dragged tab; None for a group dragged by its chip.
+    fn tab(&self) -> Option<&TitleTab> {
+        match &self.item {
+            tab_groups::StripChild::Tab(tab) => Some(tab),
+            tab_groups::StripChild::Group(_) => None,
+        }
+    }
+
+    /// Where slot `ix` puts the dragged item's left edge: past its own slot
+    /// it ends at that slot's right edge, so wider neighbours count right.
+    fn slot_left(&self, ix: usize) -> Pixels {
+        if ix > self.from {
+            self.bounds[ix].right() - self.bounds[self.from].size.width
+        } else {
+            self.bounds[ix].left()
+        }
+    }
+
+    /// How far the item at `ix` sits from its own slot while the drag
+    /// lasts: the dragged one rides the pointer, the ones it passed make
+    /// room by its width.
+    fn shift(&self, ix: usize) -> Pixels {
+        if !self.active {
+            return px(0.);
+        }
+        if ix == self.from {
+            return self.offset;
+        }
+        let step = self.bounds[self.from].size.width + self.gap();
+        if self.from < self.to && ix > self.from && ix <= self.to {
+            return -step;
+        }
+        if self.from > self.to && ix >= self.to && ix < self.from {
+            return step;
+        }
+        px(0.)
+    }
+
+    /// The gap between neighbouring items as laid out.
+    fn gap(&self) -> Pixels {
+        match self.bounds.as_slice() {
+            [first, second, ..] => (second.left() - first.right()).max(px(0.)),
+            _ => px(0.),
+        }
+    }
 }
 
 /// What a pane drop carries: a split pane by its header, a title tab
@@ -790,6 +865,8 @@ pub(crate) struct Shell {
     folder_picker: Option<session_folders::Open>,
     pending_folder: Option<(i64, AnchorSlot)>,
     _session_clock: gpui::Task<()>,
+    /// Closes idle title tabs at launch and every `IDLE_CHECK` after.
+    idle_clock: Option<gpui::Task<()>>,
     notes: Option<Entity<Notes>>,
     /// The sidebar's Notes count; `None` until the store has answered.
     inbox: Option<Entity<crate::inbox::Inbox>>,
@@ -832,6 +909,19 @@ pub(crate) struct Shell {
     pin_fan: pinned_tabs::PinFan,
     pin_deck: pinned_tabs::PinDeck,
     pin_card_hover: Option<TitleTab>,
+    /// The collapsed project group shown open while the pointer is on it:
+    /// its project folder.
+    strip_peek: Option<String>,
+    /// The strip's direct children as last drawn: loose tabs and group boxes.
+    strip_children: Vec<tab_groups::StripChild>,
+    group_tab_bounds: tab_groups::GroupTabBounds,
+    /// The peek drawn last frame, so the next peek knows which group closed.
+    drawn_peek: Option<String>,
+    /// A group left of the new peek that closed, with its open box width:
+    /// the strip scrolls back by what it gave up.
+    peek_shift: Option<(String, f32)>,
+    /// Set when the active tab changes; cleared once it is in view.
+    reveal_tab: std::rc::Rc<std::cell::Cell<bool>>,
     /// Tab animations: opening and closing title tabs, with each tab's last label.
     title_tab_motion: crate::tab_motion::TabMotion<TitleTab, ()>,
     /// Tab animations: the selected tab before the last switch, the one now
@@ -878,6 +968,8 @@ pub(crate) struct Shell {
     /// Tabs sliding between slots: neighbours making room for a drag and,
     /// after a drop, every tab gliding from where it was drawn into place.
     tab_shifts: HashMap<TitleTab, TabShift>,
+    /// Group boxes easing as a chip drag passes them, by project.
+    group_shifts: HashMap<String, TabShift>,
     pane_ticks: HashMap<i64, PaneTick>,
     skip_tab_click: bool,
     spaces_start: usize,
@@ -1045,7 +1137,8 @@ impl Shell {
             }
         });
         let metadata: Vec<_> = summaries.iter().map(|s| (s.id, s.cwd.clone())).collect();
-        let workspace = Workspace::restore(saved.as_deref(), &metadata, &cwd);
+        let mut workspace = Workspace::restore(saved.as_deref(), &metadata, &cwd);
+        workspace.start_tab_clocks(title_tabs::unix_now());
         gespan_core::cli::initialize(&workspace.preferences.binary_paths);
         for (project, saved) in &workspace.actions {
             actions::publish_personal(project, saved);
@@ -1233,6 +1326,7 @@ impl Shell {
             folder_picker: None,
             pending_folder: None,
             _session_clock: session_clock,
+            idle_clock: None,
             notes: None,
             inbox: None,
             automations: None,
@@ -1265,6 +1359,12 @@ impl Shell {
             pin_fan: Default::default(),
             pin_deck: Default::default(),
             pin_card_hover: None,
+            strip_peek: None,
+            strip_children: Vec::new(),
+            group_tab_bounds: Default::default(),
+            drawn_peek: None,
+            peek_shift: None,
+            reveal_tab: Default::default(),
             title_tab_motion: Default::default(),
             title_tab_selection: (None, None, std::time::Instant::now()),
             session_hover: None,
@@ -1300,6 +1400,7 @@ impl Shell {
             worktree_returns: HashMap::new(),
             tab_drag: None,
             tab_shifts: HashMap::new(),
+            group_shifts: HashMap::new(),
             pane_ticks: HashMap::new(),
             skip_tab_click: false,
             spaces_start: 0,
@@ -2162,14 +2263,9 @@ impl Shell {
         self.notify_sidebar(cx);
         self.tabs_frame.update(cx, |_, cx| cx.notify());
     }
-    fn reveal_active_tab(&self, cx: &App) {
-        if let Some(ix) = self
-            .visible_tabs(cx)
-            .iter()
-            .position(|tab| Some(tab) == self.active_title_tab(cx).as_ref())
-        {
-            self.tab_scroll.scroll_to_item(ix);
-        }
+    /// Scrolls the strip to the active tab once it is next laid out.
+    fn reveal_active_tab(&self, _cx: &App) {
+        self.reveal_tab.set(true);
     }
     /// The git root is the active session's worktree or folder.
     fn sync_git(&mut self, cx: &mut Context<Self>) {
@@ -4339,14 +4435,22 @@ impl Shell {
             })
     }
     /// titleTabDropFromPoint: the strip slot nearest the pointer.
+    /// Past the last tab, over the new-tab button too, is the strip's end.
     fn tab_insert_at(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
-        let strip = self.tab_scroll.bounds();
+        let mut strip = self.tab_scroll.bounds();
+        if let Some(button) = self.new_tab_anchor.get()
+            && button.right() > strip.right()
+        {
+            strip.size.width = button.right() - strip.left();
+        }
         if !strip.contains(&position) {
             return None;
         }
-        let count = self.strip_tabs(cx).len();
-        let bounds: Vec<_> = (0..count)
-            .filter_map(|ix| self.tab_scroll.bounds_for_item(ix))
+        let tabs = self.strip_tabs(cx);
+        let count = tabs.len();
+        let bounds: Vec<_> = tabs
+            .iter()
+            .filter_map(|tab| self.strip_tab_bounds(tab))
             .collect();
         if bounds.len() != count {
             return Some(count);
@@ -4477,7 +4581,7 @@ impl Shell {
                 };
                 if let Some(to) = insert {
                     self.workspace.detach(id, self.workspace.tabs.len());
-                    self.reorder_title_tab(&TitleTab::Session(id), to, cx);
+                    self.place_in_strip_slot(&TitleTab::Session(id), to, cx);
                     self.pane_motion = None;
                 } else if let Some((target, edge)) = over {
                     self.workspace.place(id, target, edge);
@@ -4492,7 +4596,7 @@ impl Shell {
                     .and_then(|next| self.workspace.tabs.iter().position(|id| *id == next))
                     .unwrap_or(self.workspace.tabs.len());
                 self.workspace.detach(id, session_index);
-                self.reorder_title_tab(&TitleTab::Session(id), to, cx);
+                self.place_in_strip_slot(&TitleTab::Session(id), to, cx);
                 self.pane_motion = None;
             }
             (DragSource::Tab(tab), Some((target, edge)), _) => {
@@ -4513,7 +4617,7 @@ impl Shell {
         if let (Some(pilot), Some(to)) = (pilot, drag.insert)
             && self.workspace.title_order.contains(&pilot)
         {
-            self.reorder_title_tab(&pilot, to, cx);
+            self.place_in_strip_slot(&pilot, to, cx);
         }
         if self.pilot_active(cx) {
             self.persist(cx);
@@ -4683,6 +4787,10 @@ impl Shell {
         }
         self.workspace.worktree_focus = self.worktree_focus.clone();
         self.workspace.normalize_title_order();
+        if let Some(tab) = self.active_title_tab(cx) {
+            self.note_tab_focus(&tab);
+        }
+        self.group_title_order(cx);
         self.sync_git(cx);
         self.update_chat_visibility(cx);
         self.update_usage_provider(cx);
@@ -7908,29 +8016,76 @@ impl Shell {
             })
     }
     fn start_tab_drag(&mut self, id: TitleTab, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        self.start_strip_drag(tab_groups::StripChild::Tab(id), event, cx);
+    }
+    /// Presses `item` for a drag: a grouped tab moves among its group's
+    /// tabs, a loose tab or a chip's whole group among the strip's entries.
+    fn start_strip_drag(
+        &mut self,
+        item: tab_groups::StripChild,
+        event: &MouseDownEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use tab_groups::StripChild;
         self.skip_tab_click = false;
         self.close_menu(cx);
-        let tabs = self.strip_tabs(cx);
-        let Some(from) = tabs.iter().position(|tab| *tab == id) else {
+        let entries = self.strip_entries(cx);
+        let top_level = || -> Vec<StripChild> {
+            entries
+                .iter()
+                .map(|entry| match entry {
+                    StripEntry::Loose(tab) => StripChild::Tab(tab.clone()),
+                    StripEntry::Group { project, .. } => StripChild::Group(project.clone()),
+                })
+                .collect()
+        };
+        let (scope, items) = match &item {
+            StripChild::Group(_) => (DragScope::TopLevel, top_level()),
+            StripChild::Tab(tab) => match entries.iter().find_map(|entry| match entry {
+                StripEntry::Group { project, tabs } if tabs.contains(tab) => {
+                    Some((project.clone(), tabs.clone()))
+                }
+                _ => None,
+            }) {
+                Some((project, tabs)) => (
+                    DragScope::Group(project),
+                    tabs.into_iter().map(StripChild::Tab).collect(),
+                ),
+                None => (DragScope::TopLevel, top_level()),
+            },
+        };
+        let Some(from) = items.iter().position(|it| *it == item) else {
             return;
         };
-        if tabs.len() < 2 {
+        if items.len() < 2 {
             return;
         }
-        let bounds: Vec<_> = (0..tabs.len())
-            .filter_map(|ix| self.tab_scroll.bounds_for_item(ix))
+        // Each item where it is drawn, after the strip's scroll.
+        let bounds: Vec<_> = items
+            .iter()
+            .filter_map(|it| match it {
+                StripChild::Tab(tab) => self.strip_tab_bounds(tab),
+                StripChild::Group(project) => self.group_box_bounds(project),
+            })
             .collect();
-        if bounds.len() != tabs.len() {
+        if bounds.len() != items.len() {
             return;
         }
+        let to_pane = match &item {
+            StripChild::Tab(tab) => self.strip_tabs(cx).contains(tab),
+            StripChild::Group(_) => false,
+        };
         self.tab_drag = Some(TabDrag {
-            id,
+            item,
+            scope,
+            items,
             from,
             to: from,
             origin: event.position.x,
             offset: px(0.),
             active: false,
             bounds,
+            to_pane,
             armed: false,
         });
         self.tabs_frame.update(cx, |_, cx| cx.notify());
@@ -7944,6 +8099,7 @@ impl Shell {
         if event.pressed_button != Some(MouseButton::Left) {
             self.tab_drag = None;
             self.cancel_pane_drag(cx);
+            self.settle_peek(event.position);
             self.tabs_frame.update(cx, |_, cx| cx.notify());
             return;
         }
@@ -7955,7 +8111,7 @@ impl Shell {
         drag.active = true;
         self.skip_tab_click = true;
         // Once armed it stays armed until the pointer is back over the tabs.
-        if pulled <= 0. {
+        if pulled <= 0. || !drag.to_pane {
             drag.armed = false;
         } else if pulled >= PANE_DROP_PULL {
             drag.armed = true;
@@ -7967,31 +8123,26 @@ impl Shell {
             drag.to = drag.from;
         } else {
             let start = drag.bounds[drag.from].left();
-            drag.offset = delta.clamp(
-                drag.bounds[0].left() - start,
-                drag.bounds.last().unwrap().left() - start,
-            );
-            drag.to = drag
-                .bounds
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| {
-                    (a.left() - start - drag.offset)
+            let last = drag.bounds.len() - 1;
+            drag.offset = delta.clamp(drag.slot_left(0) - start, drag.slot_left(last) - start);
+            let at = start + drag.offset;
+            drag.to = (0..=last)
+                .min_by(|a, b| {
+                    (drag.slot_left(*a) - at)
                         .abs()
-                        .partial_cmp(&(b.left() - start - drag.offset).abs())
+                        .partial_cmp(&(drag.slot_left(*b) - at).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
-                .map(|(ix, _)| ix)
                 .unwrap_or(drag.from);
         }
-        let (id, armed) = (drag.id.clone(), drag.armed);
+        let (id, armed) = (drag.tab().cloned(), drag.armed);
         // The active tab has no other pane to land on, but its title still
         // follows the pointer.
-        let own = self.active_title_tab(cx).as_ref() == Some(&id);
+        let own = id.is_some() && self.active_title_tab(cx) == id;
         let source = match &id {
-            TitleTab::Session(tab) => Some(DragSource::Tab(*tab)),
-            TitleTab::Pilot { .. } => Some(DragSource::PilotTab),
-            TitleTab::App(_) => None,
+            Some(TitleTab::Session(tab)) => Some(DragSource::Tab(*tab)),
+            Some(TitleTab::Pilot { .. }) => Some(DragSource::PilotTab),
+            Some(TitleTab::App(_)) | None => None,
         };
         let was = self.pane_drag.is_some();
         self.pane_drag = source.filter(|_| armed).map(|source| PaneDrag {
@@ -8012,63 +8163,80 @@ impl Shell {
         self.tabs_frame.update(cx, |_, cx| cx.notify());
     }
     fn finish_tab_drag(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use tab_groups::StripChild;
         if let Some(drag) = self.tab_drag.take() {
+            let tab = drag.tab().cloned();
             let onto_pane = self.pane_drag.as_ref().is_some_and(|d| {
                 d.over.is_some()
                     && match d.source {
-                        DragSource::Tab(tab) => drag.id.session() == Some(tab),
-                        DragSource::PilotTab => matches!(drag.id, TitleTab::Pilot { .. }),
+                        DragSource::Tab(id) => tab.as_ref().and_then(TitleTab::session) == Some(id),
+                        DragSource::PilotTab => matches!(tab, Some(TitleTab::Pilot { .. })),
                         _ => false,
                     }
             });
-            if onto_pane {
+            if onto_pane && let Some(tab) = tab {
                 self.skip_tab_click = true;
-                if matches!(drag.id, TitleTab::Pilot { .. }) {
-                    self.drop_pilot_tab(drag.id, window, cx);
+                if matches!(tab, TitleTab::Pilot { .. }) {
+                    self.drop_pilot_tab(tab, window, cx);
                 } else {
                     self.finish_pane_drag(window, cx);
                 }
             } else if drag.active {
                 self.cancel_pane_drag(cx);
-                // Each tab glides from where it is drawn into its new slot.
+                // Each item glides from where it is drawn into its new slot.
                 let now = std::time::Instant::now();
-                let visible = self.strip_tabs(cx);
-                let drawn: Vec<(TitleTab, f32)> = visible
+                let drawn: Vec<f32> = drag
+                    .items
                     .iter()
-                    .enumerate()
-                    .map(|(ix, id)| {
-                        let shift = self.tab_shifts.get(id).map_or(0., |s| s.at(now).0);
-                        (
-                            id.clone(),
-                            drag.bounds.get(ix).map_or(0., |b| b.left().as_f32()) + shift,
-                        )
+                    .zip(&drag.bounds)
+                    .map(|(item, bounds)| {
+                        let shift = match item {
+                            StripChild::Tab(tab) => self.tab_shifts.get(tab),
+                            StripChild::Group(project) => self.group_shifts.get(project),
+                        }
+                        .map_or(0., |s| s.at(now).0);
+                        bounds.left().as_f32() + shift
                     })
                     .collect();
-                self.reorder_title_tab(&drag.id, drag.to, cx);
+                match (&drag.scope, &tab) {
+                    (DragScope::Group(_), Some(tab)) => self.reorder_title_tab(tab, drag.to, cx),
+                    _ => self.reorder_entry(drag.from, drag.to, cx),
+                }
                 self.tab_shifts.clear();
+                self.group_shifts.clear();
                 if !cx.reduce_motion() {
-                    for (ix, id) in self.strip_tabs(cx).iter().enumerate() {
-                        let (Some((_, left)), Some(slot)) =
-                            (drawn.iter().find(|(t, _)| t == id), drag.bounds.get(ix))
-                        else {
+                    // The new order packed from the first slot, as it will draw.
+                    let mut order: Vec<usize> = (0..drag.items.len()).collect();
+                    let moved = order.remove(drag.from);
+                    order.insert(drag.to.min(order.len()), moved);
+                    let gap = drag.gap().as_f32();
+                    let mut left = drag.bounds[0].left().as_f32();
+                    for ix in order {
+                        let from = drawn[ix] - left;
+                        left += drag.bounds[ix].size.width.as_f32() + gap;
+                        if from.abs() <= 0.5 {
                             continue;
+                        }
+                        let shift = TabShift {
+                            from,
+                            to: 0.,
+                            start: now,
                         };
-                        let from = left - slot.left().as_f32();
-                        if from.abs() > 0.5 {
-                            self.tab_shifts.insert(
-                                id.clone(),
-                                TabShift {
-                                    from,
-                                    to: 0.,
-                                    start: now,
-                                },
-                            );
+                        match &drag.items[ix] {
+                            StripChild::Tab(tab) => {
+                                self.tab_shifts.insert(tab.clone(), shift);
+                            }
+                            StripChild::Group(project) => {
+                                self.group_shifts.insert(project.clone(), shift);
+                            }
                         }
                     }
                 }
                 self.skip_tab_click = true;
                 self.persist(cx);
             }
+            // A peek held through the drag closes if the pointer left it.
+            self.settle_peek(window.mouse_position());
             self.tabs_frame.update(cx, |_, cx| cx.notify());
         }
     }
@@ -8080,58 +8248,7 @@ impl Shell {
         follow: bool,
         reduced: bool,
     ) -> (f32, bool) {
-        let now = std::time::Instant::now();
-        // The dragged tab rides the pointer; it eases only into a slot.
-        if follow || reduced {
-            self.tab_shifts.remove(&id);
-            if follow {
-                self.tab_shifts.insert(
-                    id.clone(),
-                    TabShift {
-                        from: target,
-                        to: target,
-                        start: now - std::time::Duration::from_secs(1),
-                    },
-                );
-            }
-            return (target, false);
-        }
-        let current = self.tab_shifts.get(&id).map(|s| s.at(now));
-        if current.is_none_or(|_| self.tab_shifts[&id].to != target) {
-            let from = current.map_or(0., |(value, _)| value);
-            if from == target {
-                self.tab_shifts.remove(&id);
-                return (target, false);
-            }
-            self.tab_shifts.insert(
-                id.clone(),
-                TabShift {
-                    from,
-                    to: target,
-                    start: now,
-                },
-            );
-        }
-        let (value, done) = self.tab_shifts[&id].at(now);
-        if done && target == 0. {
-            self.tab_shifts.remove(&id);
-        }
-        (value, !done)
-    }
-    fn tab_shift(&self, ix: usize) -> Pixels {
-        let Some(d) = self.tab_drag.as_ref().filter(|d| d.active) else {
-            return px(0.);
-        };
-        if ix == d.from {
-            return d.offset;
-        }
-        if d.from < d.to && ix > d.from && ix <= d.to {
-            return d.bounds[ix - 1].left() - d.bounds[ix].left();
-        }
-        if d.from > d.to && ix >= d.to && ix < d.from {
-            return d.bounds[ix + 1].left() - d.bounds[ix].left();
-        }
-        px(0.)
+        ease_shift(&mut self.tab_shifts, id, target, follow, reduced)
     }
     /// The tab strip's width: between the navigation and the right panel
     /// toggle, `pl-1.5 pr-3` clear of the edge.
@@ -8157,8 +8274,23 @@ impl Shell {
     }
     fn tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let strip_width = self.tabs_width(window, cx);
-        let tabs = self.strip_tabs(cx);
-        let count = tabs.len();
+        self.drawn_peek = self.strip_peek.clone();
+        // Every project's tabs, grouped; collapsed groups draw only a chip.
+        // Each tab's project and each chip are worked out once a frame.
+        let (entries, projects) = self.strip_frame(cx);
+        let tabs = self.drawn_strip_tabs(&entries);
+        let chips = self.group_chip_widths(&entries, window, cx);
+        self.keep_peek_in_place(&chips.widths);
+        // Tabs share the strip as if no group peeked: a peek pushes the rest
+        // along instead of squeezing it, and the strip scrolls.
+        let group_room = Self::group_room(&chips.resting);
+        // Pane drops count the current scope's tabs, as shortcuts do.
+        let strip = self.strip_tabs(cx);
+        let strip_ix: Vec<Option<usize>> = tabs
+            .iter()
+            .map(|tab| strip.iter().position(|t| t == tab))
+            .collect();
+        let count = strip.len();
         let insert = self.pane_drag.as_ref().and_then(|d| d.insert);
         let reduced = cx.reduce_motion();
         let pane_motion = !reduced && !self.tab_drag.as_ref().is_some_and(|d| d.active);
@@ -8177,6 +8309,23 @@ impl Shell {
                 crate::tab_motion::Slot::Live { .. } => None,
             })
             .collect();
+        // Tabs of groups other than the current project's, open while they
+        // peek or easing shut, take no share of the strip.
+        let away: HashSet<TitleTab> = slots
+            .iter()
+            .map(|s| match s {
+                crate::tab_motion::Slot::Live { key, .. }
+                | crate::tab_motion::Slot::Closing { key, .. } => key,
+            })
+            .filter(|key| {
+                self.frame_project(&projects, key, cx)
+                    .is_some_and(|project| {
+                        gespan_core::files::path_key(&project)
+                            != gespan_core::files::path_key(&self.workspace.project)
+                    })
+            })
+            .cloned()
+            .collect();
         let (dock, dock_width) = self
             .pinned_dock(&closing, window, cx)
             .map_or((None, 0.), |(dock, w)| (Some(dock), w));
@@ -8187,11 +8336,17 @@ impl Shell {
         let share: f32 = slots
             .iter()
             .map(|s| match s {
-                crate::tab_motion::Slot::Live { open, .. }
-                | crate::tab_motion::Slot::Closing { open, .. } => *open,
+                crate::tab_motion::Slot::Live { key, open }
+                | crate::tab_motion::Slot::Closing { key, open, .. } => {
+                    if away.contains(key) {
+                        0.
+                    } else {
+                        *open
+                    }
+                }
             })
             .sum();
-        let avail = viewport - STRIP_PAD - STRIP_NEW_TAB - share * 2.;
+        let avail = viewport - STRIP_PAD - STRIP_NEW_TAB - group_room - share * 2.;
         let width = if share <= 0. {
             TITLE_TAB_MAX_WIDTH
         } else {
@@ -8237,6 +8392,13 @@ impl Shell {
         } else {
             (width, width)
         };
+        // Past the narrowest plate the strip scrolls instead of squeezing,
+        // and the selected tab keeps its full floor.
+        let (width, floor) = if width < TAB_MIN_WIDTH {
+            (TAB_MIN_WIDTH, SELECTED_TAB_MIN_WIDTH)
+        } else {
+            (width, floor)
+        };
         // Fractional widths round differently from tab to tab and the error
         // adds up along the strip, so a full strip's new-tab button would
         // wander as tabs come and go. Every slot snaps to device pixels and
@@ -8256,7 +8418,9 @@ impl Shell {
             .map(|s| match s {
                 crate::tab_motion::Slot::Live { key, open }
                 | crate::tab_motion::Slot::Closing { key, open, .. } => {
-                    if *open >= 1. {
+                    if away.contains(key) {
+                        0.
+                    } else if *open >= 1. {
                         base_width(key) + 2.
                     } else {
                         let (w, give) = slot_size(key, *open);
@@ -8270,11 +8434,15 @@ impl Shell {
         let mut extra: HashMap<TitleTab, f32> = HashMap::new();
         let mut new_tab_lead = 2.;
         if crowded {
-            let leftover = (viewport - STRIP_PAD - STRIP_NEW_TAB - used).max(0.);
+            let leftover = (viewport - STRIP_PAD - STRIP_NEW_TAB - group_room - used).max(0.);
             let settled: Vec<&TitleTab> = slots
                 .iter()
                 .filter_map(|s| match s {
-                    crate::tab_motion::Slot::Live { key, open } if *open >= 1. => Some(key),
+                    crate::tab_motion::Slot::Live { key, open }
+                        if *open >= 1. && !away.contains(key) =>
+                    {
+                        Some(key)
+                    }
                     _ => None,
                 })
                 .collect();
@@ -8289,24 +8457,82 @@ impl Shell {
             }
         }
         let tab_width = |tab: &TitleTab| base_width(tab) + extra.get(tab).copied().unwrap_or(0.);
-        let dragged = self
-            .tab_drag
-            .as_ref()
-            .filter(|d| d.active && !d.armed)
-            .map(|d| d.id.clone());
+        // The tabs' own width as drawn, peeking groups included: the scrolled
+        // part of the strip takes this much, up to the room it has.
+        let tabs_extent: f32 = STRIP_LEAD
+            + slots
+                .iter()
+                .map(|s| match s {
+                    crate::tab_motion::Slot::Live { key, open }
+                    | crate::tab_motion::Slot::Closing { key, open, .. } => {
+                        if *open >= 1. {
+                            base_width(key) + 2.
+                        } else {
+                            let (w, give) = slot_size(key, *open);
+                            w + 2. - give
+                        }
+                    }
+                })
+                .sum::<f32>()
+            + extra.values().sum::<f32>()
+            + Self::group_room(&chips.widths)
+            - 2.;
+        let dragging = self.tab_drag.as_ref().filter(|d| d.active && !d.armed);
+        let dragged_item = dragging.map(|d| d.item.clone());
+        let dragged = dragging.and_then(|d| d.tab().cloned());
+        // Where the drag puts each item it moves among, by item.
+        let drag_shift = |item: &tab_groups::StripChild| {
+            self.tab_drag.as_ref().map_or(0., |d| {
+                d.items
+                    .iter()
+                    .position(|it| it == item)
+                    .map_or(0., |ix| d.shift(ix).as_f32())
+            })
+        };
+        let targets: Vec<f32> = tabs
+            .iter()
+            .map(|tab| drag_shift(&tab_groups::StripChild::Tab(tab.clone())))
+            .collect();
+        let group_targets: Vec<(String, f32)> = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                StripEntry::Group { project, .. } => Some((
+                    project.clone(),
+                    drag_shift(&tab_groups::StripChild::Group(project.clone())),
+                )),
+                StripEntry::Loose(_) => None,
+            })
+            .collect();
         let mut moving = false;
         let shifts: Vec<Pixels> = tabs
             .clone()
             .into_iter()
-            .enumerate()
-            .map(|(ix, id)| {
-                let target = self.tab_shift(ix).as_f32();
+            .zip(targets)
+            .map(|(id, target)| {
                 let (value, active) =
                     self.eased_shift(id.clone(), target, dragged.as_ref() == Some(&id), reduced);
                 moving |= active;
                 px(value)
             })
             .collect();
+        // A chip drag carries its group's box; the boxes it passes make room.
+        let mut group_shifts: HashMap<String, f32> = HashMap::new();
+        for (project, target) in group_targets {
+            let follow = dragged_item == Some(tab_groups::StripChild::Group(project.clone()));
+            let (value, active) = ease_shift(
+                &mut self.group_shifts,
+                project.clone(),
+                target,
+                follow,
+                reduced,
+            );
+            moving |= active;
+            group_shifts.insert(project, value);
+        }
+        let dragged_group = match dragged_item {
+            Some(tab_groups::StripChild::Group(project)) => Some(project),
+            _ => None,
+        };
         // Keep inactive headlines on their last pane. Only an in-tab focus
         // change rolls the title; selecting a tab settles it in the same frame.
         self.pane_ticks
@@ -8349,10 +8575,9 @@ impl Shell {
                 // Keep its ink stable until that press is released, even if
                 // hover hitboxes are being replaced during that redraw.
                 let hovered = self.tab_hover == Some(id)
-                    || self
-                        .tab_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.id == TitleTab::Session(id) && !drag.active);
+                    || self.tab_drag.as_ref().is_some_and(|drag| {
+                        drag.tab() == Some(&TitleTab::Session(id)) && !drag.active
+                    });
                 // A collapsed tab drops its close button, so a click anywhere
                 // on it selects it; selected, it is wide enough to show it again.
                 let close = self.tab_can_close(id, cx)
@@ -8360,7 +8585,7 @@ impl Shell {
                 let dragging = self
                     .tab_drag
                     .as_ref()
-                    .is_some_and(|d| d.id == TitleTab::Session(id) && d.active);
+                    .is_some_and(|d| d.tab() == Some(&TitleTab::Session(id)) && d.active);
                 // Any chat in the tab with a saved draft dashes its plate, as
                 // the sidebar card does.
                 let draft = self
@@ -8370,6 +8595,10 @@ impl Shell {
                     .into_iter()
                     .filter(|pane| self.session_summaries.contains_key(pane))
                     .any(|pane| self.session_metadata(pane, cx).has_saved_draft());
+                // A tab in a worktree other than its project folder names it.
+                let worktree = self
+                    .frame_project(&projects, &TitleTab::Session(id), cx)
+                    .and_then(|p| self.tab_worktree_label_in(&TitleTab::Session(id), &p, cx));
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -8425,7 +8654,15 @@ impl Shell {
                                 (leaving, dir, progress),
                                 active,
                                 hovered,
-                            )),
+                            ))
+                            .when_some(
+                                worktree.filter(|_| {
+                                    tab_width(&TitleTab::Session(id)) >= TAB_CLOSE_MIN_WIDTH
+                                }),
+                                |d, label| {
+                                    d.child(tab_groups::worktree_badge(id.to_string(), label))
+                                },
+                            ),
                     )
                     .when(close, |d| {
                         d.child(
@@ -8486,10 +8723,14 @@ impl Shell {
                                 .rounded_full()
                                 .bg(accent_color())
                         };
-                        d.when(insert == Some(ix), |d| d.child(bar().left(px(-2.))))
-                            .when(insert == Some(count) && ix + 1 == count, |d| {
-                                d.child(bar().right(px(-2.)))
-                            })
+                        let at = strip_ix[ix];
+                        d.when(at.is_some() && insert == at, |d| {
+                            d.child(bar().left(px(-2.)))
+                        })
+                        .when(
+                            insert == Some(count) && at.is_some_and(|at| at + 1 == count),
+                            |d| d.child(bar().right(px(-2.))),
+                        )
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -8555,7 +8796,13 @@ impl Shell {
                 TitleTab::Pilot { id, .. } => {
                     let manager = self.pilots.clone()?;
                     let w = tab_width(tab);
-                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, cx))?;
+                    // A Pilot in a worktree names it, as a chat tab does.
+                    let worktree = self
+                        .frame_project(&projects, tab, cx)
+                        .and_then(|p| self.tab_worktree_label_in(tab, &p, cx))
+                        .filter(|_| w >= TAB_CLOSE_MIN_WIDTH)
+                        .map(|label| tab_groups::worktree_badge(id.clone(), label));
+                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, worktree, cx))?;
                     let drag_id = tab.clone();
                     let menu_id = id.clone();
                     let dragging = dragged.as_ref() == Some(tab);
@@ -8606,12 +8853,12 @@ impl Shell {
                 .mr(px(-give))
                 .overflow_hidden()
         };
-        let elements: Vec<AnyElement> = slots
+        let elements: Vec<(TitleTab, AnyElement)> = slots
             .into_iter()
             .filter_map(|s| match s {
                 crate::tab_motion::Slot::Live { key, open } => {
                     let element = live.remove(&key)?;
-                    Some(if open >= 1. {
+                    let element = if open >= 1. {
                         element
                     } else {
                         slot(&key, open)
@@ -8621,7 +8868,8 @@ impl Shell {
                             .when(crowded, |d| d.flex().justify_end())
                             .child(element)
                             .into_any_element()
-                    })
+                    };
+                    Some((key, element))
                 }
                 crate::tab_motion::Slot::Closing { key, open, .. } => {
                     let w = tab_width(&key);
@@ -8641,27 +8889,89 @@ impl Shell {
                         })
                         .into_iter()
                         .flatten();
-                    Some(
-                        slot(&key, open)
-                            .child(
-                                div()
-                                    .w(px(w))
-                                    .h(px(TITLE_BAR_HEIGHT))
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        title_tab_plate(false, false)
-                                            .w_full()
-                                            .min_w_0()
-                                            .gap(px(TAB_TILE_GAP))
-                                            .children(headline),
-                                    ),
-                            )
-                            .into_any_element(),
-                    )
+                    let element = slot(&key, open)
+                        .child(
+                            div()
+                                .w(px(w))
+                                .h(px(TITLE_BAR_HEIGHT))
+                                .flex()
+                                .items_center()
+                                .child(
+                                    title_tab_plate(false, false)
+                                        .w_full()
+                                        .min_w_0()
+                                        .gap(px(TAB_TILE_GAP))
+                                        .children(headline),
+                                ),
+                        )
+                        .into_any_element();
+                    Some((key, element))
                 }
             })
             .collect();
+        let (keys, elements): (Vec<_>, Vec<_>) = self
+            .grouped_strip(
+                &entries,
+                elements,
+                &chips,
+                (&group_shifts, dragged_group.as_deref()),
+                cx,
+            )
+            .into_iter()
+            .unzip();
+        // The active tab's slot among the strip's direct children, when loose.
+        let active_child = selected.as_ref().and_then(|tab| {
+            keys.iter()
+                .position(|key| *key == tab_groups::StripChild::Tab(tab.clone()))
+        });
+        self.strip_children = keys;
+        let reveal = {
+            let reveal = self.reveal_tab.clone();
+            let scroll = self.tab_scroll.clone();
+            let grouped = self.group_tab_bounds.clone();
+            let frame = self.tabs_frame.clone();
+            let active = selected.clone();
+            let settling = moving || opening || switching;
+            move |_: Vec<Bounds<Pixels>>, _: &mut Window, cx: &mut App| {
+                if !reveal.get() {
+                    return;
+                }
+                let offset = scroll.offset();
+                // Where the tab is drawn now, after this frame's scroll.
+                let bounds = match active_child {
+                    Some(ix) => scroll.bounds_for_item(ix).map(|b| Bounds {
+                        origin: gpui::point(b.origin.x + offset.x, b.origin.y),
+                        size: b.size,
+                    }),
+                    None => active
+                        .as_ref()
+                        .and_then(|tab| grouped.borrow().get(tab).copied()),
+                };
+                let Some(bounds) = bounds else {
+                    if !settling {
+                        reveal.set(false);
+                    }
+                    return;
+                };
+                let view = scroll.bounds();
+                let shift = if bounds.left() < view.left() || bounds.size.width > view.size.width {
+                    view.left() - bounds.left()
+                } else if bounds.right() > view.right() {
+                    view.right() - bounds.right()
+                } else {
+                    px(0.)
+                };
+                let target = (offset.x + shift).clamp(-scroll.max_offset().x, px(0.));
+                if (target - offset.x).abs() > px(0.5) {
+                    // Laid out already; the next frame draws it in view.
+                    scroll.set_offset(gpui::point(target, offset.y));
+                    let frame = frame.clone();
+                    cx.defer(move |cx| frame.update(cx, |_, cx| cx.notify()));
+                } else if !settling {
+                    reveal.set(false);
+                }
+            }
+        };
         div()
             .id("title-tab-strip")
             .debug_selector(|| "title-tab-strip".into())
@@ -8672,64 +8982,116 @@ impl Shell {
             .flex()
             .items_center()
             .overflow_hidden()
+            .pr(px(STRIP_TRAIL - 2.))
             .children(dock)
             .child(
                 div()
+                    .on_children_prepainted(reveal)
                     .id("session-tabs")
-                    .flex_1()
+                    // As wide as its tabs, shrinking to scroll once they
+                    // fill the strip; the new-tab button stays outside it.
+                    // Sized from the slots rather than measured, so a tab
+                    // easing open never moves the button.
+                    .flex_basis(px(tabs_extent.max(0.)))
+                    .flex_shrink(1.)
                     .min_w_0()
                     .h_full()
-                    .overflow_hidden()
+                    // A full strip scrolls sideways; a plain wheel does too.
+                    .overflow_x_scroll()
                     .track_scroll(&self.tab_scroll)
                     .flex()
                     .items_center()
                     .gap(px(2.))
                     .pl(px(STRIP_LEAD))
-                    .pr(px(STRIP_TRAIL - 2.))
-                    .children(elements)
-                    .child(
-                        div()
-                            .id("new-tab")
-                            .debug_selector(|| "new-tab".into())
-                            .group("new-tab")
-                            .role(Role::Button)
-                            .aria_label("New session tab")
-                            .cursor_pointer()
-                            .size(px(TAB_PLATE_HEIGHT))
-                            .flex_shrink_0()
-                            .ml(px(new_tab_lead))
-                            .rounded_md()
-                            .bg(content(0.04))
-                            .opacity(0.65)
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .hover(|s| s.opacity(1.).bg(content(0.07)))
-                            .relative()
-                            .when(self.menu_open(&MenuTarget::NewTab), |d| {
-                                d.opacity(1.).bg(content(0.07))
-                            })
-                            .child(self.new_tab_anchor.probe())
-                            .child(
-                                icon("plus", 14.)
-                                    .group_hover("new-tab", |s| s.text_color(content(1.))),
-                            )
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                // Title bar terminals: pick a session or a terminal.
-                                if !this.terminal_in_title() {
-                                    this.new_chat(cx);
-                                } else if this.menu_open(&MenuTarget::NewTab) {
-                                    this.close_menu(cx);
-                                } else {
-                                    let anchor = Anchor::Slot(this.new_tab_anchor.clone());
-                                    this.open_menu(MenuTarget::NewTab, anchor, window, cx);
-                                }
-                            })),
-                    )
-                    .child(titlebar_drag_area().flex_1().min_w_0()),
+                    .children(elements),
             )
+            .child(
+                div()
+                    .id("new-tab")
+                    .debug_selector(|| "new-tab".into())
+                    .group("new-tab")
+                    .role(Role::Button)
+                    .aria_label("New session tab")
+                    .cursor_pointer()
+                    .size(px(TAB_PLATE_HEIGHT))
+                    .flex_shrink_0()
+                    .ml(px(2. + new_tab_lead))
+                    .rounded_md()
+                    .bg(content(0.04))
+                    .opacity(0.65)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .hover(|s| s.opacity(1.).bg(content(0.07)))
+                    .relative()
+                    .when(self.menu_open(&MenuTarget::NewTab), |d| {
+                        d.opacity(1.).bg(content(0.07))
+                    })
+                    .child(self.new_tab_anchor.probe())
+                    .child(icon("plus", 14.).group_hover("new-tab", |s| s.text_color(content(1.))))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        // Title bar terminals: pick a session or a terminal.
+                        if !this.terminal_in_title() {
+                            this.new_chat(cx);
+                        } else if this.menu_open(&MenuTarget::NewTab) {
+                            this.close_menu(cx);
+                        } else {
+                            let anchor = Anchor::Slot(this.new_tab_anchor.clone());
+                            this.open_menu(MenuTarget::NewTab, anchor, window, cx);
+                        }
+                    })),
+            )
+            .child(titlebar_drag_area().ml(px(2.)).flex_1().min_w_0())
             .into_any()
     }
+}
+
+/// Where `id` is drawn now, easing toward `target` in `shifts`. The dragged
+/// item rides the pointer; the rest ease into their slots.
+fn ease_shift<K: Clone + Eq + std::hash::Hash>(
+    shifts: &mut HashMap<K, TabShift>,
+    id: K,
+    target: f32,
+    follow: bool,
+    reduced: bool,
+) -> (f32, bool) {
+    let now = std::time::Instant::now();
+    // The dragged tab rides the pointer; it eases only into a slot.
+    if follow || reduced {
+        shifts.remove(&id);
+        if follow {
+            shifts.insert(
+                id.clone(),
+                TabShift {
+                    from: target,
+                    to: target,
+                    start: now - std::time::Duration::from_secs(1),
+                },
+            );
+        }
+        return (target, false);
+    }
+    let current = shifts.get(&id).map(|s| s.at(now));
+    if current.is_none_or(|_| shifts[&id].to != target) {
+        let from = current.map_or(0., |(value, _)| value);
+        if from == target {
+            shifts.remove(&id);
+            return (target, false);
+        }
+        shifts.insert(
+            id.clone(),
+            TabShift {
+                from,
+                to: target,
+                start: now,
+            },
+        );
+    }
+    let (value, done) = shifts[&id].at(now);
+    if done && target == 0. {
+        shifts.remove(&id);
+    }
+    (value, !done)
 }
 /// Highlight only the existing hairline; its parent keeps the wider, transparent
 /// grab area centered on that line. The wash brightens the underlying border.
@@ -8999,6 +9361,17 @@ impl Render for Shell {
                     cx.notify();
                 }));
             self.start_native_notifications(cx);
+            self.idle_clock = Some(cx.spawn_in(window, async move |this, cx| {
+                loop {
+                    let closed = this.update_in(cx, |this, window, cx| {
+                        this.close_idle_tabs(title_tabs::unix_now(), window, cx);
+                    });
+                    if closed.is_err() {
+                        break;
+                    }
+                    cx.background_executor().timer(IDLE_CHECK).await;
+                }
+            }));
             #[cfg(windows)]
             if !self.secondary {
                 self.start_tray(window, cx);
@@ -11496,8 +11869,9 @@ mod tests {
         window
             .update(cx, |shell, _, cx| {
                 assert_eq!(shell.visible_tabs(cx).len(), 3);
-                assert_eq!(shell.tab_scroll.bounds_for_item(2), Some(pilot));
-                assert_eq!(shell.tab_scroll.bounds_for_item(0), Some(first));
+                let tabs = shell.strip_tabs(cx);
+                assert_eq!(shell.strip_tab_bounds(&tabs[2]), Some(pilot));
+                assert_eq!(shell.strip_tab_bounds(&tabs[0]), Some(first));
             })
             .unwrap();
     }
@@ -11509,6 +11883,7 @@ mod tests {
         window
             .update(cx, |shell, _, cx| {
                 shell.workspace.preferences.tab_animations = true;
+                // Crowded: the tabs give way to fit instead of scrolling.
                 for _ in 0..12 {
                     shell.create(Kind::Codex, cx);
                 }
@@ -11542,11 +11917,15 @@ mod tests {
         let last = cx
             .debug_bounds(Box::leak(format!("title-tab-{last}").into_boxed_str()))
             .unwrap();
+        // The last tab sits inside its project's group, which ends one inset
+        // past it.
+        let group = cx.debug_bounds("tab-group-gespan").unwrap();
+        assert!(group.right() >= last.right());
         // The strip's 2px gap and the button's 2px margin, as when it has room.
         assert!(
-            settled.left() - last.right() <= px(4.5),
+            settled.left() - group.right() <= px(4.5),
             "a full strip keeps the usual gap before the new-tab button: {:?}",
-            settled.left() - last.right()
+            settled.left() - group.right()
         );
         let (selected, other) = window
             .update(cx, |shell, _, cx| {
@@ -11572,6 +11951,7 @@ mod tests {
             "the selected tab shrinks only down to its floor"
         );
         assert!(bounds(cx, other).size.width < px(SELECTED_TAB_MIN_WIDTH));
+        assert!(bounds(cx, other).size.width >= px(TAB_MIN_WIDTH));
         let close = |cx: &mut gpui::VisualTestContext, id: i64| {
             cx.debug_bounds(Box::leak(format!("close-title-tab-{id}").into_boxed_str()))
         };
