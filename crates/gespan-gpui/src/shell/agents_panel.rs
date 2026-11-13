@@ -379,8 +379,8 @@ impl Shell {
         }
     }
 
-    /// The footer pinned to the sidebar's bottom, and the panel above it
-    /// while open. `None` when Settings turns Activity off.
+    /// The footer pinned above the sidebar's Settings row, and the panel
+    /// above it while open. `None` when Settings turns Activity off.
     pub(super) fn agents_footer(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.workspace.preferences.working_agents {
             self.agents_open = false;
@@ -448,7 +448,8 @@ impl Shell {
                 .flex_shrink_0()
                 .px(px(INSET))
                 .pt_1()
-                .pb(px(INSET))
+                // Settings sits just below.
+                .pb_1()
                 .children(panel)
                 .child(footer)
                 .into_any_element(),

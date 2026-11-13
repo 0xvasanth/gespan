@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     project_background::ProjectBackground,
-    project_settings::{AppearanceControls, BackgroundDialog, Event, project_icon},
+    project_settings::{AppearanceControls, BackgroundDialog, Event},
     project_theme::ThemeDialog,
 };
 use gespan_core::project_appearance::ProjectAppearance;
@@ -26,9 +26,6 @@ impl Shell {
     }
     pub(super) fn project_label(&self, path: &str) -> String {
         self.appearance(path).label(path)
-    }
-    pub(super) fn project_mark(&self, path: &str, side: f32) -> AnyElement {
-        project_icon(&self.appearance(path), path, side)
     }
     pub(super) fn save_project_appearance(
         &mut self,

@@ -135,13 +135,7 @@ fn new_layout_projects_restore_the_last_session_or_pilot_tab(cx: &mut TestAppCon
                     let session = shell.workspace.active.unwrap();
                     Surface::Pilot.open(shell, window, cx);
                     let pilot = shell.pilot_manager().read(cx).active.clone().unwrap();
-                    let ix = shell
-                        .workspace
-                        .projects
-                        .iter()
-                        .position(|p| p == path)
-                        .unwrap();
-                    (stable(format!("project-space-{ix}")), session, pilot)
+                    (path, session, pilot)
                 })
                 .unwrap();
             visual.run_until_parked();
@@ -151,6 +145,16 @@ fn new_layout_projects_restore_the_last_session_or_pilot_tab(cx: &mut TestAppCon
             visual.refresh().unwrap();
             let bounds = visual.debug_bounds(selector).unwrap();
             visual.simulate_click(bounds.center(), Default::default());
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+        };
+        // Switching projects, as the project picker does.
+        let switch = |path: &'static str, visual: &mut VisualTestContext| {
+            window
+                .update(visual, |shell, window, cx| {
+                    shell.select_project(path.into(), window, cx)
+                })
+                .unwrap();
             visual.run_until_parked();
             visual.refresh().unwrap();
         };
@@ -174,12 +178,12 @@ fn new_layout_projects_restore_the_last_session_or_pilot_tab(cx: &mut TestAppCon
                     .is_some()
             );
         };
-        click(targets[0].0, visual);
+        switch(targets[0].0, visual);
         assert_pilot(0, visual);
         click(stable(format!("title-tab-{}", targets[0].1)), visual);
-        click(targets[1].0, visual);
+        switch(targets[1].0, visual);
         assert_pilot(1, visual);
-        click(targets[0].0, visual);
+        switch(targets[0].0, visual);
         window
             .read_with(visual, |shell, cx| {
                 assert!(!shell.pilot_active(cx));
@@ -190,11 +194,11 @@ fn new_layout_projects_restore_the_last_session_or_pilot_tab(cx: &mut TestAppCon
         assert_pilot(0, visual);
         // Both same-project clicks and returning from another project restore
         // a selected Pilot in either new frame style.
-        click(targets[0].0, visual);
+        switch(targets[0].0, visual);
         assert_pilot(0, visual);
-        click(targets[1].0, visual);
+        switch(targets[1].0, visual);
         assert_pilot(1, visual);
-        click(targets[0].0, visual);
+        switch(targets[0].0, visual);
         assert_pilot(0, visual);
     }
 }
