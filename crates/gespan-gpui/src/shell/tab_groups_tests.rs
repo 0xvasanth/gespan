@@ -1986,3 +1986,117 @@ fn a_pilot_in_the_current_folder_draws_before_the_sidebar_lists_it(cx: &mut Test
         })
         .unwrap();
 }
+
+/// Draws the next frame of a moving strip: tab motion runs on the wall
+/// clock, as the window's frames do.
+fn next_frame(window: gpui::WindowHandle<Shell>, visual: &mut gpui::VisualTestContext, ms: u64) {
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+    window
+        .update(visual, |shell, _, cx| {
+            shell.tabs_frame.update(cx, |_, cx| cx.notify())
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    visual.run_until_parked();
+}
+
+fn animated(window: gpui::WindowHandle<Shell>, cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(false));
+    window
+        .update(cx, |shell, _, _| {
+            shell.workspace.preferences.tab_animations = true
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn resting_on_a_peeking_chips_count_holds_the_peek_while_it_opens(cx: &mut TestAppContext) {
+    let (window, other, _) = window(cx);
+    animated(window, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(visual);
+    let chip = visual
+        .debug_bounds("tab-group-chip-another-project")
+        .unwrap();
+    let count = visual
+        .debug_bounds("tab-group-count-another-project")
+        .unwrap();
+    // The pointer comes to rest on the count, at the chip's far end.
+    let at = gpui::point(count.right() - px(2.), count.center().y);
+    assert!(chip.contains(&at));
+    visual.simulate_mouse_move(at, None, Default::default());
+    visual.run_until_parked();
+    // While the group's tabs ease open, the chip holds still under the
+    // pointer and the peek never drops.
+    for _ in 0..8 {
+        next_frame(window, visual, 30);
+        let now = visual
+            .debug_bounds("tab-group-chip-another-project")
+            .unwrap();
+        assert_eq!(now.size.width, chip.size.width, "the chip keeps its size");
+        assert_eq!(now.left(), chip.left());
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.strip_peek.as_deref(), Some("/work/another-project"));
+            })
+            .unwrap();
+    }
+    assert!(drawn(visual, format!("title-tab-{other}")), "opened");
+}
+
+#[gpui::test]
+fn moving_on_from_a_peek_holds_the_next_chip_still_while_the_first_eases_shut(
+    cx: &mut TestAppContext,
+) {
+    let (window, _, _) = window(cx);
+    let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1400.), px(700.)));
+    window
+        .update(visual, |shell, _, cx| {
+            for _ in 0..20 {
+                add_background_tab(shell, "/work/gespan", cx);
+            }
+            for _ in 0..4 {
+                add_background_tab(shell, "/work/wide-project", cx);
+            }
+            add_background_tab(shell, "/work/third-project", cx);
+            for ix in 0..8 {
+                add_background_tab(shell, &format!("/work/after-{ix}"), cx);
+            }
+        })
+        .unwrap();
+    settle(visual);
+    let chip = visual.debug_bounds("tab-group-chip-wide-project").unwrap();
+    window
+        .update(visual, |shell, _, cx| {
+            let view = shell.tab_scroll.bounds();
+            let offset = shell.tab_scroll.offset();
+            let x = offset.x - (chip.left() - view.left() - px(40.));
+            shell.tab_scroll.set_offset(gpui::point(x, offset.y));
+            shell.tabs_frame.update(cx, |_, cx| cx.notify());
+        })
+        .unwrap();
+    settle(visual);
+    animated(window, visual);
+    hover(visual, "tab-group-chip-wide-project".into());
+    next_frame(window, visual, 260);
+    let held = visual.debug_bounds("tab-group-chip-third-project").unwrap();
+    visual.simulate_mouse_move(held.center(), None, Default::default());
+    visual.run_until_parked();
+    // Every frame of the first group easing shut, the chip under the
+    // pointer stays where it was.
+    for _ in 0..9 {
+        next_frame(window, visual, 25);
+        let now = visual.debug_bounds("tab-group-chip-third-project").unwrap();
+        assert!(
+            (now.left() - held.left()).abs() <= px(1.),
+            "{now:?} moved from {held:?}"
+        );
+    }
+    window
+        .update(visual, |shell, _, _| {
+            assert_eq!(shell.strip_peek.as_deref(), Some("/work/third-project"));
+        })
+        .unwrap();
+}

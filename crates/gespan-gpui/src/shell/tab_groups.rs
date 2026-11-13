@@ -155,12 +155,9 @@ impl Shell {
                     )
                     + if running { CHIP_GAP + SPINNER } else { 0. }
             };
-            let drawn = if self.group_expanded(project) {
-                open
-            } else {
-                collapsed
-            };
-            chips.widths.insert(project.clone(), drawn.ceil());
+            // A peeking chip keeps its collapsed size, so it never shrinks
+            // out from under the pointer that opened it.
+            chips.widths.insert(project.clone(), collapsed.ceil());
             chips.resting.insert(project.clone(), collapsed.ceil());
         }
         chips
@@ -179,7 +176,6 @@ impl Shell {
         &self,
         project: &str,
         tabs: &[TitleTab],
-        expanded: bool,
         (width, running): (f32, bool),
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -188,8 +184,11 @@ impl Shell {
         let label_for_close = label.clone();
         let color = appearance.color(project);
         let name = crate::workspace::project_name(project);
-        let running = !expanded && running;
         let current = path_key(project) == path_key(&self.workspace.project);
+        // Another project's chip looks the same peeking or not: only the
+        // tabs after it open.
+        let collapsed = !current;
+        let running = collapsed && running;
         let (peek, open, close, drag) = (
             project.to_owned(),
             project.to_owned(),
@@ -232,12 +231,12 @@ impl Shell {
                     .text_color(content(0.95))
                     .truncate()
                     // The close button takes the label's tail on hover.
-                    .when(expanded, |d| {
+                    .when(!collapsed, |d| {
                         d.group_hover(hover_group.clone(), |s| s.pr(px(16.)))
                     })
                     .child(label),
             )
-            .when(!expanded, |d| {
+            .when(collapsed, |d| {
                 d.child(
                     div()
                         .debug_selector(move || format!("tab-group-count-{count_name}"))
@@ -381,11 +380,20 @@ impl Shell {
                         }
                     }),
             )
-            .child(self.group_chip(project, tabs, expanded, chip, cx))
+            .child(self.group_chip(project, tabs, chip, cx))
             .children(children.into_iter().map(|(_, element)| element))
-            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                 // A drag holds the strip still; its release settles the peek.
                 if !*hovered && this.tab_drag.is_none() && this.strip_peek.as_ref() == Some(&peek) {
+                    // Left to the right, what is under the pointer holds
+                    // still while this group eases shut.
+                    let pointer = window.mouse_position();
+                    if this
+                        .group_box_bounds(&peek)
+                        .is_some_and(|b| pointer.x >= b.right())
+                    {
+                        this.hold_strip_as_closing(&peek);
+                    }
                     this.strip_peek = None;
                     this.tabs_frame.update(cx, |_, cx| cx.notify());
                 }
@@ -481,33 +489,43 @@ impl Shell {
                 .position(|child| matches!(child, StripChild::Group(g) if g == p))
         };
         let at = place(project);
-        self.peek_shift = self
+        if let Some(left) = self
             .drawn_peek
             .clone()
             .filter(|p| matches!((place(p), at), (Some(p), Some(at)) if p < at))
-            .and_then(|p| {
-                let width = self.group_box_bounds(&p)?.size.width.as_f32();
-                Some((p, width))
-            });
+        {
+            self.hold_strip_as_closing(&left);
+        }
         self.strip_peek = Some(project.to_owned());
         self.tabs_frame.update(cx, |_, cx| cx.notify());
     }
 
-    /// Scrolls the strip right by the width a group left of the new peek
-    /// gave up as it closed, clamped to the scroll range.
-    pub(super) fn keep_peek_in_place(&mut self, chips: &HashMap<String, f32>) {
-        let Some((project, open)) = self.peek_shift.take() else {
-            return;
-        };
-        let Some(chip) = chips.get(&project) else {
-            return;
-        };
-        let given_up = open - (chip + 2. * GROUP_INSET);
-        if given_up > 0. {
-            let offset = self.tab_scroll.offset();
-            let x = (offset.x + px(given_up)).min(px(0.));
-            self.tab_scroll.set_offset(gpui::point(x, offset.y));
+    /// `project`'s group is closing left of the pointer: from now on the
+    /// strip scrolls back by whatever its tabs give up, frame by frame.
+    fn hold_strip_as_closing(&mut self, project: &str) {
+        if let Some(&width) = self.group_tabs_width.get(project).filter(|w| **w > 0.) {
+            self.peek_anchor = Some((project.to_owned(), width));
         }
+    }
+
+    /// Scrolls the strip right by what the closing group's tabs gave up
+    /// since the last frame, clamped to the scroll range, so the strip to
+    /// its right holds still as it eases shut. `widths` are this frame's
+    /// tab widths of each group drawn open.
+    pub(super) fn hold_strip_still(&mut self, widths: HashMap<String, f32>) {
+        if let Some((project, last)) = self.peek_anchor.take() {
+            let now = widths.get(&project).copied().unwrap_or(0.);
+            let given_up = last - now;
+            if given_up > 0. {
+                let offset = self.tab_scroll.offset();
+                let x = (offset.x + px(given_up)).min(px(0.));
+                self.tab_scroll.set_offset(gpui::point(x, offset.y));
+            }
+            if now > 0. && self.strip_peek.as_deref() != Some(project.as_str()) {
+                self.peek_anchor = Some((project, now));
+            }
+        }
+        self.group_tabs_width = widths;
     }
 
     /// Closes every tab in `project`'s group, pins aside, by the usual

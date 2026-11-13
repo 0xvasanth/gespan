@@ -917,9 +917,12 @@ pub(crate) struct Shell {
     group_tab_bounds: tab_groups::GroupTabBounds,
     /// The peek drawn last frame, so the next peek knows which group closed.
     drawn_peek: Option<String>,
-    /// A group left of the new peek that closed, with its open box width:
-    /// the strip scrolls back by what it gave up.
-    peek_shift: Option<(String, f32)>,
+    /// A group closing left of the pointer, with its tabs' width last
+    /// frame: the strip scrolls back by what they give up, frame by frame.
+    peek_anchor: Option<(String, f32)>,
+    /// Each open group's tab widths as last drawn, groups other than the
+    /// current project's only.
+    group_tabs_width: HashMap<String, f32>,
     /// Set when the active tab changes; cleared once it is in view.
     reveal_tab: std::rc::Rc<std::cell::Cell<bool>>,
     /// Tab animations: opening and closing title tabs, with each tab's last label.
@@ -1363,7 +1366,8 @@ impl Shell {
             strip_children: Vec::new(),
             group_tab_bounds: Default::default(),
             drawn_peek: None,
-            peek_shift: None,
+            peek_anchor: None,
+            group_tabs_width: HashMap::new(),
             reveal_tab: Default::default(),
             title_tab_motion: Default::default(),
             title_tab_selection: (None, None, std::time::Instant::now()),
@@ -8280,7 +8284,6 @@ impl Shell {
         let (entries, projects) = self.strip_frame(cx);
         let tabs = self.drawn_strip_tabs(&entries);
         let chips = self.group_chip_widths(&entries, window, cx);
-        self.keep_peek_in_place(&chips.widths);
         // Tabs share the strip as if no group peeked: a peek pushes the rest
         // along instead of squeezing it, and the strip scrolls.
         let group_room = Self::group_room(&chips.resting);
@@ -8477,6 +8480,27 @@ impl Shell {
             + extra.values().sum::<f32>()
             + Self::group_room(&chips.widths)
             - 2.;
+        // What each other project's open tabs take this frame, so a group
+        // easing shut left of the pointer can hold the rest still.
+        let mut open_widths: HashMap<String, f32> = HashMap::new();
+        for slot in &slots {
+            let (crate::tab_motion::Slot::Live { key, open }
+            | crate::tab_motion::Slot::Closing { key, open, .. }) = slot;
+            if !away.contains(key) {
+                continue;
+            }
+            let Some(project) = self.frame_project(&projects, key, cx) else {
+                continue;
+            };
+            let width = if *open >= 1. {
+                base_width(key) + 2.
+            } else {
+                let (w, give) = slot_size(key, *open);
+                w + 2. - give
+            };
+            *open_widths.entry(project).or_default() += width;
+        }
+        self.hold_strip_still(open_widths);
         let dragging = self.tab_drag.as_ref().filter(|d| d.active && !d.armed);
         let dragged_item = dragging.map(|d| d.item.clone());
         let dragged = dragging.and_then(|d| d.tab().cloned());
