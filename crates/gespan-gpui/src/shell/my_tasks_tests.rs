@@ -1738,3 +1738,62 @@ fn a_log_switched_on_but_not_open_lists_nothing_and_fails_nothing(_cx: &mut Test
     gespan_core::decisions::set_enabled(false);
     assert!(waiting.is_ok(), "{:?}", waiting.err());
 }
+
+/// My tasks refreshes every 30 s: a proposal's "may replace" search runs
+/// again only when the proposal, its project's active entries or the
+/// search mode changed, never for an unchanged refresh.
+#[test]
+fn decision_similar_entries_are_searched_once_per_change() {
+    use gespan_core::decisions::{Config, DecisionStore, NewEntry, Scope, Source};
+    use std::cell::Cell;
+    let dir = tempfile::tempdir().unwrap();
+    let log = DecisionStore::open(&dir.path().join("gespan.db"), Config::app()).unwrap();
+    let scope = Scope::Repo("github.com/o/r@abc".into());
+    let new = |title: &str| NewEntry {
+        kind: gespan_core::decisions::Kind::Decision,
+        scope: scope.clone(),
+        title: title.into(),
+        text: format!("{title} text"),
+        why: "why".into(),
+        user_answer: None,
+        source: Source {
+            session: Some(1),
+            question_ref: Some("q".into()),
+            ..Source::default()
+        },
+    };
+    let first = log.propose(new("Use tabs"), 1).unwrap();
+    log.propose(new("Use sqlite"), 2).unwrap();
+    let searches = Cell::new(0);
+    let search = |log: &DecisionStore, entry: &gespan_core::decisions::Entry| {
+        searches.set(searches.get() + 1);
+        gespan_core::decisions::review::similar_active(log, entry, 3)
+    };
+    let mut cache = super::my_tasks::SimilarCache::default();
+    super::my_tasks::waiting_in(&log, &mut cache, &search).unwrap();
+    assert_eq!(searches.get(), 2);
+    // Nothing changed: no search at all.
+    super::my_tasks::waiting_in(&log, &mut cache, &search).unwrap();
+    super::my_tasks::waiting_in(&log, &mut cache, &search).unwrap();
+    assert_eq!(searches.get(), 2);
+    // An agent revises one proposal: only that one is searched again.
+    log.revise_pending(
+        first.id,
+        gespan_core::decisions::Edit {
+            title: "Use tabs everywhere".into(),
+            text: "Indent with tabs".into(),
+            why: "why".into(),
+        },
+        None,
+        &first.source,
+    )
+    .unwrap();
+    super::my_tasks::waiting_in(&log, &mut cache, &search).unwrap();
+    assert_eq!(searches.get(), 3);
+    // A new active entry in the project may be similar to both.
+    let active = log.propose(new("Use spaces"), 3).unwrap();
+    log.approve(active.id, None, false, &[], 4).unwrap();
+    let waiting = super::my_tasks::waiting_in(&log, &mut cache, &search).unwrap();
+    assert_eq!(searches.get(), 5);
+    assert_eq!(waiting.len(), 2);
+}

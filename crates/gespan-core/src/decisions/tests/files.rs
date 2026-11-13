@@ -814,8 +814,10 @@ fn for_every_sequence(
 
 #[test]
 fn every_short_sequence_keeps_user_lines_through_remove_and_regenerate() {
-    // Up to 6 lines with blank lines and three bodies, plus length 7 (the
-    // shortest that reaches stray-marker pairing) without blanks.
+    // Up to 6 lines with blank lines and three bodies, plus length 7 without
+    // blanks and with two bodies: the shortest length that reached a loop in
+    // an earlier version of the section finder. (Stray markers pair from
+    // 4 lines, so the shorter lengths already cover that.)
     let full = ["```", "~~~", BEGIN, END, "text", ""];
     let bodies = ["b", "b\n```\nc\n```", "b\n~~~\nc\n~~~"];
     let mut checked = for_every_sequence(&full, 0..=6, &bodies);
