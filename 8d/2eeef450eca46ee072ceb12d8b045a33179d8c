@@ -1,0 +1,29 @@
+crates/gespan-gpui/src/inbox/ui.rs
+  s_2f67ac6f14c865::t_6e898c0f338881 262,264-284,2765,4137-4209
+  s_2f67ac6f14c865::t_c9f94f711c3822 687,778-793,796-801,804,2532,2534-2541,2740-2744,2746-2764
+  s_7a8c7041476d04::t_44701b7bc88dda 263,2533,2745
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d2eeef450eca46ee072ceb12d8b045a33179d8c",
+  "prompts": {},
+  "sessions": {
+    "s_2f67ac6f14c865": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53c6326f-29b1-4dd0-86c7-af8f1d674e2d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    },
+    "s_7a8c7041476d04": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "633f75e3-97e3-4e3b-b5ee-0a3b6f60854f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
