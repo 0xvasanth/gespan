@@ -154,38 +154,15 @@ fn shortcut_scope_is_unchanged(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_tab_in_a_worktree_names_it_and_one_in_the_project_folder_does_not(cx: &mut TestAppContext) {
-    let (window, other, here) = window(cx);
+fn a_pilot_tab_belongs_to_its_project_and_an_app_tab_to_none(cx: &mut TestAppContext) {
+    let (window, _, _) = window(cx);
     window
         .update(cx, |shell, _, cx| {
-            assert_eq!(shell.tab_worktree_label(&TitleTab::Session(here), cx), None);
-            // A trailing slash is the same folder.
-            shell
-                .workspace
-                .tab_workspaces
-                .insert(here, "/work/gespan/".into());
-            assert_eq!(shell.tab_worktree_label(&TitleTab::Session(here), cx), None);
-            shell
-                .workspace
-                .tab_workspaces
-                .insert(here, "/work/gespan-fix-tabs".into());
-            assert_eq!(
-                shell.tab_worktree_label(&TitleTab::Session(here), cx),
-                Some("gespan-fix-tabs".into())
-            );
-            assert_eq!(
-                shell.tab_worktree_label(&TitleTab::Session(other), cx),
-                None
-            );
             let pilot = TitleTab::Pilot {
                 id: "p".into(),
                 project: "/work/gespan".into(),
                 worktree: "/work/gespan-pilot".into(),
             };
-            assert_eq!(
-                shell.tab_worktree_label(&pilot, cx),
-                Some("gespan-pilot".into())
-            );
             assert_eq!(shell.tab_project(&pilot, cx), Some("/work/gespan".into()));
             assert_eq!(
                 shell.tab_project(&TitleTab::App(app_views::AppView::Board), cx),
@@ -353,7 +330,7 @@ fn running_project_shows_spinner_on_its_chip(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn worktree_tabs_carry_a_label(cx: &mut TestAppContext) {
+fn worktree_tabs_carry_no_branch_label(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_reduce_motion(true));
     let (window, _, here) = window(cx);
     let worktree = window
@@ -368,14 +345,10 @@ fn worktree_tabs_carry_a_label(cx: &mut TestAppContext) {
         .unwrap();
     let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
     settle(visual);
+    // The label used to spill over the next tab; the sidebar names the
+    // branch instead.
     assert!(drawn(visual, format!("title-tab-{worktree}")));
-    let label = visual
-        .debug_bounds(selector(format!("title-tab-worktree-{worktree}")))
-        .expect("worktree label");
-    let tab = visual
-        .debug_bounds(selector(format!("title-tab-{worktree}")))
-        .unwrap();
-    assert!(tab.left() <= label.left() && label.right() <= tab.right());
+    assert!(!drawn(visual, format!("title-tab-worktree-{worktree}")));
     assert!(!drawn(visual, format!("title-tab-worktree-{here}")));
 }
 
@@ -397,7 +370,7 @@ fn current_project_without_tabs_draws_no_group(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_tab_in_another_project_names_its_branch(cx: &mut TestAppContext) {
+fn a_worktree_of_another_project_is_named_by_its_branch(cx: &mut TestAppContext) {
     let (window, _, _) = window(cx);
     let project = "/work/branch-label-project";
     let fix = "/work/branch-label-project-fix";
@@ -426,11 +399,10 @@ fn a_tab_in_another_project_names_its_branch(cx: &mut TestAppContext) {
             let id = add_background_tab(shell, project, cx);
             shell.workspace.tab_workspaces.insert(id, fix.into());
             assert_eq!(
-                shell.tab_worktree_label(&TitleTab::Session(id), cx),
-                Some("fix-tabs".into()),
+                shell.worktree_label_in(project, fix),
+                "fix-tabs",
                 "the branch, resolved under the tab's own project"
             );
-            assert_eq!(shell.worktree_label_in(project, fix), "fix-tabs");
             // The current project's lookup is unchanged.
             assert_eq!(shell.worktree_label("/work/gespan-other"), "gespan-other");
         })
@@ -811,7 +783,7 @@ fn a_pilot_gone_from_the_roster_opens_its_project(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn pilot_tabs_in_a_worktree_carry_a_label(cx: &mut TestAppContext) {
+fn pilot_tabs_in_a_worktree_carry_no_branch_label(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_reduce_motion(true));
     let (window, _, _) = window(cx);
     let pilot = window
@@ -841,13 +813,12 @@ fn pilot_tabs_in_a_worktree_carry_a_label(cx: &mut TestAppContext) {
         .unwrap();
     let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
     settle(visual);
-    let tab = visual
-        .debug_bounds(selector(format!("pilot-title-tab-{pilot}")))
-        .expect("pilot tab drawn");
-    let label = visual
-        .debug_bounds(selector(format!("title-tab-worktree-{pilot}")))
-        .expect("worktree label");
-    assert!(tab.left() <= label.left() && label.right() <= tab.right());
+    assert!(
+        visual
+            .debug_bounds(selector(format!("pilot-title-tab-{pilot}")))
+            .is_some()
+    );
+    assert!(!drawn(visual, format!("title-tab-worktree-{pilot}")));
 }
 
 #[gpui::test]

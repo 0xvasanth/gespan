@@ -239,33 +239,6 @@ impl Shell {
             .or_else(|| self.tab_project(tab, cx))
     }
 
-    /// The worktree `tab` runs in when that isn't its project folder, named
-    /// as the sidebar names it. The strip itself looks the project up once
-    /// a frame and calls [`Self::tab_worktree_label_in`].
-    #[cfg(test)]
-    pub(super) fn tab_worktree_label(&self, tab: &TitleTab, cx: &App) -> Option<String> {
-        let project = self.tab_project(tab, cx)?;
-        self.tab_worktree_label_in(tab, &project, cx)
-    }
-
-    /// [`Self::tab_worktree_label`] for a tab whose `project` is known.
-    pub(super) fn tab_worktree_label_in(
-        &self,
-        tab: &TitleTab,
-        project: &str,
-        cx: &App,
-    ) -> Option<String> {
-        let worktree = match tab {
-            TitleTab::App(_) => return None,
-            TitleTab::Session(tab) => self.workspace.tab_workspaces.get(tab).map_or_else(
-                || self.session_working_copy(self.workspace.scope_pane(*tab), cx),
-                String::as_str,
-            ),
-            TitleTab::Pilot { worktree, .. } => worktree.as_str(),
-        };
-        (path_key(worktree) != path_key(project)).then(|| self.worktree_label_in(project, worktree))
-    }
-
     /// Keeps each project's tabs side by side in `title_order`, so a tab
     /// opened for a project joins its group; the session list follows.
     pub(super) fn group_title_order(&mut self, cx: &App) {

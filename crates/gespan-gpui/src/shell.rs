@@ -1716,12 +1716,42 @@ impl Shell {
         }
         self.trim_session_histories(&shown, cx);
     }
-    fn add(&mut self, summary: Session, cx: &mut Context<Self>) {
+    fn add(&mut self, mut summary: Session, cx: &mut Context<Self>) {
+        self.fold_worktree_session(&mut summary);
         self.workspace.add_project(&summary.cwd);
         // A session started in the background adds its project without a
         // persist, so tell an open Board here too.
         self.sync_board_projects(cx);
         self.add_loaded(summary, cx);
+    }
+    /// A chat that starts in a linked Git worktree lists under the worktree's
+    /// main checkout and keeps working in the worktree, as launch folds older
+    /// ones: a worktree is never a project of its own, so its tab groups with
+    /// its project and opening it shows that project in the sidebar.
+    fn fold_worktree_session(&mut self, summary: &mut Session) {
+        if summary.id < 0 {
+            return;
+        }
+        let Some(root) = gespan_core::git::linked_worktree_root(std::path::Path::new(&summary.cwd))
+        else {
+            return;
+        };
+        let root = root.to_string_lossy().into_owned();
+        let tree = std::mem::replace(&mut summary.cwd, root.clone());
+        if let Err(error) =
+            locked(&self.store).and_then(|store| store.fold_worktree_sessions(&tree, &root))
+        {
+            tracing::warn!(%error, worktree = %tree, "cannot move a worktree's chat to its project");
+        }
+        // Chats already here from that worktree follow it.
+        for other in self.session_summaries.values_mut() {
+            if other.cwd == tree {
+                other.cwd = root.clone();
+            }
+        }
+        self.session_worktrees
+            .entry(summary.id)
+            .or_insert_with(|| Some(tree));
     }
     /// Loading history must not turn every session directory into a rail project.
     fn add_loaded(&mut self, summary: Session, cx: &mut Context<Self>) {
@@ -8400,10 +8430,6 @@ impl Shell {
                     .into_iter()
                     .filter(|pane| self.session_summaries.contains_key(pane))
                     .any(|pane| self.session_metadata(pane, cx).has_saved_draft());
-                // A tab in a worktree other than its project folder names it.
-                let worktree = self
-                    .frame_project(&projects, &TitleTab::Session(id), cx)
-                    .and_then(|p| self.tab_worktree_label_in(&TitleTab::Session(id), &p, cx));
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -8459,15 +8485,7 @@ impl Shell {
                                 (leaving, dir, progress),
                                 active,
                                 hovered,
-                            ))
-                            .when_some(
-                                worktree.filter(|_| {
-                                    tab_width(&TitleTab::Session(id)) >= TAB_CLOSE_MIN_WIDTH
-                                }),
-                                |d, label| {
-                                    d.child(tab_groups::worktree_badge(id.to_string(), label))
-                                },
-                            ),
+                            )),
                     )
                     .when(close, |d| {
                         d.child(
@@ -8601,13 +8619,7 @@ impl Shell {
                 TitleTab::Pilot { id, .. } => {
                     let manager = self.pilots.clone()?;
                     let w = tab_width(tab);
-                    // A Pilot in a worktree names it, as a chat tab does.
-                    let worktree = self
-                        .frame_project(&projects, tab, cx)
-                        .and_then(|p| self.tab_worktree_label_in(tab, &p, cx))
-                        .filter(|_| w >= TAB_CLOSE_MIN_WIDTH)
-                        .map(|label| tab_groups::worktree_badge(id.clone(), label));
-                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, worktree, cx))?;
+                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, cx))?;
                     let drag_id = tab.clone();
                     let menu_id = id.clone();
                     let dragging = dragged.as_ref() == Some(tab);

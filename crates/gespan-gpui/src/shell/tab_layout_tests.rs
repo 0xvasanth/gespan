@@ -181,3 +181,100 @@ fn opening_a_tab_of_the_same_project_keeps_the_selection(cx: &mut TestAppContext
         })
         .unwrap();
 }
+
+fn git(repo: &std::path::Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Removes the worktrees Gespan made beside the repository.
+struct Worktrees(std::path::PathBuf);
+impl Drop for Worktrees {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(gespan_core::worktree_management::default_root(&self.0));
+    }
+}
+
+#[gpui::test]
+fn a_chat_that_starts_in_a_worktree_lists_and_opens_under_its_project(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let repo = tempfile::tempdir().unwrap();
+    let _cleanup = Worktrees(repo.path().into());
+    for args in [
+        &["init", "-b", "main"][..],
+        &["config", "user.email", "fixture@example.invalid"],
+        &["config", "user.name", "Fixture"],
+        &["commit", "--allow-empty", "-m", "Initial"],
+    ] {
+        git(repo.path(), args);
+    }
+    let tree = gespan_core::git::create_named_worktree(repo.path(), "fix")
+        .unwrap()
+        .path;
+    let root = gespan_core::git::linked_worktree_root(std::path::Path::new(&tree))
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        std::fs::canonicalize(&root).unwrap(),
+        std::fs::canonicalize(repo.path()).unwrap()
+    );
+    let (window, _, _) = window(cx);
+    let id = window
+        .update(cx, |shell, _, cx| {
+            // A run, a Pilot or another app started this chat in the worktree.
+            let summary = locked(&shell.store)
+                .unwrap()
+                .create("codex", &tree)
+                .unwrap();
+            let id = summary.id;
+            shell.add(summary, cx);
+            let active = shell.workspace.active;
+            shell.workspace.open(id);
+            shell.workspace.active = active;
+            shell.invalidate_chrome(cx);
+            id
+        })
+        .unwrap();
+    window
+        .update(cx, |shell, _, cx| {
+            assert!(
+                !shell.workspace.projects.contains(&tree),
+                "a worktree is never a project of its own: {:?}",
+                shell.workspace.projects
+            );
+            assert!(shell.workspace.projects.contains(&root));
+            assert_eq!(shell.session_summaries[&id].cwd, root);
+            assert_eq!(
+                shell.tab_project(&TitleTab::Session(id), cx),
+                Some(root.clone())
+            );
+            // It keeps working in its worktree, now and after a restart.
+            assert_eq!(shell.session_worktrees.get(&id), Some(&Some(tree.clone())));
+            let store = locked(&shell.store).unwrap();
+            let saved = store.sessions().unwrap();
+            assert_eq!(saved.iter().find(|s| s.id == id).unwrap().cwd, root);
+            assert_eq!(
+                store.agent_settings(id).unwrap().unwrap().worktree_cwd,
+                Some(tree.clone())
+            );
+        })
+        .unwrap();
+    window
+        .update(cx, |shell, window, cx| {
+            shell.open_title_tab(&TitleTab::Session(id), window, cx);
+            assert_eq!(
+                shell.workspace.project, root,
+                "the sidebar shows its project"
+            );
+        })
+        .unwrap();
+}

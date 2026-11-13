@@ -69,23 +69,6 @@ fn tint(color: u32, alpha: f32) -> Hsla {
     }
 }
 
-/// The small branch label a tab in a worktree carries after its title.
-pub(super) fn worktree_badge(id: String, label: String) -> AnyElement {
-    div()
-        .debug_selector(move || format!("title-tab-worktree-{id}"))
-        .flex_shrink_0()
-        .max_w(px(96.))
-        .px(px(5.))
-        .rounded(px(4.))
-        .bg(content(0.08))
-        .text_size(px(10.))
-        .line_height(px(16.))
-        .text_color(content(0.65))
-        .truncate()
-        .child(label)
-        .into_any_element()
-}
-
 impl Shell {
     /// Whether `project`'s group shows its tabs: the current project's
     /// always, another project's while it peeks.
