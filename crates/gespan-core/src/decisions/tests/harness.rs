@@ -1,5 +1,5 @@
 use crate::accounts::{Account, Book};
-use crate::decisions::files::{lenient_canonical, BEGIN, END};
+use crate::decisions::files::{lenient_canonical, without_verbatim, BEGIN, END};
 use crate::decisions::harness::{
     hold_writing, preference_targets, project_targets, regenerate, remove_all, Mode, Report,
     BEFORE_WRITE, MAX_FILE_BYTES,
@@ -29,7 +29,9 @@ fn fixture() -> Fixture {
     // Serializes with every test of the process-wide switch, and turns it on.
     let log = isolated();
     let tmp = TempDir::new().unwrap();
-    let root = fs::canonicalize(tmp.path()).unwrap();
+    // Without Windows' `\\?\` prefix: git can't use it, and the writer
+    // reports workspace paths as git's toplevel gives them, without it.
+    let root = without_verbatim(&fs::canonicalize(tmp.path()).unwrap());
     let (home, data, repo) = (root.join("home"), root.join("data"), root.join("repo"));
     for dir in [&home, &data, &repo] {
         fs::create_dir_all(dir).unwrap();

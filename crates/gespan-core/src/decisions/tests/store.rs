@@ -1,5 +1,8 @@
 //! The decision log and My tasks share `task_decisions` in gespan.db.
 use crate::decisions::entry::derived_title;
+// Scopes are keyed by paths without Windows' `\\?\` prefix, as `scope_for`
+// gives them.
+use crate::decisions::files::without_verbatim;
 use crate::decisions::{scope_for, Config, DecisionStore, Kind, NewEntry, Scope, Source, Status};
 use crate::orm::tests::file_at_migration;
 use crate::orm::Kind as DbKind;
@@ -128,7 +131,7 @@ fn adopted_task_decisions_become_active_project_decisions() {
 fn my_tasks_saved_decision_reaches_the_decision_log() {
     let dir = TempDir::new().unwrap();
     let (store, log) = both(&dir);
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = without_verbatim(&std::fs::canonicalize(dir.path()).unwrap());
     let repo = repo(&root);
     let plain = root.join("plain");
     std::fs::create_dir_all(&plain).unwrap();
@@ -343,7 +346,7 @@ fn legacy_with_decision(path: &Path, project: &Path) {
 #[test]
 fn legacy_rows_are_rescoped_to_their_projects_scope() {
     let dir = TempDir::new().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = without_verbatim(&std::fs::canonicalize(dir.path()).unwrap());
     let repo = repo(&root);
     let path = root.join("gespan.db");
     legacy_with_decision(&path, &repo);
@@ -374,7 +377,7 @@ fn legacy_rows_are_rescoped_to_their_projects_scope() {
 #[test]
 fn rescoping_leaves_rows_already_in_their_scope_alone() {
     let dir = TempDir::new().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let root = without_verbatim(&std::fs::canonicalize(dir.path()).unwrap());
     let plain = root.join("plain");
     std::fs::create_dir_all(&plain).unwrap();
     let path = root.join("gespan.db");
