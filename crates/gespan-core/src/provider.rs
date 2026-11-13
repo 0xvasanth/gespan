@@ -1447,7 +1447,11 @@ fn launch(
             }
             // A visual publication or ticket call may arrive while the provider
             // is waiting for its tool result and therefore emits no stream events.
-            if protocol.request.settings.mount.is_some() {
+            // Each emit applies its events before the publications it drains, so
+            // while the batch still holds output read before the publication, the
+            // heartbeat waits for that batch (due within a frame) to carry it:
+            // text streamed before a `visual_show` call stays above the visual.
+            if protocol.request.settings.mount.is_some() && pending.is_empty() {
                 emit(Vec::new())?;
             }
             if protocol.done {

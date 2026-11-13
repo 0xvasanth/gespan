@@ -32,7 +32,13 @@ for line in sys.stdin:
         assert value['method'] == 'turn/start'
         assert value['params']['input'] == [{'type': 'text', 'text': 'Show a native visual'}], 'Visual discovery must not alter the user prompt'
         send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'before', 'delta': 'Before the visual.'}})
-        time.sleep(0.05)
+        # The text reaches the app over stdout and the visual over the tool
+        # endpoint. Call the tool only once the app has shown the text, so a
+        # starved stdout reader cannot let the visual overtake it.
+        deadline = time.monotonic() + 4
+        while not os.path.exists('before-observed'):
+            assert time.monotonic() < deadline, 'Streamed text never arrived'
+            time.sleep(0.01)
         # No stdout events are emitted while awaiting publication. Without
         # the provider heartbeat, neither the save nor this reply can occur.
         response = hub.call('visual_show', {
@@ -79,6 +85,13 @@ for line in sys.stdin:
         let update = receive
             .recv_blocking()
             .expect("Runtime closed before its final update");
+        if update
+            .rows
+            .iter()
+            .any(|row| row.text.contains("Before the visual."))
+        {
+            std::fs::write(fixture.0.join("before-observed"), "shown").unwrap();
+        }
         if !update.finished && update.rows.iter().any(|row| row.role == "visual") {
             let saved = locked(&store).unwrap().load(session).unwrap();
             let visual_rows = saved
@@ -142,4 +155,99 @@ for line in sys.stdin:
         settings.environment.is_empty(),
         "Transport capabilities must not be persisted"
     );
+}
+
+/// Streaming text the app has read before a `visual_show` call arrives stays
+/// above the visual, even while that text still waits in the provider's frame
+/// batch when the publication is drained.
+#[test]
+fn text_streamed_just_before_a_visual_stays_above_it() {
+    let fixture = Fixture(std::env::temp_dir().join(format!(
+        "gespan-runtime-visual-order-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    )));
+    std::fs::create_dir_all(&fixture.0).unwrap();
+    let binary = fixture.0.join("mock-provider");
+    std::fs::write(&binary, concat!(include_str!("mcp_stub.py"), r#"
+import threading
+def send(value):
+    print(json.dumps(value), flush=True)
+for line in sys.stdin:
+    value = json.loads(line)
+    if value.get('id') == 1:
+        send({'id': 1, 'result': {}})
+    elif value.get('id') == 2:
+        hub = Hub(value['params']['config']['mcp_servers']['gespan'])
+        send({'id': 2, 'result': {'thread': {'id': 'native-visual-order'}}})
+    elif value.get('id') == 3:
+        # The first visible output goes out at once; the next text joins the
+        # frame batch, which is not due until a frame after that.
+        send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'intro', 'delta': 'Intro.'}})
+        send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'before', 'delta': 'Before the visual.'}})
+        # The app answers frames in order, so once it replies to this clock
+        # request it has read the text above; only the publication is new.
+        send({'id': 'clock', 'method': 'currentTime/read', 'params': {}})
+        assert json.loads(sys.stdin.readline())['id'] == 'clock'
+        replies = []
+        call = threading.Thread(target=lambda: replies.append(hub.call('visual_show', {
+            'id': 'ordered', 'title': 'Ordered', 'requestId': 'ordered-request',
+            'source': 'return () => visual.text("Ready");'
+        })))
+        call.start()
+        # Bookkeeping frames keep the receive loop turning while the batch
+        # still holds the text, as a real provider's status frames do.
+        while call.is_alive():
+            send({'method': 'thread/status/changed', 'params': {}})
+            time.sleep(0.001)
+        assert replies[0]['ok'] is True, replies
+        send({'method': 'item/agentMessage/delta', 'params': {'itemId': 'after', 'delta': 'After the visual.'}})
+        send({'method': 'turn/completed', 'params': {'turn': {'status': 'completed'}}})
+        break
+"#)).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let store = Store::open_gespan(&fixture.0.join("sessions.db")).unwrap();
+    let summary = store.create("codex", fixture.0.to_str().unwrap()).unwrap();
+    let session = summary.id;
+    let store = Arc::new(Mutex::new(store));
+    let worker_store = store.clone();
+    let (updates, receive) = async_channel::bounded(64);
+    let (_controls, control_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        run_turn_using(
+            TurnInput {
+                summary,
+                prompt: "Show a native visual".into(),
+                settings: Settings::default(),
+            },
+            control_rx,
+            worker_store,
+            Arc::new(AtomicBool::new(false)),
+            updates,
+            |_| Some(binary),
+        );
+    });
+    let final_status = loop {
+        let update = receive
+            .recv_blocking()
+            .expect("Runtime closed before its final update");
+        if update.finished {
+            break update.status;
+        }
+    };
+    worker.join().unwrap();
+    assert_eq!(final_status, "Ready");
+    let saved = locked(&store).unwrap().load(session).unwrap();
+    let order = saved
+        .rows
+        .iter()
+        .filter_map(|row| match row.role.as_str() {
+            "visual" => Some("visual"),
+            "assistant" if row.text.contains("Intro.") => Some("intro"),
+            "assistant" if row.text.contains("Before the visual.") => Some("before"),
+            "assistant" if row.text.contains("After the visual.") => Some("after"),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["intro", "before", "visual", "after"]);
 }
