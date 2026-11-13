@@ -858,6 +858,24 @@ impl SettingsView {
                 )],
             ),
             self.row(
+                Some("title-tabs"),
+                false,
+                "Top bar tabs",
+                Some("Show this project's tabs, every project's side by side, or every project's grouped by project.".into()),
+                vec![self.segmented(
+                    "title-tabs",
+                    "Top bar tabs",
+                    &p.title_tabs,
+                    &[
+                        ("project", "This project"),
+                        ("all", "All projects"),
+                        ("grouped", "Grouped"),
+                    ],
+                    cx,
+                    |this, v, cx| this.update(cx, |p| p.title_tabs = v.into()),
+                )],
+            ),
+            self.row(
                 Some("tab-animations"),
                 false,
                 "Tab animations",

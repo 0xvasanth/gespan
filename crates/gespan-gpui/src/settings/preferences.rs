@@ -14,6 +14,10 @@ pub(crate) struct Preferences {
     pub file_word_wrap: bool,
     pub file_view_mode: String,
     pub tab_animations: bool,
+    /// What the top bar's tabs show: "project" (the current project's
+    /// only), "all" (every project's, side by side) or "grouped" (every
+    /// project's, each project's together). See [`TabLayout`].
+    pub title_tabs: String,
     pub notes: bool,
     pub board: bool,
     pub quick_composer: bool,
@@ -146,6 +150,7 @@ impl Default for Preferences {
             file_word_wrap: true,
             file_view_mode: "preview".into(),
             tab_animations: false,
+            title_tabs: "grouped".into(),
             notes: true,
             board: true,
             quick_composer: true,
@@ -220,7 +225,25 @@ impl Default for Preferences {
     }
 }
 
+/// What the top bar's tabs show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabLayout {
+    /// The current project's tabs only; switching project swaps them.
+    Project,
+    /// Every project's tabs, side by side.
+    All,
+    /// Every project's tabs, each project's together behind its chip.
+    Grouped,
+}
+
 impl Preferences {
+    pub(crate) fn tab_layout(&self) -> TabLayout {
+        match self.title_tabs.as_str() {
+            "project" => TabLayout::Project,
+            "all" => TabLayout::All,
+            _ => TabLayout::Grouped,
+        }
+    }
     /// Whether deleting a worktree of `project` starts with its merged branch
     /// ticked. The dialog can still change it, for that one deletion.
     pub(crate) fn deletes_merged_branch(&self, project: &str) -> bool {
