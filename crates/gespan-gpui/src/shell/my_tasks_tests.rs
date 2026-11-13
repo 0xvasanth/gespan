@@ -1667,7 +1667,11 @@ fn a_change_in_the_log_reloads_my_tasks_without_waiting_for_the_clock(cx: &mut T
     decision_log();
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
     window
-        .update(visual, |shell, window, cx| shell.open_my_tasks(window, cx))
+        .update(visual, |shell, window, cx| {
+            // Test shells leave the process-wide hook alone; this one listens.
+            listen_for_decision_changes(cx);
+            shell.open_my_tasks(window, cx)
+        })
         .unwrap();
     visual.run_until_parked();
     let entry = propose_decision("/work/decisions-pushed", 1, "Errors", "Use anyhow");
@@ -1677,6 +1681,50 @@ fn a_change_in_the_log_reloads_my_tasks_without_waiting_for_the_clock(cx: &mut T
     gespan_core::decisions::service::changed();
     visual.run_until_parked();
     assert!(listed(window, visual, &key));
+    // Later tests must not wake this test's executor through the hook.
+    gespan_core::decisions::service::set_changed(Box::new(|| {}));
+}
+
+/// Every test builds a shell on its own thread. If each shell took the
+/// process-wide change hook, the one it replaced would be dropped on the new
+/// test's thread and wake the old test's listener from there: GPUI's test
+/// scheduler then panics with "Your test is not deterministic" in whichever
+/// tests happen to overlap.
+#[gpui::test]
+fn a_test_shell_leaves_the_process_wide_change_hook_alone(cx: &mut TestAppContext) {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let _log = log_lock();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    gespan_core::decisions::service::set_changed(Box::new(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+    }));
+    let _window = setup(cx);
+    gespan_core::decisions::service::changed();
+    gespan_core::decisions::service::set_changed(Box::new(|| {}));
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the shell replaced the hook"
+    );
+}
+
+#[test]
+fn a_replaced_change_hook_does_not_close_its_listener() {
+    let (send, changes) = async_channel::unbounded::<()>();
+    let hook = decision_change_hook(&send);
+    hook();
+    assert_eq!(changes.try_recv(), Ok(()));
+    // The next shell's hook replaces this one, on another thread.
+    std::thread::spawn(move || drop(hook)).join().unwrap();
+    assert!(!changes.is_closed(), "dropping the hook closed the channel");
+    // Once the listener's own sender is gone, a stale hook does nothing.
+    let hook = decision_change_hook(&send);
+    drop(send);
+    assert!(changes.is_closed());
+    hook();
+    assert!(changes.try_recv().is_err());
 }
 
 #[gpui::test]
