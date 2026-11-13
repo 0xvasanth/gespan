@@ -118,7 +118,7 @@ pub struct Edit {
     pub why: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub id: i64,
     pub kind: Kind,
@@ -176,7 +176,7 @@ impl ShownHash {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Flag {
     pub id: i64,
     pub entry: i64,

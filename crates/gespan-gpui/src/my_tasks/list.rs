@@ -3,10 +3,36 @@
 //! long they have waited.
 use super::*;
 use crate::glass::{self, Tone};
-use gpui::{AnyElement, BoxShadow, Div, FontWeight, Hsla, Role, SharedString, Stateful, px};
+use gpui::{AnyElement, BoxShadow, Div, FontWeight, Hsla, Role, SharedString, Stateful, list, px};
 
 /// The queue column's width, as in the approved design.
 pub(super) const LIST_WIDTH: f32 = 360.;
+/// The narrowest the queue gets on a small window: rows still show a
+/// title, its source and the status pills, and the compact tabs fit.
+pub(super) const LIST_MIN_WIDTH: f32 = 300.;
+/// The narrowest queue the tabs fit in with all three counts.
+pub(super) const FULL_TABS_WIDTH: f32 = 348.;
+/// The share of the page the queue takes between those two widths.
+pub(super) const LIST_SHARE: f32 = 0.36;
+
+/// The queue's width on a page `page_width` wide: the design's 360pt from
+/// a 1000pt page up, narrowing with the page below that, never under 300pt.
+/// The column lays itself out with the same rule in flex terms.
+pub(super) fn queue_width(page_width: f32) -> f32 {
+    (page_width * LIST_SHARE).clamp(LIST_MIN_WIDTH, LIST_WIDTH)
+}
+
+/// Whether a page `page_width` wide narrows the queue past where the tabs
+/// fit with every count: then only Waiting's count, the one that asks for
+/// you, stays.
+pub(super) fn compact_tabs(page_width: f32) -> bool {
+    queue_width(page_width) < FULL_TABS_WIDTH
+}
+/// A Waiting or Answered row's height with its gap: 12pt padding and a
+/// 1pt edge each side around a title, a line and the pills.
+const ROW_HEIGHT_HINT: f32 = 97.;
+/// A decision row has no pills.
+const DECISION_ROW_HEIGHT_HINT: f32 = 68.;
 /// A task waiting this long is in the "Over 1 hour" group.
 const LONG_WAIT_MS: u64 = 60 * 60 * 1000;
 const EIGHT_HOURS_MS: u64 = 8 * LONG_WAIT_MS;
@@ -55,15 +81,22 @@ pub(super) fn faint() -> Hsla {
     content(if is_light() { 0.5 } else { 0.56 })
 }
 
+/// The design's `.pill` top line: a faint inset highlight that lifts the
+/// pill off the glass.
+pub(super) fn pill_highlight() -> BoxShadow {
+    BoxShadow::new(px(0.), px(1.), white(if is_light() { 0.9 } else { 0.06 })).inset()
+}
+
 /// The agent a task comes from, as a small pill after its kind.
 pub(super) fn agent_pill(name: String) -> Div {
     div()
         .h(px(22.))
-        .px(px(10.))
+        .px(px(11.))
         .rounded_full()
         .bg(glass::fill())
         .border_1()
         .border_color(glass::edge())
+        .shadow(vec![pill_highlight()])
         .flex()
         .items_center()
         .text_size(px(11.))
@@ -176,7 +209,86 @@ pub(super) fn task_row(id: String, on: bool) -> Stateful<Div> {
                 BoxShadow::new(px(0.), px(1.), white(if is_light() { 0.9 } else { 0.08 })).inset(),
             ])
         })
-        .when(!on, |d| d.hover(|s| s.bg(glass::hover_fill())))
+        // The design's row hover is a touch lighter than the shared wash.
+        .when(!on, |d| d.hover(|s| s.bg(content(0.05))))
+}
+
+/// A faint bar standing in for a line of text `width` wide, centred in a
+/// line box as tall as the text it replaces.
+fn ghost_line(line: f32, bar: f32, width: gpui::DefiniteLength) -> Div {
+    div().h(px(line)).flex().items_center().child(
+        div()
+            .h(px(bar))
+            .w(width)
+            .rounded_full()
+            .bg(content(if is_light() { 0.07 } else { 0.06 })),
+    )
+}
+
+/// What an empty queue shows: three placeholder rows in the real rows'
+/// shape and height, fading down the column, so the column keeps its
+/// structure while the pane beside it says why it is empty. The sentence
+/// stays on the list for screen readers. `pills` draws the status line the
+/// Waiting and Answered rows have and decision rows do not.
+pub(super) fn ghost_rows(label: &'static str, pills: bool) -> AnyElement {
+    let row = |ix: usize, fade: f32, title: f32, line: f32| {
+        div()
+            .debug_selector(move || format!("my-tasks-ghost-{ix}"))
+            .flex_shrink_0()
+            .p(px(12.))
+            .rounded(px(12.))
+            .border_1()
+            .border_dashed()
+            .border_color(content(if is_light() { 0.12 } else { 0.1 }))
+            .flex()
+            .gap(px(12.))
+            .opacity(fade)
+            .when(pills, |d| {
+                d.child(
+                    div()
+                        .size(px(32.))
+                        .flex_shrink_0()
+                        .rounded(px(9.))
+                        .bg(glass::fill())
+                        .border_1()
+                        .border_color(glass::edge()),
+                )
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(ghost_line(18., 9., gpui::relative(title)))
+                    .child(ghost_line(17., 8., gpui::relative(line)))
+                    .when(pills, |d| {
+                        d.child(
+                            div()
+                                .mt(px(4.))
+                                .h(px(22.))
+                                .w(px(68.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(glass::edge()),
+                        )
+                    }),
+            )
+    };
+    div()
+        .id("my-tasks-list-empty")
+        .debug_selector(|| "my-tasks-list-empty".into())
+        .role(Role::Note)
+        .aria_label(label)
+        .pt(px(4.))
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+        .child(row(0, 1., 0.62, 0.44))
+        .child(row(1, 0.6, 0.5, 0.56))
+        .child(row(2, 0.3, 0.7, 0.38))
+        .into_any_element()
 }
 
 /// A row's first line: the bold title, and a time at the far end.
@@ -200,6 +312,7 @@ pub(super) fn row_title(title: String, time: Option<(String, Hsla)>) -> Div {
                 div()
                     .flex_shrink_0()
                     .text_size(px(11.5))
+                    .line_height(px(16.))
                     .text_color(ink)
                     .child(time),
             )
@@ -216,73 +329,175 @@ pub(super) fn row_line(text: String) -> Div {
         .child(text)
 }
 
+/// One entry in the queue: a group label, or a row by the key of what it
+/// shows. The list keeps only these; a row's element is built when the row
+/// scrolls into view, so a long Answered list costs only what is on screen.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum QueueRow {
+    Group {
+        selector: String,
+        label: String,
+        first: bool,
+    },
+    Waiting(String),
+    Past(String),
+    Decision(i64),
+}
+
 impl MyTasks {
-    fn waiting_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The Waiting tab's queue, grouped by age, and the row selected.
+    fn waiting_queue(&self, cx: &gpui::App) -> (Vec<QueueRow>, Option<QueueRow>) {
         let shown = self.visible(cx);
-        let selected = self.selected_in(&shown).map(|t| t.key.clone());
-        let now = self.now_ms;
-        let mut rows: Vec<AnyElement> = Vec::new();
+        let selected = self
+            .selected_in(&shown)
+            .map(|t| QueueRow::Waiting(t.key.clone()));
+        let mut rows = Vec::new();
         let mut group = None;
         // `visible` is longest wait first, so each age group is one run.
         for task in &shown {
-            let wait = now.saturating_sub(task.since_ms);
-            let (id, label) = age_group(wait);
+            let (id, label) = age_group(self.now_ms.saturating_sub(task.since_ms));
             if group != Some(id) {
-                rows.push(group_label(
-                    format!("my-tasks-group-{id}"),
-                    label,
-                    group.is_none(),
-                ));
+                rows.push(QueueRow::Group {
+                    selector: format!("my-tasks-group-{id}"),
+                    label: label.into(),
+                    first: group.is_none(),
+                });
                 group = Some(id);
             }
-            let key = task.key.clone();
-            let on = selected.as_deref() == Some(task.key.as_str());
-            let (word, tone) = kind_status(task.kind);
-            rows.push(
-                task_row(format!("my-tasks-row-{}", task.key), on)
-                    .aria_label(SharedString::from(task.headline.clone()))
-                    .child(tile(task.kind, 32.))
+            rows.push(QueueRow::Waiting(task.key.clone()));
+        }
+        (rows, selected)
+    }
+
+    fn waiting_row(&self, task: &TaskItem, on: bool, cx: &mut Context<Self>) -> AnyElement {
+        let key = task.key.clone();
+        let wait = self.now_ms.saturating_sub(task.since_ms);
+        let (word, tone) = kind_status(task.kind);
+        task_row(format!("my-tasks-row-{}", task.key), on)
+            .aria_label(SharedString::from(task.headline.clone()))
+            .child(tile(task.kind, 32.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(row_title(
+                        task.headline.clone(),
+                        Some((waited(wait), faint())),
+                    ))
+                    .child(row_line(format!(
+                        "{} \u{b7} {}",
+                        task.source_label,
+                        super::project_display(&task.project)
+                    )))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
+                            .mt(px(4.))
                             .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(row_title(
-                                task.headline.clone(),
-                                Some((waited(wait), faint())),
-                            ))
-                            .child(row_line(format!(
-                                "{} \u{b7} {}",
-                                task.source_label,
-                                super::project_display(&task.project)
-                            )))
-                            .child(
-                                div()
-                                    .mt(px(4.))
-                                    .flex()
-                                    .gap(px(6.))
-                                    .child(glass::status(word, tone))
-                                    .children(task.agent.clone().map(|name| {
-                                        let selector = format!("my-tasks-agent-{}", task.key);
-                                        agent_pill(name).debug_selector(move || selector.clone())
-                                    })),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(&key, cx)))
-                    .into_any_element(),
-            );
+                            .gap(px(6.))
+                            .child(glass::status(word, tone))
+                            .children(task.agent.clone().map(|name| {
+                                let selector = format!("my-tasks-agent-{}", task.key);
+                                agent_pill(name).debug_selector(move || selector.clone())
+                            })),
+                    ),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.select(&key, cx)))
+            .into_any_element()
+    }
+
+    /// The queue entry at `ix`, built for the list as it comes into view.
+    /// Each entry carries the 4pt gap that separates rows.
+    fn queue_row(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let Some(row) = self.queue.get(ix).cloned() else {
+            return div().into_any_element();
+        };
+        let on = self.queue_selected.as_ref() == Some(&row);
+        let element = match &row {
+            QueueRow::Group {
+                selector,
+                label,
+                first,
+            } => Some(group_label(selector.clone(), label.clone(), *first)),
+            QueueRow::Waiting(key) => self
+                .tasks
+                .iter()
+                .find(|t| &t.key == key)
+                .map(|task| self.waiting_row(task, on, cx)),
+            QueueRow::Past(key) => self
+                .past
+                .iter()
+                .find(|t| &t.key == key)
+                .map(|record| self.past_row(record, on, cx)),
+            QueueRow::Decision(id) => self
+                .decisions
+                .iter()
+                .find(|d| d.id == *id)
+                .map(|decision| self.decision_row(decision, on, cx)),
+        };
+        div().pb(px(4.)).children(element).into_any_element()
+    }
+
+    /// Brings the list up to date with the tab shown: a changed queue is
+    /// measured again (keeping the scroll position on the same tab), and a
+    /// newly selected row is scrolled into view.
+    fn sync_queue(&mut self, cx: &gpui::App) {
+        let (rows, selected) = match self.tab {
+            Tab::Waiting => self.waiting_queue(cx),
+            Tab::Answered => self.past_queue(cx),
+            Tab::Decisions => self.decision_queue(cx),
+        };
+        // Rows not yet measured count at a typical row's height, so
+        // revealing one far down lands on it rather than short of it.
+        let hint = px(match self.tab {
+            Tab::Waiting | Tab::Answered => ROW_HEIGHT_HINT,
+            Tab::Decisions => DECISION_ROW_HEIGHT_HINT,
+        });
+        if rows != self.queue || self.queue_tab != self.tab {
+            let top = self.queue_state.logical_scroll_top();
+            self.queue_state.reset_with_uniform_height(rows.len(), hint);
+            if self.queue_tab == self.tab {
+                self.queue_state.scroll_to(top);
+            }
+            self.queue = rows;
+            self.queue_tab = self.tab;
         }
-        rows
+        if selected != self.queue_selected {
+            // Not on the first render: the list has no height to reveal in.
+            if self.queue_selected.is_some()
+                && let Some(ix) = selected
+                    .as_ref()
+                    .and_then(|row| self.queue.iter().position(|r| r == row))
+            {
+                // The list forgets its hints when it first lays out; give
+                // them back so the rows below the fold have a height.
+                let _ = self.queue_state.clone().with_uniform_item_height(hint);
+                self.queue_state.scroll_to_reveal_item(ix);
+            }
+            self.queue_selected = selected;
+        }
+    }
+
+    /// The queue's entries, for tests: what the list would draw, in order.
+    #[cfg(test)]
+    pub(super) fn queue(&self) -> &[QueueRow] {
+        &self.queue
     }
 
     /// Waiting, Answered and Decisions as one segmented control; what is
     /// waiting counts in the hot style.
     fn tab_control(&self, cx: &mut Context<Self>) -> AnyElement {
+        let compact = self
+            .page_bounds
+            .get()
+            .is_some_and(|b| compact_tabs(f32::from(b.size.width)));
         let segment = |tab: Tab, id: &'static str, label: &'static str, count: Option<Div>| {
             let on = self.tab == tab;
             glass::segment(id, label, on)
+                // A narrow queue tightens the segments to fit all three.
+                .when(compact, |d| d.px(px(7.)))
                 .debug_selector(move || id.into())
                 .role(Role::Tab)
                 .aria_selected(on)
@@ -292,6 +507,7 @@ impl MyTasks {
         let waiting = self.tasks.len();
         glass::segmented()
             .id("my-tasks-tabs")
+            .debug_selector(|| "my-tasks-tabs".into())
             .role(Role::TabList)
             .aria_label("Task view")
             .child(segment(
@@ -307,7 +523,7 @@ impl MyTasks {
                 Tab::Answered,
                 "my-tasks-tab-answered",
                 "Answered",
-                Some({
+                (!compact).then(|| {
                     let answered = self.past.len();
                     glass::count(answered, false)
                         .debug_selector(move || format!("my-tasks-count-answered-{answered}"))
@@ -317,7 +533,7 @@ impl MyTasks {
                 Tab::Decisions,
                 "my-tasks-tab-decisions",
                 "Decisions",
-                Some(glass::count(self.decisions.len(), false)),
+                (!compact).then(|| glass::count(self.decisions.len(), false)),
             ))
             .into_any_element()
     }
@@ -379,14 +595,13 @@ impl MyTasks {
                         cx.notify();
                     })),
             );
-        let rows = match self.tab {
-            Tab::Waiting => self.waiting_rows(cx),
-            Tab::Answered => self.past_rows(cx),
-            Tab::Decisions => self.decision_rows(cx),
-        };
-        let empty = rows.is_empty().then(|| self.list_empty_text());
+        self.sync_queue(cx);
+        let empty = self.queue.is_empty().then(|| self.list_empty_text());
         div()
-            .w(px(LIST_WIDTH))
+            .debug_selector(|| "my-tasks-queue".into())
+            .w(gpui::relative(LIST_SHARE))
+            .min_w(px(LIST_MIN_WIDTH))
+            .max_w(px(LIST_WIDTH))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
@@ -425,24 +640,23 @@ impl MyTasks {
                     })
                     .min_h_0()
                     .flex_1()
-                    .overflow_y_scroll()
                     .px(px(10.))
-                    .pb(px(10.))
+                    .pb(px(6.))
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
                     .when_some(empty, |d, text| {
-                        d.child(
-                            div()
-                                .debug_selector(|| "my-tasks-list-empty".into())
-                                .px(px(8.))
-                                .py(px(6.))
-                                .text_size(px(12.5))
-                                .text_color(content(0.55))
-                                .child(text),
-                        )
+                        d.child(ghost_rows(text, self.tab != Tab::Decisions))
                     })
-                    .children(rows),
+                    .when(empty.is_none(), |d| {
+                        d.child(
+                            list(
+                                self.queue_state.clone(),
+                                cx.processor(|this, ix: usize, _, cx| this.queue_row(ix, cx)),
+                            )
+                            .flex_1()
+                            .min_h_0(),
+                        )
+                    }),
             )
             .into_any_element()
     }

@@ -1845,3 +1845,37 @@ fn decision_similar_entries_are_searched_once_per_change() {
     assert_eq!(searches.get(), 5);
     assert_eq!(waiting.len(), 2);
 }
+
+#[gpui::test]
+fn the_shell_redrawing_does_not_redraw_the_my_tasks_page(cx: &mut TestAppContext) {
+    let window = setup(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    window
+        .update(visual, |shell, window, cx| shell.open_my_tasks(window, cx))
+        .unwrap();
+    visual.run_until_parked();
+    set_tasks(window, visual, vec![flow_task("a", "gespan", 1)]);
+    assert!(visual.debug_bounds("my-tasks-row-a").is_some());
+    let view = page(window, visual);
+    let renders = |visual: &mut VisualTestContext| view.read_with(visual, |view, _| view.renders);
+    let before = renders(visual);
+    // What a streamed token or the 1 s approval tick does: the shell
+    // notifies and the window draws again.
+    for _ in 0..5 {
+        window.update(visual, |_, _, cx| cx.notify()).unwrap();
+        visual.run_until_parked();
+    }
+    assert_eq!(renders(visual), before, "the cached page is reused");
+    assert!(
+        visual.debug_bounds("my-tasks-row-a").is_some(),
+        "and still drawn"
+    );
+    // A change on the page itself still draws it.
+    set_tasks(
+        window,
+        visual,
+        vec![flow_task("a", "gespan", 1), flow_task("b", "gespan", 2)],
+    );
+    assert!(renders(visual) > before);
+    assert!(visual.debug_bounds("my-tasks-row-b").is_some());
+}
