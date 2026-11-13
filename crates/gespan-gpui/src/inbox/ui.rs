@@ -300,6 +300,42 @@ pub(super) fn message(text: impl Into<SharedString>) -> Div {
         .text_color(content(0.5))
         .child(text.into())
 }
+/// What waits for its data: a spinner and what it is fetching, over
+/// skeleton lines in the shape of what comes.
+pub(super) fn loading(label: &'static str) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .text_size(px(13.))
+                .line_height(px(20.))
+                .text_color(content(0.62))
+                .child(crate::right_panel::spinner(label, "loader", 14.))
+                .child(label),
+        )
+        .children([0.92, 0.74, 0.56].map(|width| {
+            div()
+                .h(px(10.))
+                .w(gpui::relative(width))
+                .rounded(px(5.))
+                .bg(content(0.07))
+        }))
+}
+/// [`loading`] for a whole tab: a glass card on the header's 28px column.
+pub(super) fn loading_panel(id: &'static str, label: &'static str) -> Div {
+    div().px(px(28.)).pt(px(18.)).child(
+        glass::card()
+            .debug_selector(move || id.into())
+            .px(px(20.))
+            .py(px(18.))
+            .child(loading(label)),
+    )
+}
 pub(super) fn error(text: impl Into<SharedString>) -> Div {
     message(text).text_color(rgb(0xf87171))
 }
@@ -2342,7 +2378,10 @@ impl Inbox {
                     )
                 })
                 .when(self.detail_loading && self.details.is_none(), |d| {
-                    d.child(message("Loading description…"))
+                    d.child(
+                        loading("Loading description…")
+                            .debug_selector(|| "inbox-loading-description".into()),
+                    )
                 })
                 .when(
                     self.details
@@ -2477,7 +2516,9 @@ impl Inbox {
             .flex_1()
             .flex()
             .flex_col()
-            .when(self.extra_loading, |d| d.child(message("Loading changes…")))
+            .when(self.extra_loading && self.diff.is_none(), |d| {
+                d.child(loading_panel("inbox-loading-changes", "Loading changes…"))
+            })
             .when_some(self.extra_error.clone(), |d, text| d.child(error(text)))
             .when(self.diff.is_some(), |d| {
                 d.child(div().flex_1().min_h_0().child(self.diff_view.clone()))
@@ -4094,6 +4135,77 @@ mod glass_view_tests {
         visual.run_until_parked();
         let tab = window.update(cx, |inbox, _, _| inbox.tab).unwrap();
         assert!(tab == Tab::Checks);
+    }
+
+    #[gpui::test]
+    fn each_tab_loads_in_a_card_on_the_content_column_until_its_data_arrives(
+        cx: &mut TestAppContext,
+    ) {
+        let item = pr("acme/web", 9, "Change");
+        // Files and Checks: a glass card whose left edge is the header's
+        // column, not a bare line left of it.
+        for (tab, selector) in [
+            (Tab::Code, "inbox-loading-changes"),
+            (Tab::Checks, "inbox-loading-checks"),
+        ] {
+            let item = item.clone();
+            let window = open(cx, move |inbox| {
+                connect(inbox);
+                inbox.selected = Some(item.key());
+                inbox.snapshot.items = vec![item];
+                inbox.details = Some(Details::default());
+                inbox.tab = tab;
+                inbox.extra_loading = true;
+            });
+            let mut visual = visual(window, cx);
+            let card = visual
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} is not on screen"));
+            let header = visual.debug_bounds("inbox-document-status").unwrap();
+            assert_eq!(card.left(), header.left(), "{selector} is off the column");
+            assert!(
+                card.size.height > px(60.),
+                "{selector} has no skeleton lines"
+            );
+            window
+                .update(cx, |inbox, _, cx| {
+                    inbox.extra_loading = false;
+                    if tab == Tab::Code {
+                        inbox.diff = Some(Diff::default());
+                    } else {
+                        inbox.checks = Some(checks(&["pass"]));
+                    }
+                    cx.notify();
+                })
+                .unwrap();
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+            assert!(visual.debug_bounds(selector).is_none(), "{selector} stayed");
+        }
+        // Overview: the description card holds the loading lines.
+        let window = open(cx, move |inbox| {
+            connect(inbox);
+            inbox.selected = Some(item.key());
+            inbox.snapshot.items = vec![item];
+            inbox.detail_loading = true;
+        });
+        let mut visual = visual(window, cx);
+        let card = visual.debug_bounds("inbox-description-card").unwrap();
+        let lines = visual.debug_bounds("inbox-loading-description").unwrap();
+        assert!(card.contains(&lines.origin) && lines.bottom() <= card.bottom());
+        window
+            .update(cx, |inbox, _, cx| {
+                inbox.detail_loading = false;
+                inbox.details = Some(Details {
+                    body: "What it changes".into(),
+                    ..Default::default()
+                });
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("inbox-loading-description").is_none());
     }
 
     #[gpui::test]
