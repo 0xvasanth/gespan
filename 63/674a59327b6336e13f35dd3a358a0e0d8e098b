@@ -15,6 +15,7 @@ crates/gespan-gpui/src/shell.rs
   s_7a8c7041476d04::t_f93f661e170537 5136,5137-5139,5158
   s_7a8c7041476d04::t_c08c452da123e3 67-68
   s_7a8c7041476d04::t_a88382fcfe3b5a 1802,4908-4911
+  s_7a8c7041476d04::t_15f4dbf8da1d11 5135
 crates/gespan-gpui/src/settings/pages/appearance.rs
   s_7a8c7041476d04::t_362a84eabcc728 861-877
   s_7a8c7041476d04::t_d970ee3c8b48d9 860
