@@ -323,7 +323,7 @@ impl Shell {
         project: &str,
         tabs: &[TitleTab],
         children: Vec<(TitleTab, AnyElement)>,
-        chip: (f32, bool),
+        (chip, tabs_width): ((f32, bool), f32),
         (shift, dragged): (f32, bool),
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -352,6 +352,11 @@ impl Shell {
             .debug_selector(move || format!("tab-group-{name}"))
             .role(Role::Group)
             .flex_shrink_0()
+            // Sized from its slots rather than measured: a slot easing in
+            // or out is clipped, and layout would size the box as if it
+            // took no room, so the box slipped out from under the pointer
+            // and the strip after it jumped.
+            .w(px(chip.0 + 2. * GROUP_INSET + tabs_width))
             .h(px(TITLE_BAR_HEIGHT))
             .relative()
             .left(px(shift))
@@ -415,7 +420,7 @@ impl Shell {
         &self,
         entries: &[StripEntry<TitleTab>],
         slots: Vec<(TitleTab, AnyElement)>,
-        chips: &GroupChips,
+        (chips, group_tabs): (&GroupChips, &HashMap<String, f32>),
         (shifts, dragged): (&HashMap<String, f32>, Option<&str>),
         cx: &mut Context<Self>,
     ) -> Vec<(StripChild, AnyElement)> {
@@ -462,11 +467,12 @@ impl Shell {
                 StripEntry::Group { project, tabs } => {
                     let width = chips.widths.get(project).copied().unwrap_or(0.);
                     let chip = (width, chips.running.contains(project));
+                    let tabs_width = group_tabs.get(project).copied().unwrap_or(0.);
                     let shift = shifts.get(project).copied().unwrap_or(0.);
                     let motion = (shift, dragged == Some(project.as_str()));
                     out.push((
                         StripChild::Group(project.clone()),
-                        self.group_box(project, tabs, bucket, chip, motion, cx),
+                        self.group_box(project, tabs, bucket, (chip, tabs_width), motion, cx),
                     ));
                 }
             }
