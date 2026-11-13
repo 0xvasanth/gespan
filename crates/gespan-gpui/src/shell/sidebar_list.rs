@@ -1998,6 +1998,10 @@ mod tests {
                         let mut summary = store.create("codex", "/work/long-list").unwrap();
                         summary.title = format!("Session {i}");
                         summary.has_messages = true;
+                        // The list sorts by (updated_at, id), newest first.
+                        // These are made within one millisecond and ids are
+                        // random, so space the times: session 0 is the oldest.
+                        summary.updated_at += i;
                         summaries.push(summary);
                     }
                 }

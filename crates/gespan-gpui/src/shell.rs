@@ -12989,7 +12989,11 @@ mod tests {
     ) -> (WindowHandle<Shell>, i64, i64) {
         let mut store = Store::open(path).unwrap();
         let mut a = store.create("codex", "/work/another-project").unwrap();
-        let b = store.create("claude", "/work/gespan").unwrap();
+        let mut b = store.create("claude", "/work/gespan").unwrap();
+        // The sidebar sorts by (updated_at, id), newest first. Both are made
+        // within one millisecond and ids are random, so `b` is made the newer
+        // one outright, as it was when ids grew.
+        b.updated_at = b.updated_at.max(a.updated_at + 1);
         store
             .write_rows(
                 a.id,
