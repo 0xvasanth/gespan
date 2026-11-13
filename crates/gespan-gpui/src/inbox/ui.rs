@@ -828,8 +828,12 @@ impl Inbox {
         let mut rows = Vec::new();
         for (ix, (label, items)) in groups.into_iter().enumerate() {
             rows.push(
+                // The rows are flex_none, so in a list long enough to scroll
+                // the label was the one child left to shrink, and truncate's
+                // overflow let it fall to its padding, under the first row.
                 glass::eyebrow(label.clone())
                     .debug_selector(move || format!("inbox-group-{label}"))
+                    .flex_none()
                     .px(px(10.))
                     .pt(px(if ix == 0 { 4. } else { 12. }))
                     .pb(px(6.))
@@ -3989,6 +3993,62 @@ mod glass_view_tests {
         let mut visual = visual(window, cx);
         assert!(visual.debug_bounds("inbox-empty-list").is_some());
         assert!(visual.debug_bounds("inbox-empty-detail").is_some());
+    }
+
+    #[gpui::test]
+    fn a_group_label_keeps_its_height_above_its_first_row(cx: &mut TestAppContext) {
+        // A list long enough to scroll squeezed its labels: the rows do not
+        // shrink, so the label gave up its height and the first row's plate
+        // was drawn over the text. Short lists, selected or not, narrow or
+        // wide, must keep the label whole too.
+        for (count, select, width) in [
+            (40, true, 240.),
+            (40, false, 420.),
+            (2, true, 420.),
+            (2, false, 240.),
+        ] {
+            let items: Vec<Item> = (1..=count)
+                .map(|n| {
+                    pr(
+                        "langfuse/langfuse",
+                        n,
+                        &format!("fix(datasets): change {n}"),
+                    )
+                })
+                .collect();
+            let first_key = items[0].key();
+            let first = first_key.clone();
+            let window = open(cx, move |inbox| {
+                connect(inbox);
+                inbox.state.list_width = width;
+                inbox.snapshot.items = items;
+                if select {
+                    inbox.selected = Some(first.clone());
+                }
+            });
+            let mut visual = visual(window, cx);
+            let label = visual
+                .debug_bounds("inbox-group-langfuse/langfuse")
+                .expect("the group label is on screen");
+            let row = visual
+                .debug_bounds(Box::leak(
+                    format!("inbox-item-{first_key}").into_boxed_str(),
+                ))
+                .expect("the first row is on screen");
+            let case = format!("{count} rows, selected {select}, width {width}");
+            // The 11px text needs its line, plus the label's padding.
+            assert!(
+                f32::from(label.size.height) >= 4. + 11. + 6.,
+                "label squeezed to {:?} ({case})",
+                label.size.height
+            );
+            assert!(
+                label.bottom() <= row.top(),
+                "label ends at {:?}, below the first row's top {:?} ({case})",
+                label.bottom(),
+                row.top()
+            );
+        }
     }
 
     #[gpui::test]
