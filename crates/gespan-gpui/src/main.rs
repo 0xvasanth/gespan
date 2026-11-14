@@ -9,6 +9,7 @@ mod app_menu;
 mod arcade;
 mod assets;
 mod automations;
+mod backdrop;
 #[cfg(debug_assertions)]
 mod bench;
 mod board;
