@@ -1,0 +1,21 @@
+mobile/src/features/sessions/EmptySession.tsx
+  s_c32d955197a78d::t_d09dbd383582bb 15,105
+mobile/src/ui/brand.ts
+  s_c32d955197a78d::t_d09dbd383582bb 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3f14874fbb2d8dd31ab0e399f8be36f44829c01c",
+  "prompts": {},
+  "sessions": {
+    "s_c32d955197a78d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "62397557-e071-4ae9-9d4b-5b71d484cb0b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
