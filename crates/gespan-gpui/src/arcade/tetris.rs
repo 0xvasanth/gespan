@@ -1,8 +1,10 @@
-//! Colour Tetris: classic falling tetrominoes, except every piece carries one
-//! of a few colours and a full row only clears when all of it is one colour.
+//! Two-tone Tetris: classic falling tetrominoes, except every piece carries one
+//! of two tones and a full row only clears when all of it is one tone.
 //! Mixed full rows stay put, so each drop weighs colour as well as shape.
 //! The well takes whatever size the pane offers, so wide panes play wide.
-pub(crate) const COLORS: u8 = 3;
+/// Two tones, drawn as light and dark shades of the same ink, so the game
+/// stays monochrome like Pac-man and Snake.
+pub(crate) const COLORS: u8 = 2;
 /// Colours arrive in runs: the next piece repeats the previous colour this
 /// often (out of 3), so the preview gives something to plan a row around.
 const REPEAT_IN_3: u64 = 2;
@@ -632,8 +634,9 @@ mod tests {
             seen[piece.color as usize] += 1;
             previous = piece.color;
         }
-        // Uniform picks would repeat ~1/3 of the time; runs repeat ~7/9.
-        assert!((2_100..2_550).contains(&repeats), "{repeats} repeats");
+        // Uniform picks of two tones would repeat half the time; runs repeat
+        // ~5/6 (2/3 forced, plus half of the rest by chance).
+        assert!((2_380..2_620).contains(&repeats), "{repeats} repeats");
         assert!(seen.iter().all(|&n| n > 500), "{seen:?}");
     }
 
