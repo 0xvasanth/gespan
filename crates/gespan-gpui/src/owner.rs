@@ -149,8 +149,9 @@ mod tests {
         });
     }
 
+    // The caller's file and line; Windows separates the path with a backslash.
     #[gpui::test]
-    #[should_panic(expected = "src/owner.rs")]
+    #[should_panic(expected = "owner.rs:")]
     fn the_failure_names_the_reading_line(cx: &mut TestAppContext) {
         let (parent, child) = family(cx);
         parent.update(cx, |_, cx| {
