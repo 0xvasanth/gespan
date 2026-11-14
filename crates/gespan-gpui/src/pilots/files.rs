@@ -40,7 +40,7 @@ impl Pilots {
             .map_err(|e| e.to_string())?
         })
     }
-    fn file_editor(
+    pub(super) fn file_editor(
         &mut self,
         path: &str,
         text: String,
