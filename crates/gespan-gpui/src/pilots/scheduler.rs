@@ -245,11 +245,33 @@ impl Pilots {
                     .child(div().px_2().text_size(px(11.)).text_color(content(0.4)).child(title))
                     .children(items.into_iter().map(|ix| self.habit_row(&self.habits[ix], pilot, cx)))
             }));
+        // "Runs by itself", then + Add: a new schedule opens over the list.
+        let heading = div()
+            .flex_shrink_0()
+            .px(px(16.))
+            .pt(px(14.))
+            .pb(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(crate::glass::eyebrow("Runs by itself"))
+            .child(div().flex_1())
+            .child(
+                crate::glass::button("pilot-new-habit", "+ Add", crate::glass::Button::Ghost)
+                    .debug_selector(|| "pilot-new-habit".into())
+                    .h(px(26.))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.route = Some(Route::NewHabit);
+                        this.clear_habit_fields();
+                        cx.notify();
+                    })),
+            );
         div()
             .size_full()
             .min_w_0()
             .flex()
             .flex_col()
+            .child(heading)
             .when(!self.habits.is_empty(), |d| d.child(search_bar(filter)))
             .child(list)
             .into_any_element()

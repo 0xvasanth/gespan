@@ -8,11 +8,15 @@ use gespan_core::project_appearance::{MASCOTS, ProjectAppearance};
 use gpui::{AnyView, Div, FontWeight, Stateful};
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum OverviewTab {
-    Sessions,
-    Habits,
-    Documents,
-    Changes,
-    Roadmap,
+    /// The pilot's pipelines (flows) and where the current run is.
+    Pipeline,
+    /// The sessions it started.
+    History,
+    /// What it wrote.
+    Docs,
+    /// When it runs by itself (habits).
+    Schedule,
+    /// Each step a message took, reached from History.
     Activity,
 }
 #[derive(Clone, Copy, PartialEq)]
@@ -23,7 +27,6 @@ pub(super) enum SettingsSection {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Route {
-    Review,
     Session(i64),
     Document(String),
     Habit(String),
@@ -32,7 +35,6 @@ pub(super) enum Route {
 impl Route {
     pub(super) fn key(&self) -> String {
         match self {
-            Self::Review => "review".into(),
             Self::Session(id) => format!("session:{id}"),
             Self::Document(id) => format!("document:{id}"),
             Self::Habit(id) => format!("habit:{id}"),
@@ -40,6 +42,13 @@ impl Route {
         }
     }
 }
+/// The panel's tabs, in order, by label.
+pub(super) const OVERVIEW_TABS: [(OverviewTab, &str); 4] = [
+    (OverviewTab::Pipeline, "Pipeline"),
+    (OverviewTab::History, "History"),
+    (OverviewTab::Docs, "Docs"),
+    (OverviewTab::Schedule, "Schedule"),
+];
 pub(super) struct OpenPicker {
     pub(super) menu: Entity<Menu>,
     pub(super) anchor: Anchor,
@@ -725,194 +734,156 @@ impl Pilots {
             .map(|f| f.read(cx).content.to_string())
             .unwrap_or_default()
     }
-    pub(super) fn topbar(&self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
-        let id = pilot.id.clone();
-        div()
-            .absolute()
-            .top_0()
-            .right(px(10.))
-            .h(px(40.))
-            .flex()
-            .items_center()
-            .child(
-                icon_button("pilot-settings", "Pilot settings", "settings")
-                    .debug_selector(|| "pilot-settings".into())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.settings = Some(SettingsSection::General);
-                        window.focus(&this.settings_focus, cx);
-                        this.reload_files(&id, cx);
-                        cx.notify();
-                    })),
-            )
-            .into_any_element()
-    }
     pub(super) fn select_overview(&mut self, tab: OverviewTab, cx: &mut Context<Self>) {
-        if tab != OverviewTab::Changes {
-            self.pause_changes(cx);
-        }
         if self.route.is_some() {
             self.save_open_file(cx);
             self.route = None;
             cx.notify();
         }
         if self.overview_tab != tab {
-            self.overview_reveal =
-                Some(crate::project_tabs::TabReveal::new(tab, self.overview_tab));
             if tab != OverviewTab::Activity {
                 self.overview_previous = tab;
             }
             self.overview_tab = tab;
             cx.notify();
         }
-        if tab == OverviewTab::Roadmap {
+        if tab == OverviewTab::Pipeline {
             self.reload_roadmap(cx);
         }
     }
-    /// The new layouts' Pilot header: its tabs in a row at the top of the
-    /// panel, as a project's Explorer, Changes and History head its panel,
-    /// so the title bar keeps only the session tabs and the panel toggle.
+    /// The panel's top row: the four tabs as one segmented control, sized
+    /// to their labels, then Setup (sliders). No pilot-name row above it.
     pub(super) fn panel_overview_header(
         &self,
-        expand_label: bool,
+        _expand_label: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         div()
             .id("pilot-overview-header")
             .debug_selector(|| "pilot-overview-header".into())
-            .h(px(crate::theme::PANE_HEADER_HEIGHT))
             .flex_shrink_0()
-            .px_2()
-            .border_b_1()
-            .border_color(crate::right_panel::stroke())
+            .px(px(12.))
+            .pt(px(12.))
             .flex()
             .items_center()
-            .child(self.overview_controls(expand_label, window, cx))
+            .gap(px(6.))
+            .child(self.overview_controls(false, window, cx))
             .into_any_element()
     }
-    /// The Pilot's tabs. `expand_label` unfolds the selected tab's name when
-    /// there is room for it.
+    /// The Pipeline / History / Docs / Schedule tabs, then the Setup button.
     pub(crate) fn overview_controls(
         &self,
-        expand_label: bool,
-        window: &mut Window,
+        _expand_label: bool,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(pilot) = self.current() else {
             return div().into_any_element();
         };
-        let progress = self
-            .overview_reveal
-            .as_ref()
-            .and_then(|r| r.progress(self.overview_tab, window, cx));
-        let tabs = [
-            (
-                OverviewTab::Sessions,
-                "Sessions",
-                "message-multiple",
-                pilot.launches.len(),
-            ),
-            (
-                OverviewTab::Documents,
-                "Documents",
-                "file",
-                pilot.documents.len(),
-            ),
-            (OverviewTab::Habits, "Habits", "clock", self.habits.len()),
-            (
-                OverviewTab::Changes,
-                "Changes",
-                "file-diff",
-                self.project_changes.count(&pilot.id),
-            ),
-            (OverviewTab::Roadmap, "SOP Roadmap", "git-merge", 0),
-        ];
+        let selected_tab = match self.overview_tab {
+            // Activity is History's step view.
+            OverviewTab::Activity => OverviewTab::History,
+            tab => tab,
+        };
+        let id = pilot.id.clone();
+        let label = pilot.label();
         div()
-            .id("pilot-overview-tabs")
-            .debug_selector(|| "pilot-overview-tabs".into())
-            .role(Role::TabList)
-            .aria_label("Pilot details")
-            .h_full()
             .flex_1()
             .min_w_0()
-            .mr(px(2.))
             .flex()
             .items_center()
-            .gap(px(2.))
-            .children(tabs.into_iter().map(|(tab, label, glyph, count)| {
-                let selected = self.overview_tab == tab;
-                let unfolded = match progress {
-                    Some((_, p)) if selected => p,
-                    Some((closing, p)) if tab == closing => 1. - p,
-                    _ if selected => 1.,
-                    _ => 0.,
-                };
-                let id = match tab {
-                    OverviewTab::Sessions => "pilot-overview-Sessions",
-                    OverviewTab::Documents => "pilot-overview-Documents",
-                    OverviewTab::Habits => "pilot-overview-Habits",
-                    OverviewTab::Changes => "pilot-overview-Changes",
-                    OverviewTab::Roadmap => "pilot-overview-roadmap",
-                    OverviewTab::Activity => unreachable!(),
-                };
-                crate::project_tabs::tab_button(
-                    id,
-                    (label, count),
-                    glyph,
-                    selected,
-                    tab == OverviewTab::Changes && count > 0 && !selected,
-                    if expand_label { unfolded } else { 0. },
-                    window,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.select_overview(tab, cx)))
-            }))
-            .child(div().flex_1().min_w_0())
-            .when(self.overview_tab == OverviewTab::Habits, |d| {
-                d.child(
-                    icon_button("pilot-new-habit", "New habit", "plus")
-                        .debug_selector(|| "pilot-new-habit".into())
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.route = Some(Route::NewHabit);
-                            this.clear_habit_fields();
-                            cx.notify();
-                        })),
-                )
-            })
+            .gap(px(6.))
             .child(
-                icon_button("pilot-activity", "Show activity", "list-bullet")
-                    .debug_selector(|| "pilot-activity".into())
-                    .when(self.overview_tab == OverviewTab::Activity, |d| {
-                        d.bg(content(0.1))
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let tab = if this.overview_tab == OverviewTab::Activity {
-                            this.overview_previous
-                        } else {
-                            OverviewTab::Activity
-                        };
-                        this.select_overview(tab, cx);
+                crate::glass::segmented()
+                    .id("pilot-overview-tabs")
+                    .debug_selector(|| "pilot-overview-tabs".into())
+                    .role(Role::TabList)
+                    .aria_label("Pilot panels")
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .children(OVERVIEW_TABS.into_iter().map(|(tab, label)| {
+                        let selected = selected_tab == tab;
+                        crate::glass::segment(
+                            SharedString::from(format!("pilot-tab-{label}")),
+                            label,
+                            selected,
+                        )
+                        .debug_selector(move || format!("pilot-overview-tab-{label}"))
+                        .role(Role::Tab)
+                        .aria_label(label)
+                        .aria_selected(selected)
+                        // Sized to their labels; in a narrow panel they
+                        // give up padding, then clip, rather than overlap.
+                        .flex_auto()
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .overflow_hidden()
+                        .justify_center()
+                        .h(px(28.))
+                        .px(px(8.))
+                        .text_size(px(12.))
+                        .on_click(cx.listener(move |this, _, _, cx| this.select_overview(tab, cx)))
+                    })),
+            )
+            .child(
+                div()
+                    .id("pilot-setup")
+                    .debug_selector(|| "pilot-setup".into())
+                    .role(Role::Button)
+                    .aria_label(format!("{label} setup"))
+                    .tooltip(|_, cx| cx.new(|_| crate::conversation::HintTooltip("Setup")).into())
+                    .cursor_pointer()
+                    .flex_shrink_0()
+                    .size(px(30.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(crate::glass::edge())
+                    .bg(content(0.035))
+                    .when(self.settings.is_some(), |d| d.bg(content(0.11)))
+                    .hover(|s| s.bg(content(0.08)))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("sliders", 15.).text_color(content(0.74)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.toggle_setup(&id, window, cx);
                     })),
             )
             .into_any_element()
     }
+    /// Leaves Setup for the chat, saving an open file.
+    pub(crate) fn close_setup(&mut self, cx: &mut Context<Self>) {
+        if self.settings.take().is_some() {
+            self.save_open_file(cx);
+            cx.notify();
+        }
+    }
+    /// Opens the pilot's Setup page in the chat's place, or goes back to
+    /// the chat.
+    pub(super) fn toggle_setup(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings.is_some() {
+            self.close_setup(cx);
+            return;
+        } else {
+            self.settings = Some(SettingsSection::General);
+            window.focus(&self.settings_focus, cx);
+            self.reload_files(id, cx);
+        }
+        cx.notify();
+    }
     pub(super) fn overview_panel(
         &mut self,
         pilot: &Pilot,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.ensure_changes_summary(pilot, cx);
-        if self.overview_tab == OverviewTab::Changes {
-            self.ensure_changes(pilot, window, cx);
-        } else {
-            self.pause_changes(cx);
-        }
         let body = match self.overview_tab {
-            OverviewTab::Sessions => self.session_list(pilot, cx),
-            OverviewTab::Habits => self.habits_list(pilot, cx),
-            OverviewTab::Documents => self.document_list(pilot, cx),
-            OverviewTab::Changes => self.changes_list(pilot, cx),
-            OverviewTab::Roadmap => self.shown_roadmap(&pilot.id, cx).into_any_element(),
+            OverviewTab::History => self.session_list(pilot, cx),
+            OverviewTab::Schedule => self.habits_list(pilot, cx),
+            OverviewTab::Docs => self.document_list(pilot, cx),
+            OverviewTab::Pipeline => self.shown_roadmap(&pilot.id, cx).into_any_element(),
             OverviewTab::Activity => self.activity_view(pilot, cx),
         };
         div()
@@ -972,15 +943,24 @@ impl Pilots {
                     .map(|v| (v.busy || v.needs_input, v.updated_at)),
             )
         });
-        let search_bar = search_bar(filter).child(
-            icon_button("pilot-session-filter", "Filter Pilot sessions", "filter")
-                .relative()
-                .child(self.session_filter_anchor.probe())
-                .on_click(cx.listener(|this, _, window, cx| this.filter_menu(window, cx))),
-        );
+        let search_bar = search_bar(filter)
+            .child(
+                icon_button("pilot-session-filter", "Filter Pilot sessions", "filter")
+                    .relative()
+                    .child(self.session_filter_anchor.probe())
+                    .on_click(cx.listener(|this, _, window, cx| this.filter_menu(window, cx))),
+            )
+            // History holds the step-by-step Activity view too.
+            .child(
+                icon_button("pilot-activity", "Show activity", "list-bullet")
+                    .debug_selector(|| "pilot-activity".into())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.select_overview(OverviewTab::Activity, cx)
+                    })),
+            );
         let no_matches = launches.is_empty() && !pilot.launches.is_empty();
         div().size_full().flex().flex_col()
-            .when(!pilot.launches.is_empty(),|d|d.child(search_bar))
+            .child(search_bar)
             .child(div().id("pilot-session-list").debug_selector(|| "pilot-session-list".into()).flex_1().min_h_0().overflow_y_scroll().px(px(6.)).py_2().flex().flex_col().gap_1()
                 .when(pilot.launches.is_empty(),|d|d.child(empty_state("message-multiple",&format!("Ask {} to start a session on one of your projects, like a bug fix or a review, and it shows up here.",pilot.label()))))
                 .when(no_matches,|d|d.child(empty_state("search-01",if query.trim().is_empty(){"No sessions match these filters."}else{"No sessions match this search."})))
@@ -1181,15 +1161,6 @@ impl Pilots {
     ) -> AnyElement {
         let interactive = self.route.as_ref() == Some(&route);
         match route {
-            Route::Review => div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .child(self.page_header("Changes", cx))
-                .when_some(self.review.clone(), |d, review| {
-                    d.child(div().flex_1().min_h_0().child(review))
-                })
-                .into_any_element(),
             Route::Session(id) => {
                 let view = self.owner.upgrade().and_then(|owner| {
                     owner.update(cx, |owner, cx| owner.pilot_ensure_session(id, cx))
@@ -1350,211 +1321,187 @@ impl Pilots {
             .child(self.activity.as_ref().unwrap().view.clone())
             .into_any_element()
     }
-    pub(super) fn settings_modal(
+    /// Setup: a page in the chat's place (not a modal), with General, Soul
+    /// and Memory down a left column and the chosen one at full width.
+    pub(super) fn setup_page(
         &mut self,
         pilot: &Pilot,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let section = self.settings?;
-        let size = window.viewport_size();
-        let width = 880f32.min(size.width.as_f32() - 24.);
-        let height = 680f32.min(size.height.as_f32() - 32.);
         let body = match section {
-            SettingsSection::General => self.general_settings(pilot, window, cx),
-            SettingsSection::Soul => self.soul_page(pilot, cx),
-            SettingsSection::Memory => self.memory_page(pilot, window, cx),
+            SettingsSection::General => div()
+                .id("pilot-setup-general")
+                .size_full()
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .max_w(px(760.))
+                        .px(px(28.))
+                        .py(px(20.))
+                        .child(self.general_settings(pilot, window, cx)),
+                )
+                .into_any_element(),
+            SettingsSection::Soul => self.soul_setup(pilot, cx),
+            SettingsSection::Memory => div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .px(px(28.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .max_w(px(760.))
+                        .flex()
+                        .flex_col()
+                        .child(self.memory_page(pilot, window, cx)),
+                )
+                .into_any_element(),
         };
         self.bind_settings_blurs(window, cx);
-        let weak = cx.weak_entity();
-        Some(
-            div()
-                .absolute()
-                .size_full()
-                .child(
-                    gpui::deferred(
-                        gpui::anchored()
-                            .position(gpui::point(px(0.), px(0.)))
-                            .child(
-                                div()
-                                    .w(size.width)
-                                    .h(size.height)
-                                    .bg(gpui::black().opacity(0.4))
-                                    .occlude(),
-                            ),
-                    )
-                    .with_priority(69),
-                )
-                .child(
-                    popover(
-                        "pilot-settings-modal",
-                        Anchor::Point(gpui::point(
-                            px((size.width.as_f32() - width) / 2.),
-                            px((size.height.as_f32() - height) / 2.),
-                        )),
-                    )
-                    .ignore(self.notice_region.clone())
-                    .modal_surface(true)
-                    .without_animation()
-                    .priority(70)
-                    .width(width)
-                    .height(height)
-                    .gap(0.)
-                    .on_dismiss(move |_, cx| {
-                        let _ = weak.update(cx, |this, cx| {
-                            this.save_open_file(cx);
-                            this.settings = None;
-                            this.picker = None;
-                            cx.notify();
-                        });
-                    })
+        let id = pilot.id.clone();
+        let state = self
+            .chats
+            .get(&pilot.id)
+            .map(|v| v.read(cx).pilot_status().to_owned())
+            .unwrap_or_else(|| "idle".into());
+        let status = match state.as_str() {
+            "needs-you" => Some(("Needs you", crate::glass::Tone::Waiting)),
+            "working" => Some(("Working", crate::glass::Tone::Running)),
+            _ => None,
+        };
+        let header = div()
+            .debug_selector(|| "pilot-setup-header".into())
+            .h(px(56.))
+            .flex_shrink_0()
+            .px(px(20.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .border_b_1()
+            .border_color(content(0.06))
+            .child(avatar::avatar(
+                &pilot.mascot,
+                pilot.color,
+                &state,
+                20.,
+                true,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .items_baseline()
+                    .gap(px(6.))
+                    .min_w_0()
                     .child(
                         div()
-                            .id("pilot-settings-dialog")
-                            .debug_selector(|| "pilot-settings-dialog".into())
-                            .role(Role::Dialog)
-                            .track_focus(&self.settings_focus)
-                            .aria_label(format!("{} settings", pilot.label()))
-                            .h_full()
-                            .w_full()
-                            .flex()
-                            .relative()
-                            .child(
-                                div()
-                                    .id("pilot-settings-navigation")
-                                    .debug_selector(|| "pilot-settings-navigation".into())
-                                    .role(Role::Navigation)
-                                    .aria_label("Settings sections")
-                                    .w(px(192.))
-                                    .flex_shrink_0()
-                                    .h_full()
-                                    .border_r_1()
-                                    .border_color(content(0.04))
-                                    .p_2()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_px()
-                                    .child(
-                                        div()
-                                            .px_2p5()
-                                            .pt_1p5()
-                                            .pb_2()
-                                            .text_size(px(11.))
-                                            .text_color(content(0.45))
-                                            .child("Settings"),
-                                    )
-                                    .children(
-                                        [
-                                            (SettingsSection::General, "General", "settings"),
-                                            (SettingsSection::Soul, "Soul", "sparkles"),
-                                            (SettingsSection::Memory, "Memory", "sticky-note"),
-                                        ]
-                                        .into_iter()
-                                        .map(
-                                            |(tab, label, glyph)| {
-                                                let row_id = format!("pilot-settings-{label}");
-                                                div()
-                                                    .id(SharedString::from(row_id.clone()))
-                                                    .debug_selector(move || row_id.clone())
-                                                    .role(Role::Button)
-                                                    .aria_label(label)
-                                                    .w_full()
-                                                    .h(px(32.))
-                                                    .flex_shrink_0()
-                                                    .flex()
-                                                    .flex_row()
-                                                    .items_center()
-                                                    .justify_start()
-                                                    .text_align(gpui::TextAlign::Left)
-                                                    .gap(px(10.))
-                                                    .px(px(10.))
-                                                    .py(px(6.))
-                                                    .rounded_lg()
-                                                    .text_size(px(13.))
-                                                    .line_height(px(20.))
-                                                    .text_color(content(if section == tab {
-                                                        1.
-                                                    } else {
-                                                        0.65
-                                                    }))
-                                                    .when(section == tab, |d| d.bg(content(0.08)))
-                                                    .when(section != tab, |d| {
-                                                        d.hover(|d| {
-                                                            d.bg(content(0.05))
-                                                                .text_color(content(1.))
-                                                        })
-                                                    })
-                                                    .child(
-                                                        div()
-                                                            .id(SharedString::from(format!(
-                                                                "pilot-settings-icon-{label}"
-                                                            )))
-                                                            .debug_selector(move || {
-                                                                format!(
-                                                                    "pilot-settings-icon-{label}"
-                                                                )
-                                                            })
-                                                            .size(px(14.))
-                                                            .flex_shrink_0()
-                                                            .child(icon(glyph, 14.).text_color(
-                                                                content(if section == tab {
-                                                                    1.
-                                                                } else {
-                                                                    0.65
-                                                                }),
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        div()
-                                                            .id(SharedString::from(format!(
-                                                                "pilot-settings-label-{label}"
-                                                            )))
-                                                            .debug_selector(move || {
-                                                                format!(
-                                                                    "pilot-settings-label-{label}"
-                                                                )
-                                                            })
-                                                            .child(label),
-                                                    )
-                                                    .on_click(cx.listener(
-                                                        move |this, _, window, cx| {
-                                                            this.save_open_file(cx);
-                                                            this.settings = Some(tab);
-                                                            window.focus(&this.settings_focus, cx);
-                                                            cx.notify();
-                                                        },
-                                                    ))
-                                            },
-                                        ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h_full()
-                                    .flex()
-                                    .flex_col()
-                                    .child(body),
-                            )
-                            .child(
-                                div().absolute().right_3().top_1p5().child(
-                                    icon_button(
-                                        "pilot-settings-close",
-                                        "Close Pilot settings",
-                                        "close",
-                                    )
-                                    .size(px(28.))
-                                    .on_click(cx.listener(
-                                        |this, _, _, cx| {
-                                            this.save_open_file(cx);
-                                            this.settings = None;
-                                            cx.notify();
-                                        },
-                                    )),
-                                ),
-                            ),
+                            .truncate()
+                            .text_size(px(17.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(content(1.))
+                            .child(pilot.label()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .text_size(px(13.))
+                            .text_color(content(0.54))
+                            .child("/ Setup"),
                     ),
+            )
+            .children(status.map(|(label, tone)| crate::glass::status(label, tone)))
+            .child(div().flex_1())
+            .child(
+                crate::glass::button(
+                    "pilot-setup-back",
+                    "Back to chat",
+                    crate::glass::Button::Ghost,
+                )
+                .debug_selector(|| "pilot-setup-back".into())
+                .h(px(30.))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.toggle_setup(&id, window, cx);
+                })),
+            );
+        let nav = div()
+            .id("pilot-settings-navigation")
+            .debug_selector(|| "pilot-settings-navigation".into())
+            .role(Role::Navigation)
+            .aria_label("Setup sections")
+            .w(px(180.))
+            .flex_shrink_0()
+            .h_full()
+            .px(px(10.))
+            .py(px(16.))
+            .border_r_1()
+            .border_color(content(0.06))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .children(
+                [
+                    (SettingsSection::General, "General"),
+                    (SettingsSection::Soul, "Soul"),
+                    (SettingsSection::Memory, "Memory"),
+                ]
+                .into_iter()
+                .map(|(tab, label)| {
+                    let row_id = format!("pilot-settings-{label}");
+                    let on = section == tab;
+                    div()
+                        .id(SharedString::from(row_id.clone()))
+                        .debug_selector(move || row_id.clone())
+                        .role(Role::Tab)
+                        .aria_label(label)
+                        .aria_selected(on)
+                        .cursor_pointer()
+                        .w_full()
+                        .h(px(32.))
+                        .flex_shrink_0()
+                        .px(px(10.))
+                        .rounded(px(8.))
+                        .flex()
+                        .items_center()
+                        .text_size(px(12.5))
+                        .text_color(if on { content(1.) } else { content(0.86) })
+                        .when(on, |d| {
+                            d.bg(content(0.11)).shadow(vec![
+                                gpui::BoxShadow::new(px(0.), px(1.), crate::theme::white(0.08))
+                                    .inset(),
+                            ])
+                        })
+                        .when(!on, |d| d.hover(|d| d.bg(content(0.06))))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.save_open_file(cx);
+                            this.settings = Some(tab);
+                            window.focus(&this.settings_focus, cx);
+                            cx.notify();
+                        }))
+                }),
+            );
+        Some(
+            div()
+                .id("pilot-settings-dialog")
+                .debug_selector(|| "pilot-setup".into())
+                .role(Role::Region)
+                .track_focus(&self.settings_focus)
+                .aria_label(format!("{} setup", pilot.label()))
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(header)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .child(nav)
+                        .child(div().flex_1().min_w_0().h_full().child(body)),
                 )
                 .into_any_element(),
         )

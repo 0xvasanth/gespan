@@ -66,6 +66,141 @@ impl Pilots {
             .or_insert((text.clone(), hash));
         self.field(&field_key, "Markdown", text, true, cx)
     }
+    /// Setup › Soul: SOUL.md read as a document, with Read and Edit modes.
+    /// Long instructions stay readable in one 680px column.
+    pub(super) fn soul_setup(&mut self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
+        let editing = self.soul_editing;
+        let text = self.files.as_ref().map(|files| {
+            let key = format!("file:{}:SOUL.md", pilot.id);
+            self.fields
+                .get(&key)
+                .map(|f| f.read(cx).content.to_string())
+                .unwrap_or_else(|| files.soul.clone().unwrap_or_default())
+        });
+        let words = text.as_deref().map_or(0, |t| t.split_whitespace().count());
+        let header = div()
+            .debug_selector(|| "pilot-soul-header".into())
+            .flex_shrink_0()
+            .px(px(28.))
+            .py(px(14.))
+            .border_b_1()
+            .border_color(content(0.06))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(content(1.))
+                            .child("Soul"),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "pilot-soul-words".into())
+                            .text_size(px(11.5))
+                            .text_color(content(0.54))
+                            .child(format!(
+                                "SOUL.md · read before every run · {words} {}",
+                                if words == 1 { "word" } else { "words" }
+                            )),
+                    ),
+            )
+            .child(div().flex_1())
+            .child(
+                crate::glass::segmented()
+                    .id("pilot-soul-mode")
+                    .role(Role::TabList)
+                    .aria_label("Soul view")
+                    .children([("Read", false), ("Edit", true)].map(|(label, edit)| {
+                        crate::glass::segment(
+                            SharedString::from(format!("pilot-soul-{label}")),
+                            label,
+                            editing == edit,
+                        )
+                        .debug_selector(move || format!("pilot-soul-{label}"))
+                        .role(Role::Tab)
+                        .aria_label(label)
+                        .aria_selected(editing == edit)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this.soul_editing && !edit {
+                                this.save_open_file(cx);
+                            }
+                            this.soul_editing = edit;
+                            cx.notify();
+                        }))
+                    })),
+            );
+        let body = if editing {
+            div()
+                .flex_1()
+                .min_h_0()
+                .px(px(16.))
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .max_w(px(712.))
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col()
+                        .child(self.soul_page(pilot, cx)),
+                )
+                .into_any_element()
+        } else {
+            let mut column = div().max_w(px(680.)).w_full().flex().flex_col().gap(px(8.));
+            match text.as_deref() {
+                None => column = column.child(div().text_size(px(12.)).text_color(content(0.45)).child("Loading…")),
+                Some(t) if t.trim().is_empty() => {
+                    column = column.child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(content(0.54))
+                            .child("No standing instructions yet. Choose Edit to write who it is and what it should always keep in mind."),
+                    )
+                }
+                Some(t) => {
+                    for (ix, row) in crate::markdown_model::parse_full(t)
+                        .blocks
+                        .iter()
+                        .flat_map(|b| crate::markdown::rows(&b.block))
+                        .enumerate()
+                    {
+                        column = column.child(div().w_full().min_w_0().child(crate::markdown::body(
+                            &row,
+                            format!("pilot-soul-row-{ix}").into(),
+                            crate::markdown::Tone::Normal,
+                            None,
+                            std::time::Instant::now(),
+                        )));
+                    }
+                }
+            }
+            div()
+                .id("pilot-soul-read")
+                .debug_selector(|| "pilot-soul-read".into())
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .px(px(28.))
+                .pt(px(18.))
+                .pb(px(28.))
+                .child(column)
+                .into_any_element()
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(body)
+            .into_any_element()
+    }
     pub(super) fn soul_page(&mut self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
         let body = if let Some(files) = self.files.clone() {
             let editor = self.file_editor(

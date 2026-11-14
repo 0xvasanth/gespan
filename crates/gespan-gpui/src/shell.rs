@@ -1484,7 +1484,6 @@ impl Shell {
                     pilot_owner,
                     this.workspace.preferences.clone(),
                     pilot_active,
-                    this.notification_state.region.clone(),
                     cx,
                 )
             });
@@ -2489,7 +2488,6 @@ impl Shell {
                     this.persist(cx);
                 }
                 // Git turn reviews drop committed files on their own.
-                crate::changes::ChangesEvent::Committed { .. } => {}
                 crate::changes::ChangesEvent::OpenDiff { cwd, path, staged } => {
                     this.open_review(
                         crate::review::ReviewTab::Changes {

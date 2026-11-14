@@ -268,7 +268,7 @@ fn detail_pages_slide_over_the_overview_and_back_without_recreating_content(
             .update(cx, |_, _, cx| {
                 s.manager.update(cx, |m, cx| {
                     m.settings = None;
-                    m.overview_tab = OverviewTab::Documents;
+                    m.overview_tab = OverviewTab::Docs;
                     m.roster
                         .get_mut(&s.id)
                         .unwrap()
@@ -481,51 +481,96 @@ fn call(
     rx
 }
 #[gpui::test]
-fn settings_match_react_dialog_and_left_navigation_geometry(cx: &mut TestAppContext) {
+fn setup_is_a_page_in_the_chats_place_with_its_sections_on_the_left(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
     visual.run_until_parked();
-    let dialog = visual.debug_bounds("pilot-settings-dialog").unwrap();
+    // A new Pilot opens on its Setup; it is a page, not a modal.
+    assert!(visual.debug_bounds("pilot-setup").is_some());
+    assert!(visual.debug_bounds("pilot-setup-back").is_some());
+    let header = visual.debug_bounds("pilot-setup-header").unwrap();
+    assert_eq!(header.size.height, px(56.));
     let nav = visual.debug_bounds("pilot-settings-navigation").unwrap();
-    let viewport = s
-        .window
-        .update(visual, |_, w, _| w.viewport_size())
-        .unwrap();
-    assert_eq!(
-        dialog.size.width + px(2.),
-        px(880.).min(viewport.width - px(24.))
-    );
-    assert!((dialog.center().x - viewport.width / 2.).abs() <= px(1.));
-    assert_eq!(nav.size.width, px(192.));
+    assert_eq!(nav.size.width, px(180.));
+    assert!(header.bottom() <= nav.top());
+    let mut previous = None::<gpui::Bounds<gpui::Pixels>>;
     for section in ["General", "Soul", "Memory"] {
         let row = visual
             .debug_bounds(Box::leak(
                 format!("pilot-settings-{section}").into_boxed_str(),
             ))
             .unwrap();
-        let icon = visual
-            .debug_bounds(Box::leak(
-                format!("pilot-settings-icon-{section}").into_boxed_str(),
-            ))
-            .unwrap();
-        let label = visual
-            .debug_bounds(Box::leak(
-                format!("pilot-settings-label-{section}").into_boxed_str(),
-            ))
-            .unwrap();
         assert_eq!(row.size.height, px(32.));
-        assert_eq!(icon.left() - row.left(), px(10.));
-        assert_eq!(label.left() - icon.right(), px(10.));
+        if let Some(previous) = previous {
+            assert_eq!(row.top() - previous.bottom(), px(2.));
+        }
+        previous = Some(row);
     }
     assert_eq!(
         visual.debug_bounds("pilot-look").unwrap().size,
         gpui::size(px(80.), px(80.))
     );
-    assert_eq!(
-        visual.debug_bounds("pilot-name-field").unwrap().size,
-        gpui::size(px(256.), px(32.))
+    // Back to chat closes it and brings the chat back.
+    let back = visual.debug_bounds("pilot-setup-back").unwrap();
+    visual.simulate_click(back.center(), Default::default());
+    visual.run_until_parked();
+    assert!(s.manager.read_with(visual, |m, _| m.settings.is_none()));
+    assert!(visual.debug_bounds("pilot-setup-header").is_none());
+    // The sliders button beside the tabs opens it again.
+    let open = visual.debug_bounds("pilot-setup").unwrap();
+    visual.simulate_click(open.center(), Default::default());
+    visual.run_until_parked();
+    assert!(
+        s.manager
+            .read_with(visual, |m, _| m.settings == Some(SettingsSection::General))
     );
+    assert!(visual.debug_bounds("pilot-setup-header").is_some());
+}
+
+#[gpui::test]
+fn soul_reads_as_a_document_and_edits_on_demand(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let soul = "# Release role\n\nI manage releases.\n\n## Rules\n\nNever move a tag.";
+    pilot::files::save(&s.root, &s.id, None, "SOUL.md", soul, None).unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    s.manager.update(visual, |m, cx| {
+        m.settings = Some(SettingsSection::Soul);
+        m.reload_files(&s.id.clone(), cx);
+    });
+    visual.run_until_parked();
+    // Read is the default: rendered, in one readable column.
+    let read = visual
+        .debug_bounds("pilot-soul-read")
+        .expect("Soul opens to read");
+    assert!(visual.debug_bounds("pilot-soul-editor").is_none());
+    assert!(read.size.width > px(0.));
+    let words = visual.debug_bounds("pilot-soul-words").unwrap();
+    assert!(words.size.width > px(0.));
+    let count = s.manager.read_with(visual, |m, _| m.soul_editing);
+    assert!(!count);
+    // Edit swaps in the editor; Read again saves and renders the change.
+    let edit = visual.debug_bounds("pilot-soul-Edit").unwrap();
+    visual.simulate_click(edit.center(), Default::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("pilot-soul-editor").is_some());
+    assert!(visual.debug_bounds("pilot-soul-read").is_none());
+    s.manager.update(visual, |m, cx| {
+        let key = format!("file:{}:SOUL.md", s.id);
+        m.fields[&key].update(cx, |f, cx| {
+            f.set_text(format!("{soul}\n\nAsk before merging."), cx)
+        });
+    });
+    let read_tab = visual.debug_bounds("pilot-soul-Read").unwrap();
+    visual.simulate_click(read_tab.center(), Default::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("pilot-soul-read").is_some());
+    let saved = pilot::files::load(&s.root, &s.id, None)
+        .unwrap()
+        .soul
+        .unwrap_or_default();
+    assert!(saved.ends_with("Ask before merging."), "{saved}");
 }
 
 #[gpui::test]
@@ -602,30 +647,29 @@ fn memory_editor_saves_with_enter_and_stays_open_for_the_next_fact(cx: &mut Test
 }
 
 #[gpui::test]
-fn overview_activity_returns_to_its_previous_tab_and_uses_the_shared_reveal(
-    cx: &mut TestAppContext,
-) {
+fn activity_opens_from_history_and_returns_to_it(cx: &mut TestAppContext) {
     let s = setup(cx);
-    s.window
-        .update(cx, |_, window, cx| {
-            s.manager.update(cx, |m, cx| {
-                m.select_overview(OverviewTab::Documents, cx);
-                assert!(m.overview_reveal.is_some());
-                m.select_overview(OverviewTab::Activity, cx);
-                assert!(m.overview_previous == OverviewTab::Documents);
-                m.select_overview(m.overview_previous, cx);
-                assert!(m.overview_tab == OverviewTab::Documents);
-                cx.set_reduce_motion(true);
-                assert!(
-                    m.overview_reveal
-                        .as_ref()
-                        .unwrap()
-                        .progress(OverviewTab::Documents, window, cx)
-                        .is_none()
-                );
-            });
-        })
-        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.run_until_parked();
+    s.manager
+        .update(visual, |m, cx| m.select_overview(OverviewTab::History, cx));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    // History holds the Activity view: its toggle sits in History's bar.
+    let toggle = visual
+        .debug_bounds("pilot-activity")
+        .expect("History shows the Activity toggle");
+    visual.simulate_click(toggle.center(), Default::default());
+    visual.run_until_parked();
+    s.manager.read_with(visual, |m, _| {
+        assert!(m.overview_tab == OverviewTab::Activity);
+        assert!(m.overview_previous == OverviewTab::History);
+    });
+    s.manager
+        .update(visual, |m, cx| m.select_overview(m.overview_previous, cx));
+    s.manager.read_with(visual, |m, _| {
+        assert!(m.overview_tab == OverviewTab::History)
+    });
 }
 
 #[gpui::test]
@@ -1104,15 +1148,16 @@ fn details_tabs_head_the_panel_and_the_corner_keeps_only_the_toggle(cx: &mut Tes
         // title bar, which runs over the panel in both layouts.
         assert_eq!(header.top(), panel.top(), "boxy {boxy}");
         assert!(header.top() >= px(TITLE_BAR_HEIGHT) - px(0.5));
-        assert_eq!(header.size.height, px(crate::theme::PANE_HEADER_HEIGHT));
+        // The board's row: 12px in, a 28px segmented row (plus its frame)
+        // and the 30px Setup button. No pilot-name row above it.
+        assert_eq!(header.size.height, px(12. + 36.));
         assert!(header.left() >= panel.left() && header.right() <= panel.right() + px(0.5));
         assert!(header.contains(&tabs.center()), "{tabs:?} in {header:?}");
-        let activity = visual.debug_bounds("pilot-activity").unwrap();
-        assert!(header.contains(&activity.center()));
-        assert_eq!(
-            visual.debug_bounds("pilot-session-list").unwrap().top(),
-            header.bottom()
-        );
+        let setup = visual.debug_bounds("pilot-setup").unwrap();
+        assert!(header.contains(&setup.center()));
+        assert_eq!(setup.size.width, px(30.));
+        // 12px in, inside the panel's 1px edge.
+        assert!((tabs.left() - panel.left() - px(12.)).abs() <= px(1.));
         // The title bar keeps the session tabs and the toggle alone.
         assert!(visual.debug_bounds("titlebar-file-search").is_none());
         assert!(visual.debug_bounds("titlebar-open-in-editor").is_none());
@@ -1171,14 +1216,13 @@ fn details_tabs_switch_pages_and_stay_usable_above_opened_pages(cx: &mut TestApp
     let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
     visual.run_until_parked();
     for (selector, tab) in [
-        ("pilot-overview-Documents", OverviewTab::Documents),
-        ("pilot-overview-Habits", OverviewTab::Habits),
+        ("pilot-overview-tab-Docs", OverviewTab::Docs),
+        ("pilot-overview-tab-Schedule", OverviewTab::Schedule),
     ] {
         let button = visual.debug_bounds(selector).unwrap();
         visual.simulate_click(button.center(), Default::default());
         visual.run_until_parked();
         assert!(s.manager.read_with(visual, |m, _| m.overview_tab == tab));
-        assert!(visual.debug_bounds(selector).unwrap().size.width > px(26.));
     }
     let add = visual.debug_bounds("pilot-new-habit").unwrap();
     visual.simulate_click(add.center(), Default::default());
@@ -1188,20 +1232,11 @@ fn details_tabs_switch_pages_and_stay_usable_above_opened_pages(cx: &mut TestApp
             .read_with(visual, |m, _| matches!(m.route, Some(Route::NewHabit)))
     );
     assert!(visual.debug_bounds("pilot-overview-tabs").is_some());
-    let sessions = visual.debug_bounds("pilot-overview-Sessions").unwrap();
-    visual.simulate_click(sessions.center(), Default::default());
+    let history = visual.debug_bounds("pilot-overview-tab-History").unwrap();
+    visual.simulate_click(history.center(), Default::default());
     visual.run_until_parked();
     assert!(s.manager.read_with(visual, |m, _| m.route.is_none()
-        && m.overview_tab == OverviewTab::Sessions));
-    for expected in [OverviewTab::Activity, OverviewTab::Sessions] {
-        let activity = visual.debug_bounds("pilot-activity").unwrap();
-        visual.simulate_click(activity.center(), Default::default());
-        visual.run_until_parked();
-        assert!(
-            s.manager
-                .read_with(visual, |m, _| m.overview_tab == expected)
-        );
-    }
+        && m.overview_tab == OverviewTab::History));
 }
 
 #[gpui::test]
@@ -1228,13 +1263,26 @@ fn pilot_details_resize_from_their_edge_and_closed_panels_keep_the_corner(cx: &m
             .unwrap();
         visual.run_until_parked();
         let panel = visual.debug_bounds("right-panel-frame").unwrap();
-        let activity = visual.debug_bounds("pilot-activity").unwrap();
+        let setup = visual.debug_bounds("pilot-setup").unwrap();
         assert!(
-            activity.right() <= panel.right(),
-            "at {width}px every Pilot tab fits its panel: {activity:?} in {panel:?}"
+            setup.right() <= panel.right(),
+            "at {width}px Setup fits its panel: {setup:?} in {panel:?}"
         );
-        let roadmap = visual.debug_bounds("pilot-overview-roadmap").unwrap();
-        assert!(roadmap.right() <= activity.left());
+        // However narrow, no tab runs under the next one or under Setup.
+        let tabs: Vec<_> = ["Pipeline", "History", "Docs", "Schedule"]
+            .into_iter()
+            .map(|label| {
+                visual
+                    .debug_bounds(Box::leak(
+                        format!("pilot-overview-tab-{label}").into_boxed_str(),
+                    ))
+                    .unwrap()
+            })
+            .collect();
+        for pair in tabs.windows(2) {
+            assert!(pair[0].right() <= pair[1].left() + px(0.5), "at {width}px");
+        }
+        assert!(tabs[3].right() <= setup.left(), "at {width}px");
     }
     // The panel's own edge resizes it; the title bar has no divider now.
     let start = visual.debug_bounds("right-panel-resize").unwrap().center();
@@ -1361,7 +1409,7 @@ fn long_habit_draft_keeps_fields_and_schedule_inside_the_scrolling_page(cx: &mut
             shell.workspace.right_panel_width = 220.;
             s.manager.update(cx, |m, cx| {
                 m.settings = None;
-                m.overview_tab = OverviewTab::Habits;
+                m.overview_tab = OverviewTab::Schedule;
                 m.route = Some(Route::NewHabit);
                 cx.notify();
             });
@@ -1492,7 +1540,7 @@ fn habit_detail_preserves_long_content_history_and_actions_without_edit_fields(
             shell.workspace.right_panel_width = 280.;
             s.manager.update(cx, |m, cx| {
                 m.settings = None;
-                m.overview_tab = OverviewTab::Habits;
+                m.overview_tab = OverviewTab::Schedule;
                 m.habits = vec![h.clone()];
                 m.route = Some(Route::Habit(h.id.clone()));
                 cx.notify();
@@ -1556,7 +1604,7 @@ fn new_habit_click_transfers_composer_focus_after_the_animated_page_mounts(
         .update(cx, |_, window, cx| {
             s.manager.update(cx, |m, cx| {
                 m.settings = None;
-                m.overview_tab = OverviewTab::Habits;
+                m.overview_tab = OverviewTab::Schedule;
                 m.route = None;
                 m.focus_active(window, cx);
                 cx.notify();
@@ -1629,6 +1677,15 @@ fn new_habit_click_transfers_composer_focus_after_the_animated_page_mounts(
         visual.run_until_parked();
         assert!(s.manager.read_with(visual, |m, _| m.route.is_none()));
         if !reopen {
+            // "+ Add" sits in the Schedule list under the page stack, as on
+            // the board: let the page finish sliding away first.
+            visual
+                .update_window(s.window.into(), |_, window, cx| {
+                    let details = s.manager.read(cx).details.clone();
+                    details.update(cx, |v, cx| v.elapsed(std::time::Duration::from_secs(1), cx));
+                    window.draw(cx).clear(cx);
+                })
+                .unwrap();
             let add = visual.debug_bounds("pilot-new-habit").unwrap();
             visual.simulate_click(add.center(), Default::default());
             visual.run_until_parked();
@@ -4257,7 +4314,7 @@ mod roadmap {
                 shell.workspace.right_panel_width = 400.;
                 s.manager.update(cx, |m, cx| {
                     m.settings = None;
-                    m.select_overview(OverviewTab::Roadmap, cx);
+                    m.select_overview(OverviewTab::Pipeline, cx);
                 })
             })
             .unwrap();
@@ -4288,12 +4345,12 @@ mod roadmap {
         visual.run_until_parked();
         visual.refresh().unwrap();
         let tab = visual
-            .debug_bounds("pilot-overview-roadmap")
-            .expect("the SOP Roadmap tab is offered");
+            .debug_bounds("pilot-overview-tab-Pipeline")
+            .expect("the Pipeline tab is offered");
         visual.simulate_click(tab.center(), Default::default());
         visual.run_until_parked();
         s.manager.read_with(visual, |m, _| {
-            assert!(m.overview_tab == OverviewTab::Roadmap);
+            assert!(m.overview_tab == OverviewTab::Pipeline);
         });
         let roadmap = visual.update(|_, cx| s.manager.read(cx).roadmaps[&s.id].0.clone());
         roadmap.read_with(visual, |r, _| {
@@ -4347,7 +4404,39 @@ mod roadmap {
         })
     }
     #[gpui::test]
-    fn roadmap_tab_is_listed_and_selectable(cx: &mut TestAppContext) {
+    fn pipeline_follows_the_newest_flow_until_one_is_picked(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let first = save_pilot_flow(&s, "save-first", "First", visual);
+        let roadmap = open_roadmap(&s, visual);
+        roadmap.read_with(visual, |r, _| {
+            assert_eq!(r.flow.as_deref(), Some(first.as_str()))
+        });
+        // The Pilot saves another: the open Pipeline tab moves to it.
+        std::thread::sleep(Duration::from_millis(5));
+        let second = save_pilot_flow(&s, "save-second", "Second", visual);
+        visual.run_until_parked();
+        roadmap.update(visual, |r, cx| r.reload(cx));
+        visual.run_until_parked();
+        roadmap.read_with(visual, |r, _| {
+            assert_eq!(r.flow.as_deref(), Some(second.as_str()))
+        });
+        // Once the person picks one, a newer Flow doesn't take it away.
+        roadmap.update(visual, |r, cx| r.select_flow(first.clone(), cx));
+        visual.run_until_parked();
+        std::thread::sleep(Duration::from_millis(5));
+        save_pilot_flow(&s, "save-third", "Third", visual);
+        visual.run_until_parked();
+        roadmap.update(visual, |r, cx| r.reload(cx));
+        visual.run_until_parked();
+        roadmap.read_with(visual, |r, _| {
+            assert_eq!(r.flow.as_deref(), Some(first.as_str()))
+        });
+    }
+    #[gpui::test]
+    fn pipeline_leads_the_four_tabs_and_shows_first(cx: &mut TestAppContext) {
         let s = setup(cx);
         let visual = &mut roadmap_visual(&s, cx);
         s.window
@@ -4360,36 +4449,42 @@ mod roadmap {
             })
             .unwrap();
         visual.run_until_parked();
-        let tab = visual
-            .debug_bounds("pilot-overview-roadmap")
-            .expect("the SOP Roadmap tab is listed");
-        let sessions = visual.debug_bounds("pilot-overview-Sessions").unwrap();
-        assert!(tab.left() > sessions.left(), "it follows the other tabs");
-        visual.simulate_click(tab.center(), Default::default());
-        visual.run_until_parked();
+        // Pipeline / History / Docs / Schedule, left to right, then Setup.
+        let tab = |label: &str, v: &mut gpui::VisualTestContext| {
+            let selector: &'static str =
+                Box::leak(format!("pilot-overview-tab-{label}").into_boxed_str());
+            v.debug_bounds(selector)
+                .unwrap_or_else(|| panic!("the {label} tab is listed"))
+        };
+        let bounds: Vec<_> = ["Pipeline", "History", "Docs", "Schedule"]
+            .into_iter()
+            .map(|label| tab(label, visual))
+            .collect();
+        for pair in bounds.windows(2) {
+            assert!(
+                pair[0].right() <= pair[1].left(),
+                "in order, never overlapping"
+            );
+            assert_eq!(pair[0].top(), pair[1].top());
+        }
+        let setup = visual.debug_bounds("pilot-setup").unwrap();
+        assert!(bounds[3].right() <= setup.left(), "Setup follows the tabs");
+        // A Pilot opens on its Pipeline.
         assert!(
             s.manager
-                .read_with(visual, |m, _| m.overview_tab == OverviewTab::Roadmap)
+                .read_with(visual, |m, _| m.overview_tab == OverviewTab::Pipeline)
         );
         assert!(visual.debug_bounds("pilot-roadmap").is_some());
-        assert!(visual.debug_bounds("pilot-session-list").is_none());
-        assert!(
-            visual
-                .debug_bounds("pilot-overview-roadmap")
-                .unwrap()
-                .size
-                .width
-                > px(26.),
-            "the selected tab unfolds its label"
-        );
-        let sessions = visual.debug_bounds("pilot-overview-Sessions").unwrap();
-        visual.simulate_click(sessions.center(), Default::default());
+        visual.simulate_click(bounds[1].center(), Default::default());
         visual.run_until_parked();
         assert!(
             s.manager
-                .read_with(visual, |m, _| m.overview_tab == OverviewTab::Sessions)
+                .read_with(visual, |m, _| m.overview_tab == OverviewTab::History)
         );
+        assert!(visual.debug_bounds("pilot-session-list").is_some());
         assert!(visual.debug_bounds("pilot-roadmap").is_none());
+        // Changes left the Pilot: each session has its own.
+        assert!(visual.debug_bounds("pilot-overview-Changes").is_none());
     }
     #[gpui::test]
     fn roadmap_shows_the_empty_state_without_flows(cx: &mut TestAppContext) {
@@ -5134,7 +5229,7 @@ mod roadmap {
 
         // Another tab is selected: the change waits for the Roadmap tab.
         s.manager
-            .update(visual, |m, cx| m.select_overview(OverviewTab::Sessions, cx));
+            .update(visual, |m, cx| m.select_overview(OverviewTab::History, cx));
         visual.run_until_parked();
         let generation = roadmap.read_with(visual, |r, _| r.generation);
         save_pilot_flow(&s, "save-other-tab", "Other tab", visual);
@@ -5744,7 +5839,7 @@ fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
         .update(cx, |_, _, cx| {
             s.manager.update(cx, |m, cx| {
                 m.settings = None;
-                m.overview_tab = OverviewTab::Habits;
+                m.overview_tab = OverviewTab::Schedule;
                 m.habits = vec![
                     habit("digest", "Morning digest"),
                     habit("report", "Weekly report"),
@@ -5769,9 +5864,8 @@ fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
     assert!(visual.debug_bounds("pilot-habit-digest").is_some());
     assert!(visual.debug_bounds("pilot-habit-report").is_none());
 
-    s.manager.update(visual, |m, cx| {
-        m.select_overview(OverviewTab::Documents, cx)
-    });
+    s.manager
+        .update(visual, |m, cx| m.select_overview(OverviewTab::Docs, cx));
     visual.run_until_parked();
     assert!(visual.debug_bounds("pilot-document-plan").is_some());
     search(visual, "pilot-document-search", "release");

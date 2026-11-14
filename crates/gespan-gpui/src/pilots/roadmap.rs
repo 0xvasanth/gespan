@@ -106,6 +106,9 @@ pub(crate) struct Roadmap {
     pub(super) runs: Vec<FlowRun>,
     /// The shown Flow.
     pub(super) flow: Option<String>,
+    /// The person picked the shown Flow or a run. Until then the Pipeline
+    /// tab, open from the start, follows the Pilot's newest Flow.
+    picked: bool,
     /// The picked run; `None` is the blueprint.
     pub(super) run: Option<String>,
     /// The picked run's visits.
@@ -177,6 +180,7 @@ impl Roadmap {
             flows: Vec::new(),
             runs: Vec::new(),
             flow: None,
+            picked: false,
             run: None,
             visits: Vec::new(),
             drawn: None,
@@ -244,7 +248,8 @@ impl Roadmap {
         self.generation += 1;
         let generation = self.generation;
         let (owner, pilot) = (self.owner.clone(), self.pilot.clone());
-        let (flow, run) = (self.flow.clone(), self.run.clone());
+        let flow = self.flow.clone().filter(|_| self.picked);
+        let run = self.run.clone();
         cx.spawn(async move |this, cx| {
             // Read here, not in `reload`, which may run inside a Shell update.
             // A change that just reported success may still be writing.
@@ -380,6 +385,7 @@ impl Roadmap {
             self.run = None;
             self.drawer = None;
         }
+        self.picked = true;
         self.reload(cx);
     }
 
@@ -389,6 +395,7 @@ impl Roadmap {
             self.run = run;
             self.drawer = None;
         }
+        self.picked = true;
         self.reload(cx);
     }
 
