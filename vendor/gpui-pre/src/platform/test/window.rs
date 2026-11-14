@@ -44,6 +44,9 @@ pub(crate) struct TestWindowState {
     virtual_keyboard_requests: usize,
     virtual_keyboard_dismissals: usize,
     moved_callback: Option<Box<dyn FnMut()>>,
+    /// The window's accessibility callbacks, so a test can activate them.
+    #[cfg(not(target_family = "wasm"))]
+    a11y_callbacks: Option<crate::A11yCallbacks>,
     display_changed_callback: Option<Box<dyn FnMut()>>,
     appearance_change_callback: Option<Box<dyn FnMut()>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -118,6 +121,8 @@ impl TestWindow {
             virtual_keyboard_requests: 0,
             virtual_keyboard_dismissals: 0,
             moved_callback: None,
+            #[cfg(not(target_family = "wasm"))]
+            a11y_callbacks: None,
             display_changed_callback: None,
             appearance_change_callback: None,
             request_frame_callback: None,
@@ -224,6 +229,17 @@ impl TestWindow {
         self.0.lock().text_input_state_changes.clone()
     }
 
+    /// Connects a screen reader, as VoiceOver or an accessibility inspector
+    /// does: the window builds its accessibility tree from the next frame.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn simulate_a11y_activation(&self) {
+        let Some(callbacks) = self.0.lock().a11y_callbacks.take() else {
+            return;
+        };
+        (callbacks.activation)();
+        self.0.lock().a11y_callbacks = Some(callbacks);
+    }
+
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let scale_factor = self.scale_factor();
         let mut lock = self.0.lock();
@@ -306,6 +322,11 @@ impl TestWindow {
 }
 
 impl PlatformWindow for TestWindow {
+    #[cfg(not(target_family = "wasm"))]
+    fn a11y_init(&self, callbacks: crate::A11yCallbacks) {
+        self.0.lock().a11y_callbacks = Some(callbacks);
+    }
+
     fn visual_viewport_bounds(&self) -> Bounds<Pixels> {
         let state = self.0.lock();
         state

@@ -12,6 +12,9 @@ const WIDTHS: [f32; 2] = [1400., 700.];
 
 fn draw(window: WindowHandle<Shell>, cx: &mut TestAppContext) {
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    // As VoiceOver or a UI-automation tool would: two elements sharing an
+    // accessibility id then abort a debug build.
+    crate::settings::render_smoke_tests::screen_reader(visual);
     for width in WIDTHS {
         visual.simulate_resize(size(px(width), px(900.)));
         visual.run_until_parked();

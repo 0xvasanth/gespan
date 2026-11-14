@@ -2,7 +2,9 @@
 //! data, at a wide and a narrow width, with the pointer over the rows the
 //! data adds. A page that panics while it builds or paints fails here instead
 //! of taking the app down (Settings › Archive's Delete once set its hover
-//! twice and crashed on open).
+//! twice and crashed on open). A screen reader is connected throughout, so
+//! two elements sharing an accessibility id fail here too, as they abort a
+//! debug build that VoiceOver or a UI-automation tool is reading.
 //!
 //! Adding a page: add a line to `pages!` below. `every_page_file_has_a_smoke_entry`
 //! fails until the new `pages/*.rs` file has one.
@@ -116,6 +118,17 @@ fn open(section: Section, cx: &mut TestAppContext) -> WindowHandle<SettingsView>
     window
 }
 
+/// Connects a screen reader, so each frame builds the accessibility tree.
+pub(crate) fn screen_reader(visual: &mut VisualTestContext) {
+    visual.simulate_a11y_activation();
+    visual.run_until_parked();
+    visual.refresh().expect("the frame draws");
+    assert!(
+        visual.update(|window, _| window.is_a11y_active()),
+        "a screen reader is connected"
+    );
+}
+
 fn draw(visual: &mut VisualTestContext, width: f32) {
     visual.simulate_resize(size(px(width), px(3200.)));
     visual.run_until_parked();
@@ -126,6 +139,7 @@ fn smoke(file: &str, page: Page, cx: &mut TestAppContext) {
     // Empty: the page as a fresh install shows it.
     let window = open(page.section, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    screen_reader(visual);
     for width in WIDTHS {
         draw(visual, width);
     }
@@ -134,6 +148,7 @@ fn smoke(file: &str, page: Page, cx: &mut TestAppContext) {
     // built while drawing.
     let window = open(page.section, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    screen_reader(visual);
     let seed = page.seed;
     window
         .update(visual, |view, _, cx| {
@@ -490,4 +505,21 @@ fn seed_worktrees(view: &mut SettingsView, _: &mut Context<SettingsView>) {
         main: "/work/api".into(),
         error: None,
     };
+}
+
+/// What `screen_reader` is for: two elements sharing an accessibility id
+/// abort a debug build once a screen reader is connected.
+#[gpui::test]
+#[should_panic(expected = "Duplicate a11y node id")]
+fn a_screen_reader_catches_two_elements_sharing_an_id(cx: &mut TestAppContext) {
+    struct Twins;
+    impl Render for Twins {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let button = || div().id("twin").role(Role::Button).child("Delete");
+            div().child(button()).child(button())
+        }
+    }
+    let window = cx.add_window(|_, _| Twins);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    screen_reader(visual);
 }

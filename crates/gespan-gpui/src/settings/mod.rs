@@ -18,7 +18,7 @@ mod pages;
 mod palettes;
 mod preferences;
 #[cfg(test)]
-mod render_smoke_tests;
+pub(crate) mod render_smoke_tests;
 mod skill_document;
 pub(crate) use palettes::{PALETTES, palette};
 pub(crate) mod widgets;
