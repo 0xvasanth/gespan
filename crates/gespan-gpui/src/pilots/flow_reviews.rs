@@ -614,7 +614,22 @@ impl Pilots {
             return;
         };
         self.ensure_chat(pilot_id, cx);
-        let sent = self.enqueue(pilot_id, flow_notes::bundle(&alerts), Vec::new(), true, cx);
+        let text = flow_notes::bundle(&alerts);
+        // The same update still waiting is not queued twice: a run failed the
+        // same way on every launch would stack one copy per restart.
+        let handed = self.handed_reports(pilot_id, cx);
+        let waiting = self.roster.get(pilot_id).and_then(|p| {
+            p.outbox
+                .iter()
+                .find(|m| {
+                    m.internal && m.error.is_none() && m.text == text && !handed.contains(&m.id)
+                })
+                .map(|m| m.id.clone())
+        });
+        let sent = match waiting {
+            Some(id) => Some(id),
+            None => self.enqueue(pilot_id, text, Vec::new(), true, cx),
+        };
         for (pilot, message) in self.flow_watch.recovering.values_mut() {
             if pilot == pilot_id && message.is_none() {
                 message.clone_from(&sent);
