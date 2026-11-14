@@ -1,0 +1,47 @@
+crates/gespan-gpui/src/shell.rs
+  s_8cfbbba95f8344::t_5d80dbf4edd9f2 2337
+crates/gespan-gpui/src/shell/pilots.rs
+  s_8cfbbba95f8344::t_5d80dbf4edd9f2 52-58
+crates/gespan-gpui/src/pilots/panels.rs
+  s_8cfbbba95f8344::t_8000e410e070ad 80-122,126-131,138,140-143,148-149,151-153,157,159-160,162-184,186-187,189-192,194-211,1422
+  s_8cfbbba95f8344::t_eba6be0d4ed93d 1389
+  s_8cfbbba95f8344::t_c1a7704f3a5c26 565-566
+  s_8cfbbba95f8344::t_8bf0ae814d9488 991-993,1038-1040,1224,1284-1292,1324-1326,1390-1392
+  s_8cfbbba95f8344::t_2a89bf522b0728 1135-1136,1143,1145-1147,1165-1170,1172-1173,1175-1198,1200-1208,1211-1222,1226-1268,1270-1283,1293-1323,1327-1388,1393-1405,1408-1421
+  s_8cfbbba95f8344::t_01cd6257de6df5 968-969,974,988-990,994-997,1012
+crates/gespan-gpui/src/pilots/tests.rs
+  s_8cfbbba95f8344::t_a472d96c3e35dd 667,669-670,680-681
+  s_8cfbbba95f8344::t_bf85289319b39e 513-515
+  s_8cfbbba95f8344::t_8a72ca2f4614b5 696-706
+  s_8cfbbba95f8344::t_0ba6a665d90da0 579,581,583,585-600,607-609,615-656,658-666,668,671-679,682-692,695,707-733,739-756,766-788,791-797,802-806,810-816,822-830,834-843,847-852,857-861
+  s_8cfbbba95f8344::t_115b054ab277e1 4372-4374
+  s_8cfbbba95f8344::t_8bf0ae814d9488 601-605,610-614,657,734-738,757-765,798-801,807-809,817-821,831-833,844-846,853-856
+crates/gespan-gpui/src/pilots/memory_ui.rs
+  s_8cfbbba95f8344::t_3dc0b2845974e9 2
+  s_8cfbbba95f8344::t_8bf0ae814d9488 88-93,95-104,106-124,127-147,149-153,259-262,318-319,321-322,398-402
+  s_8cfbbba95f8344::t_96b1521196d5e1 5-14,16-17,23-87,94,105,125-126,148,154-235,245,252-258,263-288,299-307,310-315,324-328,330-337,339,342,350-363,368-397,403-478
+crates/gespan-gpui/src/pilots/files.rs
+  s_8cfbbba95f8344::t_3dc0b2845974e9 43
+crates/gespan-gpui/src/pilots/mod.rs
+  s_8cfbbba95f8344::t_a144568511a715 1198-1200
+  s_8cfbbba95f8344::t_c1a7704f3a5c26 561-564
+  s_8cfbbba95f8344::t_5d80dbf4edd9f2 76-77,557,569-571
+  s_8cfbbba95f8344::t_39b788417ae644 163-168,417-419,1281-1292,1299,1301-1309
+  s_8cfbbba95f8344::t_cdc0eb03f89055 572
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8534b64e1774259e849d0884cd311a22b2f3d268",
+  "prompts": {},
+  "sessions": {
+    "s_8cfbbba95f8344": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7aad105-03f8-4135-8f7b-56f02668ac6a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
