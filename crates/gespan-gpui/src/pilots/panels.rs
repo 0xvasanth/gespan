@@ -77,76 +77,138 @@ pub(super) fn button(
         .hover(|s| s.bg(content(0.08)).text_color(content(1.)))
         .child(label)
 }
-fn setting(label: &str, description: Option<&str>, control: AnyElement) -> Div {
+/// A Setup card (`.card`): a titled head with one line saying what it holds,
+/// above its rows.
+fn setup_card(id: &'static str, title: &'static str, caption: &'static str) -> Div {
+    crate::glass::card()
+        .debug_selector(move || id.into())
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .px(px(16.))
+                .pt(px(14.))
+                .pb(px(10.))
+                .border_b_1()
+                .border_color(crate::glass::hairline())
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .line_height(px(18.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(content(1.))
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .line_height(px(17.))
+                        .text_color(content(0.64))
+                        .child(caption),
+                ),
+        )
+}
+/// A row in a Setup card (`.set-row`): label and description on the left,
+/// its control on the right, a hairline above every row but the first.
+fn set_row(
+    label: impl Into<SharedString>,
+    description: Option<SharedString>,
+    first: bool,
+    control: Option<AnyElement>,
+) -> Div {
     div()
-        .min_h(px(48.))
         .flex()
         .items_center()
-        .gap_4()
-        .px_3()
-        .py_2()
+        .gap(px(20.))
+        .px(px(16.))
+        .py(px(14.))
+        .when(!first, |d| {
+            d.border_t_1().border_color(crate::glass::hairline())
+        })
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .child(
                     div()
+                        .truncate()
                         .text_size(px(13.))
-                        .line_height(px(20.))
-                        .text_color(content(0.9))
-                        .child(label.to_string()),
+                        .line_height(px(18.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(content(1.))
+                        .child(label.into()),
                 )
                 .when_some(description, |d, text| {
                     d.child(
                         div()
+                            .mt(px(2.))
+                            .truncate()
                             .text_size(px(12.))
-                            .line_height(px(20.))
-                            .text_color(content(0.4))
-                            .child(text.to_string()),
+                            .line_height(px(18.))
+                            .text_color(content(0.64))
+                            .child(text),
                     )
                 }),
         )
-        .child(
-            div()
-                .w(px(224.))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_end()
-                .pr_1p5()
-                .text_size(px(12.))
-                .text_color(content(0.85))
-                .child(control),
-        )
+        .children(control)
 }
-fn heading(title: &str, description: Option<&str>) -> Div {
+/// A Setup picker (`.select`): the value and a caret on a glass plate.
+fn select_pill(id: impl Into<gpui::ElementId>, aria: String, value: SharedString) -> Stateful<Div> {
     div()
-        .pt_7()
-        .pb_2()
-        .px_1()
-        .text_size(px(12.))
-        .text_color(content(0.7))
-        .font_weight(FontWeight::MEDIUM)
-        .child(title.to_string())
-        .when_some(description, |d, text| {
-            d.child(
-                div()
-                    .line_height(px(20.))
-                    .text_color(content(0.4))
-                    .font_weight(FontWeight::NORMAL)
-                    .child(text.to_string()),
-            )
-        })
-}
-fn card() -> Div {
-    div()
-        .rounded_xl()
-        .border_1()
-        .border_color(content(0.04))
-        .overflow_hidden()
-        .bg(content(0.02))
+        .id(id)
+        .role(Role::Button)
+        .aria_label(aria)
+        .cursor_pointer()
+        .flex_none()
+        .h(px(30.))
+        .max_w(px(240.))
+        .px(px(10.))
+        .rounded(px(8.))
         .flex()
-        .flex_col()
+        .items_center()
+        .gap(px(8.))
+        .text_size(px(12.5))
+        .text_color(content(1.))
+        .bg(crate::glass::fill_strong())
+        .border_1()
+        .border_color(crate::glass::edge())
+        .shadow(vec![
+            gpui::BoxShadow::new(px(0.), px(1.), crate::theme::white(0.10)).inset(),
+        ])
+        .hover(|s| s.bg(content(0.10)))
+        .child(div().truncate().child(value))
+        .child(icon("chevron-down", 10.).text_color(content(0.64)))
+}
+/// A small tag (`.mini`): a project in the header, a project's machine.
+pub(super) fn mini(label: impl Into<SharedString>) -> Div {
+    div()
+        .flex_none()
+        .h(px(20.))
+        .px(px(7.))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .text_size(px(11.))
+        .whitespace_nowrap()
+        .text_color(content(0.64))
+        .bg(crate::theme::white(0.05))
+        .border_1()
+        .border_color(crate::theme::white(0.09))
+        .child(label.into())
+}
+/// Where a project lives, for its tag in Setup › Projects.
+pub(super) fn project_machine(path: &str) -> String {
+    if gespan_core::remote::parse_remote_path(path).is_some() {
+        "Remote".into()
+    } else if cfg!(target_os = "macos") {
+        "This Mac".into()
+    } else {
+        "This PC".into()
+    }
 }
 /// PilotOverview's search row above the Sessions, Habits and Documents lists.
 /// Whether `haystack` contains `query`, ignoring case and surrounding spaces.
@@ -197,10 +259,8 @@ struct LookEditor {
     pilot: Pilot,
     name: Entity<Input>,
     color: Entity<Input>,
-    settings: bool,
     custom_open: bool,
     custom: Entity<super::color_picker::ColorPicker>,
-    focus: gpui::FocusHandle,
     _events: Vec<Subscription>,
 }
 impl EventEmitter<LookChanged> for LookEditor {}
@@ -260,19 +320,14 @@ impl LookEditor {
             pilot,
             name,
             color,
-            settings: false,
             custom_open: false,
             custom,
-            focus: cx.focus_handle(),
             _events: events,
         }
     }
 }
 impl gpui::Render for LookEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.settings {
-            return self.settings_controls(cx);
-        }
         // PilotMenu: the name, MascotPicker and the inline ColorPicker, each
         // ten columns wide.
         const COLOR_NAMES: [&str; 9] = [
@@ -451,222 +506,7 @@ impl gpui::Render for LookEditor {
             .into_any_element()
     }
 }
-impl LookEditor {
-    fn settings_controls(&self, cx: &mut Context<Self>) -> AnyElement {
-        const COLOR_NAMES: [&str; 9] = [
-            "Blue", "Coral", "Yellow", "Green", "Pink", "Purple", "Teal", "Orange", "Indigo",
-        ];
-        div()
-            .id("pilot-settings-look-picker")
-            .debug_selector(|| "pilot-settings-look-picker".into())
-            .role(Role::Dialog)
-            .aria_label("Mascot and color")
-            .track_focus(&self.focus)
-            .p_3()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .id("pilot-mascot-options")
-                    .role(Role::RadioGroup)
-                    .aria_label("Mascot")
-                    .px_1()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .children(MASCOTS.chunks(5).enumerate().map(|(row, names)| {
-                        div().flex().gap_1().children(names.iter().enumerate().map(
-                            |(col, name)| {
-                                let selected = self.pilot.mascot == *name;
-                                div()
-                                    .id(("settings-mascot", row * 5 + col))
-                                    .role(Role::RadioButton)
-                                    .aria_label(*name)
-                                    .aria_selected(selected)
-                                    .h(px(48.))
-                                    .flex_1()
-                                    .min_w_0()
-                                    .rounded_lg()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .when(selected, |d| {
-                                        d.bg(content(0.1)).border_1().border_color(content(0.2))
-                                    })
-                                    .hover(|d| d.bg(content(0.06)))
-                                    .child(avatar::avatar(
-                                        name,
-                                        self.pilot.color,
-                                        "idle",
-                                        32.,
-                                        !selected,
-                                    ))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.pilot.mascot = (*name).into();
-                                        cx.emit(LookChanged {
-                                            pilot: this.pilot.clone(),
-                                        });
-                                        cx.notify();
-                                    }))
-                            },
-                        ))
-                    })),
-            )
-            .child(div().h(px(1.)).bg(content(0.1)))
-            .child(
-                div()
-                    .id("pilot-color-options")
-                    .role(Role::Group)
-                    .aria_label("Color")
-                    .px_1()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .children((0..2).map(|row| {
-                        div().flex().justify_between().children((0..5).map(|col| {
-                            let index = row * 5 + col;
-                            if index < 9 {
-                                let color = pilot::COLORS_PILOT[index];
-                                let selected = self.pilot.color == color;
-                                div()
-                                    .id(("settings-color", index))
-                                    .role(Role::Button)
-                                    .aria_label(COLOR_NAMES[index])
-                                    .aria_selected(selected)
-                                    .size(px(36.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_full()
-                                    .child(
-                                        div()
-                                            .size(px(32.))
-                                            .rounded_full()
-                                            .border_2()
-                                            .border_color(if selected {
-                                                content(0.8)
-                                            } else {
-                                                content(0.)
-                                            })
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(
-                                                div().size(px(28.)).rounded_full().bg(rgb(color)),
-                                            ),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.pilot.color = color;
-                                        this.custom_open = false;
-                                        this.custom
-                                            .update(cx, |picker, cx| picker.set_color(color, cx));
-                                        this.color.update(cx, |f, cx| {
-                                            f.set_text(format!("#{color:06x}"), cx)
-                                        });
-                                        cx.emit(LookChanged {
-                                            pilot: this.pilot.clone(),
-                                        });
-                                        cx.notify();
-                                    }))
-                                    .into_any_element()
-                            } else {
-                                div()
-                                    .id("settings-custom-color")
-                                    .role(Role::Button)
-                                    .aria_label("Custom color")
-                                    .size(px(36.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_full()
-                                    .child(
-                                        div()
-                                            .size(px(28.))
-                                            .rounded_full()
-                                            .when(
-                                                !pilot::COLORS_PILOT.contains(&self.pilot.color),
-                                                |d| d.bg(rgb(self.pilot.color)),
-                                            )
-                                            .when(
-                                                pilot::COLORS_PILOT.contains(&self.pilot.color),
-                                                |d| {
-                                                    d.child(
-                                                        div()
-                                                            .absolute()
-                                                            .inset_0()
-                                                            .child(super::color_picker::spectrum()),
-                                                    )
-                                                },
-                                            )
-                                            .relative()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(
-                                                icon("pipette", 14.)
-                                                    .relative()
-                                                    .text_color(gpui::white()),
-                                            ),
-                                    )
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.custom_open = !this.custom_open;
-                                        cx.notify();
-                                    }))
-                                    .into_any_element()
-                            }
-                        }))
-                    })),
-            )
-            .when(self.custom_open, |d| {
-                d.child(div().px_1().pt_2().child(self.custom.clone()))
-            })
-            .into_any_element()
-    }
-}
 impl Pilots {
-    fn open_settings_look(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pilot) = self.roster.get(id).cloned() else {
-            return;
-        };
-        let editor = cx.new(|cx| {
-            let mut editor = LookEditor::new(pilot, cx);
-            editor.settings = true;
-            editor
-        });
-        let focus = editor.read(cx).focus.clone();
-        let changed = cx.subscribe(&editor, |this, _, event: &LookChanged, cx| {
-            if let Some(pilot) = this.roster.get_mut(&event.pilot.id) {
-                pilot.mascot = event.pilot.mascot.clone();
-                pilot.color = event.pilot.color;
-            }
-            this.configure_chat(&event.pilot.id, cx);
-            this.save(cx);
-        });
-        let menu = cx.new(|cx| {
-            Menu::new(
-                "Mascot and color",
-                vec![MenuItem::Custom(editor.into(), focus)],
-                window,
-                cx,
-            )
-            .width(272.)
-        });
-        let closed = cx.subscribe(&menu, |this, _, _: &MenuEvent, cx| {
-            this.picker = None;
-            cx.notify();
-        });
-        let anchor = Anchor::Slot(self.settings_anchor.clone());
-        self.picker = Some(OpenPicker {
-            menu,
-            anchor,
-            width: 272.,
-            align: crate::popover::Align::Center,
-            _events: vec![changed, closed],
-        });
-        cx.notify();
-    }
     pub(super) fn field(
         &mut self,
         key: &str,
@@ -722,6 +562,8 @@ impl Pilots {
             .unwrap_or_default()
     }
     pub(super) fn select_overview(&mut self, tab: OverviewTab, cx: &mut Context<Self>) {
+        // A tab shows in the panel, which Setup hides.
+        self.close_setup(cx);
         if self.route.is_some() {
             self.save_open_file(cx);
             self.route = None;
@@ -1123,26 +965,13 @@ impl Pilots {
                     div()
                         .max_w(px(760.))
                         .px(px(28.))
-                        .py(px(20.))
+                        .pt(px(20.))
+                        .pb(px(28.))
                         .child(self.general_settings(pilot, window, cx)),
                 )
                 .into_any_element(),
             SettingsSection::Soul => self.soul_setup(pilot, cx),
-            SettingsSection::Memory => div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .px(px(28.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .max_w(px(760.))
-                        .flex()
-                        .flex_col()
-                        .child(self.memory_page(pilot, window, cx)),
-                )
-                .into_any_element(),
+            SettingsSection::Memory => self.memory_page(pilot, window, cx),
         };
         self.bind_settings_blurs(window, cx);
         let id = pilot.id.clone();
@@ -1156,6 +985,16 @@ impl Pilots {
             "working" => Some(("Working", crate::glass::Tone::Running)),
             _ => None,
         };
+        // The project it works in, as the board's header tag.
+        let project = pilot.projects.first().map(|project| {
+            self.owner
+                .read(cx, |o, _| {
+                    o.workspace.project_appearance.get(project).cloned()
+                })
+                .flatten()
+                .unwrap_or_default()
+                .label(project)
+        });
         let header = div()
             .debug_selector(|| "pilot-setup-header".into())
             .h(px(56.))
@@ -1170,7 +1009,7 @@ impl Pilots {
                 &pilot.mascot,
                 pilot.color,
                 &state,
-                20.,
+                28.,
                 true,
             ))
             .child(
@@ -1196,6 +1035,9 @@ impl Pilots {
                     ),
             )
             .children(status.map(|(label, tone)| crate::glass::status(label, tone)))
+            .children(
+                project.map(|label| mini(label).debug_selector(|| "pilot-setup-project".into())),
+            )
             .child(div().flex_1())
             .child(
                 crate::glass::button(
@@ -1290,20 +1132,21 @@ impl Pilots {
                 .into_any_element(),
         )
     }
+    /// Setup › General: Identity, Model and permissions, Projects and
+    /// Conversation, each a glass card in one 760px column.
     fn general_settings(
         &mut self,
         pilot: &Pilot,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let name = self.field("pilot-name", "Name", pilot.name.clone(), false, cx);
+        let name = self.field("pilot-name", "Pilot name", pilot.name.clone(), false, cx);
         name.update(cx, |f, cx| {
-            f.set_font_size(15.);
-            f.set_line_height(20.);
-            f.set_centered(true);
+            f.set_font_size(12.5);
+            f.set_line_height(18.);
+            f.set_centered(false);
             f.set_placeholder(pilot.label(), cx);
         });
-        let look = pilot.id.clone();
         let add = pilot.id.clone();
         let reset = pilot.id.clone();
         let chat = self.chat();
@@ -1311,10 +1154,6 @@ impl Pilots {
             .as_ref()
             .map(|v| v.read(cx).pilot_model_label())
             .unwrap_or_else(|| "Loading…".into());
-        let provider = chat
-            .as_ref()
-            .map(|v| v.read(cx).summary.provider.clone())
-            .unwrap_or_else(|| "codex".into());
         let mode = chat
             .as_ref()
             .map(|v| v.read(cx).settings.access)
@@ -1323,352 +1162,263 @@ impl Pilots {
             .as_ref()
             .map(|v| v.read(cx).pilot_model_options())
             .unwrap_or_default();
-        let access_icon = match mode {
-            AccessMode::FullAccess => "shield-alert",
-            AccessMode::Auto => "sparkles",
-            AccessMode::AutoAcceptEdits => "pencil-edit",
-            _ => "square-lock",
-        };
-        let plain = |id, label: SharedString| {
+        let identity = setup_card(
+            "pilot-setup-identity",
+            "Identity",
+            "How it shows up in the sidebar and tabs.",
+        )
+        .child(
             div()
-                .id(id)
-                .role(Role::Button)
-                .aria_label(label.clone())
-                .h(px(28.))
-                .px_1p5()
-                .mx(px(-6.))
-                .rounded_md()
+                .px(px(16.))
+                .py(px(14.))
                 .flex()
-                .items_center()
-                .gap_2()
-                .text_size(px(12.))
-                .text_color(content(0.85))
-                .hover(|s| s.bg(content(0.06)))
-                .child(label)
-        };
+                .flex_col()
+                .gap(px(12.))
+                .child(
+                    crate::glass::field()
+                        .id("pilot-name-field")
+                        .debug_selector(|| "pilot-name-field".into())
+                        .h(px(34.))
+                        .w_full()
+                        .text_color(content(1.))
+                        .child(div().flex_1().min_w_0().child(name)),
+                )
+                .child(
+                    div()
+                        .id("pilot-mascots")
+                        .debug_selector(|| "pilot-mascots".into())
+                        .role(Role::RadioGroup)
+                        .aria_label("Mascot")
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(8.))
+                        .children(MASCOTS.iter().map(|mascot| {
+                            let on = pilot.mascot == *mascot;
+                            let tint = gpui::Hsla::from(rgb(pilot.color));
+                            let pick = mascot.to_string();
+                            div()
+                                .id(SharedString::from(format!("pilot-mascot-{mascot}")))
+                                .debug_selector(move || format!("pilot-mascot-{mascot}"))
+                                .role(Role::RadioButton)
+                                .aria_label(format!("{mascot} mascot"))
+                                .aria_selected(on)
+                                .cursor_pointer()
+                                .size(px(40.))
+                                .flex_none()
+                                .rounded(px(10.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .border_1()
+                                .map(|d| {
+                                    if on {
+                                        d.bg(tint.opacity(0.14)).border_color(tint.opacity(0.5))
+                                    } else {
+                                        d.bg(crate::theme::white(0.04))
+                                            .border_color(crate::theme::white(0.08))
+                                            .hover(|s| s.bg(content(0.08)))
+                                    }
+                                })
+                                .child(avatar::avatar(mascot, pilot.color, "idle", 24., true))
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.pick_mascot(&pick, cx)),
+                                )
+                        })),
+                ),
+        );
+        let options = model_options.into_iter().filter_map(|item| {
+            let MenuItem::Action(option) = item else {
+                return None;
+            };
+            let label = option.label.clone();
+            let value = option
+                .value
+                .clone()
+                .unwrap_or_else(|| if option.checked { "On" } else { "Off" }.into());
+            let anchor = AnchorSlot::default();
+            let probe = anchor.probe();
+            Some(set_row(
+                label.clone(),
+                None,
+                false,
+                Some(
+                    select_pill(
+                        SharedString::from(format!("pilot-option-{}", option.id)),
+                        format!("{label}, {value}"),
+                        value,
+                    )
+                    .child(probe)
+                    .on_click(cx.listener(move |this, _, w, cx| {
+                        if option.submenu.is_empty() {
+                            if let Some(chat) = this.chat()
+                                && let Err(e) = chat
+                                    .update(cx, |v, cx| v.pilot_pick_model_option(&option.id, cx))
+                            {
+                                this.error = Some(e);
+                            }
+                            this.changed(cx);
+                        } else {
+                            this.open_model_option(
+                                option.label.clone(),
+                                option.submenu.clone(),
+                                anchor.clone(),
+                                w,
+                                cx,
+                            );
+                        }
+                    }))
+                    .into_any_element(),
+                ),
+            ))
+        });
+        let model_card = setup_card(
+            "pilot-setup-model",
+            "Model and permissions",
+            "What it thinks with and what it may do without asking.",
+        )
+        .child(set_row(
+            "Model",
+            Some("Used for the chat and the steps it starts.".into()),
+            true,
+            Some(
+                select_pill(
+                    "pilot-settings-model",
+                    format!("Choose model, {model}"),
+                    model,
+                )
+                .debug_selector(|| "pilot-settings-model".into())
+                .child(self.model_anchor.probe())
+                .on_click(cx.listener(|this, _, w, cx| this.open_model_picker(w, cx)))
+                .into_any_element(),
+            ),
+        ))
+        .children(options)
+        .child(set_row(
+            "Permissions",
+            Some("What it may do without asking.".into()),
+            false,
+            Some(
+                select_pill(
+                    "pilot-settings-access",
+                    format!("Permissions, {}", mode.label()),
+                    mode.label().into(),
+                )
+                .debug_selector(|| "pilot-settings-access".into())
+                .when(mode == AccessMode::FullAccess, |d| {
+                    d.text_color(rgb(0xffb900))
+                })
+                .child(self.access_anchor.probe())
+                .on_click(cx.listener(|this, _, w, cx| this.open_access_picker(w, cx)))
+                .into_any_element(),
+            ),
+        ));
+        let projects = setup_card(
+            "pilot-setup-projects",
+            "Projects",
+            "Where it can start sessions, notes and folders.",
+        )
+        .children(pilot.projects.iter().enumerate().map(|(ix, project)| {
+            let remove = project.clone();
+            let appearance = self
+                .owner
+                .read(cx, |o, _| {
+                    o.workspace.project_appearance.get(project).cloned()
+                })
+                .flatten()
+                .unwrap_or_default();
+            let shown = gespan_core::remote::parse_remote_path(project)
+                .map(|remote| remote.host_path)
+                .unwrap_or_else(|| project.clone());
+            let group: SharedString = format!("pilot-project-{ix}").into();
+            set_row(appearance.label(project), Some(shown.into()), ix == 0, None)
+                .id(("pilot-project", ix))
+                .debug_selector(move || format!("pilot-project-{ix}"))
+                .group(group.clone())
+                .child(
+                    icon_button("pilot-remove-project", "Remove project", "close")
+                        .opacity(0.)
+                        .group_hover(group, |s| s.opacity(1.))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(id) = this.active.clone() {
+                                if let Some(m) = this.roster.get_mut(&id) {
+                                    m.projects.retain(|p| p != &remove);
+                                }
+                                this.configure_chat(&id, cx);
+                                this.save(cx);
+                            }
+                        })),
+                )
+                .child(mini(project_machine(project)))
+        }))
+        .child(
+            div()
+                .id("pilot-add-project")
+                .debug_selector(|| "pilot-add-project".into())
+                .role(Role::Button)
+                .aria_label("Add project")
+                .cursor_pointer()
+                .px(px(16.))
+                .py(px(14.))
+                .when(!pilot.projects.is_empty(), |d| {
+                    d.border_t_1().border_color(crate::glass::hairline())
+                })
+                .text_size(px(13.))
+                .line_height(px(18.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(content(0.64))
+                .hover(|s| s.bg(crate::glass::hover_fill()).text_color(content(1.)))
+                .child(self.projects_anchor.probe())
+                .child("+ Add project")
+                .on_click(cx.listener(move |this, _, w, cx| this.pick_project(&add, w, cx))),
+        );
+        let conversation = setup_card(
+            "pilot-setup-conversation",
+            "Conversation",
+            "Start the chat fresh. Soul, memory and docs stay.",
+        )
+        .child(set_row(
+            "Reset conversation",
+            Some("Clears all messages.".into()),
+            true,
+            Some(
+                crate::glass::button("pilot-reset", "Reset", crate::glass::Button::Ghost)
+                    .debug_selector(|| "pilot-reset".into())
+                    .role(Role::Button)
+                    .aria_label("Reset conversation")
+                    .h(px(28.))
+                    .text_color(crate::theme::diff_foreground(false))
+                    .on_click(
+                        cx.listener(move |this, _, w, cx| this.reset_conversation(&reset, w, cx)),
+                    )
+                    .into_any_element(),
+            ),
+        ));
         div()
             .id("pilot-general-settings")
             .debug_selector(|| "pilot-general-settings".into())
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .px_8()
-            .pt_6()
-            .pb_8()
-            .child(
-                div()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("General"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .pt_4()
-                    .pb_6()
-                    .child(
-                        div()
-                            .id("pilot-look")
-                            .debug_selector(|| "pilot-look".into())
-                            .role(Role::Button)
-                            .aria_label("Change mascot and color")
-                            .relative()
-                            .size(px(80.))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_2xl()
-                            .border_1()
-                            .border_color(content(0.04))
-                            .bg(content(0.04))
-                            .hover(|s| s.bg(content(0.08)))
-                            .child(self.settings_anchor.probe())
-                            .child(avatar::avatar(
-                                &pilot.mascot,
-                                pilot.color,
-                                "idle",
-                                48.,
-                                false,
-                            ))
-                            .on_click(cx.listener(move |this, _, w, cx| {
-                                this.open_settings_look(&look, w, cx)
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("pilot-name-field")
-                            .debug_selector(|| "pilot-name-field".into())
-                            .mt_3()
-                            .h(px(32.))
-                            .w(px(256.))
-                            .max_w_full()
-                            .px_2()
-                            .py_1p5()
-                            .rounded_md()
-                            .font_weight(FontWeight::MEDIUM)
-                            .hover(|s| s.bg(content(0.05)))
-                            .child(name),
-                    ),
-            )
-            .child(heading("Model", None))
-            .child(
-                card()
-                    .child(setting(
-                        "Model",
-                        Some("What it thinks and replies with."),
-                        div()
-                            .id("pilot-settings-model")
-                            .role(Role::Button)
-                            .aria_label(format!("Choose model, {model}"))
-                            .h(px(28.))
-                            .px_1p5()
-                            .mx(px(-6.))
-                            .rounded_md()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .text_size(px(12.))
-                            .text_color(content(0.85))
-                            .hover(|s| s.bg(content(0.06)))
-                            .child(self.model_anchor.probe())
-                            .child(provider_icon(&provider, 14.))
-                            .child(model)
-                            .on_click(cx.listener(|this, _, w, cx| this.open_model_picker(w, cx)))
-                            .into_any_element(),
-                    ))
-                    .children(model_options.into_iter().filter_map(|item| {
-                        let MenuItem::Action(option) = item else {
-                            return None;
-                        };
-                        let label = option.label.clone();
-                        let value = option
-                            .value
-                            .clone()
-                            .unwrap_or_else(|| if option.checked { "On" } else { "Off" }.into());
-                        let anchor = AnchorSlot::default();
-                        let probe = anchor.probe();
-                        Some(
-                            setting(
-                                &label,
-                                None,
-                                plain(
-                                    SharedString::from(format!("pilot-option-{}", option.id)),
-                                    value,
-                                )
-                                .child(probe)
-                                .on_click(cx.listener(move |this, _, w, cx| {
-                                    if option.submenu.is_empty() {
-                                        if let Some(chat) = this.chat()
-                                            && let Err(e) = chat.update(cx, |v, cx| {
-                                                v.pilot_pick_model_option(&option.id, cx)
-                                            })
-                                        {
-                                            this.error = Some(e);
-                                        }
-                                        this.changed(cx);
-                                    } else {
-                                        this.open_model_option(
-                                            option.label.clone(),
-                                            option.submenu.clone(),
-                                            anchor.clone(),
-                                            w,
-                                            cx,
-                                        );
-                                    }
-                                }))
-                                .into_any_element(),
-                            )
-                            .border_t_1()
-                            .border_color(content(0.04)),
-                        )
-                    }))
-                    .child(
-                        setting(
-                            "Permissions",
-                            Some("What it may do without asking."),
-                            div()
-                                .id("pilot-settings-access")
-                                .role(Role::Button)
-                                .aria_label(format!("Permissions, {}", mode.label()))
-                                .h(px(28.))
-                                .max_w(px(208.))
-                                .px_1p5()
-                                .mx(px(-6.))
-                                .rounded_md()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .text_size(px(12.))
-                                .text_color(content(0.85))
-                                .hover(|s| s.bg(content(0.06)))
-                                .child(self.access_anchor.probe())
-                                .child(
-                                    icon(access_icon, 14.)
-                                        .when(mode == AccessMode::FullAccess, |i| {
-                                            i.text_color(rgb(0xffb900))
-                                        }),
-                                )
-                                .child(mode.label())
-                                .child(icon("chevron-down", 12.))
-                                .on_click(
-                                    cx.listener(|this, _, w, cx| this.open_access_picker(w, cx)),
-                                )
-                                .into_any_element(),
-                        )
-                        .border_t_1()
-                        .border_color(content(0.04)),
-                    ),
-            )
-            .child(heading(
-                "Projects",
-                Some("It can see every session, note and folder in these."),
-            ))
-            .child(
-                card()
-                    .children(pilot.projects.iter().enumerate().map(|(ix, project)| {
-                        let remove = project.clone();
-                        let appearance = self
-                            .owner
-                            .read(cx, |o, _| {
-                                o.workspace.project_appearance.get(project).cloned()
-                            })
-                            .flatten()
-                            .unwrap_or_default();
-                        let label = appearance.label(project);
-                        let pretty = std::env::var("HOME")
-                            .ok()
-                            .and_then(|home| {
-                                project.strip_prefix(&home).map(|rest| format!("~{rest}"))
-                            })
-                            .unwrap_or_else(|| project.clone());
-                        let group: SharedString = format!("pilot-project-{ix}").into();
-                        div()
-                            .id(("pilot-project", ix))
-                            .group(group.clone())
-                            .min_h(px(48.))
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .px_3()
-                            .py_2()
-                            .when(ix > 0, |d| d.border_t_1().border_color(content(0.04)))
-                            .child(
-                                div()
-                                    .size(px(32.))
-                                    .flex_shrink_0()
-                                    .rounded_lg()
-                                    .bg(content(0.05))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(crate::project_settings::project_icon(
-                                        &appearance,
-                                        project,
-                                        16.,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .line_height(px(20.))
-                                            .text_color(content(0.9))
-                                            .truncate()
-                                            .child(label),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .line_height(px(16.))
-                                            .text_color(content(0.4))
-                                            .truncate()
-                                            .child(pretty),
-                                    ),
-                            )
-                            .child(
-                                icon_button("pilot-remove-project", "Remove project", "close")
-                                    .opacity(0.)
-                                    .group_hover(group, |s| s.opacity(1.))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if let Some(id) = this.active.clone() {
-                                            if let Some(m) = this.roster.get_mut(&id) {
-                                                m.projects.retain(|p| p != &remove);
-                                            }
-                                            this.configure_chat(&id, cx);
-                                            this.save(cx);
-                                        }
-                                    })),
-                            )
-                    }))
-                    .child(
-                        div()
-                            .id("pilot-add-project")
-                            .role(Role::Button)
-                            .aria_label("Add project")
-                            .h(px(44.))
-                            .px_3()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .text_size(px(13.))
-                            .text_color(content(0.55))
-                            .hover(|s| s.bg(content(0.04)).text_color(content(1.)))
-                            .when(!pilot.projects.is_empty(), |d| {
-                                d.border_t_1().border_color(content(0.04))
-                            })
-                            .child(self.projects_anchor.probe())
-                            .child(
-                                div()
-                                    .size(px(32.))
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(content(0.15))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(icon("plus", 14.)),
-                            )
-                            .child("Add project")
-                            .on_click(
-                                cx.listener(move |this, _, w, cx| this.pick_project(&add, w, cx)),
-                            ),
-                    ),
-            )
-            .child(heading("Conversation", None))
-            .child(
-                card().child(setting(
-                    "Reset conversation",
-                    Some("Clear all messages and start fresh. Its soul, memory and habits stay."),
-                    div()
-                        .id("pilot-reset")
-                        .role(Role::Button)
-                        .aria_label("Reset")
-                        .flex()
-                        .items_center()
-                        .px_3()
-                        .py_1p5()
-                        .rounded_md()
-                        .text_size(px(12.))
-                        .border_1()
-                        .border_color(content(0.04))
-                        .text_color(rgb(0xff6467))
-                        .hover(|s| s.bg(rgb(0xfb2c36).opacity(0.1)))
-                        .child("Reset")
-                        .on_click(
-                            cx.listener(move |this, _, w, cx| {
-                                this.reset_conversation(&reset, w, cx)
-                            }),
-                        )
-                        .into_any_element(),
-                )),
-            )
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(identity)
+            .child(model_card)
+            .child(projects)
+            .child(conversation)
             .into_any_element()
+    }
+    /// Identity's avatar row: the picked mascot is the Pilot's at once.
+    pub(super) fn pick_mascot(&mut self, mascot: &str, cx: &mut Context<Self>) {
+        let Some(id) = self.active.clone() else {
+            return;
+        };
+        if let Some(pilot) = self.roster.get_mut(&id) {
+            if pilot.mascot == mascot {
+                return;
+            }
+            pilot.mascot = mascot.to_string();
+        }
+        self.configure_chat(&id, cx);
+        self.save(cx);
+        cx.notify();
     }
     /// PilotMenu, beside the row's options button or at a right-click.
     pub(super) fn open_options(

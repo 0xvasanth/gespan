@@ -510,10 +510,9 @@ fn setup_is_a_page_in_the_chats_place_with_its_sections_on_the_left(cx: &mut Tes
         }
         previous = Some(row);
     }
-    assert_eq!(
-        visual.debug_bounds("pilot-look").unwrap().size,
-        gpui::size(px(80.), px(80.))
-    );
+    // General is the board's cards, not a big centred avatar.
+    assert!(visual.debug_bounds("pilot-look").is_none());
+    assert!(visual.debug_bounds("pilot-setup-identity").is_some());
     // Back to chat closes it and brings the chat back.
     let back = visual.debug_bounds("pilot-setup-back").unwrap();
     visual.simulate_click(back.center(), Default::default());
@@ -577,38 +576,289 @@ fn soul_reads_as_a_document_and_edits_on_demand(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn settings_color_popover_follows_its_mascot_when_the_window_resizes(cx: &mut TestAppContext) {
+fn setup_general_is_four_cards_in_the_boards_order(cx: &mut TestAppContext) {
     let s = setup(cx);
-    cx.update(|cx| {
-        crate::shell::bind_keys(cx);
-        crate::popover::bind(cx);
-    });
+    cx.update(|cx| cx.set_reduce_motion(true));
     let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1440.), px(900.)));
     visual.run_until_parked();
-    let face = visual.debug_bounds("pilot-look").unwrap();
-    visual.simulate_click(face.center(), Default::default());
-    visual.run_until_parked();
-    for size in [
-        gpui::size(px(1300.), px(900.)),
-        gpui::size(px(1050.), px(760.)),
-    ] {
-        visual.simulate_resize(size);
-        visual.run_until_parked();
-        let face = visual.debug_bounds("pilot-look").unwrap();
-        let picker = visual.debug_bounds("pilot-settings-look-picker").unwrap();
-        assert!((picker.center().x - face.center().x).abs() <= px(1.));
-        assert!(picker.top() >= face.bottom());
+    let nav = visual.debug_bounds("pilot-settings-navigation").unwrap();
+    let cards = [
+        "pilot-setup-identity",
+        "pilot-setup-model",
+        "pilot-setup-projects",
+        "pilot-setup-conversation",
+    ]
+    .map(|card| visual.debug_bounds(card).expect(card));
+    let [identity, model, projects, conversation] = cards;
+    // One column, 28px in from the section list and at most 760 - 2×28 wide.
+    assert_eq!(identity.left() - nav.right(), px(28.));
+    assert_eq!(identity.top() - nav.top(), px(20.));
+    assert_eq!(identity.size.width, px(704.));
+    for pair in cards.windows(2) {
+        assert_eq!(pair[1].left(), pair[0].left());
+        assert_eq!(pair[1].size.width, pair[0].size.width);
+        assert_eq!(
+            pair[1].top() - pair[0].bottom(),
+            px(16.),
+            "cards sit 16px apart"
+        );
     }
+    // Identity: the name field above one tile per mascot, the Pilot's own lit.
+    let name = visual.debug_bounds("pilot-name-field").unwrap();
+    assert_eq!(name.size.height, px(34.));
+    assert_eq!(
+        name.left() - identity.left(),
+        px(17.),
+        "16px inside the card's border"
+    );
+    let mascots = visual.debug_bounds("pilot-mascots").unwrap();
+    assert_eq!(mascots.top() - name.bottom(), px(12.));
+    let mut previous = None::<gpui::Bounds<gpui::Pixels>>;
+    for mascot in gespan_core::project_appearance::MASCOTS {
+        let tile = visual
+            .debug_bounds(Box::leak(format!("pilot-mascot-{mascot}").into_boxed_str()))
+            .unwrap();
+        assert_eq!(tile.size, gpui::size(px(40.), px(40.)));
+        if let Some(previous) = previous {
+            assert_eq!(tile.left() - previous.right(), px(8.));
+            assert_eq!(tile.top(), previous.top());
+        }
+        previous = Some(tile);
+    }
+    assert!(identity.bottom() > mascots.bottom());
+    // Model and permissions: both pickers on the right edge, the same height.
+    let picker = visual.debug_bounds("pilot-settings-model").unwrap();
+    let access = visual.debug_bounds("pilot-settings-access").unwrap();
+    assert!(model.contains(&picker.center()) && model.contains(&access.center()));
+    assert_eq!(picker.size.height, px(30.));
+    assert_eq!(access.size.height, px(30.));
+    assert_eq!(model.right() - picker.right(), px(17.));
+    assert_eq!(model.right() - access.right(), px(17.));
+    assert!(access.top() > picker.bottom());
+    // Projects: the Pilot's project, then Add project below it.
+    let project = visual.debug_bounds("pilot-project-0").unwrap();
+    let add = visual.debug_bounds("pilot-add-project").unwrap();
+    assert!(projects.contains(&project.center()) && projects.contains(&add.center()));
+    assert_eq!(add.top(), project.bottom());
+    // Conversation: the red Reset on the right.
+    let reset = visual.debug_bounds("pilot-reset").unwrap();
+    assert!(conversation.contains(&reset.center()));
+    assert_eq!(reset.size.height, px(28.));
+    assert_eq!(conversation.right() - reset.right(), px(17.));
+    // The header names the project it works in.
+    let header = visual.debug_bounds("pilot-setup-header").unwrap();
+    let tag = visual.debug_bounds("pilot-setup-project").unwrap();
+    assert!(header.contains(&tag.center()));
+    assert_eq!(tag.size.height, px(20.));
+}
+
+#[gpui::test]
+fn setup_takes_the_full_width_and_back_to_chat_brings_the_panel_back(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1440.), px(900.)));
+    visual.run_until_parked();
+    // A new Pilot opens on Setup: no Pipeline tabs or ask box beside it.
+    assert!(s.manager.read_with(visual, |m, _| m.setup_open()));
+    assert!(visual.debug_bounds("right-panel-frame").is_none());
+    assert!(visual.debug_bounds("pilot-overview-header").is_none());
+    // Setup runs to the card's edge, inside the window's 8px inset.
+    let page = visual.debug_bounds("pilot-setup").unwrap();
+    assert!(page.right() >= px(1440. - 8.), "{page:?}");
+    let full = page.size.width;
+    // Back to chat restores the panel, and its tabs.
+    let back = visual.debug_bounds("pilot-setup-back").unwrap();
+    visual.simulate_click(back.center(), Default::default());
+    visual.run_until_parked();
+    assert!(!s.manager.read_with(visual, |m, _| m.setup_open()));
+    let panel = visual
+        .debug_bounds("right-panel-frame")
+        .expect("Back to chat brings the panel back");
+    assert!(visual.debug_bounds("pilot-overview-header").is_some());
+    // With the panel back, the chat column ends where the panel begins.
+    assert!(panel.left() < page.right() && panel.size.width < full);
+    // The panel's Setup button hides it again; the panel stays open by
+    // preference, so it is not closed for good.
+    let open = visual.debug_bounds("pilot-setup").unwrap();
+    visual.simulate_click(open.center(), Default::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("right-panel-frame").is_none());
+    assert!(
+        s.window
+            .read_with(visual, |shell, _| shell.workspace.right_panel_open)
+            .unwrap()
+    );
     visual.simulate_keystrokes("escape");
     visual.run_until_parked();
-    visual.update(|_, cx| {
-        let m = s.manager.read(cx);
-        assert!(m.picker.is_none());
-        assert!(m.settings.is_some());
+    assert!(visual.debug_bounds("right-panel-frame").is_some());
+    // Anything sent to the panel (a tab, a card's document) leaves Setup,
+    // so it never lands in a hidden panel.
+    let open = visual.debug_bounds("pilot-setup").unwrap();
+    visual.simulate_click(open.center(), Default::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("right-panel-frame").is_none());
+    s.manager
+        .update(visual, |m, cx| m.select_overview(OverviewTab::Docs, cx));
+    visual.run_until_parked();
+    assert!(!s.manager.read_with(visual, |m, _| m.setup_open()));
+    assert!(visual.debug_bounds("right-panel-frame").is_some());
+}
+
+#[gpui::test]
+fn picking_a_mascot_in_identity_saves_it(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1440.), px(900.)));
+    visual.run_until_parked();
+    let before = s
+        .manager
+        .read_with(visual, |m, _| m.current().unwrap().mascot.clone());
+    let pick = gespan_core::project_appearance::MASCOTS
+        .into_iter()
+        .find(|m| *m != before)
+        .unwrap();
+    let tile = visual
+        .debug_bounds(Box::leak(format!("pilot-mascot-{pick}").into_boxed_str()))
+        .unwrap();
+    visual.simulate_click(tile.center(), Default::default());
+    visual.run_until_parked();
+    assert_eq!(
+        s.manager
+            .read_with(visual, |m, _| m.current().unwrap().mascot.clone()),
+        pick
+    );
+    let roster = Roster::load(&locked(&s.store).unwrap()).unwrap();
+    assert_eq!(
+        roster.get(&s.id).unwrap().mascot,
+        pick,
+        "saved, not just shown"
+    );
+    // Picking the same one again changes nothing; Setup stays open.
+    visual.simulate_click(tile.center(), Default::default());
+    visual.run_until_parked();
+    assert!(s.manager.read_with(visual, |m, _| m.setup_open()));
+    assert_eq!(
+        Roster::load(&locked(&s.store).unwrap())
+            .unwrap()
+            .get(&s.id)
+            .unwrap()
+            .mascot,
+        pick
+    );
+}
+
+#[gpui::test]
+fn memory_lists_memory_md_and_each_topic_note(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    pilot::files::save(
+        &s.root,
+        &s.id,
+        None,
+        "MEMORY.md",
+        "- 2026-11-12 Tags never move.",
+        None,
+    )
+    .unwrap();
+    pilot::files::save(
+        &s.root,
+        &s.id,
+        None,
+        "memory/release-process.md",
+        "# Release process\n\nTags, versions, re-releases",
+        None,
+    )
+    .unwrap();
+    pilot::files::save(
+        &s.root,
+        &s.id,
+        None,
+        "memory/ci-checks.md",
+        "Which jobs are slow or flaky",
+        None,
+    )
+    .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1440.), px(900.)));
+    s.manager.update(visual, |m, cx| {
+        m.settings = Some(SettingsSection::Memory);
+        m.reload_files(&s.id.clone(), cx);
     });
-    visual.simulate_keystrokes("escape");
     visual.run_until_parked();
-    visual.update(|_, cx| assert!(s.manager.read(cx).settings.is_none()));
+    // A 240px list beside the section nav: MEMORY.md first, then the topics
+    // by name, each with the first line of what it holds.
+    let nav = visual.debug_bounds("pilot-settings-navigation").unwrap();
+    let list = visual.debug_bounds("pilot-memory-files").unwrap();
+    assert_eq!(list.size.width, px(240.));
+    assert_eq!(list.left(), nav.right());
+    let names = s.manager.read_with(visual, |m, _| {
+        m.memory_topics
+            .iter()
+            .map(|(t, _)| t.clone())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(names, ["ci-checks", "release-process"]);
+    let rows = (0..3)
+        .map(|ix| {
+            visual
+                .debug_bounds(Box::leak(
+                    format!("pilot-memory-file-{ix}").into_boxed_str(),
+                ))
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert!(visual.debug_bounds("pilot-memory-file-3").is_none());
+    for pair in rows.windows(2) {
+        assert_eq!(pair[1].top() - pair[0].bottom(), px(2.));
+    }
+    assert_eq!(
+        super::memory_ui::topic_summary("# Release process\n\nTags, versions, re-releases")
+            .as_deref(),
+        Some("Tags, versions, re-releases")
+    );
+    assert_eq!(super::memory_ui::topic_summary("# Only a title"), None);
+    // MEMORY.md opens first, with its facts.
+    assert!(visual.debug_bounds("pilot-memory-facts").is_some());
+    let header = visual.debug_bounds("pilot-memory-header").unwrap();
+    assert_eq!(header.left(), list.right());
+    // A topic opens to read, and edits in place.
+    visual.simulate_click(rows[1].center(), Default::default());
+    visual.run_until_parked();
+    assert_eq!(
+        s.manager
+            .read_with(visual, |m, _| m.memory_file.clone())
+            .as_deref(),
+        Some("ci-checks")
+    );
+    assert!(visual.debug_bounds("pilot-memory-topic-read").is_some());
+    assert!(visual.debug_bounds("pilot-memory-facts").is_none());
+    let edit = visual.debug_bounds("pilot-memory-topic-edit").unwrap();
+    visual.simulate_click(edit.center(), Default::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("pilot-memory-topic-editor").is_some());
+    s.manager.update(visual, |m, cx| {
+        let key = format!("file:{}:memory/ci-checks.md", s.id);
+        m.fields[&key].update(cx, |f, cx| {
+            f.set_text("Windows builds take 30 minutes.".into(), cx)
+        });
+    });
+    let done = visual.debug_bounds("pilot-memory-topic-edit").unwrap();
+    visual.simulate_click(done.center(), Default::default());
+    visual.run_until_parked();
+    assert!(visual.debug_bounds("pilot-memory-topic-read").is_some());
+    let saved = pilot::memory::read(&s.root, &s.id, Some("ci-checks")).unwrap();
+    assert_eq!(
+        saved.text.as_deref(),
+        Some("Windows builds take 30 minutes.")
+    );
+    // Back to MEMORY.md; leaving Memory for another Pilot forgets the topic.
+    visual.simulate_click(rows[0].center(), Default::default());
+    visual.run_until_parked();
+    assert!(s.manager.read_with(visual, |m, _| m.memory_file.is_none()));
+    assert!(visual.debug_bounds("pilot-memory-facts").is_some());
 }
 
 #[gpui::test]
@@ -4119,10 +4369,9 @@ mod roadmap {
         s.window
             .update(cx, |shell, _, cx| {
                 shell.workspace.right_panel_width = 400.;
-                s.manager.update(cx, |m, cx| {
-                    m.settings = None;
-                    m.select_overview(OverviewTab::Pipeline, cx);
-                })
+                // Selecting the tab leaves the Setup a new Pilot opens on.
+                s.manager
+                    .update(cx, |m, cx| m.select_overview(OverviewTab::Pipeline, cx))
             })
             .unwrap();
         cx.run_until_parked();

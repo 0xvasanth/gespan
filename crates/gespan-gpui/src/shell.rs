@@ -2334,6 +2334,7 @@ impl Shell {
         (self.workspace.right_panel_open || self.right_slide.is_some())
             && !self.app_view_open()
             && self.settings.is_none()
+            && !self.pilot_setup_open(cx)
             && (self.pilot_active(cx) || self.git.read(cx).available())
     }
     fn sync_right_panel(&mut self, cx: &mut Context<Self>) {
