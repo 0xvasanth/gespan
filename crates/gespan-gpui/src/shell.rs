@@ -9127,6 +9127,8 @@ impl Render for Shell {
         // showing what's behind it and paints the gradient itself.
         let backdrop = crate::settings::backdrop_colors(p, glass);
         let see_through = glass && backdrop.is_none();
+        let backdrop_layer =
+            backdrop.map(|(a, b)| crate::backdrop::layer(a, b, window.viewport_size(), cx));
         if self.window_glass != Some(see_through) {
             self.window_glass = Some(see_through);
             window.set_background_appearance(crate::theme::window_backdrop(see_through));
@@ -9306,8 +9308,11 @@ impl Render for Shell {
             .flex_col()
             .size_full()
             .relative()
-            .map(|d| match backdrop {
-                Some((a, b)) => d.bg(gpui::rgb(BACKDROP_BASE)).child(backdrop_layer(a, b)),
+            .map(|d| match backdrop_layer {
+                // The desk, then the design's window wash over it.
+                Some(layer) => d
+                    .bg(gpui::rgb(crate::backdrop::BASE))
+                    .child(layer.child(div().absolute().inset_0().bg(crate::backdrop::wash()))),
                 None => d.bg(shell_fill()),
             })
             .text_color(content(1.))
@@ -9799,47 +9804,6 @@ impl Render for Shell {
                 root
             })
     }
-}
-
-/// The dark base under a Gradient backdrop, as in the design's desk.
-const BACKDROP_BASE: u32 = 0x17151c;
-
-/// A Gradient backdrop: soft glows of its two colours over the dark base,
-/// then the shell's own translucent wash, all behind the window's content.
-fn backdrop_layer(a: u32, b: u32) -> gpui::Div {
-    // (colour, strength, x, y, width, height): the design's four glows.
-    let glows = [
-        (a, 0.55, 0.12, 0.18, 620., 460.),
-        (b, 0.40, 0.88, 0.12, 560., 420.),
-        (a, 0.30, 0.70, 0.92, 700., 520.),
-        (b, 0.22, 0.22, 0.88, 520., 380.),
-    ];
-    div()
-        .debug_selector(|| "shell-backdrop".into())
-        .absolute()
-        .inset_0()
-        .overflow_hidden()
-        .children(glows.map(|(color, alpha, x, y, w, h)| {
-            let color: gpui::Hsla = gpui::rgb(color).into();
-            // A small core with a wide blur reads as a radial glow.
-            let (cw, ch) = (w * 0.35, h * 0.35);
-            div()
-                .absolute()
-                .left(gpui::relative(x))
-                .top(gpui::relative(y))
-                .ml(px(-cw / 2.))
-                .mt(px(-ch / 2.))
-                .w(px(cw))
-                .h(px(ch))
-                .rounded_full()
-                .bg(color.opacity(alpha))
-                .shadow(vec![
-                    gpui::BoxShadow::new(px(0.), px(0.), color.opacity(alpha))
-                        .blur_radius(px(w * 0.35))
-                        .spread_radius(px(w * 0.12)),
-                ])
-        }))
-        .child(div().absolute().inset_0().bg(shell_fill()))
 }
 
 /// Reads My tasks' decision items again whenever an agent changes the log
