@@ -265,13 +265,29 @@ impl Flow {
                 when: None,
             },
         ];
+        // A parallel step runs with its branches; a branch run alone is an
+        // ordinary step, so its condition on the step before goes.
+        let branches: Vec<FlowState> = match &state {
+            FlowState::Parallel(p) => p
+                .branches
+                .iter()
+                .filter_map(|b| self.state(b).cloned())
+                .collect(),
+            _ => Vec::new(),
+        };
         match &mut state {
-            FlowState::Agent(s) => s.transitions = ends,
+            FlowState::Agent(s) => {
+                s.transitions = ends;
+                s.when = None;
+            }
             FlowState::Approval(s) => s.transitions = ends,
+            FlowState::Parallel(s) => s.transitions = ends,
         }
+        let mut states = vec![state];
+        states.extend(branches);
         Some(Flow {
             initial: state_id.into(),
-            states: vec![state],
+            states,
             ..self.clone()
         })
     }
@@ -1676,5 +1692,28 @@ mod tests {
         let mut flow = with_parallel();
         flow.owner = Some("p1".into());
         assert_eq!(validate_flow(&flow).errors, Vec::<String>::new());
+    }
+
+    #[test]
+    fn one_parallel_step_runs_with_its_branches_and_a_branch_runs_alone() {
+        let flow = with_parallel();
+        let step = flow.only_step("both").expect("the parallel step");
+        let ids: Vec<&str> = step.states.iter().map(FlowState::id).collect();
+        assert_eq!(ids, ["both", "x", "y"]);
+        assert_eq!(validate_flow(&step).errors, Vec::<String>::new());
+
+        let mut flow = with_parallel();
+        agent_mut(&mut flow, "y").when = Some(Guard::Output {
+            field: "changed".into(),
+            op: GuardOp::Truthy,
+            value: None,
+        });
+        let branch = flow.only_step("y").expect("the branch");
+        assert_eq!(branch.states.len(), 1);
+        assert_eq!(
+            validate_flow(&branch).errors,
+            Vec::<String>::new(),
+            "alone, a branch has no step before it to be conditional on"
+        );
     }
 }
