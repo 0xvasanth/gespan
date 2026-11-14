@@ -1,6 +1,8 @@
-//! The first-run setup card over the shell. It opens whenever the workspace
-//! has setup pending, sits above every other modal, and closes only when a
-//! project is picked: Esc, the scrim and the shell's shortcuts do nothing.
+//! The first-run setup screen. While the workspace has setup pending, the
+//! window shows only the setup card, centred on the content plane, with both
+//! navs collapsed and their toggles locked. It closes only when a project is
+//! picked: Esc and the shell's shortcuts do nothing. Finishing opens the
+//! navs: both on a fresh install, as they were for Run setup again.
 use super::*;
 use crate::setup::{
     SetupStep,
@@ -14,9 +16,64 @@ pub(super) struct SetupOverlay {
     /// The project open when "Folder on a machine…" was asked for; a change
     /// from it is the machine folder picked.
     remote_from: Option<String>,
-    /// Only setup on a fresh install drops the launch folder it didn't pick;
-    /// Run setup again leaves every project alone.
+    /// Only setup on a fresh install drops the launch folder it didn't pick
+    /// and opens both navs; Run setup again leaves every project alone and
+    /// the navs as they were.
     drop_launch: bool,
+}
+
+/// What a locked toggle's tooltip says.
+pub(super) const SIDEBAR_LOCKED: &str = "Finish setup to open the sidebar";
+pub(super) const PANEL_LOCKED: &str = "Finish setup to open the panel";
+
+/// A locked toggle's tooltip: a lock and why.
+struct LockedTip(&'static str);
+impl Render for LockedTip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mut background = floating_fill();
+        background.a = 0.96;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .px(px(9.))
+            .py(px(6.))
+            .rounded(px(8.))
+            .bg(background)
+            .border_1()
+            .border_color(content(0.12))
+            .shadow(vec![
+                gpui::BoxShadow::new(px(0.), px(8.), black(0.4)).blur_radius(px(24.)),
+            ])
+            .text_size(px(11.5))
+            .line_height(px(15.))
+            .text_color(content(1.))
+            .child(icon("lock", 11.).text_color(content(1.)))
+            .child(self.0)
+    }
+}
+
+/// A dimmed title bar toggle that does nothing and says why on hover.
+fn locked_toggle(id: &'static str, glyph: &'static str, tip: &'static str) -> AnyElement {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .role(Role::Button)
+        .aria_label(tip)
+        .aria_toggled(gpui::Toggled::False)
+        .size(px(26.))
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(8.))
+        .opacity(0.28)
+        .cursor_not_allowed()
+        .child(icon(glyph, 15.).text_color(content(0.62)))
+        // A click lands on the button, not the drag area behind it.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .tooltip(move |_, cx| cx.new(|_| LockedTip(tip)).into())
+        .into_any_element()
 }
 
 fn home() -> String {
@@ -30,6 +87,31 @@ impl Shell {
     /// wait for it.
     pub(super) fn setup_shows(&self) -> bool {
         self.workspace.setup.is_some() && !self.secondary
+    }
+
+    /// Whether the sidebar and right panel are locked shut: setup shows in
+    /// this window. Their toggles, shortcuts and commands do nothing, and
+    /// the saved open state is left alone for finishing to restore.
+    pub(super) fn panels_locked(&self) -> bool {
+        self.setup_shows()
+    }
+
+    /// Setup finished: the navs slide open from closed. A fresh install
+    /// opens both; Run setup again brings back the ones that were open.
+    fn unlock_panels(&mut self, open_both: bool, cx: &mut Context<Self>) {
+        if open_both {
+            self.workspace.sidebar_visible = true;
+            self.workspace.right_panel_open = true;
+        }
+        if self.workspace.sidebar_visible {
+            self.workspace.sidebar_visible = false;
+            self.set_sidebar_visible(true, cx);
+        }
+        if self.workspace.right_panel_open && !cx.reduce_motion() {
+            let full = self.right_panel_width();
+            self.right_slide = Some(PaneSlide::new(0., full, full));
+        }
+        self.sync_right_panel(cx);
     }
 
     /// Opens setup on `step`, from a fresh install or Settings › General.
@@ -203,6 +285,7 @@ impl Shell {
         self.workspace
             .finish_setup(&path, &launch, launch_has_sessions);
         self.setup = None;
+        self.unlock_panels(drop_launch, cx);
         self.select_project(path, window, cx);
         self.create_session(self.default_kind(cx), true, cx);
         self.action_notice = Some("You're set up. Change any of this in Settings.".into());
@@ -210,13 +293,15 @@ impl Shell {
         self.persist(cx);
     }
 
-    /// The card and its scrim, above every other modal. Opens the card when
-    /// setup is pending and it isn't showing yet.
-    pub(super) fn setup_overlay(
+    /// The setup screen in place of the shell's body: a title bar with no
+    /// tabs and both toggles locked, and the card alone, centred on the
+    /// content plane. Opens the card when setup is pending and it isn't
+    /// showing yet.
+    pub(super) fn setup_screen(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    ) -> Option<Vec<AnyElement>> {
         if !self.setup_shows() {
             return None;
         }
@@ -241,31 +326,85 @@ impl Shell {
         if self.remote_project_picker.is_none() && !focus.contains_focused(window, cx) {
             window.focus(&focus, cx);
         }
-        Some(crate::modal::window_overlay(
-            window,
+        let card = setup.view.clone();
+        let title_bar = div()
+            .id("setup-title-bar")
+            .debug_selector(|| "setup-title-bar".into())
+            .h(px(TITLE_BAR_HEIGHT))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .bg(inset_chrome_wash())
+            .child(
+                titlebar_drag_area()
+                    .w(px(self.traffic_lights()))
+                    .flex_shrink_0(),
+            )
+            // The glyphs' dividers sit on the side each panel opens: the
+            // `sidebar-right` asset is the mirrored one, its line on the left.
+            .child(locked_toggle(
+                "toggle-sidebar",
+                "sidebar-right",
+                SIDEBAR_LOCKED,
+            ))
+            .child(
+                titlebar_drag_area()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(12.))
+                    .text_color(content(0.55))
+                    .child("Gespan · Setup"),
+            )
+            .child(locked_toggle("toggle-right-panel", "sidebar", PANEL_LOCKED))
+            .child(
+                titlebar_drag_area()
+                    .w(px(12. + self.window_controls))
+                    .flex_shrink_0(),
+            );
+        let plane = div()
+            .id("setup-plane")
+            .debug_selector(|| "setup-plane".into())
+            .flex_1()
+            .min_h_0()
+            .mx(px(6.))
+            .mb(px(6.))
+            .rounded(px(super::layout::CARD_RADIUS))
+            .border_1()
+            .border_color(content(0.08))
+            .bg(inset_pane_fill())
+            .overflow_y_scroll()
+            .track_focus(&focus)
+            .key_context("Setup")
+            .on_key_down(cx.listener(move |_, event: &gpui::KeyDownEvent, _, cx| {
+                let keys = &event.keystroke;
+                if keys.key == "o" && keys.modifiers.secondary() && !keys.modifiers.shift {
+                    view.update(cx, |_, cx| cx.emit(SetupEvent::ChooseFolder));
+                }
+                // Nothing else reaches the shell, Esc included.
+                if !(keys.key == "q" && keys.modifiers.secondary()) {
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                div()
+                    .min_h_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .p(px(24.))
+                    .child(card),
+            );
+        Some(vec![
+            title_bar.into_any_element(),
             div()
-                .id("setup-overlay")
-                .absolute()
-                .inset_0()
-                .occlude()
+                .flex_1()
+                .min_h_0()
                 .flex()
-                .items_center()
-                .justify_center()
-                .child(crate::modal::scrim("setup-scrim"))
-                .track_focus(&focus)
-                .key_context("Setup")
-                .on_key_down(cx.listener(move |_, event: &gpui::KeyDownEvent, _, cx| {
-                    let keys = &event.keystroke;
-                    if keys.key == "o" && keys.modifiers.secondary() && !keys.modifiers.shift {
-                        view.update(cx, |_, cx| cx.emit(SetupEvent::ChooseFolder));
-                    }
-                    // Nothing else reaches the shell, Esc included.
-                    if !(keys.key == "q" && keys.modifiers.secondary()) {
-                        cx.stop_propagation();
-                    }
-                }))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(setup.view.clone()),
-        ))
+                .flex_col()
+                .child(plane)
+                .into_any_element(),
+        ])
     }
 }

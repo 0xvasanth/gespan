@@ -24,61 +24,47 @@ pub(super) fn render(
         .clone()
         .filter(|folder| Some(folder) != suggestion.as_ref());
 
-    let mut body = ui::card(28., 22.).child(ui::header(3, None)).child(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(ui::title("Pick a project to start in.", 28.))
-            .child(ui::lead(
-                "Any folder works, a git repository works best. Gespan opens here from now on. \
-                     Add more projects later from the project menu.",
-                14.,
-                22.,
-            )),
-    );
+    let mut body = ui::card()
+        .child(ui::header(ui::steps(3), None))
+        .child(ui::intro(
+            "Pick a project to start in.",
+            "Any folder works, a git repository works best. Gespan opens here from now on. \
+         Add more projects later from the project menu.",
+        ));
     if let Some(line) = defaults_line(card) {
         body = body.child(
-            div()
-                .px(px(12.))
+            ui::t2(line)
+                .px(px(14.))
                 .py(px(10.))
                 .rounded(px(10.))
-                .bg(ui::well())
-                .text_size(px(12.))
-                .line_height(px(18.))
-                .text_color(ui::muted())
-                .child(line),
+                .bg(ui::inset())
+                .border_1()
+                .border_color(ui::inset_edge()),
         );
     }
-    if suggestion.is_some() || other.is_some() {
-        let mut rows = div().flex().flex_col().gap(px(8.)).child(
+    if let Some(path) = suggestion {
+        let selected = picked.as_deref() == Some(path.as_str());
+        body = body.child(
             div()
-                .text_size(px(12.))
-                .text_color(ui::muted())
-                .child("Opened from"),
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(ui::t3("Opened from"))
+                .child(
+                    ui::list().child(
+                        folder_row("setup-suggested", &path, &card.home, selected)
+                            .debug_selector(|| "setup-suggested".into())
+                            .on_click(cx.listener(move |card, _, _, cx| {
+                                if card.folder.as_deref() == Some(path.as_str()) {
+                                    card.folder = None;
+                                    cx.notify();
+                                } else {
+                                    card.set_folder(path.clone(), cx);
+                                }
+                            })),
+                    ),
+                ),
         );
-        if let Some(path) = suggestion {
-            let selected = picked.as_deref() == Some(path.as_str());
-            rows = rows.child(
-                folder_row("setup-suggested", &path, &card.home, selected)
-                    .debug_selector(|| "setup-suggested".into())
-                    .on_click(cx.listener(move |card, _, _, cx| {
-                        if card.folder.as_deref() == Some(path.as_str()) {
-                            card.folder = None;
-                            cx.notify();
-                        } else {
-                            card.set_folder(path.clone(), cx);
-                        }
-                    })),
-            );
-        }
-        if let Some(path) = other {
-            rows = rows.child(
-                folder_row("setup-picked", &path, &card.home, true)
-                    .debug_selector(|| "setup-picked".into()),
-            );
-        }
-        body = body.child(rows);
     }
 
     let continue_label: SharedString = match &picked {
@@ -87,13 +73,7 @@ pub(super) fn render(
     };
     let mut right = Vec::new();
     if picked.is_none() {
-        right.push(
-            div()
-                .text_size(px(13.))
-                .text_color(ui::muted())
-                .child("Pick a folder to finish")
-                .into_any_element(),
-        );
+        right.push(ui::t3("Pick a folder to finish").into_any_element());
     }
     right.push(
         ui::primary("setup-continue", continue_label, picked.is_some())
@@ -104,34 +84,50 @@ pub(super) fn render(
             .into_any_element(),
     );
 
+    let shortcut = kbd(if cfg!(target_os = "macos") {
+        "⌘O"
+    } else {
+        "Ctrl O"
+    });
+    // A folder picked from the picker shows in its own tile, tinted.
+    let choose = match &other {
+        Some(path) => {
+            let (name, detail) = describe(path, &card.home);
+            choice(
+                "setup-choose-folder",
+                icon("folder", 18.)
+                    .text_color(content(1.))
+                    .into_any_element(),
+                name,
+                detail,
+                true,
+                Some(shortcut),
+            )
+        }
+        None => choice(
+            "setup-choose-folder",
+            icon("folder", 18.)
+                .text_color(content(1.))
+                .into_any_element(),
+            "Choose a folder…".into(),
+            "Pick any folder on this Mac".into(),
+            false,
+            Some(shortcut),
+        ),
+    };
+    let choose = choose.debug_selector(|| "setup-choose-folder".into());
     body.child(
         div()
-            .grid()
-            .grid_cols(2)
+            .flex()
             .gap(px(10.))
-            .child(
-                choice(
-                    "setup-choose-folder",
-                    icon("folder", 18.)
-                        .text_color(content(1.))
-                        .into_any_element(),
-                    "Choose a folder…",
-                    "Pick any folder on this Mac",
-                    Some(kbd(if cfg!(target_os = "macos") {
-                        "⌘O"
-                    } else {
-                        "Ctrl O"
-                    })),
-                )
-                .debug_selector(|| "setup-choose-folder".into())
-                .on_click(cx.listener(|_, _, _, cx| cx.emit(SetupEvent::ChooseFolder))),
-            )
+            .child(choose.on_click(cx.listener(|_, _, _, cx| cx.emit(SetupEvent::ChooseFolder))))
             .child(
                 choice(
                     "setup-choose-remote",
                     monitor().into_any_element(),
-                    "Folder on a machine…",
-                    "A remote machine you've added",
+                    "Folder on a machine…".into(),
+                    "A remote machine you've added".into(),
+                    false,
                     None,
                 )
                 .debug_selector(|| "setup-choose-remote".into())
@@ -140,11 +136,10 @@ pub(super) fn render(
     )
     .child(ui::footer(
         Some(
-            ui::text_button("setup-back", "Back", 14.)
+            ui::ghost("setup-back", "Back", 32.)
                 .debug_selector(|| "setup-back".into())
-                .py(px(9.))
-                .px(px(4.))
-                .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Look, cx))),
+                .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Look, cx)))
+                .into_any_element(),
         ),
         right,
     ))
@@ -200,39 +195,31 @@ fn abbreviate(path: &str, home: &str) -> String {
     }
 }
 
-/// A project row: colour tile, name over the path (and branch, when git
-/// metadata for it is already cached), and a violet check when selected.
-fn folder_row(id: &'static str, path: &str, home: &str, selected: bool) -> Stateful<gpui::Div> {
-    let name = folder_name(path);
+/// A folder's name, and its path with the branch when git metadata for it
+/// is already cached.
+fn describe(path: &str, home: &str) -> (SharedString, SharedString) {
     let mut detail = abbreviate(path, home);
     // Only the in-memory cache: no git process on the render path.
     if let Some(branch) = crate::git_cache::get(path).and_then(|snapshot| snapshot.current) {
         detail = format!("{detail} · git, on {branch}");
     }
+    (folder_name(path).into(), detail.into())
+}
+
+/// The suggested project's row: colour tile, name over the path, and an
+/// accent check and tint when selected.
+fn folder_row(id: &'static str, path: &str, home: &str, selected: bool) -> Stateful<gpui::Div> {
+    let (name, detail) = describe(path, home);
     let tile = rgb(ProjectAppearance::default().color(path));
-    div()
+    ui::row(true)
         .id(id)
         .role(Role::Button)
-        .aria_label(SharedString::from(name.clone()))
+        .aria_label(name.clone())
+        .aria_selected(selected)
         .cursor_pointer()
-        .flex()
-        .items_center()
-        .gap(px(14.))
-        .px(px(16.))
-        .py(px(14.))
-        .rounded(px(12.))
-        .border_1()
-        .border_color(if selected {
-            ui::selected_edge()
-        } else {
-            ui::glass_edge()
-        })
-        .bg(if selected {
-            ui::selected_fill()
-        } else {
-            ui::well()
-        })
-        .child(div().size(px(32.)).flex_shrink_0().rounded(px(8.)).bg(tile))
+        .when(selected, |row| row.bg(ui::picked()))
+        .when(!selected, |row| row.hover(|s| s.bg(content(0.03))))
+        .child(div().size(px(30.)).flex_shrink_0().rounded(px(8.)).bg(tile))
         .child(
             div()
                 .flex_1()
@@ -240,49 +227,49 @@ fn folder_row(id: &'static str, path: &str, home: &str, selected: bool) -> State
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(ui::muted())
-                        .truncate()
-                        .child(detail),
-                ),
+                .child(ui::t1(name).font_weight(FontWeight::SEMIBOLD).truncate())
+                .child(ui::t3(detail).truncate()),
         )
         .when(selected, |row| {
-            row.child(icon("check", 18.).text_color(ui::violet()))
+            row.child(icon("check", 16.).text_color(ui::accent(1.)))
         })
 }
 
-/// A dashed-edge action: icon, title over a sub-line, and an optional chip.
+/// A pick tile: a dashed edge, or the accent's solid edge and tint once
+/// picked; a glyph tile, title over a sub-line, and an optional chip.
 fn choice(
     id: &'static str,
     glyph: AnyElement,
-    title: &'static str,
-    sub: &'static str,
+    title: SharedString,
+    sub: SharedString,
+    on: bool,
     chip: Option<gpui::Div>,
 ) -> Stateful<gpui::Div> {
     div()
         .id(id)
         .role(Role::Button)
-        .aria_label(title)
+        .aria_label(title.clone())
+        .aria_selected(on)
         .cursor_pointer()
+        .flex_1()
+        .min_w_0()
         .flex()
         .items_center()
-        .gap(px(10.))
-        .px(px(16.))
-        .py(px(14.))
-        .rounded(px(12.))
+        .gap(px(12.))
+        .p(px(14.))
+        .rounded(px(14.))
         .border_1()
-        .border_dashed()
-        .border_color(content(0.18))
-        .hover(|s| s.bg(ui::well()))
-        .child(glyph)
+        .map(|d| {
+            if on {
+                d.border_color(ui::accent(0.45)).bg(ui::accent(0.08))
+            } else {
+                d.border_dashed()
+                    .border_color(content(0.16))
+                    .bg(crate::glass::fill())
+                    .hover(|s| s.bg(content(0.05)))
+            }
+        })
+        .child(ui::tile().child(glyph))
         .child(
             div()
                 .flex_1()
@@ -290,23 +277,26 @@ fn choice(
                 .flex()
                 .flex_col()
                 .gap(px(2.))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
-                .child(div().text_size(px(12.)).text_color(ui::muted()).child(sub)),
+                // The picked folder's own selector, for tests.
+                .when(on, |d| d.debug_selector(|| "setup-picked".into()))
+                .child(ui::t1(title).font_weight(FontWeight::SEMIBOLD).truncate())
+                .child(ui::t3(sub).truncate()),
         )
         .children(chip)
 }
 
-/// The shortcut chip: 11pt, 1×6 padding, radius 5, a faint edge.
+/// The shortcut chip: mono 10.5, 1×5 padding, radius 4, the glass edge.
 fn kbd(label: &'static str) -> gpui::Div {
     div()
         .flex_shrink_0()
-        .px(px(6.))
+        .px(px(5.))
         .py(px(1.))
-        .rounded(px(5.))
+        .rounded(px(4.))
         .border_1()
-        .border_color(content(0.12))
-        .text_size(px(11.))
-        .text_color(ui::muted())
+        .border_color(crate::glass::edge())
+        .font_family(crate::fonts::monospace())
+        .text_size(px(10.5))
+        .text_color(ui::faint())
         .child(label)
 }
 
@@ -421,7 +411,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn a_picked_folder_shows_its_own_row_and_finishes(cx: &mut TestAppContext) {
+    fn a_picked_folder_fills_the_choose_tile_and_finishes(cx: &mut TestAppContext) {
         let opened = open(SetupStep::Project, "/Users/a/langfuse", cx);
         assert!(!has(&opened, "setup-picked", cx));
         opened
@@ -429,6 +419,12 @@ mod tests {
             .update(cx, |card, cx| card.set_folder("/Users/a/other".into(), cx));
         assert!(has(&opened, "setup-picked", cx));
         assert!(has(&opened, "setup-suggested", cx));
+        // The tinted tile is still the picker: clicking it picks again.
+        click(&opened, "setup-choose-folder", cx);
+        assert_eq!(
+            opened.events.borrow().last(),
+            Some(&SetupEvent::ChooseFolder)
+        );
         click(&opened, "setup-continue", cx);
         assert_eq!(finishes(&opened), vec!["/Users/a/other".to_string()]);
     }
