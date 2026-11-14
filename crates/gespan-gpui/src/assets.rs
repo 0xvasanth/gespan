@@ -255,6 +255,8 @@ fn icon_body(path: &str) -> Option<&'static str> {
         }
         "check-bold" => "<polyline points='20 6 9 17 4 12' stroke-width='2.4'/>",
         // The Pipeline graph's done and failed marks, as the board draws them.
+        // The draft chip's save check, as the board draws it.
+        "draft-save" => "<polyline points='20 6 9 17 4 12' stroke-width='2.2'/>",
         "step-done" => "<polyline points='20 6 9 17 4 12' stroke-width='2.6'/>",
         "step-failed" => "<path d='M18 6 6 18M6 6l12 12' stroke-width='2.6'/>",
         // The Docs tab's document row, as the board draws it.

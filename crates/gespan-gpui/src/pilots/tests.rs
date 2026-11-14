@@ -4257,13 +4257,21 @@ mod roadmap {
             assert_eq!(r.drawn.as_ref().unwrap().name, "Release");
         });
         visual.refresh().unwrap();
-        assert!(visual.debug_bounds("pilot-roadmap-draft").is_some());
-        assert!(
-            visual
-                .debug_bounds("pilot-roadmap-version-picker")
-                .is_some()
-        );
-        // "See the change" shows the draft's YAML against the live one's.
+        // The draft is a chip in the header, right after the version
+        // picker and before Graph / YAML, on the same line; nothing waits
+        // above the ask box.
+        let chip = visual
+            .debug_bounds("pilot-roadmap-draft")
+            .expect("the draft chip");
+        let version = visual.debug_bounds("pilot-roadmap-version-picker").unwrap();
+        let view = visual.debug_bounds("pilot-roadmap-view").unwrap();
+        let header = visual.debug_bounds("pilot-roadmap-header").unwrap();
+        assert!(header.contains(&chip.center()));
+        assert!(version.right() < chip.left() && chip.right() < view.left());
+        assert_eq!(chip.size.height, px(28.));
+        assert_eq!(chip.center().y, version.center().y, "one row, no wrap");
+        assert!(visual.debug_bounds("pilot-roadmap-draft-discard").is_none());
+        // Its body shows the draft's YAML against the live one's.
         let see = visual.debug_bounds("pilot-roadmap-draft-see").unwrap();
         visual.simulate_click(see.center(), Default::default());
         visual.run_until_parked();
@@ -4342,14 +4350,26 @@ mod roadmap {
         roadmap.update(visual, |r, cx| r.reload(cx));
         visual.run_until_parked();
         visual.refresh().unwrap();
-        let discard = visual.debug_bounds("pilot-roadmap-draft-discard").unwrap();
+        // Discard sits with the change: open it from the chip.
+        let see = visual.debug_bounds("pilot-roadmap-draft-see").unwrap();
+        visual.simulate_click(see.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let discard = visual
+            .debug_bounds("pilot-roadmap-draft-discard")
+            .expect("the change offers Discard");
         visual.simulate_click(discard.center(), Default::default());
         visual.run_until_parked();
+        visual.refresh().unwrap();
         assert_eq!(live_name(&s, &id, visual), "Release");
         roadmap.read_with(visual, |r, _| {
             assert!(r.draft().is_none());
             assert_eq!(r.versions.len(), 1);
         });
+        assert!(
+            visual.debug_bounds("pilot-roadmap-draft").is_none(),
+            "the chip goes with the draft"
+        );
     }
 
     #[gpui::test]
@@ -5722,7 +5742,7 @@ mod roadmap {
     }
 
     #[gpui::test]
-    fn an_earlier_run_shows_when_picked(cx: &mut TestAppContext) {
+    fn the_pipeline_tab_shows_the_run_going_and_no_earlier_runs(cx: &mut TestAppContext) {
         let s = setup(cx);
         hold_flow_launches(&s, cx);
         hold_outbox(&s, cx);
@@ -5735,24 +5755,18 @@ mod roadmap {
         roadmap.read_with(visual, |r, _| {
             assert_eq!(r.run.as_deref(), Some(second.as_str()))
         });
-        let earlier = visual
-            .debug_bounds(Box::leak(
-                format!("pilot-roadmap-earlier-{first}").into_boxed_str(),
-            ))
-            .expect("the earlier run is listed");
-        assert!(
-            visual
-                .debug_bounds(Box::leak(
-                    format!("pilot-roadmap-earlier-{second}").into_boxed_str()
-                ))
-                .is_none(),
-            "the shown run is not listed again"
-        );
-        visual.simulate_click(earlier.center(), Default::default());
-        visual.run_until_parked();
-        roadmap.read_with(visual, |r, _| {
-            assert_eq!(r.run.as_deref(), Some(first.as_str()))
-        });
+        assert!(visual.debug_bounds("pilot-roadmap-run-card").is_some());
+        // Past runs live in History alone.
+        for run in [&first, &second] {
+            assert!(
+                visual
+                    .debug_bounds(Box::leak(
+                        format!("pilot-roadmap-earlier-{run}").into_boxed_str()
+                    ))
+                    .is_none()
+            );
+        }
+        assert!(visual.debug_bounds("pilot-roadmap-earlier").is_none());
     }
 
     #[gpui::test]

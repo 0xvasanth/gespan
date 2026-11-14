@@ -103,13 +103,6 @@ fn load(
     })
 }
 
-fn run_label(run: &FlowRun) -> String {
-    match &run.tag {
-        Some(tag) => format!("{} · {}", tag.task, tag.goal),
-        None => run.id.clone(),
-    }
-}
-
 pub(crate) struct Roadmap {
     pilot: String,
     owner: WeakEntity<Shell>,
@@ -194,7 +187,10 @@ impl Roadmap {
         });
         let ask = cx.new(|cx| {
             let mut input = Input::new(cx);
-            input.set_font_size(13.);
+            input.set_font_size(12.5);
+            // One line in the board's 36px box; it grows as you type more.
+            input.set_line_height(18.);
+            input.set_min_height(18.);
             input.set_label("Ask the Pilot about this roadmap");
             input.set_placeholder(ASK, cx);
             input
@@ -492,7 +488,10 @@ impl Roadmap {
         self.reload(cx);
     }
 
-    /// Shows `run` of the shown Flow; `None` is its blueprint.
+    /// Shows `run` of the shown Flow; `None` is its blueprint. The tab
+    /// shows the run still going; tests pick others to draw their
+    /// snapshots.
+    #[cfg(test)]
     pub(super) fn select_run(&mut self, run: Option<String>, cx: &mut Context<Self>) {
         if self.run != run {
             self.run = run;
@@ -703,7 +702,8 @@ impl Roadmap {
             .role(Role::Button)
             .aria_label(SharedString::from(format!("{caption}: {value}")))
             .relative()
-            .when(chip, |d| d.flex_shrink(1.).max_w(px(180.)))
+            // The board's pickers keep their width beside the draft chip.
+            .when(chip, |d| d.flex_shrink_0().max_w(px(180.)))
             .when(!chip, |d| d.flex_1())
             .min_w_0()
             .h(px(28.))
@@ -942,15 +942,6 @@ fn state_title(state: &FlowState) -> &str {
     state.title()
 }
 
-/// When a run started or ended, as the board writes it: "Nov 12".
-fn day(ms: i64) -> String {
-    use chrono::TimeZone;
-    chrono::Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map_or_else(String::new, |t| t.format("%b %-d").to_string())
-}
-
 impl Roadmap {
     /// The run shown is `run`; its version is the saved one whose
     /// definition its snapshot started from, if any.
@@ -1029,95 +1020,6 @@ impl Roadmap {
                 .into_any_element(),
         )
     }
-
-    /// "Earlier runs": every other run of the shown Flow, newest first;
-    /// picking one shows it.
-    fn earlier_runs(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let others: Vec<&FlowRun> = self
-            .runs
-            .iter()
-            .filter(|r| Some(r.id.as_str()) != self.run.as_deref())
-            .collect();
-        if others.is_empty() {
-            return None;
-        }
-        Some(
-            div()
-                .debug_selector(|| "pilot-roadmap-earlier".into())
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .px(px(4.))
-                        .pt(px(14.))
-                        .pb(px(6.))
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(faint_ink())
-                        .child("EARLIER RUNS"),
-                )
-                .child(div().px(px(4.)).flex().flex_col().gap(px(2.)).children(
-                    others.into_iter().map(|run| {
-                        let id = run.id.clone();
-                        let name = run
-                            .tag
-                            .as_ref()
-                            .map_or_else(|| run_label(run), |t| t.task.clone());
-                        let end = run
-                            .finished_at
-                            .unwrap_or_else(|| gespan_core::time::now_ms() as i64);
-                        let when = format!(
-                            "{} · {}",
-                            day(run.created_at),
-                            crate::shell::running_elapsed((end - run.created_at).max(0) as u64)
-                        );
-                        let dot = match run.status {
-                            RunStatus::Succeeded => rgb(0x6ee7b7).into(),
-                            RunStatus::Failed => rgb(0xfda4af).into(),
-                            RunStatus::Running | RunStatus::WaitingApproval => rgb(0x459bf7).into(),
-                            _ => content(0.22),
-                        };
-                        let selector = format!("pilot-roadmap-earlier-{id}");
-                        div()
-                            .id(SharedString::from(selector.clone()))
-                            .debug_selector(move || selector.clone())
-                            .role(Role::Button)
-                            .aria_label(SharedString::from(format!("{name}, {when}")))
-                            .cursor_pointer()
-                            .rounded(px(6.))
-                            .hover(|s| s.bg(content(0.05)))
-                            .flex()
-                            .gap(px(8.))
-                            .text_size(px(12.))
-                            .line_height(px(17.))
-                            .text_color(content(0.64))
-                            .child(
-                                div()
-                                    .mt(px(5.))
-                                    .size(px(7.))
-                                    .rounded_full()
-                                    .flex_shrink_0()
-                                    .bg(dot),
-                            )
-                            .child(div().min_w_0().truncate().child(name))
-                            .child(
-                                div()
-                                    .ml_auto()
-                                    .flex_shrink_0()
-                                    .text_size(px(11.5))
-                                    .line_height(px(16.))
-                                    .text_color(faint_ink())
-                                    .child(when),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.version = None;
-                                this.select_run(Some(id.clone()), cx);
-                            }))
-                    }),
-                ))
-                .into_any_element(),
-        )
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1176,13 +1078,15 @@ impl Roadmap {
             .id("pilot-roadmap-ask")
             .debug_selector(|| "pilot-roadmap-ask".into())
             .flex_shrink_0()
-            .px_2()
-            .py(px(6.))
+            // The board's ask row: a hairline over a 36px search-style box.
+            .mx(px(12.))
+            .pt(px(10.))
+            .pb(px(12.))
             .border_t_1()
-            .border_color(crate::right_panel::stroke())
+            .border_color(content(0.06))
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(8.))
             .when_some(notice, |d, notice| {
                 d.child(
                     div()
@@ -1198,12 +1102,37 @@ impl Roadmap {
             })
             .child(
                 div()
-                    .rounded_md()
+                    .min_h(px(36.))
+                    .px(px(10.))
+                    .py(px(8.))
+                    .rounded(px(10.))
+                    .bg(gpui::black().opacity(0.25))
                     .border_1()
-                    .border_color(content(0.1))
-                    .px_2()
-                    .py_1()
-                    .child(self.ask.clone()),
+                    .border_color(crate::glass::edge())
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .child(self.ask.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .px(px(5.))
+                            .py(px(1.))
+                            .rounded(px(4.))
+                            .border_1()
+                            .border_color(crate::glass::edge())
+                            .font_family(crate::fonts::monospace())
+                            .text_size(px(10.5))
+                            .text_color(super::graph::faint_ink())
+                            .child("↵"),
+                    ),
             )
             .into_any_element()
     }
@@ -1266,7 +1195,7 @@ impl Roadmap {
                         .gap(px(8.))
                         .child(self.picker_button(Picker::Flow, "Pipeline", flow_name, cx))
                         .child(self.picker_button(Picker::Version, "Version", version_name, cx))
-                        .child(div().flex_1())
+                        .children(self.draft_chip(cx))
                         .child(self.view_switch(cx)),
                 )
                 .when_some(self.error.clone(), |d, error| {
@@ -1287,7 +1216,6 @@ impl Roadmap {
                         // The run card, the graph and the earlier runs
                         // scroll together under the pickers.
                         let run_card = self.run_card(cx);
-                        let earlier = self.earlier_runs(cx);
                         d.child(
                             div()
                                 .id("pilot-roadmap-canvas")
@@ -1306,8 +1234,9 @@ impl Roadmap {
                                         .flex()
                                         .flex_col()
                                         .children(run_card)
-                                        .when(self.drawn.is_some(), |d| d.child(self.graph.clone()))
-                                        .children(earlier),
+                                        .when(self.drawn.is_some(), |d| {
+                                            d.child(self.graph.clone())
+                                        }),
                                 )
                                 .children(drawer),
                         )
@@ -1328,6 +1257,8 @@ impl Roadmap {
             .role(Role::TabList)
             .aria_label("Pipeline view")
             .flex_shrink_0()
+            // The board's `margin-left: auto`: one gap before it, not two.
+            .ml_auto()
             .children([("Graph", false), ("YAML", true)].map(|(label, yaml)| {
                 crate::glass::segment(
                     SharedString::from(format!("pilot-roadmap-{label}")),
@@ -1348,7 +1279,7 @@ impl Roadmap {
 
     /// The draft's YAML against the live version's: removed lines red,
     /// added lines green, the rest as they are.
-    fn diff_view(&self) -> Option<AnyElement> {
+    fn diff_view(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         use gespan_core::flow::DiffLine;
         let draft = self.draft()?;
         let live = self.saved_flow()?;
@@ -1375,14 +1306,38 @@ impl Roadmap {
                 .gap(px(6.))
                 .child(
                     div()
-                        .debug_selector(|| "pilot-roadmap-diff-caption".into())
-                        .text_size(px(11.5))
-                        .text_color(content(0.54))
-                        .child(format!(
-                            "v{from} → v{} draft · {changed} {} changed",
-                            draft.version,
-                            if changed == 1 { "line" } else { "lines" }
-                        )),
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .debug_selector(|| "pilot-roadmap-diff-caption".into())
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(11.5))
+                                .text_color(content(0.54))
+                                .child(format!(
+                                    "v{from} → v{} draft · {changed} {} changed",
+                                    draft.version,
+                                    if changed == 1 { "line" } else { "lines" }
+                                )),
+                        )
+                        // The change is shown here, so dropping it is too.
+                        .child(
+                            crate::glass::button(
+                                "pilot-roadmap-draft-discard",
+                                "Discard",
+                                crate::glass::Button::Ghost,
+                            )
+                            .debug_selector(|| "pilot-roadmap-draft-discard".into())
+                            .role(Role::Button)
+                            .aria_label("Discard draft")
+                            .h(px(24.))
+                            .px(px(8.))
+                            .text_size(px(11.5))
+                            .on_click(cx.listener(|this, _, _, cx| this.discard_draft(cx))),
+                        ),
                 )
                 .child(
                     div()
@@ -1436,7 +1391,7 @@ impl Roadmap {
     /// The shown version as YAML, read-only, with Copy.
     fn yaml_view(&self, cx: &mut Context<Self>) -> AnyElement {
         if self.diff
-            && let Some(diff) = self.diff_view()
+            && let Some(diff) = self.diff_view(cx)
         {
             return diff;
         }
@@ -1525,85 +1480,86 @@ impl Roadmap {
             .into_any_element()
     }
 
-    /// The Pilot drafted a change: what it is, and saving or dropping it.
-    fn draft_card(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// While the Pilot's change is a draft, a compact amber chip after the
+    /// version picker: its body shows the change (with Discard there), its
+    /// check saves it as the next version. Gone once saved or discarded.
+    fn draft_chip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let draft = self.draft()?;
-        let live = self.live_version().unwrap_or(1);
         let next = draft.version;
+        let live = self.live_version().unwrap_or(1);
         let showing = self.diff;
+        let amber = |alpha: f32| {
+            let mut c: gpui::Hsla = rgb(0xfbbf24).into();
+            c.a = alpha;
+            c
+        };
         Some(
-            crate::glass::card()
+            div()
                 .debug_selector(|| "pilot-roadmap-draft".into())
                 .flex_shrink_0()
-                .mx(px(12.))
-                .mb(px(8.))
-                .px(px(10.))
-                .py(px(8.))
-                .rounded(px(10.))
+                .h(px(28.))
+                .pr(px(3.))
+                .rounded(px(8.))
+                .bg(amber(0.08))
+                .border_1()
+                .border_color(amber(0.22))
                 .flex()
-                .flex_col()
-                .gap(px(6.))
+                .items_center()
+                .gap(px(2.))
                 .child(
                     div()
-                        .text_size(px(12.))
-                        .text_color(content(0.86))
-                        .child(format!(
-                            "Drafted v{next}. v{live} stays live until you save."
-                        )),
+                        .id("pilot-roadmap-draft-see")
+                        .debug_selector(|| "pilot-roadmap-draft-see".into())
+                        .role(Role::Button)
+                        .aria_label(SharedString::from(if showing {
+                            format!("v{next} draft, unsaved. Hide the change")
+                        } else {
+                            format!("v{next} draft, unsaved. See the change")
+                        }))
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| {
+                                super::StatusTooltip(SharedString::from(format!(
+                                    "v{next} draft. v{live} stays live until you save. Click to see the change or discard it."
+                                )))
+                            })
+                            .into()
+                        })
+                        .cursor_pointer()
+                        .h(px(26.))
+                        .pl(px(8.))
+                        .pr(px(4.))
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .child(div().size(px(6.)).rounded_full().bg(rgb(0xfbbf24)))
+                        .child(
+                            div()
+                                .text_size(px(11.5))
+                                .text_color(rgb(0xf3d48a))
+                                .child(format!("v{next}")),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.show_change(!showing, cx))),
                 )
                 .child(
                     div()
+                        .id("pilot-roadmap-draft-save")
+                        .debug_selector(|| "pilot-roadmap-draft-save".into())
+                        .role(Role::Button)
+                        .aria_label(SharedString::from(format!("Save as v{next}")))
+                        .tooltip(move |_, cx| {
+                            cx.new(|_| super::StatusTooltip(SharedString::from(format!("Save as v{next}"))))
+                                .into()
+                        })
+                        .cursor_pointer()
+                        .size(px(22.))
+                        .rounded(px(8.))
+                        .bg(content(0.10))
+                        .hover(|s| s.bg(content(0.16)))
                         .flex()
-                        .gap(px(6.))
-                        .child(
-                            crate::glass::button(
-                                "pilot-roadmap-draft-see",
-                                if showing {
-                                    "Hide the change"
-                                } else {
-                                    "See the change"
-                                },
-                                crate::glass::Button::Glass,
-                            )
-                            .debug_selector(|| "pilot-roadmap-draft-see".into())
-                            .role(Role::Button)
-                            .aria_label(if showing {
-                                "Hide the change"
-                            } else {
-                                "See the change"
-                            })
-                            .h(px(24.))
-                            .text_size(px(11.5))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.show_change(!showing, cx)),
-                            ),
-                        )
-                        .child(
-                            crate::glass::button(
-                                "pilot-roadmap-draft-save",
-                                format!("Save as v{next}"),
-                                crate::glass::Button::Primary,
-                            )
-                            .debug_selector(|| "pilot-roadmap-draft-save".into())
-                            .role(Role::Button)
-                            .aria_label(format!("Save as v{next}"))
-                            .h(px(24.))
-                            .text_size(px(11.5))
-                            .on_click(cx.listener(|this, _, _, cx| this.save_draft(cx))),
-                        )
-                        .child(
-                            crate::glass::button(
-                                "pilot-roadmap-draft-discard",
-                                "Discard",
-                                crate::glass::Button::Ghost,
-                            )
-                            .debug_selector(|| "pilot-roadmap-draft-discard".into())
-                            .role(Role::Button)
-                            .aria_label("Discard draft")
-                            .h(px(24.))
-                            .text_size(px(11.5))
-                            .on_click(cx.listener(|this, _, _, cx| this.discard_draft(cx))),
-                        ),
+                        .items_center()
+                        .justify_center()
+                        .child(crate::theme::icon("draft-save", 13.).text_color(gpui::white()))
+                        .on_click(cx.listener(|this, _, _, cx| this.save_draft(cx))),
                 )
                 .into_any_element(),
         )
@@ -1622,7 +1578,6 @@ impl Render for Roadmap {
             .flex()
             .flex_col()
             .child(content.unwrap_or_else(|| div().flex_1().into_any_element()))
-            .children(self.draft_card(cx))
             .child(self.ask_view())
     }
 }
