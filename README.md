@@ -367,7 +367,7 @@ Bug reports, protocol fixes and tests for the existing agents help the most.
 Thanks to everyone who has helped build Gespan.
 
 <a href="https://github.com/0xvasanth/gespan/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=0xvasanth/gespan?0" alt="Gespan contributors" />
+  <img src="https://contrib.rocks/image?repo=0xvasanth/gespan" alt="Gespan contributors" />
 </a>
 
 ## License
