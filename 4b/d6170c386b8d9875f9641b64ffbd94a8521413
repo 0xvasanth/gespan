@@ -1,0 +1,23 @@
+docs/desktop/README.md
+  s_c32d955197a78d::t_4fe4c476e54464 1,15,58,64,151
+docs/install.md
+  s_c32d955197a78d::t_4fe4c476e54464 49
+CHANGELOG.md
+  s_c32d955197a78d::t_4fe4c476e54464 1310
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4bd6170c386b8d9875f9641b64ffbd94a8521413",
+  "prompts": {},
+  "sessions": {
+    "s_c32d955197a78d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "62397557-e071-4ae9-9d4b-5b71d484cb0b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
