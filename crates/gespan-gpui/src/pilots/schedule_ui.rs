@@ -146,10 +146,7 @@ fn pipeline<'a>(flows: &'a [Flow], shown: Option<&str>) -> Option<&'a Flow> {
         .or_else(|| flows.first())
 }
 fn state_title(state: &FlowState) -> &str {
-    match state {
-        FlowState::Agent(s) => &s.title,
-        FlowState::Approval(s) => &s.title,
-    }
+    state.title()
 }
 /// The time a run happened, from `now`: "7h ago".
 pub(super) fn ago(at: u64, now: u64) -> String {

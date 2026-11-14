@@ -149,19 +149,6 @@ fn card() -> Div {
         .flex_col()
 }
 /// PilotOverview's search row above the Sessions, Habits and Documents lists.
-pub(super) fn search_bar(field: Entity<Input>) -> Div {
-    div()
-        .h(px(36.))
-        .flex_shrink_0()
-        .px_2()
-        .border_b_1()
-        .border_color(crate::right_panel::stroke())
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(icon("search", 12.))
-        .child(div().flex_1().min_w_0().child(field))
-}
 /// Whether `haystack` contains `query`, ignoring case and surrounding spaces.
 pub(super) fn matches_query(query: &str, haystack: &str) -> bool {
     haystack
