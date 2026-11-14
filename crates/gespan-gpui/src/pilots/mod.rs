@@ -2,7 +2,6 @@
 //! overview, settings and floating windows.
 pub(crate) mod avatar;
 pub(crate) mod cards;
-mod changes;
 mod color_picker;
 #[cfg(test)]
 mod dictation_tests;
@@ -69,7 +68,7 @@ pub(crate) struct OverviewChrome {
     active: Option<String>,
     tab: OverviewTab,
     routed: bool,
-    counts: (usize, usize, usize, usize),
+    counts: (usize, usize, usize),
 }
 /// The turn's commands in the Activity tab.
 struct ActivityList {
@@ -111,11 +110,9 @@ pub(crate) struct Pilots {
     on_load: HashMap<String, quit::OnLoad>,
     work: work::Cache,
     pub(crate) error: Option<String>,
-    notice_region: AnchorSlot,
     pub(crate) details: Entity<overview::Overview>,
     overview_tab: OverviewTab,
     overview_previous: OverviewTab,
-    overview_reveal: Option<crate::project_tabs::TabReveal<OverviewTab>>,
     /// Each Pilot's SOP Roadmap tab, made when first shown.
     roadmaps: HashMap<String, (Entity<roadmap::Roadmap>, [Subscription; 2])>,
     /// Roadmaps to reload when next drawn.
@@ -143,13 +140,13 @@ pub(crate) struct Pilots {
     menu_anchor: Anchor,
     documents: HashMap<String, Entity<crate::transcript::TranscriptView>>,
     html_documents: HashMap<String, Entity<html::Html>>,
-    project_changes: changes::ProjectChanges,
-    review: Option<Entity<crate::review::ReviewPane>>,
     activity: Option<ActivityList>,
     activity_turn: Option<usize>,
     rail_ids: Vec<String>,
     /// The sidebar lists every Pilot, not just the first few.
     rail_all: bool,
+    /// Setup › Soul shows its editor rather than the read view.
+    soul_editing: bool,
     running: HashMap<i64, RunningHabit>,
     active_run: Option<i64>,
     /// Completion reports per `(pilot_id, source session)`, held until all of them are built.
@@ -317,7 +314,6 @@ impl Pilots {
         owner: WeakEntity<Shell>,
         prefs: crate::settings::Preferences,
         active: Option<String>,
-        notice_region: AnchorSlot,
         cx: &mut Context<Self>,
     ) -> Self {
         let (roster, root, roster_error) = match locked(&store) {
@@ -371,11 +367,9 @@ impl Pilots {
             on_load: HashMap::new(),
             work: work::Cache::default(),
             error: roster_error,
-            notice_region,
             details,
-            overview_tab: OverviewTab::Sessions,
-            overview_previous: OverviewTab::Sessions,
-            overview_reveal: None,
+            overview_tab: OverviewTab::Pipeline,
+            overview_previous: OverviewTab::Pipeline,
             roadmaps: HashMap::new(),
             stale_roadmaps: HashSet::new(),
             route: None,
@@ -401,12 +395,11 @@ impl Pilots {
             menu_anchor: Anchor::Point(gpui::Point::default()),
             documents: HashMap::new(),
             html_documents: HashMap::new(),
-            project_changes: Default::default(),
-            review: None,
             activity: None,
             activity_turn: None,
             rail_ids: Vec::new(),
             rail_all: false,
+            soul_editing: false,
             running: HashMap::new(),
             active_run: None,
             completion_work: HashMap::new(),
@@ -535,12 +528,11 @@ impl Pilots {
         }
     }
     pub(crate) fn overview_chrome(&self) -> OverviewChrome {
-        let counts = self.current().map_or((0, 0, 0, 0), |pilot| {
+        let counts = self.current().map_or((0, 0, 0), |pilot| {
             (
                 pilot.launches.len(),
                 pilot.documents.len(),
                 self.habits.len(),
-                self.project_changes.count(&pilot.id),
             )
         });
         OverviewChrome {
@@ -1173,7 +1165,6 @@ impl Pilots {
         }
         if self.active.as_deref() != Some(id) {
             self.save_open_file(cx);
-            self.pause_changes(cx);
             self.route = None;
             self.details.update(cx, |details, cx| details.reset(cx));
             self.fields.retain(|k, _| k.starts_with("file:"));
@@ -1213,7 +1204,6 @@ impl Pilots {
     }
     pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
         self.save_open_file(cx);
-        self.pause_changes(cx);
         self.hide_html(cx);
         if self.active.take().is_some() {
             self.details.update(cx, |details, cx| details.reset(cx));
@@ -1750,7 +1740,6 @@ impl gpui::Render for Pilots {
         let Some(pilot) = self.current().cloned() else {
             return div().into_any_element();
         };
-        self.ensure_changes_summary(&pilot, cx);
         let bg = self
             .backgrounds
             .entry(pilot.id.clone())
@@ -1798,17 +1787,17 @@ impl gpui::Render for Pilots {
                             .map(|view| view.update(cx, |v, cx| v.pilot_attention(window, cx))),
                     )
                     .map(|d| {
-                        if self.floating_shows(&pilot.id, cx) {
+                        if let Some(setup) = self.setup_page(&pilot, window, cx) {
+                            d.child(setup)
+                        } else if self.floating_shows(&pilot.id, cx) {
                             d.child(self.floating_placeholder(&pilot, cx))
                         } else if let Some(chat) = self.chat() {
                             d.child(div().flex_1().min_h_0().child(chat))
                         } else {
                             d
                         }
-                    })
-                    .child(self.topbar(&pilot, cx)),
+                    }),
             )
-            .children(self.settings_modal(&pilot, window, cx))
             .children(self.picker_surface(cx))
             .children(self.options_surface(cx))
             .children(self.background_modal())

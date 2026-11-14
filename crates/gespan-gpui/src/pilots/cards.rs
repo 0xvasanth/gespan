@@ -486,7 +486,7 @@ impl Pilots {
                 if let Some(id) = value["sessionId"].as_i64() {
                     self.route = Some(Route::Session(id));
                     self.show_overview(cx);
-                    self.overview_tab = OverviewTab::Sessions;
+                    self.overview_tab = OverviewTab::History;
                     cx.notify();
                 }
             }
@@ -495,14 +495,14 @@ impl Pilots {
                     self.open_document(id, cx);
                     self.route = Some(Route::Document(id.into()));
                     self.show_overview(cx);
-                    self.overview_tab = OverviewTab::Documents;
+                    self.overview_tab = OverviewTab::Docs;
                     cx.notify();
                 }
             }
             "habit" => {
                 if value["started"] == true {
                     self.show_overview(cx);
-                    self.overview_tab = OverviewTab::Habits;
+                    self.overview_tab = OverviewTab::Schedule;
                     self.route = Some(Route::Habit(format!(
                         "card-{}",
                         value["id"].as_str().unwrap_or_default()
@@ -538,7 +538,7 @@ impl Pilots {
                             cx,
                         );
                         self.show_overview(cx);
-                        self.overview_tab = OverviewTab::Habits;
+                        self.overview_tab = OverviewTab::Schedule;
                         self.route = None;
                     }
                     Err(e) => self.error = Some(e),

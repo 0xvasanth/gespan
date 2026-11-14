@@ -2441,7 +2441,6 @@ mod tests {
     use crate::runtime::TicketChange;
     use crate::tickets::fakes::FakeTickets;
 
-
     fn fake_tickets(
         window: WindowHandle<Shell>,
         cx: &mut TestAppContext,

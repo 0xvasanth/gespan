@@ -80,7 +80,6 @@ mod popover;
 mod project_background;
 mod project_search;
 mod project_settings;
-mod project_tabs;
 mod project_theme;
 mod pulse;
 mod questions;

@@ -122,9 +122,11 @@ mod tests {
         std::fs::write(&path, "# Heading\nsecond line\nthird line\n").unwrap();
         window
             .update(cx, |shell, w, cx| {
-                shell
-                    .pilot_manager()
-                    .update(cx, |m, cx| m.create(Vec::new(), w, cx));
+                shell.pilot_manager().update(cx, |m, cx| {
+                    m.create(Vec::new(), w, cx);
+                    // A new Pilot opens on its Setup page; back to chat.
+                    m.close_setup(cx);
+                });
             })
             .unwrap();
         cx.run_until_parked();
