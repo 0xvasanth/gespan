@@ -7,6 +7,15 @@ pub const MAX: usize = 20;
 pub const GRACE_MS: u64 = 2 * 60 * 60 * 1000;
 pub const TIMEOUT_MS: u64 = 60 * 60 * 1000;
 pub const APPROVAL_WAIT_MS: u64 = 12 * 60 * 60 * 1000;
+pub const WEEKDAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Schedule {
@@ -55,19 +64,41 @@ impl Schedule {
             "hourly" => format!("Hourly at :{:02}", self.minute),
             "weekdays" => format!("Weekdays at {}", self.time),
             "weekly" => format!(
-                "{} at {}",
-                [
-                    "Sunday",
-                    "Monday",
-                    "Tuesday",
-                    "Wednesday",
-                    "Thursday",
-                    "Friday",
-                    "Saturday"
-                ][self.day_of_week.min(6) as usize],
+                "{}s at {}",
+                WEEKDAYS[self.day_of_week.min(6) as usize],
                 self.time
             ),
             _ => format!("Daily at {}", self.time),
+        }
+    }
+    /// How often it repeats, after "then": "every day", "every Monday".
+    pub fn cadence(&self) -> String {
+        match self.schedule_kind.as_str() {
+            "hourly" => "every hour".into(),
+            "weekdays" => "every weekday".into(),
+            "weekly" => format!("every {}", WEEKDAYS[self.day_of_week.min(6) as usize]),
+            _ => "every day".into(),
+        }
+    }
+    /// When `at` falls, said from `now`: "tonight at 02:00", "today at
+    /// 14:00", "tomorrow at 09:00", else "Mon, Nov 16 at 09:00". Late
+    /// evening and the small hours of the next morning are both tonight.
+    pub fn when(at: u64, now: u64) -> String {
+        let local =
+            |ms: u64| DateTime::from_timestamp_millis(ms as i64).map(|d| d.with_timezone(&Local));
+        let (Some(at), Some(now)) = (local(at), local(now)) else {
+            return String::new();
+        };
+        let time = at.format("%H:%M");
+        let days = (at.date_naive() - now.date_naive()).num_days();
+        match days {
+            0 if at.hour() >= 18 || (at.hour() < 6 && now.hour() < 6) => {
+                format!("tonight at {time}")
+            }
+            0 => format!("today at {time}"),
+            1 if at.hour() < 6 && now.hour() >= 18 => format!("tonight at {time}"),
+            1 => format!("tomorrow at {time}"),
+            _ => format!("{} at {time}", at.format("%a, %b %-d")),
         }
     }
     pub fn next(&self, after: u64) -> Result<u64, String> {
@@ -102,12 +133,62 @@ impl Schedule {
         Err("No next habit run found".into())
     }
 }
+/// What a scheduled run starts. Habits saved before this field read as an
+/// instruction, which is what every habit used to be.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Target {
+    /// The Pilot's Flow from its first step, as New run does.
+    #[serde(rename_all = "camelCase")]
+    Pipeline { flow_id: String },
+    /// One step of the Pilot's Flow on its own.
+    #[serde(rename_all = "camelCase")]
+    Step { flow_id: String, step_id: String },
+    /// A hidden run that follows `Habit::instructions`.
+    #[default]
+    Instruction,
+}
+impl Target {
+    pub fn flow_id(&self) -> Option<&str> {
+        match self {
+            Self::Pipeline { flow_id } | Self::Step { flow_id, .. } => Some(flow_id),
+            Self::Instruction => None,
+        }
+    }
+    fn valid(&self) -> bool {
+        match self {
+            Self::Pipeline { flow_id } => !flow_id.trim().is_empty(),
+            Self::Step { flow_id, step_id } => {
+                !flow_id.trim().is_empty() && !step_id.trim().is_empty()
+            }
+            Self::Instruction => true,
+        }
+    }
+}
+/// When a scheduled run reports back in the chat. Habits saved before this
+/// field read as `EveryRun`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Tell {
+    #[default]
+    EveryRun,
+    /// Only a run that needs the person, such as one that failed or found
+    /// something to act on.
+    OnlyIfNeeded,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Habit {
     pub id: String,
     pub name: String,
+    /// The instruction a `Target::Instruction` run follows; empty for a
+    /// Flow target.
+    #[serde(default)]
     pub instructions: String,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(default)]
+    pub tell: Tell,
     pub schedule: Schedule,
     #[serde(default = "yes")]
     pub enabled: bool,
@@ -141,24 +222,42 @@ pub struct Run {
     pub error: Option<String>,
 }
 impl Habit {
+    /// An instruction habit that reports every run.
     pub fn new(
         name: String,
         instructions: String,
         schedule: Schedule,
         now: u64,
     ) -> Result<Self, String> {
-        if name.trim().is_empty()
-            || name.chars().count() > 120
-            || instructions.trim().is_empty()
-            || instructions.len() > 32000
-        {
-            return Err("A habit needs a name and instructions".into());
-        }
+        Self::create(
+            name,
+            Target::Instruction,
+            instructions,
+            Tell::EveryRun,
+            schedule,
+            now,
+        )
+    }
+    pub fn create(
+        name: String,
+        target: Target,
+        instructions: String,
+        tell: Tell,
+        schedule: Schedule,
+        now: u64,
+    ) -> Result<Self, String> {
+        check(&name, &target, &instructions)?;
         let next_run_at = schedule.next(now)?;
+        let instructions = match target {
+            Target::Instruction => instructions.trim().into(),
+            _ => String::new(),
+        };
         Ok(Self {
             id: super::new_id(),
             name: name.trim().into(),
-            instructions: instructions.trim().into(),
+            instructions,
+            target,
+            tell,
             schedule,
             enabled: true,
             created_at: now,
@@ -171,6 +270,33 @@ impl Habit {
             running_since: None,
             from_card: None,
         })
+    }
+    /// Replaces what the person can edit. A changed schedule moves the next
+    /// run; an unchanged one keeps it, so saving never skips a run.
+    pub fn edit(
+        &mut self,
+        name: String,
+        target: Target,
+        instructions: String,
+        tell: Tell,
+        schedule: Schedule,
+        now: u64,
+    ) -> Result<(), String> {
+        check(&name, &target, &instructions)?;
+        if schedule != self.schedule || self.next_run_at == 0 {
+            self.next_run_at = schedule.next(now)?;
+        } else {
+            schedule.validate()?;
+        }
+        self.name = name.trim().into();
+        self.instructions = match target {
+            Target::Instruction => instructions.trim().into(),
+            _ => String::new(),
+        };
+        self.target = target;
+        self.tell = tell;
+        self.schedule = schedule;
+        Ok(())
     }
     pub fn due(&self, now: u64) -> bool {
         self.running_since.is_none()
@@ -186,6 +312,20 @@ impl Habit {
         self.runs.truncate(20);
         Ok(())
     }
+}
+fn check(name: &str, target: &Target, instructions: &str) -> Result<(), String> {
+    if name.trim().is_empty() || name.chars().count() > 120 {
+        return Err("A scheduled run needs a name".into());
+    }
+    if !target.valid() {
+        return Err("Pick what this scheduled run starts".into());
+    }
+    if *target == Target::Instruction
+        && (instructions.trim().is_empty() || instructions.len() > 32000)
+    {
+        return Err("A scheduled run needs an instruction".into());
+    }
+    Ok(())
 }
 pub fn load(root: &Path, id: &str) -> Result<Vec<Habit>, String> {
     let file = files::read(root, id, None, "habits.json")?;
@@ -220,7 +360,8 @@ fn parse(text: Option<&str>) -> Result<Vec<Habit>, String> {
         .filter(|h| {
             !h.id.trim().is_empty()
                 && !h.name.trim().is_empty()
-                && !h.instructions.trim().is_empty()
+                && h.target.valid()
+                && (h.target != Target::Instruction || !h.instructions.trim().is_empty())
                 && h.schedule.validate().is_ok()
         })
         .take(MAX)
@@ -340,5 +481,183 @@ mod tests {
         let habits = parse(Some(text)).unwrap();
         assert_eq!(habits.len(), 1);
         assert!(habits[0].runs.is_empty());
+    }
+
+    #[test]
+    fn habits_saved_before_targets_read_as_an_instruction_that_tells_every_run() {
+        let text = r#"[{"id":"old","name":"Digest","instructions":"Check the news",
+            "schedule":{"scheduleKind":"weekly","time":"09:00","dayOfWeek":1},
+            "enabled":true,"createdAt":1,"nextRunAt":2,"lastRunAt":null,
+            "lastOutcome":null,"lastError":null,"runs":[]}]"#;
+        let habits = parse(Some(text)).unwrap();
+        assert_eq!(habits.len(), 1);
+        assert_eq!(habits[0].target, Target::Instruction);
+        assert_eq!(habits[0].tell, Tell::EveryRun);
+        assert_eq!(habits[0].instructions, "Check the news");
+        assert_eq!(habits[0].schedule.label(), "Mondays at 09:00");
+        // Saving writes both fields, and they read back the same.
+        let saved = serde_json::to_value(&habits).unwrap();
+        assert_eq!(
+            saved[0]["target"],
+            serde_json::json!({"kind": "instruction"})
+        );
+        assert_eq!(saved[0]["tell"], "everyRun");
+        let again = parse(Some(&saved.to_string())).unwrap();
+        assert_eq!(again[0].target, Target::Instruction);
+    }
+
+    #[test]
+    fn flow_targets_need_no_instruction_but_do_need_their_ids() {
+        let text = r#"[
+            {"id":"a","name":"Release","schedule":{"scheduleKind":"daily"},
+             "target":{"kind":"pipeline","flowId":"release"},"tell":"onlyIfNeeded",
+             "lastRunAt":null,"lastOutcome":null,"lastError":null},
+            {"id":"b","name":"Build","schedule":{"scheduleKind":"daily"},
+             "target":{"kind":"step","flowId":"release","stepId":"build"},
+             "lastRunAt":null,"lastOutcome":null,"lastError":null},
+            {"id":"c","name":"No step","schedule":{"scheduleKind":"daily"},
+             "target":{"kind":"step","flowId":"release","stepId":" "},
+             "lastRunAt":null,"lastOutcome":null,"lastError":null},
+            {"id":"d","name":"No words","schedule":{"scheduleKind":"daily"},
+             "target":{"kind":"instruction"},"instructions":"  ",
+             "lastRunAt":null,"lastOutcome":null,"lastError":null}]"#;
+        let habits = parse(Some(text)).unwrap();
+        let ids: Vec<_> = habits.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert_eq!(habits[0].tell, Tell::OnlyIfNeeded);
+        assert_eq!(habits[0].target.flow_id(), Some("release"));
+        assert_eq!(
+            habits[1].target,
+            Target::Step {
+                flow_id: "release".into(),
+                step_id: "build".into()
+            }
+        );
+    }
+
+    #[test]
+    fn creating_and_editing_check_what_the_target_needs() {
+        let pipeline = Target::Pipeline {
+            flow_id: "release".into(),
+        };
+        let h = Habit::create(
+            "Nightly".into(),
+            pipeline.clone(),
+            "left over from an instruction".into(),
+            Tell::OnlyIfNeeded,
+            Schedule::default(),
+            0,
+        )
+        .unwrap();
+        assert_eq!(h.instructions, "", "a Flow target keeps no instruction");
+        assert!(Habit::create(
+            "Nightly".into(),
+            Target::Instruction,
+            " ".into(),
+            Tell::EveryRun,
+            Schedule::default(),
+            0
+        )
+        .is_err());
+        assert!(Habit::create(
+            "Nightly".into(),
+            Target::Step {
+                flow_id: "release".into(),
+                step_id: String::new()
+            },
+            String::new(),
+            Tell::EveryRun,
+            Schedule::default(),
+            0
+        )
+        .is_err());
+
+        let mut h = h;
+        h.next_run_at = 42;
+        // Same schedule: the next run stays, so a save never skips one.
+        h.edit(
+            " Nightly check ".into(),
+            Target::Instruction,
+            "Check main".into(),
+            Tell::EveryRun,
+            Schedule::default(),
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(h.next_run_at, 42);
+        assert_eq!(h.name, "Nightly check");
+        assert_eq!(h.instructions, "Check main");
+        assert_eq!(h.tell, Tell::EveryRun);
+        // A new time moves it.
+        let at_two = Schedule {
+            time: "02:00".into(),
+            ..Schedule::default()
+        };
+        h.edit(
+            "Nightly check".into(),
+            pipeline,
+            "Check main".into(),
+            Tell::OnlyIfNeeded,
+            at_two.clone(),
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(h.next_run_at, at_two.next(1_000).unwrap());
+        assert_eq!(h.instructions, "");
+        // A bad edit changes nothing.
+        let before = h.name.clone();
+        assert!(h
+            .edit(
+                "".into(),
+                Target::Instruction,
+                "x".into(),
+                Tell::EveryRun,
+                at_two,
+                1_000
+            )
+            .is_err());
+        assert_eq!(h.name, before);
+    }
+
+    #[test]
+    fn the_next_run_reads_as_tonight_today_tomorrow_or_a_date() {
+        use chrono::TimeZone;
+        let at = |day, hour, minute| {
+            Local
+                .with_ymd_and_hms(2026, 11, day, hour, minute, 0)
+                .single()
+                .unwrap()
+                .timestamp_millis() as u64
+        };
+        let evening = at(14, 21, 0);
+        assert_eq!(Schedule::when(at(15, 2, 0), evening), "tonight at 02:00");
+        assert_eq!(Schedule::when(at(14, 23, 0), evening), "tonight at 23:00");
+        assert_eq!(Schedule::when(at(15, 9, 0), evening), "tomorrow at 09:00");
+        let morning = at(14, 8, 0);
+        assert_eq!(Schedule::when(at(14, 14, 30), morning), "today at 14:30");
+        assert_eq!(Schedule::when(at(15, 2, 0), morning), "tomorrow at 02:00");
+        assert_eq!(
+            Schedule::when(at(14, 3, 0), at(14, 1, 0)),
+            "tonight at 03:00"
+        );
+        assert_eq!(
+            Schedule::when(at(16, 9, 0), morning),
+            "Mon, Nov 16 at 09:00"
+        );
+        let weekly = Schedule {
+            schedule_kind: "weekly".into(),
+            day_of_week: 1,
+            ..Schedule::default()
+        };
+        assert_eq!(weekly.cadence(), "every Monday");
+        assert_eq!(Schedule::default().cadence(), "every day");
+        assert_eq!(
+            Schedule {
+                schedule_kind: "hourly".into(),
+                ..Schedule::default()
+            }
+            .cadence(),
+            "every hour"
+        );
     }
 }

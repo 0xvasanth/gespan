@@ -201,6 +201,11 @@ fn icon_body(path: &str) -> Option<&'static str> {
             "<path d='M20 7v5h-5M4 17v-5h5'/><path d='M6 6a8 8 0 0 1 13 2l1 4M4 12l1 4a8 8 0 0 0 13 2'/>"
         }
         "plus" => "<path d='M12 5v14M5 12h14'/>",
+        // The Schedule board's clock and play glyphs, at its 1.8 stroke.
+        "schedule-clock" => {
+            "<circle cx='12' cy='12' r='10' stroke-width='1.8'/><polyline points='12 6 12 12 16 14' stroke-width='1.8'/>"
+        }
+        "schedule-play" => "<polygon points='6 3 20 12 6 21 6 3' stroke-width='1.8'/>",
         "close" => "<path d='m7 7 10 10M17 7 7 17'/>",
         "grip-vertical" => {
             "<circle cx='9' cy='5' r='1'/><circle cx='9' cy='12' r='1'/><circle cx='9' cy='19' r='1'/><circle cx='15' cy='5' r='1'/><circle cx='15' cy='12' r='1'/><circle cx='15' cy='19' r='1'/>"

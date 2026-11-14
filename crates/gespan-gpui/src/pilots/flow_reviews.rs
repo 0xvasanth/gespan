@@ -63,6 +63,8 @@ pub(crate) struct Watch {
     /// Pilots to settle once the current batch of events is handled.
     unsettled: HashSet<String>,
     scheduled: bool,
+    /// Runs a schedule started, until they end: the habit records each.
+    pub(super) habits: HashMap<String, super::scheduler::ScheduledFlow>,
 }
 
 fn goal_and_task(run: &FlowRun) -> (String, String) {
@@ -227,7 +229,7 @@ impl Pilots {
         });
     }
     /// The flow store, read only outside Shell updates.
-    fn flow_store(
+    pub(super) fn flow_store(
         &self,
         cx: &App,
     ) -> Option<std::sync::Arc<std::sync::Mutex<gespan_core::flow::FlowStore>>> {
@@ -554,6 +556,25 @@ impl Pilots {
                 rollups.push((goal, runs));
             }
         }
+        // Runs a schedule started end here. One told only when it needs the
+        // person stays out of the chat when every run of its goal succeeded.
+        let mut quiet = HashSet::new();
+        let mut scheduled = Vec::new();
+        for (goal, runs) in &rollups {
+            let ended: Vec<_> = runs
+                .iter()
+                .filter_map(|r| self.flow_watch.habits.remove(&r.id).map(|h| (h, r.clone())))
+                .collect();
+            let silent = !ended.is_empty()
+                && ended.len() == runs.len()
+                && ended.iter().all(|(h, r)| {
+                    h.tell == habits::Tell::OnlyIfNeeded && r.status == RunStatus::Succeeded
+                });
+            if silent {
+                quiet.insert(goal.name.clone());
+            }
+            scheduled.extend(ended.into_iter().map(|(h, r)| (h, r, !silent)));
+        }
         let Some(pilot) = self.roster.get_mut(pilot_id) else {
             return;
         };
@@ -562,12 +583,17 @@ impl Pilots {
             if let Some(g) = pilot.goals.iter_mut().find(|g| g.name == goal.name) {
                 g.reported = true;
             }
-            pilot.flow_alerts.push(text);
+            if !quiet.contains(&goal.name) {
+                pilot.flow_alerts.push(text);
+            }
             // Ended runs are in the store from here on.
             for id in &goal.runs {
                 self.flow_watch.runs.remove(id);
                 self.flow_watch.ended.remove(id);
             }
+        }
+        for (habit, run, told) in scheduled {
+            self.scheduled_flow_ended(habit, &run, told, cx);
         }
     }
     /// Delivers waiting alerts as one internal message once the chat is idle.

@@ -458,17 +458,17 @@ impl Input {
         self.height = self.height.clamp(self.min_height, self.max_height);
         cx.notify();
     }
-    /// NewHabitPage's three-row AutoTextarea, capped like React's AutoTextarea.
+    /// A scheduled run's instruction: two 19px rows of 12.5px text in the
+    /// Schedule sheet's fixed box, scrolling past that.
     pub(crate) fn habit_instructions(cx: &mut Context<Self>) -> Self {
         let mut input = Self::commit_message(cx);
-        input.label = "What it does".into();
-        input.placeholder =
-            "What it should do on each run, and when it's worth telling you about.".into();
-        input.font_size = 12.;
-        input.line_height = 20.;
-        input.height = 60.;
-        input.min_height = 60.;
-        input.max_height = 320.;
+        input.label = "Instruction".into();
+        input.placeholder = "What it should do on each run.".into();
+        input.font_size = 12.5;
+        input.line_height = 19.;
+        input.height = 38.;
+        input.min_height = 38.;
+        input.max_height = 38.;
         input.max_chars = Some(4000);
         input
     }

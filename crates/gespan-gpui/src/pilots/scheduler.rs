@@ -1,23 +1,49 @@
-use super::panels::{button, empty_state, matches_query, search_bar};
 use super::*;
+use gespan_core::flow::{FlowRun, RunStatus, RunTag};
 use gespan_core::pilot::completions;
-use gespan_core::pilot::habits::{Run, Schedule};
+use gespan_core::pilot::habits::{Run, Target, Tell};
 use gespan_core::time::now_ms;
 
 /// A started hidden run: its session, its view, and whether the session
 /// took the prompt.
 pub(super) type HiddenRun = (i64, Entity<Conversation>, bool);
 
-#[derive(Default)]
-pub(super) struct HabitUi {
-    saving: bool,
-    revision: u64,
-    error: Option<String>,
-    picker_field: Option<&'static str>,
-    expanded: HashSet<(String, u64)>,
+/// A Flow run a schedule started, until it ends.
+pub(crate) struct ScheduledFlow {
+    pub(super) pilot: String,
+    pub(super) habit: String,
+    pub(super) name: String,
+    pub(super) tell: Tell,
+    pub(super) launched: u64,
 }
 
-fn duration(ms: u64) -> String {
+/// The prompt of a scheduled instruction. One that tells only when needed
+/// may answer NOTHING_TO_REPORT; one that tells every run always reports.
+pub(super) fn instruction_prompt(habit: &Habit) -> String {
+    let report = match habit.tell {
+        Tell::EveryRun => "Return a concise report of what you did and found.",
+        Tell::OnlyIfNeeded => {
+            "Return a concise report only if something needs the user's attention or decision; otherwise reply exactly NOTHING_TO_REPORT."
+        }
+    };
+    format!(
+        "[Scheduled habit: {}]\n{}\n\nDo this scheduled work independently. {report} Any session you start belongs to this habit. Do not change the habit unless asked.",
+        habit.name, habit.instructions
+    )
+}
+
+#[derive(Default)]
+pub(super) struct HabitUi {
+    pub(super) saving: bool,
+    pub(super) revision: u64,
+    pub(super) error: Option<String>,
+    pub(super) picker_field: Option<&'static str>,
+    pub(super) expanded: HashSet<(String, u64)>,
+    /// The Pipeline tab's Flows are watched while the form is open.
+    pub(super) watching: Option<(String, Subscription)>,
+}
+
+pub(super) fn duration(ms: u64) -> String {
     let seconds = (ms.saturating_add(500) / 1000).max(1);
     if seconds < 60 {
         format!("{seconds}s")
@@ -27,7 +53,8 @@ fn duration(ms: u64) -> String {
         format!("{}m {}s", seconds / 60, seconds % 60)
     }
 }
-fn when(at: u64, now: u64) -> String {
+/// When a run happened, as Last runs lists it: "Today 02:00", else "Nov 13".
+pub(super) fn when(at: u64, now: u64) -> String {
     let Some(at) = chrono::DateTime::from_timestamp_millis(at as i64) else {
         return String::new();
     };
@@ -36,10 +63,8 @@ fn when(at: u64, now: u64) -> String {
         .map(|d| d.with_timezone(&chrono::Local).date_naive());
     if Some(at.date_naive()) == today {
         format!("Today {}", at.format("%H:%M"))
-    } else if now.saturating_sub(at.timestamp_millis().max(0) as u64) < 6 * 24 * 60 * 60 * 1000 {
-        at.format("%a %H:%M").to_string()
     } else {
-        at.format("%b %-d, %H:%M").to_string()
+        at.format("%b %-d").to_string()
     }
 }
 fn same_day(a: u64, b: u64) -> bool {
@@ -50,7 +75,7 @@ fn same_day(a: u64, b: u64) -> bool {
     day(a).is_some() && day(a) == day(b)
 }
 /// One row per habit, following HabitsList's today/upcoming/done/later order.
-fn grouped_habits(
+pub(super) fn grouped_habits(
     habits: &[Habit],
     now: u64,
     running: impl Fn(&Habit) -> Option<u64>,
@@ -86,85 +111,6 @@ fn grouped_habits(
         later.into_iter().map(|item| item.2).collect(),
     ]
 }
-fn section(title: &'static str) -> gpui::Div {
-    div()
-        .w_full()
-        .min_w_0()
-        .flex_shrink_0()
-        .border_t_1()
-        .border_color(content(0.1))
-        .px_2()
-        .pt_3()
-        .pb_4()
-        .flex()
-        .flex_col()
-        .gap_2()
-        .child(
-            div()
-                .px_2()
-                .text_size(px(11.))
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(content(0.4))
-                .child(title),
-        )
-}
-fn property(label: &'static str, value: impl IntoElement) -> gpui::Div {
-    div()
-        .w_full()
-        .min_w_0()
-        .flex_shrink_0()
-        .flex()
-        .items_start()
-        .gap_2()
-        .text_size(px(12.))
-        .line_height(px(28.))
-        .child(
-            div()
-                .w(px(80.))
-                .flex_shrink_0()
-                .text_color(content(0.45))
-                .child(label),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_color(content(0.85))
-                .child(value),
-        )
-}
-/// Fixed controls must never be compressed by a large, scrollable draft.
-fn habit_field(field: Entity<Input>) -> gpui::Div {
-    div()
-        .px_2()
-        .py_1()
-        .rounded_md()
-        .hover(|s| s.bg(content(0.05)))
-        .w_full()
-        .min_w_0()
-        .flex_shrink_0()
-        .overflow_hidden()
-        .child(field)
-}
-fn habit_icon_button(
-    id: SharedString,
-    label: &'static str,
-    glyph: &'static str,
-) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .role(Role::Button)
-        .aria_label(label)
-        .flex_shrink_0()
-        .size(px(24.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .text_color(content(0.5))
-        .hover(|s| s.bg(content(0.08)).text_color(content(1.)))
-        .child(icon(glyph, 14.))
-}
 impl Pilots {
     pub(super) fn attention_views(&self, id: &str, cx: &App) -> Vec<Entity<Conversation>> {
         let mut views = Vec::new();
@@ -197,244 +143,17 @@ impl Pilots {
         views
     }
 
-    fn habit_running_since(&self, habit: &Habit) -> Option<u64> {
+    pub(super) fn habit_running_since(&self, habit: &Habit) -> Option<u64> {
         self.running
             .values()
             .find(|r| r.habit == habit.id && self.active.as_deref() == Some(r.pilot.as_str()))
             .map(|r| r.launched)
             .or(habit.running_since)
     }
-    fn habit_busy(&self, habit: &Habit) -> bool {
+    pub(super) fn habit_busy(&self, habit: &Habit) -> bool {
         self.habit_running_since(habit).is_some()
             || habit.run_requested
             || habit.enabled && habit.next_run_at <= now_ms()
-    }
-    pub(super) fn habits_list(&mut self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
-        let filter = self.field(
-            "pilot-habit-search",
-            "Search habits…",
-            String::new(),
-            false,
-            cx,
-        );
-        let query = filter.read(cx).content.to_string();
-        let groups =
-            grouped_habits(&self.habits, now_ms(), |h| self.habit_running_since(h)).map(|items| {
-                items
-                    .into_iter()
-                    .filter(|ix| {
-                        let h = &self.habits[*ix];
-                        matches_query(
-                            &query,
-                            &format!("{} {} {}", h.name, h.instructions, h.schedule.label()),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            });
-        let no_matches = !self.habits.is_empty() && groups.iter().all(|items| items.is_empty());
-        let list = div().id("pilot-habits-list").debug_selector(|| "pilot-habits-list".into())
-            .flex_1().min_h_0().min_w_0().overflow_y_scroll().p_2().flex().flex_col().gap_4()
-            .when(no_matches, |d| d.child(empty_state("search-01", "No habits match this search.")))
-            .when(self.habits.is_empty(), |d| d.child(
-                div().flex_1().min_h(px(160.)).flex().flex_col().items_center().justify_center()
-                    .gap_3().px_6().py_10().text_center().text_size(px(12.)).line_height(px(18.))
-                    .text_color(content(0.55)).child(icon("clock", 18.))
-                    .child(format!("Ask {} to put recurring work on a schedule, like a morning digest or a weekly report.", pilot.label()))))
-            .children(["Up next today", "Done today", "Later"].into_iter().zip(groups).filter(|(_, items)| !items.is_empty()).map(|(title, items)| {
-                div().flex_shrink_0().w_full().min_w_0().flex().flex_col().gap_1p5()
-                    .child(div().px_2().text_size(px(11.)).text_color(content(0.4)).child(title))
-                    .children(items.into_iter().map(|ix| self.habit_row(&self.habits[ix], pilot, cx)))
-            }));
-        // "Runs by itself", then + Add: a new schedule opens over the list.
-        let heading = div()
-            .flex_shrink_0()
-            .px(px(16.))
-            .pt(px(14.))
-            .pb(px(6.))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(crate::glass::eyebrow("Runs by itself"))
-            .child(div().flex_1())
-            .child(
-                crate::glass::button("pilot-new-habit", "+ Add", crate::glass::Button::Ghost)
-                    .debug_selector(|| "pilot-new-habit".into())
-                    .h(px(26.))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.route = Some(Route::NewHabit);
-                        this.clear_habit_fields();
-                        cx.notify();
-                    })),
-            );
-        div()
-            .size_full()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .child(heading)
-            .when(!self.habits.is_empty(), |d| d.child(search_bar(filter)))
-            .child(list)
-            .into_any_element()
-    }
-    fn habit_row(&self, h: &Habit, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
-        let id = h.id.clone();
-        let since = self.habit_running_since(h);
-        let subtitle = if let Some(since) = since {
-            format!("Running now · {}", duration(now_ms().saturating_sub(since)))
-        } else if self.habit_busy(h) {
-            "Starting…".into()
-        } else if h.enabled {
-            h.schedule.label()
-        } else {
-            format!("Paused · {}", h.schedule.label())
-        };
-        div()
-            .id(SharedString::from(format!("pilot-habit-{id}")))
-            .debug_selector({
-                let id = id.clone();
-                move || format!("pilot-habit-{id}")
-            })
-            .group("pilot-habit")
-            .w_full()
-            .min_w_0()
-            .flex_shrink_0()
-            .rounded_md()
-            .flex()
-            .items_center()
-            .hover(|s| s.bg(content(0.05)))
-            .child(
-                div()
-                    .id(SharedString::from(format!("pilot-habit-open-{id}")))
-                    .role(Role::Button)
-                    .aria_label(h.name.clone())
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap_2p5()
-                    .px_2()
-                    .py_2()
-                    .child(
-                        div()
-                            .size(px(28.))
-                            .flex_shrink_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_md()
-                            .bg(content(0.06))
-                            .child(if since.is_some() {
-                                div()
-                                    .size(px(8.))
-                                    .rounded_full()
-                                    .bg(rgb(pilot.color))
-                                    .into_any_element()
-                            } else {
-                                icon("clock", 14.)
-                                    .text_color(content(if h.enabled { 0.6 } else { 0.3 }))
-                                    .into_any_element()
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .line_height(px(20.))
-                                    .truncate()
-                                    .text_color(content(if h.enabled || since.is_some() {
-                                        0.85
-                                    } else {
-                                        0.45
-                                    }))
-                                    .child(h.name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .line_height(px(16.))
-                                    .truncate()
-                                    .text_color(content(0.4))
-                                    .child(subtitle),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.route = Some(Route::Habit(id.clone()));
-                        this.clear_habit_fields();
-                        cx.notify();
-                    })),
-            )
-            .child(self.habit_actions(h, false, cx).pr_2())
-            .into_any_element()
-    }
-    fn habit_actions(&self, h: &Habit, page: bool, cx: &mut Context<Self>) -> gpui::Div {
-        let busy = self.habit_busy(h);
-        let running = self.habit_running_since(h).is_some();
-        let run = h.id.clone();
-        let toggle = h.id.clone();
-        let remove = h.id.clone();
-        let suffix = if page {
-            String::new()
-        } else {
-            format!("-{}", h.id)
-        };
-        div()
-            .when(!page, |d| {
-                d.opacity(0.).group_hover("pilot-habit", |s| s.opacity(1.))
-            })
-            .flex_shrink_0()
-            .flex()
-            .items_center()
-            .child(
-                habit_icon_button(
-                    SharedString::from(format!("pilot-habit-run{suffix}")),
-                    if running {
-                        "Already running"
-                    } else if busy {
-                        "Starting"
-                    } else {
-                        "Run now"
-                    },
-                    "zap",
-                )
-                .debug_selector({
-                    let suffix = suffix.clone();
-                    move || format!("pilot-habit-run{suffix}")
-                })
-                .when(busy, |d| d.opacity(0.35))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if !busy {
-                        this.request_habit(&run, cx);
-                    }
-                })),
-            )
-            .child(
-                habit_icon_button(
-                    SharedString::from(format!("pilot-habit-toggle{suffix}")),
-                    if h.enabled { "Pause" } else { "Resume" },
-                    if h.enabled {
-                        "queue-pause"
-                    } else {
-                        "queue-play"
-                    },
-                )
-                .debug_selector({
-                    let suffix = suffix.clone();
-                    move || format!("pilot-habit-toggle{suffix}")
-                })
-                .on_click(cx.listener(move |this, _, _, cx| this.habit_toggle(&toggle, cx))),
-            )
-            .child(
-                habit_icon_button(
-                    SharedString::from(format!("pilot-habit-delete{suffix}")),
-                    "Remove",
-                    "trash",
-                )
-                .debug_selector(move || format!("pilot-habit-delete{suffix}"))
-                .on_click(cx.listener(move |this, _, _, cx| this.remove_habit(&remove, cx))),
-            )
     }
     pub(super) fn clear_habit_fields(&mut self) {
         self.fields.retain(|key, _| !key.starts_with("habit-"));
@@ -466,705 +185,7 @@ impl Pilots {
             cx,
         );
     }
-    pub(super) fn habit_page(
-        &mut self,
-        pilot: &Pilot,
-        id: Option<&str>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        if let Some(id) = id {
-            let Some(h) = self.habits.iter().find(|h| h.id == id).cloned() else {
-                return div()
-                    .size_full()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(self.page_header("Habit", cx))
-                    .child(
-                        div()
-                            .p_4()
-                            .text_size(px(12.))
-                            .text_color(content(0.45))
-                            .child("This habit is no longer available."),
-                    )
-                    .into_any_element();
-            };
-            return self.habit_detail(pilot, h, cx);
-        }
-        self.new_habit_page(window, cx)
-    }
-    fn habit_detail(&self, pilot: &Pilot, h: Habit, cx: &mut Context<Self>) -> AnyElement {
-        let since = self.habit_running_since(&h);
-        let mut info = div()
-            .w_full()
-            .min_w_0()
-            .flex_shrink_0()
-            .px_4()
-            .py_3()
-            .flex()
-            .flex_col()
-            .gap_0p5()
-            .child(property(
-                "Runs",
-                if h.enabled {
-                    h.schedule.label()
-                } else {
-                    "Paused".into()
-                },
-            ));
-        if since.is_none() && self.habit_busy(&h) {
-            info = info.child(property("Next", "Starting…"));
-        } else if h.enabled {
-            info = info.child(property("Next", when(h.next_run_at, now_ms())));
-        }
-        let mut history = section("Recent runs");
-        if let Some(since) = since {
-            history = history.child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_2p5()
-                    .px_2()
-                    .py_2()
-                    .text_size(px(12.))
-                    .child(
-                        div()
-                            .size(px(8.))
-                            .flex_shrink_0()
-                            .rounded_full()
-                            .bg(rgb(pilot.color)),
-                    )
-                    .child(div().flex_1().min_w_0().child("Running now"))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(content(0.4))
-                            .child(duration(now_ms().saturating_sub(since))),
-                    ),
-            );
-        }
-        if h.runs.is_empty() && since.is_none() {
-            history = history.child(
-                div()
-                    .px_2()
-                    .py_3()
-                    .text_size(px(12.))
-                    .text_color(content(0.4))
-                    .child("It hasn't run yet."),
-            );
-        }
-        for run in &h.runs {
-            history = history.child(self.habit_run_row(pilot, &h, run, cx));
-        }
-        div()
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .child(
-                self.page_header(&h.name, cx)
-                    .child(self.habit_actions(&h, true, cx)),
-            )
-            .child(
-                div()
-                    .id("pilot-habit-editor")
-                    .debug_selector(|| "pilot-habit-editor".into())
-                    .w_full()
-                    .min_w_0()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .child(info)
-                    .child(
-                        section("What it does").child(
-                            div()
-                                .id("pilot-habit-instructions")
-                                .debug_selector(|| "pilot-habit-instructions".into())
-                                .w_full()
-                                .min_w_0()
-                                .flex_shrink_0()
-                                .px_2()
-                                .text_size(px(12.))
-                                .line_height(px(20.))
-                                .text_color(content(0.75))
-                                .child(h.instructions.clone()),
-                        ),
-                    )
-                    .child(history),
-            )
-            .into_any_element()
-    }
-    fn habit_run_row(
-        &self,
-        pilot: &Pilot,
-        h: &Habit,
-        run: &Run,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let key = (h.id.clone(), run.at);
-        let expanded = self.habit_ui.expanded.contains(&key);
-        let detail = run
-            .report
-            .as_ref()
-            .or(run.error.as_ref())
-            .is_some_and(|text| !text.is_empty());
-        let (label, color) = match run.outcome.as_str() {
-            "posted" => ("Messaged you", rgb(pilot.color).into()),
-            "quiet" => ("Nothing to report", content(0.25)),
-            _ => ("Couldn't finish", rgb(0xf87171).into()),
-        };
-        let time = format!(
-            "{}{}",
-            when(run.at, now_ms()),
-            if run.duration_ms > 0 {
-                format!(" · {}", duration(run.duration_ms))
-            } else {
-                String::new()
-            }
-        );
-        let mut card = div()
-            .w_full()
-            .min_w_0()
-            .flex_shrink_0()
-            .rounded_md()
-            .when(expanded && detail, |d| d.bg(content(0.05)))
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "pilot-habit-history-{}-{}",
-                        h.id, run.at
-                    )))
-                    .debug_selector({
-                        let id = h.id.clone();
-                        let at = run.at;
-                        move || format!("pilot-habit-history-{id}-{at}")
-                    })
-                    .role(Role::Button)
-                    .aria_label(format!("{label}, {time}"))
-                    .w_full()
-                    .min_w_0()
-                    .px_2()
-                    .py_2()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2p5()
-                    .text_size(px(12.))
-                    .when(detail, |d| {
-                        d.aria_expanded(expanded).hover(|s| s.bg(content(0.05)))
-                    })
-                    .child(div().size(px(8.)).flex_shrink_0().rounded_full().bg(color))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(72.))
-                            .truncate()
-                            .text_color(content(0.85))
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(content(0.4))
-                            .child(time),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if detail {
-                            if !this.habit_ui.expanded.remove(&key) {
-                                this.habit_ui.expanded.insert(key.clone());
-                            }
-                            cx.notify();
-                        }
-                    })),
-            );
-        if expanded && detail {
-            let mut body = div()
-                .id(SharedString::from(format!(
-                    "pilot-habit-report-{}-{}",
-                    h.id, run.at
-                )))
-                .debug_selector({
-                    let id = h.id.clone();
-                    let at = run.at;
-                    move || format!("pilot-habit-report-{id}-{at}")
-                })
-                .w_full()
-                .min_w_0()
-                .flex_shrink_0()
-                .overflow_hidden()
-                .pl(px(26.))
-                .pr_3()
-                .pb_3()
-                .text_size(px(12.))
-                .line_height(px(20.));
-            if let Some(report) = &run.report {
-                for (ix, mut row) in crate::markdown_model::parse_full(report)
-                    .blocks
-                    .iter()
-                    .flat_map(|b| crate::markdown::rows(&b.block))
-                    .enumerate()
-                {
-                    crate::markdown::resolve_file_links(
-                        &mut row,
-                        &pilot.projects.first().cloned().unwrap_or_default(),
-                    );
-                    body = body.child(div().w_full().min_w_0().flex_shrink_0().child(
-                        crate::markdown::body(
-                            &row,
-                            format!("habit-report-{}-{}-{ix}", h.id, run.at).into(),
-                            crate::markdown::Tone::Normal,
-                            None,
-                            std::time::Instant::now(),
-                        ),
-                    ));
-                }
-            } else if let Some(error) = &run.error {
-                body = body.child(div().text_color(rgb(0xf87171)).child(error.clone()));
-            }
-            card = card.child(body);
-        }
-        card.into_any_element()
-    }
-    fn new_habit_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let fresh = !self.fields.contains_key("habit-name");
-        let name = self.field("habit-name", "Name", String::new(), false, cx);
-        let instructions = if let Some(field) = self.fields.get("habit-instructions") {
-            field.clone()
-        } else {
-            let field = cx.new(Input::habit_instructions);
-            self.observations
-                .push(cx.subscribe(&field, |_, _, _: &input::Changed, cx| cx.notify()));
-            self.fields
-                .insert("habit-instructions".into(), field.clone());
-            field
-        };
-        if fresh {
-            // Views are rendered lazily during prepaint. The chat composer may
-            // already have claimed this frame's accessibility focus, so moving
-            // focus here would let the new field claim it a second time.
-            let manager = cx.weak_entity();
-            let focus = name.focus_handle(cx);
-            let field_id = name.entity_id();
-            let revision = self.habit_ui.revision;
-            window.on_next_frame(move |window, cx| {
-                let _ = manager.update(cx, |this, cx| {
-                    if this.route == Some(Route::NewHabit)
-                        && this.habit_ui.revision == revision
-                        && this
-                            .fields
-                            .get("habit-name")
-                            .is_some_and(|field| field.entity_id() == field_id)
-                    {
-                        window.focus(&focus, cx);
-                    }
-                });
-            });
-            name.update(cx, |f, _| f.set_max_chars(80));
-            instructions.update(cx, |f, _| {
-                f.set_max_chars(4000);
-                f.set_font_size(12.);
-                f.set_line_height(20.);
-            });
-            for field in [&name, &instructions] {
-                self.observations
-                    .push(cx.subscribe(field, |this, _, _: &input::Submitted, cx| {
-                        this.save_habit(cx)
-                    }));
-            }
-        }
-        for (key, text) in [
-            ("habit-kind", "daily"),
-            ("habit-time", "09:00"),
-            ("habit-minute", "0"),
-            ("habit-weekday", "1"),
-        ] {
-            self.field(key, key, text.into(), false, cx);
-        }
-        self.fields["habit-time"].update(cx, |f, _| f.set_max_chars(5));
-        let ready = !self.habit_ui.saving
-            && !self.value("habit-name", cx).trim().is_empty()
-            && !self.value("habit-instructions", cx).trim().is_empty();
-        let next = self
-            .habit_schedule(cx)
-            .next(now_ms())
-            .map(|at| when(at, now_ms()))
-            .unwrap_or_else(|_| "Choose a valid time (HH:MM)".into());
-        div()
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .child(
-                self.page_header("New habit", cx).child(
-                    button(
-                        "pilot-habit-save",
-                        if self.habit_ui.saving {
-                            "Creating…"
-                        } else {
-                            "Create"
-                        },
-                    )
-                    .debug_selector(|| "pilot-habit-save".into())
-                    .flex_shrink_0()
-                    .h(px(24.))
-                    .py_0()
-                    .px_2()
-                    .bg(content(0.1))
-                    .when(!ready, |d| d.opacity(0.4))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if ready {
-                            this.save_habit(cx);
-                        }
-                    })),
-                ),
-            )
-            .child(
-                div()
-                    .id("pilot-habit-editor")
-                    .debug_selector(|| "pilot-habit-editor".into())
-                    .w_full()
-                    .min_w_0()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .id("pilot-habit-name-field")
-                            .debug_selector(|| "pilot-habit-name-field".into())
-                            .w_full()
-                            .min_w_0()
-                            .flex_shrink_0()
-                            .px_2()
-                            .pt_3()
-                            .child(
-                                habit_field(name)
-                                    .h(px(32.))
-                                    .py_1p5()
-                                    .font_weight(gpui::FontWeight::MEDIUM),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .flex_shrink_0()
-                            .px_4()
-                            .py_3()
-                            .flex()
-                            .flex_col()
-                            .gap_0p5()
-                            .child(property("Runs", self.schedule_controls(cx)))
-                            .child(property("Next", next)),
-                    )
-                    .child(
-                        section("What it does")
-                            .child(
-                                div()
-                                    .id("pilot-habit-prompt-field")
-                                    .debug_selector(|| "pilot-habit-prompt-field".into())
-                                    .w_full()
-                                    .min_w_0()
-                                    .flex_shrink_0()
-                                    .child(habit_field(instructions)),
-                            )
-                            .when_some(self.habit_ui.error.clone(), |d, error| {
-                                d.child(
-                                    div()
-                                        .px_2()
-                                        .pt_2()
-                                        .text_size(px(12.))
-                                        .text_color(rgb(0xf87171))
-                                        .child(error),
-                                )
-                            }),
-                    ),
-            )
-            .into_any_element()
-    }
-    fn habit_schedule(&self, cx: &App) -> Schedule {
-        Schedule {
-            schedule_kind: self.value("habit-kind", cx),
-            time: self.value("habit-time", cx).trim().into(),
-            minute: self.value("habit-minute", cx).parse().unwrap_or(60),
-            day_of_week: self.value("habit-weekday", cx).parse().unwrap_or(7),
-        }
-    }
-    fn schedule_picker(
-        &self,
-        field: &'static str,
-        label: &'static str,
-        current: String,
-        choices: Vec<(String, String)>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let selected = choices
-            .iter()
-            .find(|(value, _)| value == &current)
-            .map(|(_, label)| label.clone())
-            .unwrap_or_else(|| current.clone());
-        let anchor = AnchorSlot::default();
-        let focus = self.fields[field].focus_handle(cx);
-        let keyboard_choices = choices.clone();
-        let keyboard_anchor = anchor.clone();
-        let expanded = self.picker.is_some() && self.habit_ui.picker_field == Some(field);
-        div()
-            .id(field)
-            .debug_selector(move || format!("pilot-{field}-picker"))
-            .role(Role::ComboBox)
-            .aria_label(format!("{label}: {selected}"))
-            .aria_expanded(expanded)
-            .track_focus(&focus)
-            .tab_index(0)
-            .relative()
-            .h(px(28.))
-            .max_w_full()
-            .flex_shrink_0()
-            .px_2()
-            .rounded_md()
-            .bg(content(0.1))
-            .hover(|s| s.bg(content(0.14)))
-            .flex()
-            .items_center()
-            .gap_1()
-            .text_size(px(12.))
-            .line_height(px(16.))
-            .child(anchor.probe())
-            .child(div().min_w_0().truncate().child(selected))
-            .child(icon("chevron-down", 12.))
-            .on_key_down(
-                cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
-                    if matches!(
-                        event.keystroke.key.as_str(),
-                        "enter" | "space" | "down" | "up"
-                    ) {
-                        this.open_schedule_picker(
-                            field,
-                            label,
-                            keyboard_choices.clone(),
-                            keyboard_anchor.clone(),
-                            window,
-                            cx,
-                        );
-                        window.prevent_default();
-                        cx.stop_propagation();
-                    }
-                }),
-            )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                window.focus(&this.fields[field].focus_handle(cx), cx);
-                this.open_schedule_picker(
-                    field,
-                    label,
-                    choices.clone(),
-                    anchor.clone(),
-                    window,
-                    cx,
-                );
-            }))
-            .into_any_element()
-    }
-    fn open_schedule_picker(
-        &mut self,
-        field: &'static str,
-        label: &'static str,
-        choices: Vec<(String, String)>,
-        anchor: AnchorSlot,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let current = self.value(field, cx);
-        let items = choices
-            .into_iter()
-            .map(|(value, label)| {
-                crate::popover::MenuAction::new(value.clone(), label)
-                    .checked(value == current)
-                    .into()
-            })
-            .collect();
-        let menu = cx.new(|cx| {
-            Menu::new(label, items, window, cx)
-                .width(240.)
-                .select_value(&current)
-        });
-        let picked = cx.subscribe(&menu, move |this, _, event: &MenuEvent, cx| {
-            if let MenuEvent::Picked(value, _) = event
-                && let Some(input) = this.fields.get(field)
-            {
-                input.update(cx, |input, cx| input.set_text(value.to_string(), cx));
-            }
-            this.picker = None;
-            this.habit_ui.picker_field = None;
-            cx.notify();
-        });
-        self.habit_ui.picker_field = Some(field);
-        self.picker = Some(OpenPicker {
-            menu,
-            anchor: Anchor::Slot(anchor),
-            width: 240.,
-            align: crate::popover::Align::Start,
-            _events: vec![picked],
-        });
-        cx.notify();
-    }
-    fn schedule_controls(&self, cx: &mut Context<Self>) -> AnyElement {
-        let kind = self.value("habit-kind", cx);
-        let choices = |items: &[(&str, &str)]| {
-            items
-                .iter()
-                .map(|(value, label)| (value.to_string(), label.to_string()))
-                .collect()
-        };
-        let days = [
-            "Sunday",
-            "Monday",
-            "Tuesday",
-            "Wednesday",
-            "Thursday",
-            "Friday",
-            "Saturday",
-        ];
-        div()
-            .id("pilot-habit-schedule")
-            .debug_selector(|| "pilot-habit-schedule".into())
-            .w_full()
-            .min_w_0()
-            .flex_shrink_0()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap_1p5()
-            .py_0p5()
-            .child(self.schedule_picker(
-                "habit-kind",
-                "Repeats",
-                kind.clone(),
-                choices(&[
-                    ("daily", "Daily"),
-                    ("weekdays", "Weekdays"),
-                    ("weekly", "Weekly"),
-                    ("hourly", "Hourly"),
-                ]),
-                cx,
-            ))
-            .when(kind == "weekly", |d| {
-                d.child(div().text_color(content(0.45)).child("on")).child(
-                    self.schedule_picker(
-                        "habit-weekday",
-                        "Day",
-                        self.value("habit-weekday", cx),
-                        days.into_iter()
-                            .enumerate()
-                            .map(|(ix, label)| (ix.to_string(), label.into()))
-                            .collect(),
-                        cx,
-                    ),
-                )
-            })
-            .child(div().text_color(content(0.45)).child("at"))
-            .when(kind == "hourly", |d| {
-                d.child(
-                    self.schedule_picker(
-                        "habit-minute",
-                        "Minute",
-                        self.value("habit-minute", cx),
-                        [0, 15, 30, 45]
-                            .into_iter()
-                            .map(|minute| (minute.to_string(), format!(":{minute:02}")))
-                            .collect(),
-                        cx,
-                    ),
-                )
-            })
-            .when(kind != "hourly", |d| {
-                d.child(
-                    habit_field(self.fields["habit-time"].clone())
-                        .w(px(84.))
-                        .h(px(28.))
-                        .bg(content(0.1)),
-                )
-            })
-            .into_any_element()
-    }
-    fn save_habit(&mut self, cx: &mut Context<Self>) {
-        if self.habit_ui.saving || self.route != Some(Route::NewHabit) {
-            return;
-        }
-        let Some(pilot) = self.active.clone() else {
-            return;
-        };
-        let name = self
-            .value("habit-name", cx)
-            .trim()
-            .chars()
-            .take(80)
-            .collect();
-        let instructions = self
-            .value("habit-instructions", cx)
-            .trim()
-            .chars()
-            .take(4000)
-            .collect();
-        let habit = match Habit::new(name, instructions, self.habit_schedule(cx), now_ms()) {
-            Ok(h) => h,
-            Err(error) => {
-                self.habit_ui.error = Some(error);
-                cx.notify();
-                return;
-            }
-        };
-        self.habit_ui.saving = true;
-        self.habit_ui.error = None;
-        let root = self.root.clone();
-        let target = pilot.clone();
-        let revision = self.habit_ui.revision;
-        let work = cx.background_executor().spawn(async move {
-            habits::update(&root, &target, |all| {
-                all.push(habit.clone());
-                Ok(())
-            })
-        });
-        cx.spawn(async move |this, cx| {
-            let result = work.await;
-            let _ = this.update(cx, |this, cx| {
-                this.habit_ui.saving = false;
-                match result {
-                    Ok(()) => {
-                        this.reload_files(&pilot, cx);
-                        if this.active.as_deref() == Some(&pilot)
-                            && this.route == Some(Route::NewHabit)
-                            && this.habit_ui.revision == revision
-                        {
-                            this.route = None;
-                            this.clear_habit_fields();
-                        }
-                    }
-                    Err(error) => {
-                        if this.active.as_deref() == Some(&pilot)
-                            && this.habit_ui.revision == revision
-                        {
-                            this.habit_ui.error = Some(error);
-                        }
-                    }
-                }
-                this.changed(cx);
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-    fn request_habit(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(super) fn request_habit(&mut self, id: &str, cx: &mut Context<Self>) {
         if self
             .habits
             .iter()
@@ -1205,7 +226,7 @@ impl Pilots {
         .detach();
         cx.notify();
     }
-    fn remove_habit(&mut self, id: &str, cx: &mut Context<Self>) {
+    pub(super) fn remove_habit(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(pilot) = self.active.clone() else {
             return;
         };
@@ -1392,16 +413,23 @@ impl Pilots {
         .detach();
     }
     fn start_habit(&mut self, id: &str, habit: Habit, cx: &mut Context<Self>) {
+        match habit.target.clone() {
+            Target::Pipeline { flow_id } => {
+                return self.start_habit_flow(id, habit, &flow_id, None, cx);
+            }
+            Target::Step { flow_id, step_id } => {
+                return self.start_habit_flow(id, habit, &flow_id, Some(&step_id), cx);
+            }
+            Target::Instruction => {}
+        }
         self.active_run = Some(-1);
         let Some(pilot) = self.roster.get(id).map(|p| p.label()) else {
             return;
         };
         let target = id.to_string();
         let habit_id = habit.id.clone();
-        let prompt = format!(
-            "[Scheduled habit: {}]\n{}\n\nDo this scheduled work independently. Return a concise report; if nothing requires attention, reply exactly NOTHING_TO_REPORT. Any session you start belongs to this habit. Do not change the habit unless asked.",
-            habit.name, habit.instructions
-        );
+        let tell = habit.tell;
+        let prompt = instruction_prompt(&habit);
         let run = self.spawn_hidden_run(
             id,
             format!("{} · {}", pilot, habit.name),
@@ -1425,6 +453,7 @@ impl Pilots {
                         waiting_since: None,
                         cards: Vec::new(),
                         mailbox: Vec::new(),
+                        tell,
                     },
                 );
                 this.active_run = Some(session);
@@ -1445,6 +474,150 @@ impl Pilots {
             });
         })
         .detach();
+    }
+    /// Starts the habit's Flow, or one step of it, through the same path as
+    /// `flows.start`. Its goal holds only this run, so the goal's rollup is
+    /// this run's report, and the Flow's own alerts carry its failures.
+    fn start_habit_flow(
+        &mut self,
+        id: &str,
+        habit: Habit,
+        flow_id: &str,
+        step: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        let launched = now_ms();
+        let goal = format!("Scheduled: {}", habit.name)
+            .chars()
+            .take(300)
+            .collect::<String>();
+        let tag = RunTag {
+            goal: goal.clone(),
+            task: match step {
+                Some(step) => format!("Step {step}"),
+                None => "Whole pipeline".into(),
+            },
+        };
+        let started = match (self.roster.get(id).cloned(), self.flow_store(cx)) {
+            (Some(pilot), Some(store)) => {
+                self.launch_pilot_flow(&pilot, flow_id, step, HashMap::new(), tag, &store, cx)
+            }
+            (None, _) => Err("Pilot is no longer available".into()),
+            (_, None) => Err("Flows are not ready".into()),
+        };
+        match started {
+            Ok(run) => {
+                if let Some(pilot) = self.roster.get_mut(id) {
+                    pilot.goals.retain(|g| !(g.name == goal && g.reported));
+                }
+                self.flow_watch.habits.insert(
+                    run.id.clone(),
+                    ScheduledFlow {
+                        pilot: id.into(),
+                        habit: habit.id.clone(),
+                        name: habit.name.clone(),
+                        tell: habit.tell,
+                        launched,
+                    },
+                );
+                self.flow_started(id, run);
+                self.flows_changed(id, cx);
+                self.save(cx);
+            }
+            Err(error) => {
+                let scheduled = ScheduledFlow {
+                    pilot: id.into(),
+                    habit: habit.id.clone(),
+                    name: habit.name.clone(),
+                    tell: habit.tell,
+                    launched,
+                };
+                self.finish_scheduled(scheduled, Err(error), cx);
+            }
+        }
+        self.changed(cx);
+    }
+    /// A Flow run a schedule started ended; `told` says whether its goal's
+    /// rollup went to the chat.
+    pub(super) fn scheduled_flow_ended(
+        &mut self,
+        scheduled: ScheduledFlow,
+        run: &FlowRun,
+        told: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let result = if run.status == RunStatus::Succeeded {
+            Ok(told)
+        } else {
+            Err(run
+                .error
+                .clone()
+                .unwrap_or_else(|| format!("The run {}", run.status.as_str())))
+        };
+        // The Flow's own alerts already told the Pilot about a failed run.
+        self.record_scheduled(scheduled, result, cx);
+    }
+    /// A scheduled Flow that never started: recorded and, since it needs
+    /// the person, told in the chat whatever the habit's `tell`.
+    fn finish_scheduled(
+        &mut self,
+        scheduled: ScheduledFlow,
+        result: Result<bool, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = &result {
+            if let Some(m) = self.roster.get_mut(&scheduled.pilot) {
+                m.pending_reports.push(format!(
+                    "**Scheduled run failed**: {}\n\n{error}",
+                    scheduled.name
+                ));
+            }
+            let pilot = scheduled.pilot.clone();
+            self.ensure_chat(&pilot, cx);
+            self.record_scheduled(scheduled, result, cx);
+            self.save(cx);
+            self.dispatch(&pilot, cx);
+        } else {
+            self.record_scheduled(scheduled, result, cx);
+        }
+    }
+    /// Files a scheduled Flow's run in its habit's history. `Ok(told)` is a
+    /// success that did or did not message the person.
+    fn record_scheduled(
+        &mut self,
+        scheduled: ScheduledFlow,
+        result: Result<bool, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let now = now_ms();
+        let run = Run {
+            at: scheduled.launched,
+            duration_ms: now.saturating_sub(scheduled.launched),
+            outcome: match result {
+                Ok(true) => "posted",
+                Ok(false) => "quiet",
+                Err(_) => "failed",
+            }
+            .into(),
+            report: None,
+            error: result.err(),
+        };
+        let root = self.root.clone();
+        let pilot = scheduled.pilot;
+        let target = pilot.clone();
+        let habit = scheduled.habit;
+        self.file_work(
+            pilot,
+            move || {
+                habits::update(&root, &target, |all| {
+                    if let Some(h) = all.iter_mut().find(|h| h.id == habit) {
+                        h.finish(run.clone())?;
+                    }
+                    Ok(())
+                })
+            },
+            cx,
+        );
     }
     /// Starts a hidden standalone session for `pilot_id` with its chat's
     /// settings, files it in `roster.hidden_sessions` and sends `prompt` as
@@ -1604,20 +777,32 @@ impl Pilots {
             ok = false;
             text = error;
         }
-        let report = ok
+        let found = ok
             .then(|| {
                 habits::report(&gespan_core::response::prose(
                     run.view.read(cx).pilot_rows(cx),
                 ))
             })
             .flatten();
+        // Every run reports, even one with nothing to say; one told only when
+        // needed stays quiet then. A failure needs the person either way.
+        let report = match (ok, run.tell) {
+            (true, Tell::EveryRun) => Some(
+                found
+                    .clone()
+                    .unwrap_or_else(|| "Nothing to report.".to_string()),
+            ),
+            (true, Tell::OnlyIfNeeded) => found.clone(),
+            (false, _) => None,
+        };
+        let title = run.view.read(cx).summary.title.clone();
         let root = self.root.clone();
         let id = run.pilot.clone();
         let habit = run.habit.clone();
         let at = run.launched;
         let duration = now_ms().saturating_sub(at);
         let error = (!ok).then_some(text);
-        let stored = report.clone();
+        let failure = error.clone();
         let result = Run {
             at,
             duration_ms: duration,
@@ -1627,7 +812,7 @@ impl Pilots {
                 "failed"
             }
             .into(),
-            report: stored,
+            report: found,
             error,
         };
         self.file_work(
@@ -1642,10 +827,14 @@ impl Pilots {
             },
             cx,
         );
-        if let Some(report) = report {
+        let message = report
+            .map(|report| format!("**Habit report**\n\n{report}"))
+            .or_else(|| {
+                failure.map(|error| format!("**Scheduled run failed**: {title}\n\n{error}"))
+            });
+        if let Some(message) = message {
             if let Some(m) = self.roster.get_mut(&run.pilot) {
-                m.pending_reports
-                    .push(format!("**Habit report**\n\n{report}"));
+                m.pending_reports.push(message);
                 for card in &run.cards {
                     m.pending_reports.push(format!("pilot-card:{card}"));
                 }
@@ -1662,6 +851,7 @@ impl Pilots {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use gespan_core::pilot::habits::Schedule;
 
     #[test]
     fn habits_list_groups_today_with_running_first_and_paused_last() {

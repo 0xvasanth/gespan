@@ -35,19 +35,27 @@ impl Shell {
     }
 
     /// Starts `pilot_id`'s Flow `flow_id`, tagged with the task it serves.
-    pub(crate) fn start_pilot_flow(
+    /// With `step`, only that step of the Flow runs: it starts there and
+    /// ends with it (`Flow::only_step`).
+    pub(crate) fn start_pilot_flow_step(
         &mut self,
         pilot_id: &str,
         flow_id: &str,
+        step: Option<&str>,
         inputs: HashMap<String, String>,
         tag: RunTag,
         cx: &mut Context<Self>,
     ) -> Result<FlowRun, Vec<String>> {
         let store = self.pilot_flows_store().map_err(|e| vec![e])?;
-        let flow = store_lock(&store)
+        let mut flow = store_lock(&store)
             .and_then(|store| store.owned_flow(pilot_id, flow_id))
             .map_err(|e| vec![e])?
             .ok_or_else(|| vec![FLOW_NOT_FOUND.to_string()])?;
+        if let Some(step) = step {
+            flow = flow
+                .only_step(step)
+                .ok_or_else(|| vec![format!("The step {step} is no longer in this Flow")])?;
+        }
         self.with_flow_host(cx, |host, driver| {
             host.start(driver, &flow, &inputs, Some(tag))
         })
@@ -374,14 +382,14 @@ mod tests {
                 for flow_id in ["theirs", "user", "nowhere"] {
                     assert_eq!(
                         shell
-                            .start_pilot_flow("p1", flow_id, task(), tag(), cx)
+                            .start_pilot_flow_step("p1", flow_id, None, task(), tag(), cx)
                             .map(|_| ()),
                         not_found,
                         "{flow_id}"
                     );
                 }
                 let run = shell
-                    .start_pilot_flow("p1", "mine", task(), tag(), cx)
+                    .start_pilot_flow_step("p1", "mine", None, task(), tag(), cx)
                     .unwrap();
                 assert_eq!(run.flow_id, "mine");
                 assert_eq!(run.tag, Some(tag()));
@@ -409,7 +417,7 @@ mod tests {
                 let host = shell.flows_state.host.take();
                 assert_eq!(
                     shell
-                        .start_pilot_flow("p1", "mine", task(), tag(), cx)
+                        .start_pilot_flow_step("p1", "mine", None, task(), tag(), cx)
                         .map(|_| ()),
                     Err(vec![NOT_READY.to_string()])
                 );
@@ -435,7 +443,7 @@ mod tests {
             .update(cx, |shell, _, cx| {
                 save(shell, &[owned("mine", Some("p1")), owned("user", None)]);
                 let run = shell
-                    .start_pilot_flow("p1", "mine", task(), tag(), cx)
+                    .start_pilot_flow_step("p1", "mine", None, task(), tag(), cx)
                     .unwrap();
                 let user = owned("user", None);
                 let user_run = shell.start_flow(&user, &task(), cx).unwrap();
@@ -490,7 +498,7 @@ mod tests {
                 // As before the Pilots entity and its roster exist.
                 let pilots = shell.pilots.take().unwrap();
                 let run = shell
-                    .start_pilot_flow("p1", "mine", task(), tag(), cx)
+                    .start_pilot_flow_step("p1", "mine", None, task(), tag(), cx)
                     .unwrap();
                 (pilots, run)
             })
