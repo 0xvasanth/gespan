@@ -1159,7 +1159,6 @@ impl Roadmap {
                                 })
                                 .px(px(12.))
                                 .flex()
-                                .whitespace_nowrap()
                                 .text_color(match added {
                                     Some(add) => crate::theme::diff_foreground(add),
                                     None => content(0.7),
@@ -1168,11 +1167,13 @@ impl Roadmap {
                                     d.bg(crate::theme::diff_background(add, false))
                                 })
                                 .child(div().w(px(14.)).flex_shrink_0().child(sign))
-                                .child(if text.is_empty() {
+                                // Long lines wrap, so a change at the end of
+                                // one is never cut off.
+                                .child(div().flex_1().min_w_0().child(if text.is_empty() {
                                     " ".to_owned()
                                 } else {
                                     text
-                                })
+                                }))
                         })),
                 )
                 .into_any_element(),
@@ -1261,7 +1262,7 @@ impl Roadmap {
                     .line_height(px(19.))
                     .text_color(content(0.86))
                     .children(text.lines().map(|line| {
-                        div().whitespace_nowrap().child(if line.is_empty() {
+                        div().child(if line.is_empty() {
                             " ".to_owned()
                         } else {
                             line.to_owned()
