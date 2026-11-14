@@ -73,6 +73,8 @@ pub(crate) struct OverviewChrome {
     active: Option<String>,
     tab: OverviewTab,
     routed: bool,
+    /// Setup is open: it takes the full width, so the panel steps aside.
+    setup: bool,
     counts: (usize, usize, usize),
 }
 /// The turn's commands in the Activity tab.
@@ -158,6 +160,12 @@ pub(crate) struct Pilots {
     rail_all: bool,
     /// Setup › Soul shows its editor rather than the read view.
     soul_editing: bool,
+    /// Setup › Memory's open file: `None` for MEMORY.md, else a topic.
+    memory_file: Option<String>,
+    /// Setup › Memory edits the open topic note rather than reading it.
+    memory_topic_editing: bool,
+    /// The active Pilot's topic notes under memory/, as last loaded.
+    memory_topics: Vec<(String, pilot::files::AgentFile)>,
     running: HashMap<i64, RunningHabit>,
     active_run: Option<i64>,
     /// Completion reports per `(pilot_id, source session)`, held until all of them are built.
@@ -406,6 +414,9 @@ impl Pilots {
             rail_ids: Vec::new(),
             rail_all: false,
             soul_editing: false,
+            memory_file: None,
+            memory_topic_editing: false,
+            memory_topics: Vec::new(),
             running: HashMap::new(),
             active_run: None,
             completion_work: HashMap::new(),
@@ -543,13 +554,21 @@ impl Pilots {
             active: self.active.clone(),
             tab: self.overview_tab,
             routed: self.route.is_some(),
+            setup: self.settings.is_some(),
             counts,
         }
     }
-    fn show_overview(&self, cx: &mut Context<Self>) {
+    /// Brings the panel up for something to show there. Setup hides the
+    /// panel, so it closes first.
+    fn show_overview(&mut self, cx: &mut Context<Self>) {
+        self.close_setup(cx);
         if let Some(id) = self.active.clone() {
             cx.emit(ShowDetails(id));
         }
+    }
+    /// Whether the active Pilot's Setup page is open.
+    pub(crate) fn setup_open(&self) -> bool {
+        self.active.is_some() && self.settings.is_some()
     }
     pub(crate) fn current(&self) -> Option<&Pilot> {
         self.active.as_deref().and_then(|id| self.roster.get(id))
@@ -1176,6 +1195,9 @@ impl Pilots {
             self.activity_turn = None;
             self.memory_adding = false;
             self.memory_edit = None;
+            self.memory_file = None;
+            self.memory_topic_editing = false;
+            self.memory_topics.clear();
             self.settings = None;
         }
         self.active = Some(id.into());
@@ -1256,18 +1278,35 @@ impl Pilots {
         let root = self.root.clone();
         let id = id.to_string();
         let work = cx.background_executor().spawn(async move {
-            Ok::<_, String>((
-                pilot::load_files(&root, &pilot)?,
-                habits::load(&root, &pilot.id)?,
-            ))
+            let files = pilot::load_files(&root, &pilot)?;
+            // Topic notes are small and few; the Memory list shows each.
+            let topics = files
+                .topics
+                .iter()
+                .filter_map(|topic| {
+                    pilot::memory::read(&root, &pilot.id, Some(topic))
+                        .ok()
+                        .map(|file| (topic.clone(), file))
+                })
+                .collect::<Vec<_>>();
+            Ok::<_, String>((files, topics, habits::load(&root, &pilot.id)?))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 if this.active.as_deref() == Some(&id) && this.file_load_revision == revision {
                     match result {
-                        Ok((files, habits)) => {
+                        Ok((files, topics, habits)) => {
                             this.files = Some(files);
+                            if this
+                                .memory_file
+                                .as_ref()
+                                .is_some_and(|open| !topics.iter().any(|(t, _)| t == open))
+                            {
+                                this.memory_file = None;
+                                this.memory_topic_editing = false;
+                            }
+                            this.memory_topics = topics;
                             this.habits = habits;
                         }
                         Err(error) => this.error = Some(error),

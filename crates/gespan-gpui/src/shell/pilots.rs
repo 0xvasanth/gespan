@@ -49,6 +49,13 @@ impl Shell {
             .map(|pilots| pilots.read(cx).names())
             .unwrap_or_default()
     }
+    /// A Pilot's Setup takes the full width: its right panel steps aside
+    /// until Back to chat.
+    pub(super) fn pilot_setup_open(&self, cx: &App) -> bool {
+        self.pilots
+            .as_ref()
+            .is_some_and(|m| m.read(cx).setup_open())
+    }
     pub(super) fn pilot_active(&self, cx: &App) -> bool {
         self.pilots
             .as_ref()

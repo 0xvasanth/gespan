@@ -192,7 +192,8 @@ pub(crate) fn segment(
             ])
         })
         .when(!selected, |d| d.hover(|s| s.text_color(content(1.))))
-        .child(label.into())
+        // A segment squeezed below its label's width truncates the label.
+        .child(div().min_w_0().truncate().child(label.into()))
 }
 
 /// A count inside a segment or tab. `hot` marks what waits on you.
