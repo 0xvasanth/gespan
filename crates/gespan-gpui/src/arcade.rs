@@ -564,8 +564,20 @@ fn well(width: f32, height: f32, (cols, rows): (usize, usize), playing: bool) ->
     }
 }
 
-/// The well sits centred under the HUD; idle it paints at half strength
-/// beneath the composer like the other attract loops.
+/// How strongly a Tetris block at `row` of `rows` paints. In play, near
+/// full. Idle, the well is a quiet texture behind the empty session like the
+/// other attract loops: faint, and fainter still toward the composer, so the
+/// window's glass and backdrop read through it rather than a coloured band.
+fn block_alpha(playing: bool, row: f32, rows: usize) -> f32 {
+    if playing {
+        return 0.92;
+    }
+    let depth = (row / rows.max(1) as f32).clamp(0., 1.);
+    0.18 * (1. - 0.6 * depth)
+}
+
+/// The well sits centred under the HUD; idle it paints faintly beneath the
+/// composer like the other attract loops.
 fn paint_tetris(
     bounds: gpui::Bounds<gpui::Pixels>,
     window: &mut Window,
@@ -580,7 +592,6 @@ fn paint_tetris(
         (cols, rows),
         playing,
     );
-    let strength = if playing { 0.92 } else { 0.45 };
     let mut square = |x: f32, y: f32, color: gpui::Hsla| {
         window.paint_quad(fill(
             gpui::Bounds::new(
@@ -600,7 +611,8 @@ fn paint_tetris(
         }
     }
     for &(x, y, color) in blocks {
-        square(x as f32, y as f32, block_color(color, strength));
+        let alpha = block_alpha(playing, y as f32, rows);
+        square(x as f32, y as f32, block_color(color, alpha));
     }
     if playing {
         let cells = next.cells();
@@ -610,20 +622,47 @@ fn paint_tetris(
             square(
                 (cols as i32 + 1 + x - min_x) as f32,
                 (y - min_y) as f32,
-                block_color(next.color, strength),
+                block_color(next.color, block_alpha(true, 0., rows)),
             );
         }
     }
 }
+/// A block in the ink of the other games: tone 0 full strength, tone 1 at
+/// half, so the two tones the rules care about read apart at a glance.
 fn block_color(color: u8, alpha: f32) -> gpui::Hsla {
-    const HUES: [f32; tetris::COLORS as usize] = [0.98, 0.12, 0.52];
-    let lightness = if is_light() { 0.5 } else { 0.62 };
-    gpui::hsla(HUES[color as usize % HUES.len()], 0.72, lightness, alpha)
+    content(alpha * if color.is_multiple_of(2) { 1. } else { 0.48 })
 }
 
 #[cfg(test)]
 mod tests {
     use gpui::AppContext;
+    #[test]
+    fn tetris_draws_its_two_tones_in_the_other_games_ink() {
+        use super::{block_color, content, tetris::COLORS};
+        assert_eq!(COLORS, 2, "two tones, so each has its own shade");
+        let ink = content(1.);
+        let (light, dark) = (block_color(0, 0.9), block_color(1, 0.9));
+        for tone in [light, dark] {
+            // Same hue, saturation and lightness as the ink: monochrome.
+            assert_eq!((tone.h, tone.s, tone.l), (ink.h, ink.s, ink.l));
+        }
+        assert!(light.a - dark.a > 0.4, "the tones read apart in play");
+    }
+    #[test]
+    fn idle_tetris_is_a_faint_texture_that_fades_toward_the_composer() {
+        use super::block_alpha;
+        let rows = 20;
+        let idle: Vec<f32> = (0..rows)
+            .map(|r| block_alpha(false, r as f32, rows))
+            .collect();
+        // Faint enough that the glass and backdrop read through it: no
+        // block is a fifth as strong as a block in play.
+        assert!(idle.iter().all(|a| *a <= 0.18 && *a > 0.));
+        assert!(idle.windows(2).all(|w| w[1] < w[0]), "it fades downwards");
+        assert!(idle[rows - 1] < idle[0] * 0.5, "the bottom row is softest");
+        // A game in play stays bright everywhere in the well.
+        assert!((0..rows).all(|r| block_alpha(true, r as f32, rows) >= 0.9));
+    }
     #[test]
     fn tetris_keys_cover_arrows_wasd_and_space() {
         use super::{Input, tetris_input};
