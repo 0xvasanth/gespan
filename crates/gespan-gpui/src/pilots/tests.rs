@@ -281,6 +281,7 @@ fn detail_pages_slide_over_the_overview_and_back_without_recreating_content(
                             body: "# Document\n\nKeep this reader alive.".into(),
                             created_at: 1,
                             updated_at: 1,
+                            ..Default::default()
                         });
                     cx.notify();
                 });
@@ -5905,6 +5906,124 @@ mod roadmap {
         visual.run_until_parked();
         assert_eq!(runs(visual), 1, "a new run shows without a manual reload");
     }
+
+    // Docs, grouped as the board draws them.
+
+    fn add_doc(s: &Setup, doc: pilot::Document, cx: &mut gpui::VisualTestContext) {
+        s.manager.update(cx, |m, cx| {
+            m.roster.get_mut(&s.id).unwrap().documents.push(doc);
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+
+    fn open_docs(s: &Setup, cx: &mut gpui::VisualTestContext) {
+        s.manager.update(cx, |m, cx| {
+            m.settings = None;
+            m.route = None;
+            m.select_overview(OverviewTab::Docs, cx)
+        });
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+        cx.run_until_parked();
+        cx.refresh().unwrap();
+    }
+
+    #[gpui::test]
+    fn docs_put_this_runs_drafts_under_this_run_and_a_pin_moves_one_on_top(
+        cx: &mut TestAppContext,
+    ) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let flow_id = save_parallel_flow(&s, visual);
+        let run_id = start_pilot_run(&s, &flow_id, "Ship 0.2.1", "Release 0.2.1", visual);
+        let now = gespan_core::time::now_ms();
+        add_doc(
+            &s,
+            pilot::Document {
+                id: "plan".into(),
+                kind: "document".into(),
+                title: "Release plan 0.2.1".into(),
+                body: "# Plan".into(),
+                created_at: now,
+                updated_at: now,
+                run_id: Some(run_id.clone()),
+                ..Default::default()
+            },
+            visual,
+        );
+        add_doc(
+            &s,
+            pilot::Document {
+                id: "old".into(),
+                kind: "document".into(),
+                title: "Release 0.2.0, completed".into(),
+                body: "# Done".into(),
+                created_at: now - 86_400_000,
+                updated_at: now - 86_400_000,
+                ..Default::default()
+            },
+            visual,
+        );
+        open_docs(&s, visual);
+        let inside = |group: &str, doc: &str, visual: &mut gpui::VisualTestContext| {
+            let group = visual.debug_bounds(Box::leak(
+                format!("pilot-docs-group-{group}").into_boxed_str(),
+            ));
+            let doc =
+                visual.debug_bounds(Box::leak(format!("pilot-document-{doc}").into_boxed_str()));
+            group.zip(doc).is_some_and(|(g, d)| g.contains(&d.center()))
+        };
+        assert!(
+            inside("This run", "plan", visual),
+            "the running run's draft"
+        );
+        assert!(inside("Earlier", "old", visual));
+        assert!(visual.debug_bounds("pilot-docs-group-Pinned").is_none());
+
+        // Pinned from its page, it moves on top and stays there.
+        let row = visual.debug_bounds("pilot-document-old").unwrap();
+        visual.simulate_click(row.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let pin = visual
+            .debug_bounds("pilot-document-pin")
+            .expect("the document page offers a pin");
+        visual.simulate_click(pin.center(), Default::default());
+        visual.run_until_parked();
+        s.manager.read_with(visual, |m, _| {
+            assert!(
+                m.roster
+                    .get(&s.id)
+                    .unwrap()
+                    .documents
+                    .iter()
+                    .any(|d| d.id == "old" && d.pinned)
+            );
+        });
+        open_docs(&s, visual);
+        assert!(inside("Pinned", "old", visual));
+        let (pinned, this) = (
+            visual.debug_bounds("pilot-docs-group-Pinned").unwrap(),
+            visual.debug_bounds("pilot-docs-group-This run").unwrap(),
+        );
+        assert!(pinned.top() < this.top(), "pinned first");
+    }
+
+    #[gpui::test]
+    fn new_doc_asks_the_pilot_in_its_chat_box(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        open_docs(&s, visual);
+        let new = visual.debug_bounds("pilot-docs-new").expect("+ New");
+        visual.simulate_click(new.center(), Default::default());
+        visual.run_until_parked();
+        let chat = s.manager.read_with(visual, |m, _| m.chat().unwrap());
+        let text = visual.update(|_, cx| chat.read(cx).input.read(cx).content.to_string());
+        assert_eq!(text, "Write a doc: ");
+    }
 }
 
 // Default provider: start on an installed CLI; switching provider retries.
@@ -6188,6 +6307,7 @@ fn documents_search_like_sessions_and_schedule_lists_every_run(cx: &mut TestAppC
         body: String::new(),
         created_at: 1,
         updated_at: 1,
+        ..Default::default()
     };
     s.window
         .update(cx, |_, _, cx| {

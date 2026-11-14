@@ -5,6 +5,7 @@ pub(crate) mod cards;
 mod color_picker;
 #[cfg(test)]
 mod dictation_tests;
+mod docs;
 mod files;
 mod floating;
 mod flow_reviews;

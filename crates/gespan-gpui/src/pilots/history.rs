@@ -355,7 +355,7 @@ impl Pilots {
 
     /// `pilot`'s History as drawn: loaded on first use and reloaded once
     /// stale.
-    fn shown_history(&mut self, pilot: &str, cx: &mut Context<Self>) {
+    pub(super) fn shown_history(&mut self, pilot: &str, cx: &mut Context<Self>) {
         let fresh = self.histories.contains_key(pilot);
         if !fresh || self.stale_histories.remove(pilot) {
             self.reload_history(pilot, cx);

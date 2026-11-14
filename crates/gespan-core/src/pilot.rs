@@ -179,7 +179,7 @@ pub struct Launch {
     #[serde(default)]
     pub dismissed: bool,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Document {
     pub id: String,
@@ -189,6 +189,12 @@ pub struct Document {
     pub body: String,
     pub created_at: u64,
     pub updated_at: u64,
+    /// Kept on top of the Docs tab, like the Pilot's SOP.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// The pipeline run it was written for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 pub type Work = (Vec<Document>, Vec<Launch>);
 #[derive(Clone, Debug, Serialize, Deserialize)]
