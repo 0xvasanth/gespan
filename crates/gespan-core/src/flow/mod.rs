@@ -8,6 +8,7 @@ pub mod runner;
 pub mod starter;
 pub mod store;
 pub mod template;
+pub mod yaml;
 
 pub use definition::{
     approval_outputs, outputs_of, validate_flow, AgentState, ApprovalState, Flow, FlowInput,
@@ -17,5 +18,6 @@ pub use definition::{
 pub use run::{FlowRun, FlowVisit, RunEdit, RunStatus, RunTag, VisitStatus};
 pub use runner::{AgentOutcome, AgentStatus, Effect, LaunchRequest, Runner, MAX_RUN_STEPS};
 pub use starter::starter_flows;
-pub use store::FlowStore;
+pub use store::{FlowStore, FlowVersion};
 pub use template::{list_bindings, render_template, resolve_inputs, BindingContext};
+pub use yaml::{flow_yaml, yaml_diff, DiffLine};

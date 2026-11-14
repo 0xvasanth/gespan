@@ -226,8 +226,8 @@ static ACTIONS: LazyLock<Vec<Action>> = LazyLock::new(|| {
         action("flows.read", "Read one SOP (Flow) in full, in the shape flows.save takes.", vec![flow_id()], json!({"flowId":"f1"})),
         action(
             "flows.save",
-            "Create an SOP (Flow), or replace one: flows.read it, change it, and save the whole Flow with its id.",
-            vec![req("flow", Flow, "The whole Flow")],
+            "Create an SOP (Flow), or replace one: flows.read it, change it, and save the whole Flow with its id. With draft, an existing Flow keeps its live version and the change waits as a draft the user saves as the next version on the Pipeline tab.",
+            vec![req("flow", Flow, "The whole Flow"), opt("draft", Bool, "Keep the change as a draft instead of making it live")],
             json!({"flow":crate::flow::pilot_schema::example(PROJECT)}),
         ),
         action("flows.delete", "Delete an SOP (Flow).", vec![flow_id()], json!({"flowId":"f1"})),

@@ -4403,6 +4403,195 @@ mod roadmap {
             defined
         })
     }
+    /// `flow_id` as the Pilot reads it, with `name` changed and saved as
+    /// the Pilot does from the Pipeline tab: a draft.
+    fn draft_rename(s: &Setup, flow_id: &str, name: &str, cx: &mut TestAppContext) -> Value {
+        let mut flow = flows_ok(
+            s,
+            "read-for-draft",
+            "flows.read",
+            json!({"flowId": flow_id}),
+            cx,
+        );
+        flow["name"] = json!(name);
+        flows_ok(
+            s,
+            "save-draft",
+            "flows.save",
+            json!({"flow": flow, "draft": true}),
+            cx,
+        )
+    }
+
+    fn live_name(s: &Setup, flow_id: &str, cx: &mut TestAppContext) -> String {
+        flows_ok(s, "read-live", "flows.read", json!({"flowId": flow_id}), cx)["name"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[gpui::test]
+    fn a_pilots_draft_leaves_the_live_pipeline_and_shows_on_the_tab(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let id = save_pilot_flow(&s, "save-release", "Release", visual);
+        let saved = draft_rename(&s, &id, "Release (Linux only on new commits)", visual);
+        assert_eq!(saved["draft"]["version"], 2, "drafted as the next version");
+        // Runs and the Pilot keep reading the live v1.
+        assert_eq!(live_name(&s, &id, visual), "Release");
+        let roadmap = open_roadmap(&s, visual);
+        roadmap.update(visual, |r, cx| r.reload(cx));
+        visual.run_until_parked();
+        roadmap.read_with(visual, |r, _| {
+            let listed: Vec<_> = r.versions.iter().map(|v| (v.version, v.draft)).collect();
+            assert_eq!(listed, [(2, true), (1, false)]);
+            assert_eq!(r.live_version(), Some(1));
+            assert_eq!(r.shown_version(), Some(1), "the live version shows first");
+            assert_eq!(r.drawn.as_ref().unwrap().name, "Release");
+        });
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-roadmap-draft").is_some());
+        assert!(
+            visual
+                .debug_bounds("pilot-roadmap-version-picker")
+                .is_some()
+        );
+        // "See the change" shows the draft's YAML against the live one's.
+        let see = visual.debug_bounds("pilot-roadmap-draft-see").unwrap();
+        visual.simulate_click(see.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        roadmap.read_with(visual, |r, _| assert!(r.yaml && r.diff));
+        assert!(visual.debug_bounds("pilot-roadmap-diff").is_some());
+        assert!(visual.debug_bounds("flow-diagram").is_none());
+        let marked = |prefix: &str, v: &mut gpui::VisualTestContext| {
+            (0..400)
+                .filter(|ix| {
+                    v.debug_bounds(Box::leak(format!("{prefix}{ix}").into_boxed_str()))
+                        .is_some()
+                })
+                .count()
+        };
+        // The name and version changed: two lines out, two in; the rest
+        // reads as it was.
+        assert_eq!(marked("pilot-roadmap-diff-removed-", visual), 2);
+        assert_eq!(marked("pilot-roadmap-diff-added-", visual), 2);
+        assert!(marked("pilot-roadmap-diff-line-", visual) > 4);
+        // Again, and it is back to the live version's graph.
+        let hide = visual.debug_bounds("pilot-roadmap-draft-see").unwrap();
+        visual.simulate_click(hide.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        roadmap.read_with(visual, |r, _| {
+            assert!(!r.yaml && !r.diff);
+            assert_eq!(r.shown_version(), Some(1));
+        });
+        assert!(visual.debug_bounds("pilot-roadmap-diff").is_none());
+        // The version picker still draws the draft itself on demand.
+        roadmap.update(visual, |r, cx| r.select_version(Some(2), cx));
+        visual.run_until_parked();
+        roadmap.read_with(visual, |r, _| {
+            assert_eq!(
+                r.drawn.as_ref().unwrap().name,
+                "Release (Linux only on new commits)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn saving_the_draft_makes_it_the_live_next_version(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let id = save_pilot_flow(&s, "save-release", "Release", visual);
+        draft_rename(&s, &id, "Release v2", visual);
+        let roadmap = open_roadmap(&s, visual);
+        roadmap.update(visual, |r, cx| r.reload(cx));
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let save = visual.debug_bounds("pilot-roadmap-draft-save").unwrap();
+        visual.simulate_click(save.center(), Default::default());
+        visual.run_until_parked();
+        assert_eq!(live_name(&s, &id, visual), "Release v2");
+        roadmap.read_with(visual, |r, _| {
+            let listed: Vec<_> = r.versions.iter().map(|v| (v.version, v.draft)).collect();
+            assert_eq!(listed, [(2, false), (1, false)]);
+            assert_eq!(r.shown_version(), Some(2));
+        });
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-roadmap-draft").is_none());
+    }
+
+    #[gpui::test]
+    fn discarding_the_draft_keeps_the_live_version(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let id = save_pilot_flow(&s, "save-release", "Release", visual);
+        draft_rename(&s, &id, "Not wanted", visual);
+        let roadmap = open_roadmap(&s, visual);
+        roadmap.update(visual, |r, cx| r.reload(cx));
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let discard = visual.debug_bounds("pilot-roadmap-draft-discard").unwrap();
+        visual.simulate_click(discard.center(), Default::default());
+        visual.run_until_parked();
+        assert_eq!(live_name(&s, &id, visual), "Release");
+        roadmap.read_with(visual, |r, _| {
+            assert!(r.draft().is_none());
+            assert_eq!(r.versions.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn yaml_shows_the_shown_version_on_demand(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        save_pilot_flow(&s, "save-release", "Release", visual);
+        open_roadmap(&s, visual);
+        visual.refresh().unwrap();
+        // The graph by default; YAML when asked.
+        assert!(visual.debug_bounds("pilot-roadmap-yaml").is_none());
+        let yaml = visual.debug_bounds("pilot-roadmap-YAML").unwrap();
+        visual.simulate_click(yaml.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-roadmap-yaml").is_some());
+        assert!(visual.debug_bounds("pilot-roadmap-yaml-text").is_some());
+        assert!(visual.debug_bounds("flow-diagram").is_none());
+        let graph = visual.debug_bounds("pilot-roadmap-Graph").unwrap();
+        visual.simulate_click(graph.center(), Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("pilot-roadmap-yaml").is_none());
+    }
+
+    #[gpui::test]
+    fn a_draft_of_a_new_flow_is_simply_saved_as_v1(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        let mut flow = flow_blueprint("", &s.project);
+        flow["name"] = json!("Brand new");
+        let saved = flows_ok(
+            &s,
+            "save-new",
+            "flows.save",
+            json!({"flow": flow, "draft": true}),
+            cx,
+        );
+        assert!(
+            saved.get("draft").is_none(),
+            "nothing live to keep apart from"
+        );
+        let id = saved["flow"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(live_name(&s, &id, cx), "Brand new");
+    }
+
     #[gpui::test]
     fn pipeline_follows_the_newest_flow_until_one_is_picked(cx: &mut TestAppContext) {
         let s = setup(cx);
@@ -5301,7 +5490,7 @@ mod roadmap {
         let s = setup(cx);
         hold_outbox(&s, cx);
         let visual = &mut roadmap_visual(&s, cx);
-        assert_eq!(ASK, "Ask about this roadmap or ask for a change…");
+        assert_eq!(ASK, "Ask to change this pipeline");
         // No Flow yet: the input is there, and the text goes alone, since
         // the user may be asking for a first Flow.
         let roadmap = open_roadmap(&s, visual);

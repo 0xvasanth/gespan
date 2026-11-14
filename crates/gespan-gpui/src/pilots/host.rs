@@ -139,15 +139,22 @@ fn read_flows(
         ),
         "flows.save" => {
             let flow = flow.ok_or("Provide flow")?;
+            let flows = store.list()?;
             // Another Pilot's or the user's Flow is not this Pilot's to see.
-            if store
-                .list()?
+            if flows
                 .iter()
                 .any(|f| f.id == flow.id && f.owner.as_deref() != Some(owner))
             {
                 return Err("Flow not found".into());
             }
-            json!({"flow": store.upsert(&flow)?})
+            let draft = input.get("draft").and_then(Value::as_bool) == Some(true);
+            // A new Flow has no live version to keep: it is saved as v1.
+            if draft && flows.iter().any(|f| f.id == flow.id) {
+                let draft = store.save_draft(&flow)?;
+                json!({"flow": draft.flow, "draft": {"version": draft.version}})
+            } else {
+                json!({"flow": store.upsert(&flow)?})
+            }
         }
         "flows.runs" => {
             let goal = input.get("goal").and_then(Value::as_str);

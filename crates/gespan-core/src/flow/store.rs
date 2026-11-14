@@ -43,6 +43,104 @@ pub(crate) struct FlowVisitRow {
     visit_json: String,
 }
 
+/// One version of a Flow: a numbered snapshot of a definition that was
+/// live, or the one draft being edited before it is saved as the next.
+/// `flows` keeps the live definition, so running a Flow reads nothing here.
+#[derive(Debug, toasty::Model)]
+#[table = "flow_versions"]
+#[unique(name = "flow_versions_number_idx", flow_id, version)]
+pub(crate) struct FlowVersionRow {
+    /// `<flow id>:v<n>`, or `<flow id>:draft`.
+    #[key]
+    id: String,
+    flow_id: String,
+    version: i64,
+    /// `"saved"` or `"draft"`.
+    status: String,
+    definition_json: String,
+    created_at: i64,
+}
+
+/// A Flow version as the Pipeline tab lists it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlowVersion {
+    pub flow_id: String,
+    /// v1, v2…; a draft carries the number it will be saved as.
+    pub version: i64,
+    pub draft: bool,
+    pub flow: Flow,
+    pub created_at: i64,
+}
+
+const SAVED: &str = "saved";
+const DRAFT: &str = "draft";
+
+fn version_id(flow_id: &str, version: i64) -> String {
+    format!("{flow_id}:v{version}")
+}
+fn draft_id(flow_id: &str) -> String {
+    format!("{flow_id}:draft")
+}
+
+/// The definition without its timestamps, to tell whether a save changed it.
+fn definition_of(flow: &Flow) -> Result<serde_json::Value, toasty::Error> {
+    let mut flow = flow.clone();
+    (flow.created_at, flow.updated_at) = (0, 0);
+    serde_json::to_value(&flow).map_err(json_error)
+}
+
+/// The newest saved version of `flow_id`, if any.
+async fn latest_saved(
+    tx: &mut toasty::Transaction<'_>,
+    flow_id: &str,
+) -> Result<Option<FlowVersionRow>, toasty::Error> {
+    let version = FlowVersionRow::fields();
+    FlowVersionRow::filter(
+        version
+            .flow_id()
+            .eq(flow_id)
+            .and(version.status().eq(SAVED.to_owned())),
+    )
+    .order_by(version.version().desc())
+    .first()
+    .exec(tx)
+    .await
+}
+
+/// Records `flow` as the next saved version unless the newest already has
+/// the same definition.
+async fn record_version(
+    tx: &mut toasty::Transaction<'_>,
+    flow: &Flow,
+    at: i64,
+) -> Result<(), toasty::Error> {
+    let latest = latest_saved(tx, &flow.id).await?;
+    let next = match &latest {
+        Some(row) => {
+            let same = serde_json::from_str::<Flow>(&row.definition_json)
+                .ok()
+                .map(|old| definition_of(&old))
+                .transpose()?
+                == Some(definition_of(flow)?);
+            if same {
+                return Ok(());
+            }
+            row.version + 1
+        }
+        None => 1,
+    };
+    FlowVersionRow::create()
+        .id(version_id(&flow.id, next))
+        .flow_id(flow.id.clone())
+        .version(next)
+        .status(SAVED.to_owned())
+        .definition_json(serde_json::to_string(flow).map_err(json_error)?)
+        .created_at(at)
+        .exec(tx)
+        .await?;
+    Ok(())
+}
+
 /// The foreign keys the hand-made tables declared, which Toasty's DDL
 /// cannot: a run needs its Flow and a visit its run, and deleting a Flow
 /// deletes its runs and their visits (`ON DELETE CASCADE`).
@@ -142,8 +240,169 @@ pub struct FlowStore {
 
 impl FlowStore {
     pub fn open(db: &Path) -> Result<Self, String> {
-        Ok(Self {
+        let store = Self {
             db: orm::open(Kind::Gespan, db)?,
+        };
+        store.backfill_versions()?;
+        Ok(store)
+    }
+
+    /// Flows saved before versions existed become v1, exactly as they are,
+    /// dated when they were last saved. Runs on every open and does nothing
+    /// once each Flow has a version.
+    fn backfill_versions(&self) -> Result<(), String> {
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let flows = FlowRow::all().exec(tx).await?;
+                for row in flows {
+                    if latest_saved(tx, &row.id).await?.is_some() {
+                        continue;
+                    }
+                    // A definition that no longer parses stays as it is;
+                    // `list` already skips it.
+                    if serde_json::from_str::<Flow>(&row.definition_json).is_err() {
+                        continue;
+                    }
+                    FlowVersionRow::create()
+                        .id(version_id(&row.id, 1))
+                        .flow_id(row.id.clone())
+                        .version(1)
+                        .status(SAVED.to_owned())
+                        .definition_json(row.definition_json.clone())
+                        .created_at(row.updated_at)
+                        .exec(tx)
+                        .await?;
+                }
+                Ok(())
+            })
+        })
+    }
+
+    /// `flow_id`'s versions, the draft first, then newest saved first.
+    pub fn versions(&self, flow_id: &str) -> Result<Vec<FlowVersion>, String> {
+        let rows = self.db.run(|mut db| async move {
+            let version = FlowVersionRow::fields();
+            FlowVersionRow::filter(version.flow_id().eq(flow_id))
+                .order_by(version.version().desc())
+                .exec(&mut db)
+                .await
+        })?;
+        // A draft is stored as version 0; it will be saved as the next one.
+        let next = rows
+            .iter()
+            .filter(|row| row.status == SAVED)
+            .map(|row| row.version)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let mut versions: Vec<FlowVersion> = rows
+            .into_iter()
+            .filter_map(
+                |row| match serde_json::from_str::<Flow>(&row.definition_json) {
+                    Ok(flow) => Some(FlowVersion {
+                        flow_id: row.flow_id,
+                        version: if row.status == DRAFT {
+                            next
+                        } else {
+                            row.version
+                        },
+                        draft: row.status == DRAFT,
+                        flow,
+                        created_at: row.created_at,
+                    }),
+                    Err(error) => {
+                        tracing::warn!(id = %row.id, %error, "skipped an unreadable flow version");
+                        None
+                    }
+                },
+            )
+            .collect();
+        versions.sort_by_key(|v| (!v.draft, std::cmp::Reverse(v.version)));
+        Ok(versions)
+    }
+
+    /// The draft being edited for `flow_id`, if any.
+    pub fn draft(&self, flow_id: &str) -> Result<Option<FlowVersion>, String> {
+        Ok(self.versions(flow_id)?.into_iter().find(|v| v.draft))
+    }
+
+    /// Keeps `flow` as `flow.id`'s draft, numbered as the next version. The
+    /// live definition is untouched until [`Self::publish_draft`]. The Flow
+    /// must exist, and the draft must be valid.
+    pub fn save_draft(&self, flow: &Flow) -> Result<FlowVersion, String> {
+        let errors = validate_flow(flow).errors;
+        if !errors.is_empty() {
+            return Err(format!("Flow is invalid: {}", errors.join("; ")));
+        }
+        let now = now_millis();
+        let draft = flow.clone();
+        self.db.transaction(|tx| {
+            Box::pin(async move {
+                let Some(live) = FlowRow::filter_by_id(&draft.id).first().exec(tx).await? else {
+                    return Ok(Err("Flow not found".to_owned()));
+                };
+                let next = latest_saved(tx, &draft.id)
+                    .await?
+                    .map_or(1, |row| row.version + 1);
+                let mut stored = draft.clone();
+                // A draft keeps the Flow's identity and creation time.
+                stored.created_at = serde_json::from_str::<Flow>(&live.definition_json)
+                    .map(|f| f.created_at)
+                    .unwrap_or(now);
+                stored.updated_at = now;
+                let raw = serde_json::to_string(&stored).map_err(json_error)?;
+                match FlowVersionRow::filter_by_id(draft_id(&draft.id))
+                    .first()
+                    .exec(tx)
+                    .await?
+                {
+                    Some(mut row) => {
+                        row.update()
+                            .definition_json(raw)
+                            .created_at(now)
+                            .exec(tx)
+                            .await?
+                    }
+                    None => {
+                        FlowVersionRow::create()
+                            .id(draft_id(&draft.id))
+                            .flow_id(draft.id.clone())
+                            // Unnumbered until saved; see `versions`.
+                            .version(0)
+                            .status(DRAFT.to_owned())
+                            .definition_json(raw)
+                            .created_at(now)
+                            .exec(tx)
+                            .await?;
+                    }
+                }
+                Ok(Ok(FlowVersion {
+                    flow_id: stored.id.clone(),
+                    version: next,
+                    draft: true,
+                    flow: stored,
+                    created_at: now,
+                }))
+            })
+        })?
+    }
+
+    /// Makes `flow_id`'s draft the live definition, saved as its version.
+    pub fn publish_draft(&self, flow_id: &str) -> Result<Flow, String> {
+        let draft = self.draft(flow_id)?.ok_or("No draft to save")?;
+        let saved = self.upsert(&draft.flow)?;
+        self.discard_draft(flow_id)?;
+        Ok(saved)
+    }
+
+    /// Drops `flow_id`'s draft; the live definition stays.
+    pub fn discard_draft(&self, flow_id: &str) -> Result<(), String> {
+        let id = draft_id(flow_id);
+        self.db.run(|mut db| async move {
+            FlowVersionRow::filter_by_id(&id)
+                .delete()
+                .exec(&mut db)
+                .await
         })
     }
 
@@ -252,6 +511,8 @@ impl FlowStore {
                             .await?;
                     }
                 }
+                // Every change to the live definition is the next version.
+                record_version(tx, &saved, now).await?;
                 Ok(saved)
             })
         })
@@ -275,6 +536,13 @@ impl FlowStore {
                 if active.is_some() {
                     return Ok(Err("Flow has an active run".to_owned()));
                 }
+                // Versions are only written here, so this store keeps them
+                // with their Flow rather than a trigger.
+                let version = FlowVersionRow::fields();
+                FlowVersionRow::filter(version.flow_id().eq(&id))
+                    .delete()
+                    .exec(tx)
+                    .await?;
                 FlowRow::filter_by_id(&id).delete().exec(tx).await?;
                 Ok(Ok(()))
             })
@@ -840,11 +1108,187 @@ mod tests {
             .save_run(&run("r2", &flow("ghost"), RunStatus::Running, 1))
             .is_err());
         assert!(s.save_visit(&visit("v2", "r1", 1)).is_err());
+        // An adopted Flow arrives as its v1, exactly as it was.
+        let versions = s.versions("f1").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!((versions[0].version, versions[0].draft), (1, false));
+        assert_eq!(versions[0].flow, f);
+        assert_eq!(versions[0].created_at, 5, "dated when it was last saved");
         // And deleting the Flow still takes its runs and their visits.
         s.delete("f1").unwrap();
         assert_eq!(texts(&s, "SELECT id FROM flow_runs"), Vec::<String>::new());
         assert_eq!(
             texts(&s, "SELECT id FROM flow_visits"),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A Flow saved by a build without versions, on a file already on
+    /// Toasty: written straight to `flows`, as that build did.
+    fn old_flow_row(path: &Path, f: &Flow, updated_at: i64) {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute(
+            "INSERT INTO flows (id, definition_json, updated_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![f.id, serde_json::to_string(f).unwrap(), updated_at],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn existing_pipelines_become_v1_exactly_as_they_were_and_keep_their_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        // The file exists with today's tables; its Flows predate versions.
+        drop(FlowStore::open(&path).unwrap());
+        let (a, mut b) = (flow("a"), flow("b"));
+        b.name = "Release".into();
+        old_flow_row(&path, &a, 100);
+        old_flow_row(&path, &b, 200);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let r = run("r1", &b, RunStatus::Succeeded, 150);
+        conn.execute(
+            "INSERT INTO flow_runs (id, flow_id, status, created_at, run_json) VALUES ('r1', 'b', 'succeeded', 150, ?1)",
+            [serde_json::to_string(&r).unwrap()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let s = FlowStore::open(&path).unwrap();
+        for (f, at) in [(&a, 100), (&b, 200)] {
+            let versions = s.versions(&f.id).unwrap();
+            assert_eq!(versions.len(), 1, "{}", f.id);
+            assert_eq!((versions[0].version, versions[0].draft), (1, false));
+            assert_eq!(&versions[0].flow, f, "the definition is untouched");
+            assert_eq!(versions[0].created_at, at);
+        }
+        // Live definitions and runs are as they were.
+        assert_eq!(s.list().unwrap().len(), 2);
+        assert_eq!(s.runs("b", 10).unwrap(), vec![r]);
+        drop(s);
+        // Opening again adds nothing.
+        let s = FlowStore::open(&path).unwrap();
+        assert_eq!(s.versions("a").unwrap().len(), 1);
+        assert_eq!(
+            texts(&s, "SELECT id FROM flow_versions ORDER BY id"),
+            ["a:v1", "b:v1"]
+        );
+    }
+
+    #[test]
+    fn an_unreadable_old_flow_is_left_alone_by_the_backfill() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.db");
+        drop(FlowStore::open(&path).unwrap());
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO flows (id, definition_json, updated_at) VALUES ('bad', '{not json', 1)",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+        let s = FlowStore::open(&path).expect("one bad row does not stop the store");
+        assert!(s.versions("bad").unwrap().is_empty());
+    }
+
+    #[test]
+    fn each_change_to_a_flow_is_its_next_version_and_a_resave_is_not() {
+        let s = store();
+        let mut f = flow("f");
+        s.upsert(&f).unwrap();
+        s.upsert(&f).unwrap();
+        assert_eq!(
+            s.versions("f").unwrap().len(),
+            1,
+            "the same definition again"
+        );
+        f.name = "Renamed".into();
+        s.upsert(&f).unwrap();
+        let versions = s.versions("f").unwrap();
+        let numbers: Vec<_> = versions.iter().map(|v| v.version).collect();
+        assert_eq!(numbers, [2, 1], "newest first");
+        assert_eq!(versions[0].flow.name, "Renamed");
+        assert_ne!(versions[1].flow.name, "Renamed");
+    }
+
+    #[test]
+    fn a_draft_stays_apart_from_the_live_flow_until_saved_as_the_next_version() {
+        let s = store();
+        let f = flow("f");
+        s.upsert(&f).unwrap();
+        let mut edited = f.clone();
+        edited.description = "Only build Linux when main moved".into();
+        let draft = s.save_draft(&edited).unwrap();
+        assert_eq!((draft.version, draft.draft), (2, true));
+        // Running reads the live Flow, which has not changed.
+        assert_eq!(s.list().unwrap()[0].description, f.description);
+        let versions = s.versions("f").unwrap();
+        assert_eq!(
+            versions
+                .iter()
+                .map(|v| (v.version, v.draft))
+                .collect::<Vec<_>>(),
+            [(2, true), (1, false)],
+            "the draft leads"
+        );
+        // Editing the draft again keeps one draft.
+        edited.description = "Only build Linux when main has new commits".into();
+        s.save_draft(&edited).unwrap();
+        assert_eq!(s.versions("f").unwrap().len(), 2);
+        let live = s.publish_draft("f").unwrap();
+        assert_eq!(live.description, edited.description);
+        assert_eq!(s.list().unwrap()[0].description, edited.description);
+        let versions = s.versions("f").unwrap();
+        assert_eq!(
+            versions
+                .iter()
+                .map(|v| (v.version, v.draft))
+                .collect::<Vec<_>>(),
+            [(2, false), (1, false)]
+        );
+        assert!(s.draft("f").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_discarded_draft_leaves_the_live_flow_and_its_versions() {
+        let s = store();
+        let f = flow("f");
+        s.upsert(&f).unwrap();
+        let mut edited = f.clone();
+        edited.name = "Draft name".into();
+        s.save_draft(&edited).unwrap();
+        s.discard_draft("f").unwrap();
+        assert!(s.draft("f").unwrap().is_none());
+        assert_eq!(s.versions("f").unwrap().len(), 1);
+        assert_eq!(s.list().unwrap()[0].name, f.name);
+        assert!(s.publish_draft("f").is_err(), "nothing to save");
+    }
+
+    #[test]
+    fn a_draft_needs_a_valid_definition_and_an_existing_flow() {
+        let s = store();
+        assert_eq!(s.save_draft(&flow("ghost")).unwrap_err(), "Flow not found");
+        let f = flow("f");
+        s.upsert(&f).unwrap();
+        let mut broken = f.clone();
+        broken.initial = "missing-state".into();
+        assert!(s
+            .save_draft(&broken)
+            .unwrap_err()
+            .starts_with("Flow is invalid"));
+        assert!(s.draft("f").unwrap().is_none());
+    }
+
+    #[test]
+    fn deleting_a_flow_deletes_its_versions_and_draft() {
+        let s = store();
+        let f = flow("f");
+        s.upsert(&f).unwrap();
+        let mut edited = f.clone();
+        edited.name = "Next".into();
+        s.save_draft(&edited).unwrap();
+        s.delete("f").unwrap();
+        assert_eq!(
+            texts(&s, "SELECT id FROM flow_versions"),
             Vec::<String>::new()
         );
     }
