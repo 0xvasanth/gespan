@@ -430,7 +430,9 @@ impl View {
 fn view_options(source: &str) -> Vec<(View, &'static str)> {
     let mut views = vec![(View::All, "All")];
     if source == "github" {
-        views.push((View::ReviewRequested, "Review requested"));
+        // "Reviews" keeps the three tabs inside the list; the row meta and the
+        // tab's accessible name still say "Review requested".
+        views.push((View::ReviewRequested, "Reviews"));
     }
     views.push((
         View::Assigned,
@@ -743,9 +745,14 @@ impl Inbox {
                     .count();
                 glass::segmented()
                     .id("inbox-views")
+                    .debug_selector(|| "inbox-views".into())
                     .role(Role::TabList)
                     .aria_label("Inbox view")
                     .self_start()
+                    // Never wider than the list: the tabs shrink and their
+                    // labels truncate instead of running into the detail pane.
+                    .max_w_full()
+                    .min_w_0()
                     .children(view_options(&self.state.source).into_iter().map(
                         |(option, label)| {
                             let selected = view == option;
@@ -761,10 +768,16 @@ impl Inbox {
                             )
                             .debug_selector(move || format!("inbox-view-{}", option.id()))
                             .role(Role::Tab)
-                            .aria_label(label)
+                            .aria_label(match option {
+                                View::ReviewRequested => "Review requested",
+                                _ => label,
+                            })
                             .aria_selected(selected)
+                            .px(px(9.))
+                            .gap(px(4.))
+                            .min_w_0()
                             .when_some(count.filter(|(n, _)| *n > 0), |d, (n, hot)| {
-                                d.child(glass::count(n, hot))
+                                d.child(glass::count(n, hot).flex_none())
                             })
                             .on_click(cx.listener(move |this, _, _, cx| this.set_view(option, cx)))
                         },
@@ -879,6 +892,7 @@ impl Inbox {
             rows.extend(items.into_iter().map(|item| self.list_row(item, cx)));
         }
         div()
+            .debug_selector(|| "inbox-list".into())
             .relative()
             .w(px(self.state.list_width.clamp(240., 420.)))
             .h_full()
@@ -3853,7 +3867,7 @@ mod glass_view_tests {
             ids("github"),
             [
                 ("all", "All"),
-                ("review-requested", "Review requested"),
+                ("review-requested", "Reviews"),
                 ("assigned", "Assigned")
             ]
         );
@@ -4089,6 +4103,59 @@ mod glass_view_tests {
                 label.bottom(),
                 row.top()
             );
+        }
+    }
+
+    #[gpui::test]
+    fn the_view_tabs_stay_inside_the_list_at_every_width(cx: &mut TestAppContext) {
+        // A big inbox made "All 972 · Review requested · Assigned" wider than
+        // the list, so the tabs ran over the list's edge into the detail pane.
+        // Every tab must stay inside the list's padding, at the narrowest and
+        // the widest list, and with or without a review count.
+        for (width, reviews) in [(240., true), (280., true), (280., false), (420., true)] {
+            let mut items: Vec<Item> = (1..=972)
+                .map(|n| pr("0xvasanth/gespan", n, &format!("Change {n}")))
+                .collect();
+            if reviews {
+                for item in items.iter_mut().take(12) {
+                    item.attention_reason = "review_requested".into();
+                }
+            }
+            let window = open(cx, move |inbox| {
+                connect(inbox);
+                inbox.state.list_width = width;
+                inbox.snapshot.items = items;
+            });
+            let mut visual = visual(window, cx);
+            let list = visual
+                .debug_bounds("inbox-list")
+                .expect("the list is on screen");
+            let tabs = visual
+                .debug_bounds("inbox-views")
+                .expect("the view tabs show");
+            let case = format!("width {width}, reviews {reviews}");
+            // The header pads the list by 18px on each side.
+            assert!(
+                tabs.right() <= list.right() - px(18.) + px(0.5),
+                "tabs end at {:?}, past the list's padding at {:?} ({case})",
+                tabs.right(),
+                list.right() - px(18.)
+            );
+            for id in [
+                "inbox-view-all",
+                "inbox-view-review-requested",
+                "inbox-view-assigned",
+            ] {
+                let tab = visual.debug_bounds(id).expect("each tab shows");
+                assert!(
+                    tab.right() <= tabs.right() + px(0.5) && tab.left() >= tabs.left() - px(0.5),
+                    "{id} at {:?}..{:?} spills out of the tabs {:?}..{:?} ({case})",
+                    tab.left(),
+                    tab.right(),
+                    tabs.left(),
+                    tabs.right()
+                );
+            }
         }
     }
 
