@@ -1278,7 +1278,14 @@ impl Pilots {
         })
         .detach();
     }
-    pub(crate) fn rail(&mut self, project: Option<String>, cx: &mut Context<Self>) -> AnyElement {
+    /// The left nav's Pilots section. `updated` says when each session last
+    /// changed, for the age of a Pilot whose chat is not loaded.
+    pub(crate) fn rail(
+        &mut self,
+        project: Option<String>,
+        updated: &HashMap<i64, u64>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         if !self.prefs.pilots {
             return div().into_any_element();
         }
@@ -1387,6 +1394,10 @@ impl Pilots {
                 )
             });
         div()
+            .debug_selector(|| "rail-pilots".into())
+            // The section spans the rail like every other row, so "All N →"
+            // and each status sit at the right edge, as on the board.
+            .w_full()
             .px(px(10.))
             // The rail's 1px gap between rows.
             .flex()
@@ -1551,16 +1562,7 @@ impl Pilots {
                             })
                             .when(unread > 0, |d| d.invisible())
                             .group_hover("pilot-rail-row", |s| s.invisible())
-                            .child(match state {
-                                "needs-you" => "needs you".to_owned(),
-                                "working" => "working".to_owned(),
-                                _ => self
-                                    .chats
-                                    .get(&pilot.id)
-                                    .map(|v| v.read(cx).summary.updated_at)
-                                    .map(|at| pilot_age(at, gespan_core::time::now_ms()))
-                                    .unwrap_or_default(),
-                            }),
+                            .child(self.rail_status(&pilot, state, updated, cx)),
                     )
                     .when(unread > 0, |d| {
                         d.child(
@@ -1841,6 +1843,38 @@ pub(crate) fn rail_shown(ranks: &[u8]) -> usize {
 pub(crate) const RAIL_PILOTS: usize = 3;
 
 /// An idle Pilot's age on its row: "9m", "2h", "1d".
+impl Pilots {
+    /// A rail row's status word: "needs you", "working", else how long ago
+    /// its chat last changed ("1d"), from the loaded chat or, for a Pilot
+    /// not opened yet, its chat's summary in `updated`. Empty for a Pilot
+    /// that has never chatted.
+    pub(super) fn rail_status(
+        &self,
+        pilot: &Pilot,
+        state: &str,
+        updated: &HashMap<i64, u64>,
+        cx: &App,
+    ) -> String {
+        match state {
+            "needs-you" => "needs you".to_owned(),
+            "working" => "working".to_owned(),
+            _ => self
+                .chats
+                .get(&pilot.id)
+                .map(|v| v.read(cx).summary.updated_at)
+                .filter(|at| *at > 0)
+                .or_else(|| {
+                    updated
+                        .get(&pilot.session_id?)
+                        .copied()
+                        .filter(|at| *at > 0)
+                })
+                .map(|at| pilot_age(at, gespan_core::time::now_ms()))
+                .unwrap_or_default(),
+        }
+    }
+}
+
 fn pilot_age(at: u64, now: u64) -> String {
     if at == 0 {
         return String::new();
