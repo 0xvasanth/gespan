@@ -47,10 +47,6 @@
   <img src="docs/assets/screenshot.png" alt="The Gespan window. The sidebar lists Inbox, Runs, Automations, Board and Notes, then the acme-web project with five sessions run by Claude Code, Codex, Cursor CLI, OpenCode and Kiro. The open session shows Claude Code's summary of a login redirect fix, and the Changes panel on the right lists the two files it edited, ready to commit." width="920" />
 </p>
 
-<p align="center">
-  <sub>Gespan began as a fork of <a href="https://github.com/hardbeat920/monocode">MonoCode</a> and has grown quickly from there. <a href="#acknowledgements">Read the acknowledgements.</a></sub>
-</p>
-
 ---
 
 > **Gespan** (*guh-SPAHN*) is Dutch for a team of horses or oxen harnessed
@@ -373,21 +369,6 @@ Thanks to everyone who has helped build Gespan.
 <a href="https://github.com/0xvasanth/gespan/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=0xvasanth/gespan" alt="Gespan contributors" />
 </a>
-
-## Acknowledgements
-
-Gespan is a fork of [MonoCode](https://github.com/hardbeat920/monocode), the
-open-source GUI for coding agents created by
-[hardbeat920](https://github.com/hardbeat920) and its contributors, and it would
-not exist without their work. Gespan's core ideas come from that project, as
-does much of its code. These include tabs as sessions, a provider-independent
-harness, and running the agents and subscriptions you already have.
-
-Gespan builds on that foundation and has expanded rapidly in its own direction,
-with new features, more agents and many fixes. Fixes still come in from
-upstream regularly. The original MIT copyright notice is kept in
-[LICENSE](LICENSE). If Gespan is useful to you, please give the original
-project a star too.
 
 ## License
 
