@@ -1014,26 +1014,40 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                 .map_err(|_| "inputs must be an object of text values".to_string())?,
             None => HashMap::new(),
         };
+        let run = self.launch_pilot_flow(pilot, &flow_id, None, inputs, tag, store, cx)?;
+        let id = run.id.clone();
+        self.flow_started(&pilot.id, run);
+        self.save(cx);
+        Ok(json!({"runId": id}))
+    }
+    /// Starts `pilot`'s Flow, or one `step` of it, as `flows.start` does:
+    /// only while its project is still one the Pilot works on.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn launch_pilot_flow(
+        &mut self,
+        pilot: &pilot::Pilot,
+        flow_id: &str,
+        step: Option<&str>,
+        inputs: HashMap<String, String>,
+        tag: RunTag,
+        store: &StoreHandle,
+        cx: &mut Context<Self>,
+    ) -> Result<gespan_core::flow::FlowRun, String> {
         // Its project may have been unassigned since the Flow was saved.
         let cwd = flows_lock(store)?
-            .owned_flow(&pilot.id, &flow_id)?
+            .owned_flow(&pilot.id, flow_id)?
             .ok_or("Flow not found")?
             .cwd;
         if !pilot.works_on(&cwd) {
             return Err(FLOW_OUTSIDE_PROJECTS.into());
         }
         let owner = pilot.id.clone();
-        let run = self
-            .owner
+        self.owner
             .update(cx, |shell, cx| {
-                shell.start_pilot_flow(&owner, &flow_id, inputs, tag, cx)
+                shell.start_pilot_flow_step(&owner, flow_id, step, inputs, tag, cx)
             })
             .map_err(|_| FLOWS_NOT_READY.to_string())?
-            .map_err(|errors| errors.join("; "))?;
-        let id = run.id.clone();
-        self.flow_started(&owner, run);
-        self.save(cx);
-        Ok(json!({"runId": id}))
+            .map_err(|errors| errors.join("; "))
     }
     fn change_flows(
         &mut self,

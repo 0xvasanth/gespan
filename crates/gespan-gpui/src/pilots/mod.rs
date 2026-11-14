@@ -22,6 +22,9 @@ mod panel_stack;
 mod panels;
 mod quit;
 mod roadmap;
+#[cfg(test)]
+mod schedule_tests;
+mod schedule_ui;
 mod scheduler;
 mod search;
 #[cfg(all(target_os = "macos", not(test)))]
@@ -88,6 +91,8 @@ struct RunningHabit {
     cards: Vec<serde_json::Value>,
     /// Completion reports waiting for the run to finish its turn.
     mailbox: Vec<Message>,
+    /// When the run reports back in the chat.
+    tell: habits::Tell,
 }
 pub(crate) struct Pilots {
     #[cfg(all(target_os = "macos", not(test)))]

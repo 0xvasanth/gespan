@@ -183,6 +183,37 @@ pub const ACCESS_MODES: [&str; 5] = [
     "full-access",
 ];
 
+impl Flow {
+    /// This Flow cut down to its step `state_id` alone, as a schedule that
+    /// runs one step starts it: the run begins at that step and ends with
+    /// it, succeeded when the step completes and failed otherwise. `None`
+    /// when the Flow has no such step.
+    pub fn only_step(&self, state_id: &str) -> Option<Flow> {
+        let mut state = self.states.iter().find(|s| s.id() == state_id)?.clone();
+        let ends = vec![
+            Transition {
+                to: SUCCEEDED.into(),
+                when: Some(Guard::Status {
+                    is: VisitResult::Completed,
+                }),
+            },
+            Transition {
+                to: FAILED.into(),
+                when: None,
+            },
+        ];
+        match &mut state {
+            FlowState::Agent(s) => s.transitions = ends,
+            FlowState::Approval(s) => s.transitions = ends,
+        }
+        Some(Flow {
+            initial: state_id.into(),
+            states: vec![state],
+            ..self.clone()
+        })
+    }
+}
+
 fn default_access() -> String {
     DEFAULT_ACCESS.into()
 }
@@ -763,6 +794,28 @@ mod tests {
 
     fn errors_of(flow: &Flow) -> String {
         validate_flow(flow).errors.join("\n")
+    }
+
+    #[test]
+    fn only_step_starts_and_ends_at_that_step() {
+        let mut plan = agent("a");
+        plan.transitions = vec![to("b")];
+        let mut build = agent("b");
+        build.transitions = vec![to("a"), to(SUCCEEDED)];
+        let flow = make_flow(vec![FlowState::Agent(plan), FlowState::Agent(build)]);
+        let only = flow.only_step("b").unwrap();
+        assert_eq!(only.initial, "b");
+        assert_eq!(only.states.len(), 1);
+        assert_eq!(only.states[0].id(), "b");
+        let ends: Vec<_> = only.states[0]
+            .transitions()
+            .iter()
+            .map(|t| t.to.as_str())
+            .collect();
+        assert_eq!(ends, [SUCCEEDED, FAILED], "it never goes back to plan");
+        assert_eq!((only.id.as_str(), only.cwd.as_str()), ("f1", "/repo"));
+        assert_eq!(validate_flow(&only).errors, Vec::<String>::new());
+        assert!(flow.only_step("missing").is_none());
     }
 
     #[test]

@@ -9,7 +9,7 @@ pub(super) struct Setup {
     pub(super) id: String,
     pub(super) project: String,
     pub(super) session: i64,
-    root: PathBuf,
+    pub(super) root: PathBuf,
     pub(super) store: Database,
 }
 
@@ -456,7 +456,7 @@ pub(super) fn setup(cx: &mut TestAppContext) -> Setup {
         store,
     }
 }
-fn call(
+pub(super) fn call(
     s: &Setup,
     request: &str,
     action: &str,
@@ -1397,204 +1397,6 @@ fn a_session_open_in_pilot_details_keeps_its_history(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn long_habit_draft_keeps_fields_and_schedule_inside_the_scrolling_page(cx: &mut TestAppContext) {
-    let s = setup(cx);
-    cx.update(|cx| {
-        cx.set_reduce_motion(true);
-        input::bind(cx);
-        crate::popover::bind(cx);
-    });
-    s.window
-        .update(cx, |shell, _, cx| {
-            shell.workspace.right_panel_width = 220.;
-            s.manager.update(cx, |m, cx| {
-                m.settings = None;
-                m.overview_tab = OverviewTab::Schedule;
-                m.route = Some(Route::NewHabit);
-                cx.notify();
-            });
-        })
-        .unwrap();
-    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
-    visual.run_until_parked();
-    s.manager.update(visual, |m, cx| {
-        m.fields["habit-name"].update(cx, |f, cx| {
-            f.set_text(
-                "A long but valid habit name that fills the narrow panel".into(),
-                cx,
-            )
-        });
-        m.fields["habit-instructions"].update(cx, |f, cx| {
-            f.set_text(
-                "Report useful updates on the current project.\n".repeat(65),
-                cx,
-            )
-        });
-        m.fields["habit-kind"].update(cx, |f, cx| f.set_text("weekly".into(), cx));
-        cx.notify();
-    });
-    visual.run_until_parked();
-    let body = visual.debug_bounds("pilot-habit-editor").unwrap();
-    let name = visual.debug_bounds("pilot-habit-name-field").unwrap();
-    let schedule = visual.debug_bounds("pilot-habit-schedule").unwrap();
-    let prompt = visual.debug_bounds("pilot-habit-prompt-field").unwrap();
-    let create = visual.debug_bounds("pilot-habit-save").unwrap();
-    assert!(name.size.height >= px(36.));
-    assert!(schedule.top() >= name.bottom());
-    assert!(prompt.top() > schedule.bottom());
-    assert!(prompt.size.height >= px(300.));
-    assert!(prompt.size.height <= px(328.));
-    for bounds in [name, schedule, prompt] {
-        assert!(bounds.left() >= body.left());
-        assert!(bounds.right() <= body.right() + px(1.));
-    }
-    assert!(create.bottom() <= body.top());
-    let day = visual.debug_bounds("pilot-habit-weekday-picker").unwrap();
-    assert!(day.left() >= schedule.left());
-    assert!(day.right() <= schedule.right() + px(1.));
-    visual.simulate_click(day.center(), Default::default());
-    visual.run_until_parked();
-    // Escape returns focus to the trigger; arrow keys reopen the list with
-    // the current weekday highlighted, and Enter retains that selection.
-    visual.simulate_keystrokes("escape");
-    visual.run_until_parked();
-    assert!(s.manager.read_with(visual, |m, _| m.picker.is_none()));
-    visual.simulate_keystrokes("down");
-    visual.run_until_parked();
-    assert!(s.manager.read_with(visual, |m, _| m.picker.is_some()));
-    visual.simulate_keystrokes("enter");
-    visual.run_until_parked();
-    assert_eq!(
-        s.manager
-            .read_with(visual, |m, cx| m.value("habit-weekday", cx)),
-        "1"
-    );
-    assert!(s.manager.read_with(visual, |m, _| m.picker.is_none()));
-    visual.simulate_click(day.center(), Default::default());
-    visual.run_until_parked();
-    let saturday = visual.debug_bounds("menu-action-6").unwrap();
-    visual.simulate_click(saturday.center(), Default::default());
-    visual.run_until_parked();
-    assert_eq!(
-        s.manager
-            .read_with(visual, |m, cx| m.value("habit-weekday", cx)),
-        "6"
-    );
-    // Invalid schedules keep the full draft in place instead of navigating away.
-    s.manager.update(visual, |m, cx| {
-        m.fields["habit-time"].update(cx, |f, cx| f.set_text("25:00".into(), cx));
-    });
-    visual.run_until_parked();
-    visual.simulate_click(create.center(), Default::default());
-    visual.run_until_parked();
-    assert!(
-        s.manager
-            .read_with(visual, |m, _| m.route == Some(Route::NewHabit))
-    );
-    assert!(s.manager.read_with(visual, |m, cx| {
-        m.fields["habit-instructions"].read(cx).content.len() > 2000
-    }));
-    assert!(habits::load(&s.root, &s.id).unwrap().is_empty());
-    s.manager.update(visual, |m, cx| {
-        m.fields["habit-time"].update(cx, |f, cx| f.set_text("09:00".into(), cx));
-    });
-    visual.run_until_parked();
-    visual.simulate_click(create.center(), Default::default());
-    visual.run_until_parked();
-    let saved = habits::load(&s.root, &s.id).unwrap();
-    assert_eq!(saved.len(), 1);
-    assert!(saved[0].instructions.len() > 2000);
-    assert_eq!(saved[0].schedule.schedule_kind, "weekly");
-    assert_eq!(saved[0].schedule.day_of_week, 6);
-    assert!(s.manager.read_with(visual, |m, _| m.route.is_none()));
-}
-
-#[gpui::test]
-fn habit_detail_preserves_long_content_history_and_actions_without_edit_fields(
-    cx: &mut TestAppContext,
-) {
-    let s = setup(cx);
-    cx.update(|cx| cx.set_reduce_motion(true));
-    let mut h = Habit::new(
-        "A long habit title that should truncate before the action buttons".into(),
-        "Review changes and report anything that needs attention.".into(),
-        habits::Schedule::default(),
-        gespan_core::time::now_ms(),
-    )
-    .unwrap();
-    h.id = "layout-history".into();
-    h.runs.push(habits::Run {
-        at: gespan_core::time::now_ms() - 60_000,
-        duration_ms: 72_000,
-        outcome: "posted".into(),
-        report: Some("**Result**\n\nThe project is ready to review.".into()),
-        error: None,
-    });
-    habits::update(&s.root, &s.id, |all| {
-        all.push(h.clone());
-        Ok(())
-    })
-    .unwrap();
-    s.window
-        .update(cx, |shell, _, cx| {
-            shell.workspace.right_panel_width = 280.;
-            s.manager.update(cx, |m, cx| {
-                m.settings = None;
-                m.overview_tab = OverviewTab::Schedule;
-                m.habits = vec![h.clone()];
-                m.route = Some(Route::Habit(h.id.clone()));
-                cx.notify();
-            });
-        })
-        .unwrap();
-    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
-    visual.run_until_parked();
-    assert!(
-        s.manager
-            .read_with(visual, |m, _| !m.fields.contains_key("habit-name"))
-    );
-    let body = visual.debug_bounds("pilot-habit-editor").unwrap();
-    let description = visual.debug_bounds("pilot-habit-instructions").unwrap();
-    let row_id = format!("pilot-habit-history-{}-{}", h.id, h.runs[0].at);
-    let row = visual
-        .debug_bounds(Box::leak(row_id.into_boxed_str()))
-        .unwrap();
-    assert!(row.top() > description.bottom());
-    assert!(description.right() <= body.right());
-    for selector in [
-        "pilot-habit-run",
-        "pilot-habit-toggle",
-        "pilot-habit-delete",
-    ] {
-        let action = visual.debug_bounds(selector).unwrap();
-        assert!(action.bottom() <= body.top());
-        assert!(action.right() <= body.right());
-    }
-    visual.simulate_click(row.center(), Default::default());
-    visual.run_until_parked();
-    assert!(
-        visual
-            .debug_bounds(Box::leak(
-                format!("pilot-habit-report-{}-{}", h.id, h.runs[0].at).into_boxed_str()
-            ))
-            .is_some()
-    );
-    let toggle = visual.debug_bounds("pilot-habit-toggle").unwrap();
-    visual.simulate_click(toggle.center(), Default::default());
-    visual.run_until_parked();
-    assert!(!habits::load(&s.root, &s.id).unwrap()[0].enabled);
-    assert!(
-        s.manager
-            .read_with(visual, |m, _| m.route == Some(Route::Habit(h.id.clone())))
-    );
-    let remove = visual.debug_bounds("pilot-habit-delete").unwrap();
-    visual.simulate_click(remove.center(), Default::default());
-    visual.run_until_parked();
-    assert!(habits::load(&s.root, &s.id).unwrap().is_empty());
-    assert!(s.manager.read_with(visual, |m, _| m.route.is_none()));
-}
-
-#[gpui::test]
 fn new_habit_click_transfers_composer_focus_after_the_animated_page_mounts(
     cx: &mut TestAppContext,
 ) {
@@ -1672,7 +1474,7 @@ fn new_habit_click_transfers_composer_focus_after_the_animated_page_mounts(
                 window.draw(cx).clear(cx);
             })
             .unwrap();
-        let back = visual.debug_bounds("pilot-page-back").unwrap();
+        let back = visual.debug_bounds("pilot-habit-back").unwrap();
         visual.simulate_click(back.center(), Default::default());
         visual.run_until_parked();
         assert!(s.manager.read_with(visual, |m, _| m.route.is_none()));
@@ -2115,7 +1917,7 @@ fn mailbox_texts(run: &RunningHabit) -> Vec<String> {
     run.mailbox.iter().map(|m| m.text.clone()).collect()
 }
 /// A habit run, standing in a third session, that launched both delegated children.
-fn habit_run(s: &Setup, cx: &mut TestAppContext) -> i64 {
+pub(super) fn habit_run(s: &Setup, cx: &mut TestAppContext) -> i64 {
     let start = call(
         s,
         "habit-run",
@@ -2148,6 +1950,7 @@ fn habit_run(s: &Setup, cx: &mut TestAppContext) -> i64 {
                     waiting_since: None,
                     cards: Vec::new(),
                     mailbox: Vec::new(),
+                    tell: habits::Tell::EveryRun,
                 },
             );
         })
@@ -2538,7 +2341,7 @@ fn launches_left_loose_by_older_versions_are_filed_once_at_startup(cx: &mut Test
     assert_eq!(restart(cx), filed, "a second pass changes nothing");
 }
 /// A two-agent Pilot Flow blueprint in `cwd`, as a Pilot would send it.
-fn flow_blueprint(id: &str, cwd: &str) -> Value {
+pub(super) fn flow_blueprint(id: &str, cwd: &str) -> Value {
     let agent = |id: &str, to: &str| {
         json!({"kind":"agent","id":id,"title":id.to_uppercase(),"harness":"codex","model":"",
             "brief":format!("{id} {{{{inputs.task}}}}"),"outputs":[],"transitions":[{"to":to}],"maxVisits":3})
@@ -2547,7 +2350,7 @@ fn flow_blueprint(id: &str, cwd: &str) -> Value {
         "inputs":[{"name":"task","label":"Task","required":true}],"initial":"plan",
         "states":[agent("plan","build"),agent("build","$succeeded")],"access":"auto"})
 }
-fn flows_ok(
+pub(super) fn flows_ok(
     s: &Setup,
     request: &str,
     action: &str,
@@ -2572,7 +2375,7 @@ fn flows_err(
     }
 }
 /// Every Flow launch is held from here on, so no session or provider turn starts.
-fn hold_flow_launches(s: &Setup, cx: &mut TestAppContext) {
+pub(super) fn hold_flow_launches(s: &Setup, cx: &mut TestAppContext) {
     s.window
         .update(cx, |shell, _, _| shell.hold_flow_launches_for_test())
         .unwrap();
@@ -2842,7 +2645,7 @@ fn flows_actions_never_reveal_other_pilots_or_user_flows(cx: &mut TestAppContext
                 task: "t1".into(),
             };
             let their_run = shell
-                .start_pilot_flow("other-pilot", "theirs", inputs.clone(), tag, cx)
+                .start_pilot_flow_step("other-pilot", "theirs", None, inputs.clone(), tag, cx)
                 .unwrap();
             let user_run = shell.start_flow(&user, &inputs, cx).unwrap();
             (their_run.id, user_run.id)
@@ -3102,7 +2905,7 @@ fn run_and_cancel(
                     goal: "g".into(),
                     task: "Fix the login bug".into(),
                 };
-                shell.start_pilot_flow(&s.id, &flow.id, inputs, tag, cx)
+                shell.start_pilot_flow_step(&s.id, &flow.id, None, inputs, tag, cx)
             } else {
                 shell.start_flow(&flow, &inputs, cx)
             }
@@ -3175,7 +2978,7 @@ use gespan_core::pilot::flow_notes::{MAX_REVIEWS, NoteKind};
 const REVIEW_CONTRACT: &str = "Review only this step. You cannot change anything. Reply with one first line: NO_CHANGE, SUGGEST_STEP_CHANGE, NEEDS_ATTENTION or BLUEPRINT_IDEA, then at most a short paragraph explaining it.";
 /// A failed message at the head of the outbox holds it, so Flow updates stay
 /// visible there instead of starting a provider turn.
-fn hold_outbox(s: &Setup, cx: &mut TestAppContext) {
+pub(super) fn hold_outbox(s: &Setup, cx: &mut TestAppContext) {
     cx.update(|cx| {
         s.manager.update(cx, |m, _| {
             m.roster.get_mut(&s.id).unwrap().outbox.push(Message {
@@ -3268,14 +3071,14 @@ fn step(run: &FlowRun, visit: FlowVisit) -> PilotFlowEvent {
         visit,
     }
 }
-fn finished(run_id: &str, status: RunStatus) -> PilotFlowEvent {
+pub(super) fn finished(run_id: &str, status: RunStatus) -> PilotFlowEvent {
     PilotFlowEvent::Finished {
         run_id: run_id.into(),
         status,
     }
 }
 /// Hands `events` to the Pilot in one batch, as the Shell does.
-fn flow_events(s: &Setup, events: Vec<PilotFlowEvent>, cx: &mut TestAppContext) {
+pub(super) fn flow_events(s: &Setup, events: Vec<PilotFlowEvent>, cx: &mut TestAppContext) {
     cx.update(|cx| {
         s.manager.update(cx, |m, cx| {
             for event in events {
@@ -3318,7 +3121,7 @@ fn answer_review(s: &Setup, session: i64, reply: &str, cx: &mut TestAppContext) 
     });
     cx.run_until_parked();
 }
-fn set_main_busy(s: &Setup, busy: bool, cx: &mut TestAppContext) {
+pub(super) fn set_main_busy(s: &Setup, busy: bool, cx: &mut TestAppContext) {
     cx.update(|cx| {
         let chat = s.manager.read(cx).chats[&s.id].clone();
         chat.update(cx, |v, cx| {
@@ -3329,7 +3132,7 @@ fn set_main_busy(s: &Setup, busy: bool, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 /// The internal Flow updates queued for the main Pilot chat.
-fn flow_updates(s: &Setup, cx: &mut TestAppContext) -> Vec<String> {
+pub(super) fn flow_updates(s: &Setup, cx: &mut TestAppContext) -> Vec<String> {
     cx.update(|cx| {
         s.manager
             .read(cx)
@@ -3343,7 +3146,7 @@ fn flow_updates(s: &Setup, cx: &mut TestAppContext) -> Vec<String> {
             .collect()
     })
 }
-fn pilot_state(s: &Setup, cx: &mut TestAppContext) -> pilot::Pilot {
+pub(super) fn pilot_state(s: &Setup, cx: &mut TestAppContext) -> pilot::Pilot {
     cx.update(|cx| s.manager.read(cx).roster.get(&s.id).unwrap().clone())
 }
 fn call_from(
@@ -3639,7 +3442,7 @@ fn a_review_that_runs_too_long_is_a_review_problem_not_an_alert(cx: &mut TestApp
     assert!(flow_updates(&s, cx).is_empty());
 }
 /// The main chat takes the queued Flow updates and starts the turn that reads them.
-fn take_flow_updates(s: &Setup, cx: &mut TestAppContext) {
+pub(super) fn take_flow_updates(s: &Setup, cx: &mut TestAppContext) {
     cx.update(|cx| {
         s.manager.update(cx, |m, _| {
             m.roster
@@ -4724,7 +4527,7 @@ mod roadmap {
                 };
                 shell.start_flow(&user, &inputs, cx).unwrap();
                 shell
-                    .start_pilot_flow("other-pilot", "theirs", inputs.clone(), tag, cx)
+                    .start_pilot_flow_step("other-pilot", "theirs", None, inputs.clone(), tag, cx)
                     .unwrap()
                     .id
             })
@@ -5255,7 +5058,7 @@ mod roadmap {
                 };
                 let inputs = HashMap::from([("task".to_string(), "x".to_string())]);
                 shell
-                    .start_pilot_flow("other-pilot", "theirs", inputs, tag, cx)
+                    .start_pilot_flow_step("other-pilot", "theirs", None, inputs, tag, cx)
                     .unwrap()
                     .id
             })
@@ -6001,7 +5804,7 @@ fn a_habit_run_before_the_chat_loads_starts_on_an_installed_provider(cx: &mut Te
 }
 
 #[gpui::test]
-fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
+fn documents_search_like_sessions_and_schedule_lists_every_run(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let habit = |id: &str, name: &str| {
@@ -6048,10 +5851,9 @@ fn habits_and_documents_search_like_sessions(cx: &mut TestAppContext) {
         });
         visual.run_until_parked();
     };
+    // Schedule lists every run, as its board does, with no search.
     assert!(visual.debug_bounds("pilot-habit-report").is_some());
-    search(visual, "pilot-habit-search", "DIGEST");
     assert!(visual.debug_bounds("pilot-habit-digest").is_some());
-    assert!(visual.debug_bounds("pilot-habit-report").is_none());
 
     s.manager
         .update(visual, |m, cx| m.select_overview(OverviewTab::Docs, cx));
