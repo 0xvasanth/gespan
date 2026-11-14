@@ -12,7 +12,7 @@ import { FadingBackground } from "@/features/background/FadingBackground";
 import type { EmptyBackground } from "@/features/background/useEmptyBackground";
 import { PixelMascot } from "@/features/mascots/PixelMascot";
 import type { Project } from "@/features/workspace/types";
-import { GESPAN_MARK } from "@/ui/brand";
+import { GESPAN_MARK_COLOR } from "@/ui/brand";
 import { themedStyles } from "@/ui/theme";
 
 import { COMPOSER_FADE, useSessionLayout } from "./SessionScreen";
@@ -21,9 +21,6 @@ import type { TranscriptAgent } from "./TranscriptTurn";
 export const EMPTY_HEADLINE = "What should we work on?";
 
 const MARK_SIZE = 84;
-/** Dimmed, so it reads as part of the screen, including over a photo. */
-const MARK_OPACITY = 0.3;
-
 /** Space between the composer and what rests on it. */
 const ACCESSORY_GAP = 10;
 
@@ -105,7 +102,7 @@ export function EmptySession({
           ) : (
             <>
               <Image
-                source={GESPAN_MARK}
+                source={GESPAN_MARK_COLOR}
                 style={styles.mark}
                 accessibilityIgnoresInvertColors
               />
@@ -164,8 +161,6 @@ const useStyles = themedStyles((colors) => ({
   mark: {
     width: MARK_SIZE,
     height: MARK_SIZE,
-    opacity: MARK_OPACITY,
-    tintColor: colors.mark,
   },
   headline: {
     color: colors.content,
