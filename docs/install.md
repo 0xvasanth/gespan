@@ -46,7 +46,7 @@ sudo dnf install ./Gespan-*.rpm
 
 GitHub Releases builds the `.rpm` on Enterprise Linux 10 so it loads on Fedora and EL 10. EL 9 and older are unsupported (`webkit2gtk4.1-devel` only exists in EPEL 10).
 
-For native build dependencies and packaging commands, see [building from source](building.md#fedora--enterprise-linux-packages). Building on EL 10 also needs CRB; the repository’s setup helper enables it and EPEL automatically.
+For native build dependencies and packaging commands, see [building from source](building.md#platform-prerequisites). Building on EL 10 also needs CRB and EPEL: `sudo dnf config-manager --set-enabled crb` and `sudo dnf install -y epel-release`.
 
 ## AppImage
 

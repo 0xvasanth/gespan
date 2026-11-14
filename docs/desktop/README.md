@@ -1,4 +1,4 @@
-# Gespan preview
+# Gespan desktop
 
 Gespan is a Rust + GPUI app. Native builds have their own Cargo workspace and
 lockfile.
@@ -12,7 +12,7 @@ lockfile.
 - At least one installed, signed-in agent CLI. See [provider setup](../providers.md).
 
 The native commands do not require `bun install`.
-macOS is the primary preview target. A Linux ARM64 source build has been
+macOS is the most tested platform. A Linux ARM64 source build has been
 smoke-tested in a VM; Linux x64 packages and Windows GUI interaction still need
 runtime testing. See [known limitations](parity.md).
 
@@ -55,15 +55,13 @@ On macOS, open:
 open "crates/gespan-gpui/target/release/Gespan.app"
 ```
 
-The app has a separate name and application ID (`dev.gespan.native`) so it can be
-installed alongside Gespan. Local source builds are signed locally, without
+The app ID is `dev.gespan.native`. Local source builds are signed locally, without
 Apple notarization or configured automatic updates. Linux and Windows builds
 produce a standalone executable
 under `crates/gespan-gpui/target/release/`. `CARGO_TARGET_DIR` and
 `CARGO_BUILD_TARGET` can change these output paths.
 
-The **Gespan Preview** GitHub Actions workflow runs checks and build
-verification.
+The **CI** GitHub Actions workflow runs checks and build verification.
 
 ## Releases and the update feed
 
@@ -150,7 +148,7 @@ Move the AppImage to a permanent location and make it executable, then opt in
 to a per-user application menu entry and Wayland icon registration:
 
 ```sh
-./GespanNative.AppImage --install-desktop
+./Gespan_*.AppImage --install-desktop
 ```
 
 This installs `dev.gespan.native.desktop` and the app icon under
