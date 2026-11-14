@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/pilots/roadmap.rs
+  s_f3e6395a3dfa42::t_ac3cc50507e260 1170-1172,1176,1265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c62b23b053aba445ae258abc3ceefa31961e1823",
+  "prompts": {},
+  "sessions": {
+    "s_f3e6395a3dfa42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5533043b-5f9e-412e-b28e-efb33386b130",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
