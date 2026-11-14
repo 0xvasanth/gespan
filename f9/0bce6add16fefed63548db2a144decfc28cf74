@@ -1,0 +1,19 @@
+crates/gespan-gpui/src/owner.rs
+  s_46ef193bc6d117::t_508691498f2609 152-153,155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f90bce6add16fefed63548db2a144decfc28cf74",
+  "prompts": {},
+  "sessions": {
+    "s_46ef193bc6d117": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6567463e-8e15-4a3d-832b-6fe101a09ede",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
