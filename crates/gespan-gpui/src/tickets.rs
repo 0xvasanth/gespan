@@ -47,10 +47,6 @@ pub(crate) mod fakes {
             }
         }
 
-        pub(crate) fn disconnect(&self) {
-            self.connected.lock().unwrap().clear();
-        }
-
         pub(crate) fn fetch_count(&self) -> usize {
             self.fetches.lock().unwrap().len()
         }

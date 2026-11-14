@@ -887,14 +887,20 @@ mod tests {
         launches
     }
 
-    /// Clicks the gear beside the sidebar's project button and returns its
+    /// Right-clicks the rail's project switcher and returns the project
     /// menu's rows.
     fn open_project_settings(
         window: WindowHandle<Shell>,
         visual: &mut VisualTestContext,
     ) -> Vec<String> {
-        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
-        visual.simulate_click(gear.center(), Default::default());
+        let switcher = visual.debug_bounds("sidebar-project-button").unwrap();
+        visual.simulate_event(gpui::MouseDownEvent {
+            position: switcher.center(),
+            button: gpui::MouseButton::Right,
+            modifiers: Default::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
         visual.run_until_parked();
         window
             .update(visual, |shell, _, cx| {

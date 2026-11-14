@@ -182,6 +182,13 @@ pub(crate) struct Workspace {
     pub compact_session_cards: bool,
     pub sidebar_automations_visible: bool,
     pub sidebar_inbox_visible: bool,
+    /// Projects pinned to the top of the project switcher, in pin order.
+    pub pinned_projects: Vec<String>,
+    /// Projects by when they were last switched to, newest first.
+    pub recent_projects: Vec<String>,
+    /// Rail folders the user opened (`true`) or closed, by folder key. A
+    /// folder with no entry follows its default.
+    pub rail_folds: HashMap<String, bool>,
     /// The inset right panel: open state, tab, width and tab order.
     pub right_panel_open: bool,
     pub right_panel_tab: crate::right_panel::RightTab,
@@ -543,6 +550,9 @@ impl Default for Workspace {
             compact_session_cards: true,
             sidebar_automations_visible: true,
             sidebar_inbox_visible: true,
+            pinned_projects: Vec::new(),
+            recent_projects: Vec::new(),
+            rail_folds: HashMap::new(),
             right_panel_open: false,
             right_panel_tab: Default::default(),
             right_panel_width: crate::right_panel::WIDTH_DEFAULT,

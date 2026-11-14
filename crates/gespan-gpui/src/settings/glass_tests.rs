@@ -268,16 +268,19 @@ fn layout_pictures_and_sidebar_chips_send_the_shell_events(cx: &mut TestAppConte
     click(visual, "settings-new-layout-style-boxy");
     click(visual, "settings-toggle-sidebar-inbox");
     click(visual, "settings-toggle-sidebar-activity");
-    click(visual, "settings-toggle-compact-session-cards");
     assert_eq!(
         *seen.borrow(),
         [
             "boxy:true",
             "sidebar:sidebar-inbox",
             "sidebar:sidebar-activity",
-            "sidebar:compact-session-cards"
         ]
     );
+    // The rail's grouping is a preference of its own.
+    assert_eq!(prefs(window, visual).sidebar_group_by, "worktree");
+    click(visual, "settings-sidebar-group-by-folders");
+    assert_eq!(prefs(window, visual).sidebar_group_by, "folders");
+    assert!(!prefs(window, visual).groups_by_worktree());
 }
 
 #[gpui::test]

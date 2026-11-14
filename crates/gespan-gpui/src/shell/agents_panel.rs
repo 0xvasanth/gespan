@@ -15,8 +15,8 @@ pub(super) const LIST_HEIGHT: f32 = 252.;
 const FOOTER_HEIGHT: f32 = 36.;
 /// Between the footer and the panel above it.
 const PANEL_GAP: f32 = 8.;
-/// The sidebar's inset around the footer.
-const INSET: f32 = 8.;
+/// The rail's side padding around the footer.
+const INSET: f32 = 10.;
 /// The waiting yellow, and its ink: lighter on dark glass, deeper on white.
 const WAIT: u32 = 0xe8c547;
 const WAIT_INK: (u32, u32) = (0xf5dc84, 0xa86b00);

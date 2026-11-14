@@ -55,6 +55,9 @@ mod project_removal;
 mod project_settings;
 mod quick_composer;
 mod quick_open;
+mod rail;
+pub(crate) use rail::project_tile;
+mod rail_plan;
 mod rails;
 mod remote_projects;
 mod remote_sessions;
@@ -150,6 +153,7 @@ actions!(
         NewClaude,
         NewWindow,
         OpenProject,
+        SwitchProject,
         CloseTab,
         CloseAllTabs,
         ArchiveSession,
@@ -250,7 +254,8 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new(&format!("{modifier}-t"), NewCodex, context),
         // The one place that decides who owns this chord.
         KeyBinding::new(&format!("{modifier}-shift-n"), NewWindow, context),
-        KeyBinding::new(&format!("{modifier}-o"), OpenProject, context),
+        // The rail's project switcher; Open Project lives in it as Add project.
+        KeyBinding::new(&format!("{modifier}-o"), SwitchProject, context),
         KeyBinding::new(&format!("{modifier}-p"), GoToFile, context),
         KeyBinding::new(&format!("{modifier}-shift-p"), OpenCommandPalette, context),
         KeyBinding::new(&format!("{modifier}-,"), OpenSettings, context),
@@ -737,7 +742,6 @@ pub(crate) struct Shell {
     /// Sessions an /operator thread started, by the session that started them.
     started_by: HashMap<i64, i64>,
     /// The sidebar rails under orchestrators and /operator threads.
-    rails: rails::Rails,
     usage_footer: Entity<UsageFooter>,
     /// The footer's high-usage chip and its running-work dialog.
     resources: Entity<ResourceMonitor>,
@@ -901,7 +905,6 @@ pub(crate) struct Shell {
     pub(crate) workspace: Workspace,
     focus: FocusHandle,
     sidebar_focus: FocusHandle,
-    sidebar_hover: Option<&'static str>,
     tab_hover: Option<i64>,
     /// The pinned deck at the strip's left edge: how far it has fanned out,
     /// and the card under the pointer.
@@ -956,7 +959,6 @@ pub(crate) struct Shell {
     backdrop: Option<(i64, bool)>,
     background_card: AnchorSlot,
     project_anchor: AnchorSlot,
-    project_settings_anchor: AnchorSlot,
     history: VisitHistory,
     /// User navigation invalidates pending requests that would otherwise
     /// focus a new session in a tab or project the user has already left.
@@ -1242,7 +1244,6 @@ impl Shell {
             control_bridge: None,
             orchestration_summaries: sidebar_metadata.orchestrations,
             started_by: sidebar_metadata.started_by,
-            rails: Default::default(),
             usage_footer: cx.new(|cx| UsageFooter::new(active_kind, cx)),
             resources,
             sidebar_frame,
@@ -1361,7 +1362,6 @@ impl Shell {
             workspace,
             focus: cx.focus_handle(),
             sidebar_focus: cx.focus_handle(),
-            sidebar_hover: None,
             tab_hover: None,
             pin_fan: Default::default(),
             pin_deck: Default::default(),
@@ -1397,7 +1397,6 @@ impl Shell {
             backdrop: None,
             background_card: AnchorSlot::default(),
             project_anchor: AnchorSlot::default(),
-            project_settings_anchor: AnchorSlot::default(),
             history: VisitHistory::default(),
             navigation_revision: 0,
             pending_project_blanks: HashSet::new(),
@@ -5188,6 +5187,7 @@ impl Shell {
         }
         self.workspace.project = path.clone();
         self.workspace.active = None;
+        rail::note_recent(&mut self.workspace.recent_projects, &path);
         self.show_project_in_sidebar(&path);
         // Each project restores its selected tab, including Pilots.
         if self.restore_scope_tab(window, cx) {
@@ -6249,10 +6249,12 @@ impl Shell {
             // The project row's dropdown is the project picker itself. Worktrees
             // are picked in the composer, never here.
             MenuTarget::Header => {
+                let switcher = self.switcher_data(cx);
                 let picker = cx.new(|cx| {
                     ProjectPicker::new(&self.workspace.projects, &self.workspace.project, cx)
                         .appearance(self.workspace.project_appearance.clone())
                         .allow_remote()
+                        .switcher(switcher, cx)
                 });
                 events.push(cx.subscribe_in(
                     &picker,
@@ -6279,7 +6281,7 @@ impl Shell {
                 (
                     "Switch project".into(),
                     vec![MenuItem::Custom(picker.into(), focus)],
-                    286.,
+                    380.,
                     MenuStyle::Switcher,
                 )
             }
@@ -6323,7 +6325,18 @@ impl Shell {
                             .into(),
                     );
                 }
+                let pinned = self.workspace.pinned_projects.contains(path);
                 items.extend([
+                    MenuAction::new(
+                        "pin-project",
+                        if pinned {
+                            "Unpin from switcher"
+                        } else {
+                            "Pin to switcher"
+                        },
+                    )
+                    .icon("pin")
+                    .into(),
                     MenuAction::new("reveal", REVEAL_LABEL)
                         .icon("folder-open")
                         .into(),
@@ -6420,6 +6433,9 @@ impl Shell {
                     if moved {
                         self.project_order_changed(cx);
                     }
+                } else if action == "pin-project" {
+                    rail::toggle_pin(&mut self.workspace.pinned_projects, &path);
+                    self.persist(cx);
                 } else if action == "reveal" {
                     if path.starts_with("remote://") {
                         self.error = Some("Remote folders stay on their host machine.".into());
@@ -6586,398 +6602,6 @@ impl Shell {
             let _ = this.update(cx, |this, cx| this.close_preview(cx));
         }));
     }
-    fn session_row(&self, id: i64, cx: &mut Context<Self>) -> AnyElement {
-        self.session_row_with(id, false, None, cx)
-    }
-    /// SessionCard, dense: `nested` for a session on another's rail; `rail`
-    /// for a thread with one under it, and whether it is open.
-    fn session_row_with(
-        &self,
-        id: i64,
-        nested: bool,
-        rail: Option<(&rails::Rail, bool)>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        if let Some(row) = self.rename_row(&session_groups::RenameTarget::Session(id), cx) {
-            return row;
-        }
-        // A collapsed thread shows a chevron in its mark's place on hover:
-        // selecting it opens the rail below.
-        let expandable = rail.is_some_and(|(_, open)| !open);
-        let mode = rail.map(|(rail, _)| match rail {
-            rails::Rail::Agents(summary) => (
-                "share",
-                // fuchsia-200/90
-                gpui::Hsla::from(rgb(0xf5d0fe)).opacity(0.9),
-                format!(
-                    "Orchestrator, {} {}",
-                    summary.tasks.len(),
-                    if summary.tasks.len() == 1 {
-                        "agent"
-                    } else {
-                        "agents"
-                    }
-                ),
-            ),
-            rails::Rail::Started(children) => (
-                "cursor-magic",
-                // sky-200/90
-                gpui::Hsla::from(rgb(0xbae6fd)).opacity(0.9),
-                format!(
-                    "Operator, started {} {}",
-                    children.len(),
-                    if children.len() == 1 {
-                        "session"
-                    } else {
-                        "sessions"
-                    }
-                ),
-            ),
-        });
-        // startedInView: one of its sessions is the one in view or chosen,
-        // so the thread keeps its hover fill as the group's head.
-        let started_in_view = match rail {
-            Some((rails::Rail::Started(children), _)) => children.iter().any(|c| {
-                self.selected_sessions.contains(c)
-                    || (self.workspace.active == Some(*c)
-                        && !self.pilot_active(cx)
-                        && !self.app_view_open())
-            }),
-            _ => false,
-        };
-        let compact = nested || self.workspace.compact_session_cards;
-        let side = if nested || !compact { 14. } else { 16. };
-        if let Some(mark) = self.session_marks.get(&id) {
-            mark.update(cx, |mark, cx| mark.set_size(side, cx));
-        }
-        let work_item = self.work_item_badge(id, compact, cx);
-        let has_badges = work_item.is_some()
-            || mode.is_some()
-            || self.automation_state.session_automations.contains_key(&id);
-        let session = self.session_metadata(id, cx);
-        let active = self.selected_sessions.contains(&id)
-            || (self.workspace.active == Some(id)
-                && !self.pilot_active(cx)
-                && !self.app_view_open());
-        let anchor = self
-            .session_row_bounds
-            .get(&id)
-            .cloned()
-            .unwrap_or_default();
-        self.sidebar_list.track_anchor(anchor.clone());
-        let draft = session.has_saved_draft();
-        let (model, branch, workspace_label) = if compact {
-            (SharedString::default(), None, String::new())
-        } else {
-            let saved = self.session_details.get(&id);
-            let live = self
-                .sessions
-                .get(&id)
-                .and_then(|view| view.read(cx).sidebar_details());
-            let (model, branch) = live.unwrap_or_else(|| {
-                (
-                    crate::pickers::cached_model_name(
-                        Kind::from_id(&session.summary.provider),
-                        saved.and_then(|data| data.model.as_deref()),
-                    ),
-                    None,
-                )
-            });
-            let cwd = self
-                .session_worktrees
-                .get(&id)
-                .and_then(|cwd| cwd.as_deref())
-                .unwrap_or(&session.summary.cwd);
-            let branch = branch
-                .or_else(|| saved.and_then(|data| data.branch.clone()))
-                .or_else(|| {
-                    let git = self.git.read(cx);
-                    (git.root == cwd)
-                        .then(|| git.index.as_ref().and_then(|index| index.branch.clone()))
-                        .flatten()
-                });
-            let directory = std::path::Path::new(cwd)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(cwd);
-            let workspace_label = branch.clone().unwrap_or_else(|| directory.to_owned());
-            (model, branch, workspace_label)
-        };
-        let pinned = session.summary.pinned;
-        let mark = {
-            let mark = match self.session_marks.get(&id) {
-                Some(mark) if self.sidebar_uncached() => div()
-                    .size(px(side))
-                    .flex_shrink_0()
-                    .child(mark.clone())
-                    .into_any_element(),
-                Some(mark) => mark
-                    .clone()
-                    .cached(StyleRefinement::default().size(px(side)).flex_shrink_0())
-                    .into_any_element(),
-                // Not loaded yet, as after a restart: the saved hold still marks it.
-                None if self.held_mark(id, None, cx) => {
-                    crate::session_mark::held("session-held-unloaded").into_any_element()
-                }
-                None => provider_icon(&session.summary.provider, side).into_any_element(),
-            };
-            div()
-                .relative()
-                .size(px(side))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(nested, |d| d.overflow_hidden())
-                .child(
-                    div()
-                        .size_full()
-                        .when(expandable, |d| {
-                            d.group_hover("session-row", |s| s.opacity(0.))
-                        })
-                        .child(mark),
-                )
-                .when(expandable, |d| {
-                    d.child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .opacity(0.)
-                            .group_hover("session-row", |s| s.opacity(1.))
-                            .child(icon("chevron-down", 14.).text_color(content(0.6))),
-                    )
-                })
-        };
-        let title = div()
-            .debug_selector(move || format!("session-title-{id}"))
-            .flex_1()
-            .min_w_0()
-            .h(px(20.))
-            .when(nested, |d| {
-                d.text_size(px(13.))
-                    .text_color(content(if active { 1. } else { 0.55 }))
-                    .when(!active, |d| {
-                        d.group_hover("session-row", |s| s.text_color(content(0.8)))
-                    })
-            })
-            .when(!nested && compact, |d| {
-                d.text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(content(1.))
-            })
-            .when(!compact, |d| {
-                d.text_size(px(13.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(content(1.))
-            })
-            .child(crate::particle_text::particle_text(session.display_title()));
-        let badges = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .flex_shrink_0()
-            .children(work_item)
-            .when(
-                self.automation_state.session_automations.contains_key(&id),
-                |row| row.child(icon("zap", 12.).text_color(content(0.35))),
-            )
-            // Marked on the right like a linked issue or PR, in its mode's colour.
-            .when_some(mode, |d, (glyph, color, label)| {
-                d.child(
-                    div()
-                        .id(("session-mode", id as usize))
-                        .role(Role::Image)
-                        .aria_label(label)
-                        .size(px(16.))
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(icon(glyph, 12.).text_color(color)),
-                )
-            });
-        let suffix = self.session_suffix(id, &session, compact, cx);
-        let body = if compact {
-            div()
-                .w_full()
-                .flex()
-                .items_center()
-                .gap(px(if nested { 6. } else { 8. }))
-                .child(mark)
-                .child(title)
-                .when(has_badges, |d| d.child(badges))
-                .child(suffix)
-                .into_any_element()
-        } else {
-            div()
-                .w_full()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .child(
-                    div()
-                        .h(px(20.))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .when(pinned, |d| {
-                            d.child(icon("pin", 12.).text_color(content(0.45)))
-                        })
-                        .child(title)
-                        .child(suffix),
-                )
-                .child(
-                    div()
-                        .h(px(20.))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .text_size(px(11.))
-                                .text_color(content(0.45))
-                                .child(icon(
-                                    if branch.is_some() {
-                                        "git-branch"
-                                    } else {
-                                        "folder"
-                                    },
-                                    12.,
-                                ))
-                                .child(
-                                    div()
-                                        .debug_selector(move || format!("session-workspace-{id}"))
-                                        .min_w_0()
-                                        .truncate()
-                                        .child(workspace_label),
-                                ),
-                        )
-                        .when(has_badges, |d| d.child(badges))
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .min_w_0()
-                                .max_w(gpui::relative(0.5))
-                                .flex()
-                                .items_center()
-                                .gap_1p5()
-                                .text_size(px(11.))
-                                .text_color(content(0.5))
-                                .child(
-                                    div()
-                                        .debug_selector(move || format!("session-model-{id}"))
-                                        .min_w_0()
-                                        .truncate()
-                                        .child(model),
-                                )
-                                .child(provider_icon(&session.summary.provider, 14.)),
-                        ),
-                )
-                .into_any_element()
-        };
-        div()
-            .id(("sidebar-session", id as usize))
-            .debug_selector(move || format!("sidebar-session-{id}"))
-            .group("session-row")
-            .role(Role::Button)
-            .aria_label(session.display_title())
-            .aria_description(format!(
-                "{} conversation",
-                Kind::from_id(&session.summary.provider).label()
-            ))
-            .cursor_pointer()
-            // A nested row's `h-5` line and `px-1.5`, inside the card border.
-            .h(px(if compact {
-                if nested { 28. } else { 32. }
-            } else if nested {
-                56.
-            } else {
-                60.
-            }))
-            // `px-2` inside the 1px card border.
-            .px(px(if nested { 7. } else { 9. }))
-            .rounded_md()
-            // The border is dashed for a saved draft. It overlays the row, so
-            // the hover anchor still spans the whole card.
-            .when(draft, |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .rounded_md()
-                        .border_1()
-                        .border_dashed()
-                        .border_color(content(if active { 0.3 } else { 0.25 })),
-                )
-            })
-            .flex()
-            .items_center()
-            .when(active, |d| d.bg(content(0.1)))
-            .when(started_in_view && !active, |d| d.bg(content(0.05)))
-            .hover(|s| s.bg(content(if active { 0.1 } else { 0.05 })))
-            .when(
-                self.sidebar_drop == Some(session_groups::ListDrop::Session(id)),
-                |d| d.bg(content(0.14)),
-            )
-            .when(self.deleting.contains(&id), |d| d.opacity(0.5))
-            .child(body)
-            .child(anchor.probe())
-            .relative()
-            .on_hover(cx.listener(move |this, hovered, window, cx| {
-                this.hover_session(id, anchor.clone(), *hovered, compact, window, cx);
-            }))
-            .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                    if std::mem::take(&mut this.skip_session_click) {
-                        return;
-                    }
-                    this.select_sidebar_session(id, event.modifiers(), window, cx)
-                }),
-            )
-            // A session card dragged onto a pane edge opens there.
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                    this.skip_session_click = false;
-                    this.tab_drag = None;
-                    this.pane_drag = Some(PaneDrag {
-                        source: DragSource::Session(id),
-                        start: event.position,
-                        position: event.position,
-                        active: false,
-                        over: None,
-                        insert: None,
-                    });
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    let anchor = Anchor::Point(event.position);
-                    this.context_selection = !this.selected_sessions.contains(&id);
-                    if this.context_selection {
-                        this.selected_sessions.clear();
-                        this.selected_sessions.insert(id);
-                    }
-                    this.open_menu(MenuTarget::Session(id), anchor, window, cx);
-                }),
-            )
-            .into_any()
-    }
-
     fn session_archive_button(
         &self,
         id: i64,
@@ -7019,82 +6643,6 @@ impl Shell {
                 cx.stop_propagation();
                 this.archive_session(id, window, cx);
             }))
-            .into_any()
-    }
-
-    fn session_suffix(
-        &self,
-        id: i64,
-        session: &session_loading::Metadata<'_>,
-        compact: bool,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let detailed = !compact;
-        if self.session_hover == Some(id) {
-            return self.session_archive_button(id, session, cx);
-        }
-        div()
-            .flex_shrink_0()
-            .text_size(px(11.))
-            .line_height(px(16.))
-            .font_weight(FontWeight::NORMAL)
-            .text_color(content(0.4))
-            .child(if session.needs_approval() {
-                div()
-                    .id(("session-approval", id as usize))
-                    .role(Role::Image)
-                    .aria_label("Needs approval")
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_color(rgb(0xfbbf24))
-                    .child(icon("circle-alert", 14.))
-                    .when(detailed, |d| d.child("Needs approval"))
-                    .into_any()
-            } else if detailed && session.responding() {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_color(content(0.5))
-                    .children(self.session_marks.get(&id).cloned())
-                    .child("Working…")
-                    .into_any()
-            } else if detailed && self.unseen_finished.contains(&id) {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_color(rgb(0x2dd4bf))
-                    .child(icon("check-circle-2", 14.).text_color(rgb(0x2dd4bf)))
-                    .child("Done")
-                    .into_any()
-            } else if session.has_saved_draft() {
-                div()
-                    .id(("session-draft", id as usize))
-                    .role(Role::Image)
-                    .aria_label("Draft")
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(icon("circle-dashed-hi", 14.).text_color(content(0.4)))
-                    .when(detailed, |d| d.child("Draft"))
-                    .into_any()
-            } else if let Some(reminder) = self.reminders.iter().find(|r| r.session_id == id) {
-                div()
-                    .id(("session-reminder", id as usize))
-                    .aria_label(local_reminder_label(reminder.due_at))
-                    .text_color(rgb(0xf59e0b))
-                    .child(session_groups::reminder_caption(reminder.due_at))
-                    .into_any()
-            } else {
-                div()
-                    .child(gespan_core::time::relative(
-                        session.summary.updated_at,
-                        gespan_core::time::now_ms(),
-                    ))
-                    .into_any()
-            })
             .into_any()
     }
 
@@ -7225,115 +6773,6 @@ impl Shell {
             self.open_title_tab(tab, window, cx);
         }
     }
-    /// The Focused sidebar's project row, under All projects: the project
-    /// dropdown and the Project settings gear, after a hairline.
-    pub(super) fn sidebar_project_row(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let settings_open = self.menu_open(&MenuTarget::Project {
-            path: self.workspace.project.clone(),
-        });
-        div()
-            .w_full()
-            .px_2()
-            .pt(px(10.))
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .debug_selector(|| "sidebar-project-divider".into())
-                    .mx_1p5()
-                    .h_px()
-                    .bg(content(crate::modal::BORDER)),
-            )
-            .child(
-                div()
-                    .pt(px(6.))
-                    .h(px(38.))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(
-                        div().flex_1().min_w_0().flex().items_center().child(
-                            div()
-                                .id("workspace-project")
-                                .debug_selector(|| "sidebar-project-button".into())
-                                .relative()
-                                .role(Role::Button)
-                                .aria_label(format!(
-                                    "Switch project, {}",
-                                    self.project_label(&self.workspace.project)
-                                ))
-                                .aria_description(self.workspace.project.clone())
-                                .aria_expanded(self.menu_open(&MenuTarget::Header))
-                                .cursor_pointer()
-                                .w_full()
-                                .h(px(32.))
-                                .px(px(10.))
-                                .rounded_md()
-                                .border_1()
-                                .border_color(content(crate::modal::BORDER))
-                                .bg(content(0.05))
-                                .hover(|s| s.bg(content(0.08)))
-                                .when(self.menu_open(&MenuTarget::Header), |d| d.bg(content(0.08)))
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap_1p5()
-                                .text_size(px(13.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(crate::project_settings::header_project_icon(
-                                    &self.appearance(&self.workspace.project),
-                                    &self.workspace.project,
-                                ))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .child(self.project_label(&self.workspace.project)),
-                                )
-                                .child(div().flex_1())
-                                .child(icon("chevron-down", 14.))
-                                .child(self.project_anchor.probe())
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if this.menu_open(&MenuTarget::Header) {
-                                        this.close_menu(cx);
-                                    } else {
-                                        let anchor = Anchor::Slot(this.project_anchor.clone());
-                                        this.open_menu(MenuTarget::Header, anchor, window, cx);
-                                    }
-                                })),
-                        ),
-                    )
-                    .child(
-                        icon_button_hover(
-                            "sidebar-project-settings",
-                            "Project settings",
-                            "settings",
-                            0.08,
-                        )
-                        .debug_selector(|| "sidebar-project-settings".into())
-                        .aria_expanded(settings_open)
-                        .size(px(32.))
-                        .border_1()
-                        .border_color(content(crate::modal::BORDER))
-                        .bg(content(0.05))
-                        .when(settings_open, |d| d.bg(content(0.08)))
-                        .relative()
-                        .child(self.project_settings_anchor.probe())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            let target = MenuTarget::Project {
-                                path: this.workspace.project.clone(),
-                            };
-                            if this.menu_open(&target) {
-                                this.close_menu(cx);
-                            } else {
-                                let anchor = Anchor::Slot(this.project_settings_anchor.clone());
-                                this.open_menu(target, anchor, window, cx);
-                            }
-                        })),
-                    ),
-            )
-            .into_any()
-    }
     fn sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if let Some(settings) = self.settings.clone() {
             let section = settings.read(cx).section;
@@ -7380,6 +6819,7 @@ impl Shell {
                         .size_full()
                         .flex()
                         .flex_col()
+                        .child(self.rail_top(cx))
                         .child(self.virtual_sidebar(cx))
                         .child(self.app_update_footer(cx))
                         .children(agents)
@@ -9428,6 +8868,9 @@ impl Render for Shell {
             )
             .on_action(cx.listener(|this, _: &NewClaude, _, cx| this.create(Kind::Claude, cx)))
             .on_action(cx.listener(|this, _: &OpenProject, _, cx| this.open_project(cx)))
+            .on_action(cx.listener(|this, _: &SwitchProject, window, cx| {
+                this.toggle_project_switcher(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &crate::browser_pane::LeaveBrowser, window, cx| {
                     this.leave_browser(window, cx)
@@ -9741,11 +9184,14 @@ impl Render for Shell {
             .children(self.menu.as_ref().map(|open| {
                 let point = matches!(open.anchor, Anchor::Point(_));
                 let beside = matches!(open.target, MenuTarget::Project { .. });
+                // The rail's switcher opens its picker beside the rail.
+                let switcher = open.target == MenuTarget::Header;
                 // Context menus open at the pointer, as ExplorerMenu
                 // does; TabGroupMenu hangs its top-left corner there.
                 menu_popover(&open.menu, open.anchor.clone(), cx)
                     .when(point, |p| p.gap(0.))
                     .when(beside, |p| p.side(Side::Right))
+                    .when(switcher, |p| p.side(Side::Right).gap(28.))
                     .when(open.target == MenuTarget::Actions, |p| {
                         p.side(Side::Top).align(crate::popover::Align::End)
                     })
@@ -10068,7 +9514,7 @@ mod tests {
         let second = visual
             .debug_bounds(Box::leak(format!("sidebar-session-{a}").into_boxed_str()))
             .unwrap();
-        assert_eq!(first.size.height, px(32.));
+        assert_eq!(first.size.height, px(28.));
         assert_eq!(
             second.top() - first.bottom(),
             px(1.),
@@ -10082,7 +9528,7 @@ mod tests {
             cx.run_until_parked();
             cx.refresh().unwrap();
         };
-        move_to(first.origin + gpui::point(px(20.), px(16.)), cx);
+        move_to(first.origin + gpui::point(px(20.), px(14.)), cx);
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(130));
         cx.run_until_parked();
@@ -10774,9 +10220,15 @@ mod tests {
         });
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        // The gear beside the project dropdown opens Project settings.
-        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
-        visual.simulate_click(gear.center(), Default::default());
+        // A right click on the rail's project switcher opens Project settings.
+        let switcher = visual.debug_bounds("sidebar-project-button").unwrap();
+        visual.simulate_event(gpui::MouseDownEvent {
+            position: switcher.center(),
+            button: gpui::MouseButton::Right,
+            modifiers: Default::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
         visual.run_until_parked();
         let name = visual.debug_bounds("project-appearance-name").unwrap();
         visual.simulate_click(name.center(), Default::default());
@@ -12186,8 +11638,8 @@ mod tests {
                 w.painted_quads()
                     .into_iter()
                     .find(|q| {
-                        q.background == content(0.1).into()
-                            && q.bounds.size.height.0 == 32. * w.scale_factor()
+                        q.background == content(0.11).into()
+                            && q.bounds.size.height.0 == 28. * w.scale_factor()
                             && q.bounds.size.width.0
                                 > shell.workspace.sidebar_width / 2. * w.scale_factor()
                             && q.bounds.right().0 < shell.workspace.sidebar_width * w.scale_factor()
@@ -12250,7 +11702,7 @@ mod tests {
                         let quad = quad.expect("exposed sidebar row paints at its full size");
                         let alpha = quad.background.as_solid().unwrap().a;
                         assert!(
-                            (alpha - 0.1 * fraction).abs() < 0.0001,
+                            (alpha - 0.11 * fraction).abs() < 0.0001,
                             "painted alpha {alpha} follows {fraction}"
                         );
                         assert!(
@@ -12663,19 +12115,13 @@ mod tests {
         let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
         let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
         let before = transcript.read_with(visual, |t, _| t.render_passes);
+        // Hovering the rail's page icons repaints the rail only.
         visual.simulate_mouse_move(inbox.center(), None, Default::default());
         visual.run_until_parked();
-        assert_eq!(
-            root.read_with(visual, |s, _| s.sidebar_hover),
-            Some("Inbox")
-        );
         visual.simulate_mouse_move(notes.center(), None, Default::default());
         visual.run_until_parked();
-        assert_eq!(
-            root.read_with(visual, |s, _| s.sidebar_hover),
-            Some("Notes")
-        );
         assert_eq!(transcript.read_with(visual, |t, _| t.render_passes), before);
+        drop(root);
     }
     #[gpui::test]
     fn many_blank_tabs_fit_without_creating_sidebar_conversations(cx: &mut TestAppContext) {

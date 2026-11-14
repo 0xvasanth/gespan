@@ -67,21 +67,20 @@ fn run(id: &str, status: &str, created_at: i64) -> AutomationRun {
 }
 
 #[gpui::test]
-fn home_is_the_first_entry_under_all_projects_and_opens_the_page(cx: &mut TestAppContext) {
+fn home_is_the_first_page_icon_and_opens_the_page(cx: &mut TestAppContext) {
     let window = setup(cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    let top = |visual: &mut VisualTestContext, selector: &'static str| {
+    let bounds = |visual: &mut VisualTestContext, selector: &'static str| {
         visual
             .debug_bounds(selector)
             .unwrap_or_else(|| panic!("{selector}"))
-            .top()
     };
-    let home = top(visual, "sidebar-navigation-Home");
-    assert!(top(visual, "sidebar-all-projects") < home);
-    assert!(
-        home < top(visual, "sidebar-navigation-My tasks"),
-        "Home sits above My tasks, which keeps its place after it"
-    );
+    let home = bounds(visual, "sidebar-navigation-Home");
+    let tasks = bounds(visual, "sidebar-navigation-My tasks");
+    // Under the project switcher, Home leads the icon row.
+    assert!(bounds(visual, "sidebar-project-button").bottom() <= home.top());
+    assert_eq!(home.top(), tasks.top());
+    assert!(home.right() <= tasks.left(), "Home comes before My tasks");
     click(visual, "sidebar-navigation-Home");
     assert_eq!(view(window, visual), Some(AppView::Home));
     assert!(drawn(visual, "home-greeting"));

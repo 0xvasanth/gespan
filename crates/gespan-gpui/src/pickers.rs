@@ -1381,7 +1381,62 @@ pub(crate) struct ProjectPicker {
     active: usize,
     allow_remote: bool,
     search: Entity<input::Input>,
+    /// The rail's switcher: Pinned and Recent groups with each project's
+    /// branch and live work. `None` is the plain list other pickers use.
+    switcher: Option<Switcher>,
+    /// "All N projects" was clicked: list every project.
+    show_all: bool,
     _changed: Subscription,
+}
+
+/// What the rail's project switcher shows beside each project.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProjectInfo {
+    pub branch: Option<String>,
+    pub needs_you: usize,
+    pub running: usize,
+    /// When nothing is live: how long since its last session, "3h".
+    pub age: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Switcher {
+    pub pinned: Vec<String>,
+    /// Newest first; pinned projects are left out of it.
+    pub recent: Vec<String>,
+    pub info: std::collections::HashMap<String, ProjectInfo>,
+}
+
+/// The switcher's Recent group lists this many projects.
+pub(crate) const RECENT_PROJECTS: usize = 5;
+
+/// The switcher's groups, in order: (eyebrow, projects). Pinned projects
+/// first, then the recent ones, then (for a project never visited yet) the
+/// rest in the user's order, up to [`RECENT_PROJECTS`].
+pub(crate) fn switcher_groups(
+    projects: &[String],
+    pinned: &[String],
+    recent: &[String],
+) -> Vec<(&'static str, Vec<String>)> {
+    let known = |p: &String| projects.contains(p);
+    let pinned: Vec<String> = pinned.iter().filter(|p| known(p)).cloned().collect();
+    let recent: Vec<String> = recent
+        .iter()
+        .chain(projects)
+        .filter(|p| known(p) && !pinned.contains(p))
+        .fold(Vec::new(), |mut list: Vec<String>, p| {
+            if !list.contains(p) {
+                list.push(p.clone());
+            }
+            list
+        })
+        .into_iter()
+        .take(RECENT_PROJECTS)
+        .collect();
+    [("Pinned", pinned), ("Recent", recent)]
+        .into_iter()
+        .filter(|(_, list)| !list.is_empty())
+        .collect()
 }
 impl EventEmitter<ProjectPicked> for ProjectPicker {}
 impl ProjectPicker {
@@ -1403,8 +1458,24 @@ impl ProjectPicker {
             active: 0,
             allow_remote: false,
             search,
+            switcher: None,
+            show_all: false,
             _changed: changed,
         }
+    }
+    /// The rail's switcher: grouped, with live work per project, and the
+    /// current project highlighted.
+    pub(crate) fn switcher(mut self, switcher: Switcher, cx: &mut Context<Self>) -> Self {
+        self.switcher = Some(switcher);
+        self.search.update(cx, |search, cx| {
+            search.set_placeholder("Switch project", cx)
+        });
+        self.active = self
+            .matches(cx)
+            .iter()
+            .position(|p| *p == self.current)
+            .unwrap_or(0);
+        self
     }
     pub(crate) fn search_focus(&self, cx: &gpui::App) -> FocusHandle {
         self.search.focus_handle(cx)
@@ -1428,7 +1499,23 @@ impl ProjectPicker {
             .get(path)
             .map_or_else(|| project_name(path), |a| a.label(path))
     }
+    /// The switcher's groups while it is not searching or showing all.
+    fn groups(&self, cx: &gpui::App) -> Option<Vec<(&'static str, Vec<String>)>> {
+        let switcher = self.switcher.as_ref()?;
+        if self.show_all || !self.search.read(cx).content.is_empty() {
+            return None;
+        }
+        Some(switcher_groups(
+            &self.projects,
+            &switcher.pinned,
+            &switcher.recent,
+        ))
+    }
+    /// The rows in order, as the keyboard steps through them.
     fn matches(&self, cx: &gpui::App) -> Vec<String> {
+        if let Some(groups) = self.groups(cx) {
+            return groups.into_iter().flat_map(|(_, list)| list).collect();
+        }
         let query = self.search.read(cx).content.to_lowercase();
         self.projects
             .iter()
@@ -1467,8 +1554,279 @@ pub(crate) fn pretty_parent(path: &str) -> String {
         _ => parent,
     }
 }
+impl ProjectPicker {
+    /// Rail F1's switcher: a search field, Pinned and Recent with each
+    /// project's branch and live work, then "All N projects" and
+    /// "+ Add project".
+    fn switcher_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let info = self
+            .switcher
+            .as_ref()
+            .map(|s| s.info.clone())
+            .unwrap_or_default();
+        let focused = self.search.focus_handle(cx).is_focused(window);
+        let groups = self.groups(cx);
+        let faint = content(0.54);
+        let muted = content(0.64);
+        let wait: gpui::Hsla = gpui::rgb(0xe8c547).into();
+        let dot = |color: gpui::Hsla| {
+            div()
+                .size(px(7.))
+                .flex_shrink_0()
+                .rounded_full()
+                .bg(color)
+                .shadow(vec![
+                    gpui::BoxShadow::new(px(0.), px(0.), color.opacity(0.2)).spread_radius(px(3.)),
+                ])
+        };
+        let row = |ix: usize, path: String, cx: &mut Context<Self>| -> AnyElement {
+            let active = self.active == ix;
+            let current = path == self.current;
+            let label = self.label(&path);
+            let project = info.get(&path).cloned().unwrap_or_default();
+            let appearance = self.appearance.get(&path).cloned().unwrap_or_default();
+            div()
+                .id(("project-option", ix))
+                .debug_selector(move || format!("project-picker-project-{ix}"))
+                .role(Role::ListBoxOption)
+                .aria_label(label.clone())
+                .aria_description(path.clone())
+                .aria_selected(current)
+                .cursor_pointer()
+                .flex_shrink_0()
+                .h(px(34.))
+                .px(px(10.))
+                .gap(px(10.))
+                .rounded(px(8.))
+                .flex()
+                .items_center()
+                .text_size(px(13.))
+                .text_color(content(0.9))
+                .when(active, |d| d.bg(content(0.10)))
+                .when(!active, |d| d.hover(|s| s.bg(content(0.05))))
+                .child(crate::shell::project_tile(&appearance, &path, 20., 5., 10.))
+                .child(div().flex_shrink(1.).min_w_0().truncate().child(label))
+                .children(project.branch.clone().map(|branch| {
+                    div()
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .max_w(px(110.))
+                        .truncate()
+                        .text_size(px(11.5))
+                        .text_color(faint)
+                        .child(branch)
+                }))
+                .child(
+                    div()
+                        .debug_selector(move || format!("project-picker-live-{ix}"))
+                        .ml_auto()
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .text_size(px(11.5))
+                        .text_color(muted)
+                        .when(project.needs_you > 0, |d| {
+                            d.child(dot(wait)).child(project.needs_you.to_string())
+                        })
+                        .when(project.running > 0, |d| {
+                            d.child(dot(accent_color()))
+                                .child(project.running.to_string())
+                        })
+                        .when(project.needs_you + project.running == 0, |d| {
+                            d.child(project.age.clone())
+                        }),
+                )
+                .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                    if *hovered {
+                        this.active = ix;
+                        cx.notify();
+                    }
+                }))
+                .on_click(cx.listener(move |this, _, _, cx| this.pick(ix, cx)))
+                .into_any()
+        };
+        let eyebrow = |label: &'static str, first: bool| {
+            div()
+                .pt(px(if first { 6. } else { 10. }))
+                .px(px(10.))
+                .pb(px(4.))
+                .text_size(px(11.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(faint)
+                .child(label.to_uppercase())
+                .into_any_element()
+        };
+        let mut list: Vec<AnyElement> = Vec::new();
+        match groups {
+            Some(groups) => {
+                let mut ix = 0;
+                for (gx, (name, paths)) in groups.into_iter().enumerate() {
+                    list.push(eyebrow(name, gx == 0));
+                    for path in paths {
+                        list.push(row(ix, path, cx));
+                        ix += 1;
+                    }
+                }
+            }
+            None => {
+                for (ix, path) in self.matches(cx).into_iter().enumerate() {
+                    list.push(row(ix, path, cx));
+                }
+            }
+        }
+        if list.is_empty() {
+            list.push(
+                div()
+                    .px(px(10.))
+                    .py(px(20.))
+                    .flex()
+                    .justify_center()
+                    .text_size(px(12.))
+                    .text_color(content(0.45))
+                    .child("No projects found")
+                    .into_any_element(),
+            );
+        }
+        let total = self.projects.len();
+        let all = self.show_all;
+        div()
+            .id("project-picker")
+            .debug_selector(|| "project-picker".into())
+            .role(Role::Dialog)
+            .aria_label("Project picker")
+            .w_full()
+            .p(px(6.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
+                this.step(-1, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
+                this.step(1, cx);
+                cx.stop_propagation();
+            }))
+            .capture_action(cx.listener(|this, _: &input::Submit, _, cx| {
+                this.pick(this.active, cx);
+                cx.stop_propagation();
+            }))
+            .child(
+                div()
+                    .mb(px(6.))
+                    .h(px(32.))
+                    .px(px(10.))
+                    .rounded(px(9.))
+                    .bg(if is_light() {
+                        content(0.04)
+                    } else {
+                        black(0.25)
+                    })
+                    .border_1()
+                    .border_color(crate::glass::edge())
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .text_size(px(12.5))
+                    .child(icon("search", 14.).text_color(if focused {
+                        content(0.7)
+                    } else {
+                        faint
+                    }))
+                    .child(div().flex_1().min_w_0().child(self.search.clone())),
+            )
+            .child(
+                div()
+                    .id("project-list")
+                    .role(Role::ListBox)
+                    .aria_label("Projects")
+                    .max_h(px(440.))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .children(list),
+            )
+            .child(
+                div()
+                    .mt(px(6.))
+                    .pt(px(8.))
+                    .px(px(10.))
+                    .pb(px(2.))
+                    .border_t_1()
+                    .border_color(content(0.06))
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .text_size(px(12.))
+                    .text_color(muted)
+                    .child(
+                        div()
+                            .id("project-all")
+                            .debug_selector(|| "project-picker-all".into())
+                            .role(Role::Button)
+                            .aria_label(if all {
+                                "Show pinned and recent projects".to_owned()
+                            } else {
+                                format!("Show all {total} projects")
+                            })
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(content(1.)))
+                            .child(if all {
+                                "Pinned and recent".to_owned()
+                            } else {
+                                format!("All {total} projects")
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_all = !this.show_all;
+                                this.active = 0;
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().flex_1())
+                    .when(self.allow_remote, |d| {
+                        d.child(
+                            div()
+                                .id("project-remote")
+                                .role(Role::Button)
+                                .aria_label("Open folder on a machine")
+                                .tooltip(|_, cx| {
+                                    cx.new(|_| {
+                                        crate::conversation::HintTooltip(
+                                            "Open folder on a machine…",
+                                        )
+                                    })
+                                    .into()
+                                })
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(content(1.)))
+                                .child(icon("globe", 13.).text_color(muted))
+                                .on_click(
+                                    cx.listener(|_, _, _, cx| cx.emit(ProjectPicked::Remote)),
+                                ),
+                        )
+                    })
+                    .child(
+                        div()
+                            .id("project-new")
+                            .debug_selector(|| "project-picker-add".into())
+                            .role(Role::Button)
+                            .aria_label("Add project")
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(content(1.)))
+                            .child("+ Add project")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(ProjectPicked::New))),
+                    ),
+            )
+            .into_any_element()
+    }
+}
 impl Render for ProjectPicker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.switcher.is_some() {
+            return self.switcher_view(window, cx);
+        }
         let matches = self.matches(cx);
         let focused = self.search.focus_handle(cx).is_focused(window);
         let rows: Vec<AnyElement> = matches
@@ -1673,5 +2031,39 @@ impl Render for ProjectPicker {
                         )
                     }),
             )
+            .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod switcher_tests {
+    use super::*;
+
+    fn paths(list: &[&str]) -> Vec<String> {
+        list.iter().map(|p| (*p).to_owned()).collect()
+    }
+
+    #[test]
+    fn pinned_lead_then_recent_without_repeats_and_capped() {
+        let projects = paths(&["/a", "/b", "/c", "/d", "/e", "/f", "/g", "/h"]);
+        let groups = switcher_groups(
+            &projects,
+            &paths(&["/c", "/a"]),
+            &paths(&["/a", "/h", "/b"]),
+        );
+        assert_eq!(groups[0], ("Pinned", paths(&["/c", "/a"])));
+        // Recent: visited newest first, then the rest in the user's order,
+        // never repeating a pin, up to five.
+        assert_eq!(
+            groups[1],
+            ("Recent", paths(&["/h", "/b", "/d", "/e", "/f"]))
+        );
+    }
+
+    #[test]
+    fn removed_projects_drop_out_and_empty_groups_hide() {
+        let projects = paths(&["/a"]);
+        let groups = switcher_groups(&projects, &paths(&["/gone", "/a"]), &paths(&["/gone"]));
+        assert_eq!(groups, [("Pinned", paths(&["/a"]))]);
     }
 }

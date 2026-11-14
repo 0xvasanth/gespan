@@ -898,17 +898,17 @@ impl SettingsView {
                 true,
             ),
             self.row(
-                Some("compact-session-cards"),
+                Some("sidebar-group-by"),
                 false,
-                "Compact view",
-                Some("Tighter sidebar rows and session cards.".into()),
-                vec![self.toggle(
-                    "compact-session-cards",
-                    "Compact view",
-                    v.compact,
-                    false,
+                "Group sessions by",
+                Some("Group the sidebar's sessions by the worktree they run in, or by your own folders.".into()),
+                vec![self.segmented(
+                    "sidebar-group-by",
+                    "Group sessions by",
+                    &p.sidebar_group_by,
+                    &[("worktree", "Worktree"), ("folders", "My folders")],
                     cx,
-                    |_, _, cx| cx.emit(SettingsEvent::SidebarOption("compact-session-cards")),
+                    |this, v, cx| this.update(cx, |p| p.sidebar_group_by = v.into()),
                 )],
             ),
         ];

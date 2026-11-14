@@ -18,6 +18,9 @@ pub(crate) struct Preferences {
     /// only), "all" (every project's, side by side) or "grouped" (every
     /// project's, each project's together). See [`TabLayout`].
     pub title_tabs: String,
+    /// How the sidebar's Folders section groups sessions: "worktree" (by
+    /// the worktree each runs in) or "folders" (the user's own folders).
+    pub sidebar_group_by: String,
     pub notes: bool,
     pub board: bool,
     pub quick_composer: bool,
@@ -151,6 +154,7 @@ impl Default for Preferences {
             file_view_mode: "preview".into(),
             tab_animations: false,
             title_tabs: "grouped".into(),
+            sidebar_group_by: "worktree".into(),
             notes: true,
             board: true,
             quick_composer: true,
@@ -237,6 +241,10 @@ pub(crate) enum TabLayout {
 }
 
 impl Preferences {
+    /// The sidebar groups sessions by worktree, not by the user's folders.
+    pub(crate) fn groups_by_worktree(&self) -> bool {
+        self.sidebar_group_by != "folders"
+    }
     pub(crate) fn tab_layout(&self) -> TabLayout {
         match self.title_tabs.as_str() {
             "project" => TabLayout::Project,

@@ -224,8 +224,13 @@ impl Pilots {
             );
         // The card is a sidebar list item's root, where a margin narrows it
         // without moving it over. Padding on a wrapper insets it evenly, on
-        // the same 8px edges as the rows around it.
-        div().px_2().pb_2().child(card).into_any_element()
+        // the rail's 10px edges, as the rows around it.
+        div()
+            .px(px(10.))
+            .pt(px(12.))
+            .pb_2()
+            .child(card)
+            .into_any_element()
     }
 }
 

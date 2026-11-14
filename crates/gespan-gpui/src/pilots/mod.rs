@@ -148,6 +148,8 @@ pub(crate) struct Pilots {
     activity: Option<ActivityList>,
     activity_turn: Option<usize>,
     rail_ids: Vec<String>,
+    /// The sidebar lists every Pilot, not just the first few.
+    rail_all: bool,
     running: HashMap<i64, RunningHabit>,
     active_run: Option<i64>,
     /// Completion reports per `(pilot_id, source session)`, held until all of them are built.
@@ -404,6 +406,7 @@ impl Pilots {
             activity: None,
             activity_turn: None,
             rail_ids: Vec::new(),
+            rail_all: false,
             running: HashMap::new(),
             active_run: None,
             completion_work: HashMap::new(),
@@ -1285,13 +1288,34 @@ impl Pilots {
         if !self.prefs.pilots {
             return div().into_any_element();
         }
-        let roster: Vec<_> = self
+        let mut roster: Vec<_> = self
             .roster
             .pilots
             .iter()
             .filter(|m| project.as_ref().is_none_or(|p| m.works_on(p)))
             .cloned()
             .collect();
+        // Live Pilots lead, then the open one, then the rest as arranged.
+        // The section lists a few; a live or open Pilot always shows.
+        let status = |id: &str| {
+            self.chats
+                .get(id)
+                .map(|v| v.read(cx).pilot_status().to_owned())
+                .unwrap_or_else(|| "idle".to_owned())
+        };
+        let rank = |pilot: &Pilot| match status(&pilot.id).as_str() {
+            "needs-you" => 0,
+            "working" => 1,
+            _ if self.active.as_deref() == Some(&pilot.id) => 2,
+            _ => 3,
+        };
+        roster.sort_by_key(|pilot| rank(pilot));
+        let total = roster.len();
+        let shown = rail_shown(&roster.iter().map(rank).collect::<Vec<_>>());
+        let hidden = total - shown;
+        if !self.rail_all {
+            roster.truncate(shown);
+        }
         self.rail_ids = roster.iter().map(|m| m.id.clone()).collect();
         for pilot in &roster {
             self.rail_bounds.entry(pilot.id.clone()).or_default();
@@ -1304,22 +1328,76 @@ impl Pilots {
             return self.intro_card(project.into_iter().collect(), cx);
         }
         let add_project = project.clone();
-        let heading = section_label("Pilots").when(has, |d| {
-            d.child(
-                icon_button("new-pilot", "New pilot", "plus")
-                    .debug_selector(|| "sidebar-pilot-button".into())
-                    .size(px(20.))
-                    // Centred on the sidebar's trailing column, with the
-                    // session filter and the navigation hints and counts.
-                    .mr(px(-3.))
-                    .on_click(cx.listener(move |this, _, w, cx| {
-                        this.create(add_project.clone().into_iter().collect(), w, cx)
-                    })),
-            )
-        });
+        let faint = content(0.54);
+        // Rail F1's `.rl-sec`: "Pilots", then "All N →" when some are left
+        // out. New pilot shows on hover.
+        let heading = div()
+            .debug_selector(|| "rail-section-Pilots".into())
+            .group("rail-pilots-heading")
+            .w_full()
+            .pt(px(12.))
+            .px(px(10.))
+            .pb(px(4.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(11.))
+            .line_height(px(13.))
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(faint)
+            .child("Pilots")
+            .child(div().flex_1())
+            .when(has, |d| {
+                d.child(
+                    // As tall as the heading's line; the button overflows it.
+                    div()
+                        .h(px(13.))
+                        .flex()
+                        .items_center()
+                        .invisible()
+                        .group_hover("rail-pilots-heading", |s| s.visible())
+                        .child(
+                            icon_button("new-pilot", "New pilot", "plus")
+                                .debug_selector(|| "sidebar-pilot-button".into())
+                                .size(px(16.))
+                                .on_click(cx.listener(move |this, _, w, cx| {
+                                    this.create(add_project.clone().into_iter().collect(), w, cx)
+                                })),
+                        ),
+                )
+            })
+            .when(hidden > 0, |d| {
+                let all = self.rail_all;
+                d.child(
+                    div()
+                        .id("pilots-rail-all")
+                        .debug_selector(|| "pilots-rail-all".into())
+                        .role(Role::Button)
+                        .aria_label(if all {
+                            "Show fewer Pilots".to_owned()
+                        } else {
+                            format!("Show all {total} Pilots")
+                        })
+                        .cursor_pointer()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .hover(|s| s.text_color(content(1.)))
+                        .child(if all {
+                            "Fewer".to_owned()
+                        } else {
+                            format!("All {total} →")
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.rail_all = !this.rail_all;
+                            cx.notify();
+                        })),
+                )
+            });
         div()
-            .px_2()
-            .pb_3()
+            .px(px(10.))
+            // The rail's 1px gap between rows.
+            .flex()
+            .flex_col()
+            .gap_px()
             .child(heading)
             .when(!has, |d| {
                 d.child(
@@ -1394,11 +1472,13 @@ impl Pilots {
                     .aria_label(label)
                     .h(px(32.))
                     .px_2()
-                    .rounded_md()
+                    .rounded(px(6.))
                     .relative()
                     .flex()
                     .items_center()
                     .gap_2()
+                    .text_size(px(12.5))
+                    .text_color(content(0.88))
                     .opacity(if active { 1. } else { 0.65 })
                     .map(|d| {
                         let tip = SharedString::from(format!(
@@ -1449,9 +1529,44 @@ impl Pilots {
                             .truncate()
                             .when(unread > 0, |d| d.pr(px(24.)))
                             .group_hover("pilot-rail-row", |s| s.pr(px(24.)))
-                            .text_size(px(14.))
-                            .font_weight(gpui::FontWeight::MEDIUM)
                             .child(pilot.label()),
+                    )
+                    // The board's status word: yellow while it needs you,
+                    // blue while it works, else how long it has been idle.
+                    .child(
+                        div()
+                            .debug_selector({
+                                let id = pilot.id.clone();
+                                move || format!("pilot-rail-status-{id}")
+                            })
+                            .flex_shrink_0()
+                            .text_size(px(11.))
+                            .text_color(match state {
+                                "needs-you" => gpui::Hsla::from(rgb(if crate::theme::is_light() {
+                                    0xa86b00
+                                } else {
+                                    0xf5dc84
+                                })),
+                                "working" => rgb(if crate::theme::is_light() {
+                                    0x1f6fd6
+                                } else {
+                                    0x8cc3ff
+                                })
+                                .into(),
+                                _ => faint,
+                            })
+                            .when(unread > 0, |d| d.invisible())
+                            .group_hover("pilot-rail-row", |s| s.invisible())
+                            .child(match state {
+                                "needs-you" => "needs you".to_owned(),
+                                "working" => "working".to_owned(),
+                                _ => self
+                                    .chats
+                                    .get(&pilot.id)
+                                    .map(|v| v.read(cx).summary.updated_at)
+                                    .map(|at| pilot_age(at, gespan_core::time::now_ms()))
+                                    .unwrap_or_default(),
+                            }),
                     )
                     .when(unread > 0, |d| {
                         d.child(
@@ -1720,6 +1835,32 @@ impl gpui::Render for Pilots {
 }
 
 /// The hover text on a Focused-rail Pilot row: its name and state.
+/// How many Pilots the sidebar lists of `ranks` (live 0–1, open 2, idle 3,
+/// sorted): at least [`RAIL_PILOTS`], and never fewer than are live or open.
+pub(crate) fn rail_shown(ranks: &[u8]) -> usize {
+    ranks
+        .iter()
+        .filter(|rank| **rank < 3)
+        .count()
+        .max(RAIL_PILOTS.min(ranks.len()))
+}
+/// The Pilots the sidebar lists before "All N →".
+pub(crate) const RAIL_PILOTS: usize = 3;
+
+/// An idle Pilot's age on its row: "9m", "2h", "1d".
+fn pilot_age(at: u64, now: u64) -> String {
+    if at == 0 {
+        return String::new();
+    }
+    match now.saturating_sub(at) / 60_000 {
+        0 => "now".into(),
+        m if m < 60 => format!("{m}m"),
+        m if m < 60 * 24 => format!("{}h", m / 60),
+        m if m < 60 * 24 * 7 => format!("{}d", m / (60 * 24)),
+        m => format!("{}w", m / (60 * 24 * 7)),
+    }
+}
+
 struct StatusTooltip(SharedString);
 impl Render for StatusTooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

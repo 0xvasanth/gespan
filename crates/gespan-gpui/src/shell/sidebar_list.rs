@@ -1,34 +1,40 @@
 //! Only construct and lay out sidebar cards near the viewport.
+use super::rail::{RAIL_PAD, count_pill, section, section_more};
+use super::rail_plan::{self, Live};
 use super::*;
 use crate::machines::sidebar as machine_rows;
 use gespan_core::session_groups::Entry;
+use gpui::{Div, Stateful};
 use gpui::{ListAlignment, ListState, list};
 use std::cell::{Cell, RefCell};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Row {
-    Navigation,
-    /// The Focused layout's project dropdown and gear, under All projects.
-    Project,
-    /// The Focused layout's standalone New thread button.
-    NewThread,
-    Pilots,
-    Pinned,
-    Folders,
-    Group(Entry),
-    Gap,
-    Heading {
-        label: &'static str,
-        first: bool,
+    /// "Needs you" or "Running", with how many.
+    LiveHeading {
+        live: Live,
+        count: usize,
     },
-    Session(i64),
-    /// A worktree's group under Sessions, by its working copy's path.
-    Worktree(String),
-    GroupedSession {
+    /// A live session, with the folder it would otherwise sit in.
+    Live {
         id: i64,
-        first: bool,
-        last: bool,
+        live: Live,
+        folder: String,
     },
+    /// "Folders", how many and how many sessions they hold.
+    FoldersHeading {
+        folders: usize,
+        sessions: usize,
+    },
+    Folder(rail_plan::Folder),
+    /// An idle session under an open folder.
+    FolderSession(i64),
+    /// "N more…" under an open folder, by its key.
+    FolderMore {
+        key: String,
+        more: usize,
+    },
+    Pilots,
     Empty,
     MachinesHeading,
     /// A herdr machine, by id.
@@ -50,6 +56,12 @@ pub(super) struct SidebarList {
     /// Only anchors constructed for the last viewport, including nested rails.
     visible_anchors: RefCell<Vec<AnchorSlot>>,
     visible_rows: RefCell<Vec<usize>>,
+    /// Folders whose "N more" was clicked, until the app quits.
+    pub(super) expanded: HashSet<String>,
+    /// The switcher's counts: folders, then sessions.
+    pub(super) summary: (usize, usize),
+    /// The live sessions the rows were built for; a change rebuilds them.
+    live: Vec<(i64, Live)>,
 }
 
 impl SidebarList {
@@ -76,6 +88,9 @@ impl SidebarList {
             structural_rebuilds: 0,
             visible_anchors: RefCell::new(Vec::new()),
             visible_rows: RefCell::new(Vec::new()),
+            expanded: HashSet::new(),
+            summary: (0, 0),
+            live: Vec::new(),
         }
     }
 
@@ -123,8 +138,10 @@ impl SidebarList {
             );
         }
         self.rows = rows;
-        // Navigation and the Pilot overview can change height independently.
-        self.state.remeasure_items(0..self.rows.len().min(2));
+        // The Pilots section changes height on its own.
+        if let Some(ix) = self.rows.iter().position(|row| *row == Row::Pilots) {
+            self.state.remeasure_items(ix..ix + 1);
+        }
     }
 }
 
@@ -163,17 +180,17 @@ fn push_machine_rows(rows: &mut Vec<Row>, cx: &App) -> bool {
 }
 
 /// A session in the sidebar's worktree grouping.
-struct Listed {
-    id: i64,
+pub(super) struct Listed {
+    pub id: i64,
     /// When the session started, or zero where the store does not say.
-    created_at: u64,
-    path: String,
+    pub created_at: u64,
+    pub path: String,
 }
 
 /// Sessions by the worktree they run in, each group keeping the list's order.
 /// The worktree where the newest session started comes first. Stores that do
 /// not record a start time hand out growing ids, so the id breaks ties.
-fn worktree_groups(sessions: &[Listed]) -> Vec<(String, Vec<i64>)> {
+pub(super) fn worktree_groups(sessions: &[Listed]) -> Vec<(String, Vec<i64>)> {
     use gespan_core::files::path_key;
     let mut groups: Vec<(String, Vec<i64>, (u64, i64))> = Vec::new();
     for session in sessions {
@@ -194,6 +211,23 @@ fn worktree_groups(sessions: &[Listed]) -> Vec<(String, Vec<i64>)> {
         .into_iter()
         .map(|(path, ids, _)| (path, ids))
         .collect()
+}
+
+/// The sessions a by-folder rail key holds in `entries`; empty for a
+/// worktree key, whose label is the worktree's own.
+fn entries_of(entries: &[Entry], key: &str) -> Vec<i64> {
+    entries
+        .iter()
+        .find_map(|entry| match entry {
+            Entry::Reminders { sessions, .. } if key == "reminders" => Some(sessions.clone()),
+            Entry::Pinned { sessions } if key == "pinned" => Some(sessions.clone()),
+            Entry::Fixed { id, sessions, .. } if id == key => Some(sessions.clone()),
+            Entry::Folder { id, sessions } if key.strip_prefix("folder:") == Some(id) => {
+                Some(sessions.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// Height of the fade the sidebar list paints over its bottom edge, where it
@@ -301,10 +335,16 @@ impl Shell {
     pub(super) fn refresh_sidebar_structure(&mut self, cx: &mut Context<Self>) {
         let scope = self.sidebar_scope();
         let minute = gespan_core::time::now_ms() / 60_000;
+        // A session that starts or stops waiting or running changes section.
+        let mut live: Vec<_> = self.rail_live(cx).into_iter().collect();
+        live.sort_unstable();
+        let live_changed = self.sidebar_list.live != live;
         if self.sidebar_list.structure_dirty.replace(false)
+            || live_changed
             || self.sidebar_list.scope != scope
             || self.sidebar_list.indexed_minute != minute
         {
+            self.sidebar_list.live = live;
             // Date/time expiry refreshes membership without resetting the
             // project scope or scroll anchor.
             self.sidebar_list.indexed_minute = minute;
@@ -313,7 +353,6 @@ impl Shell {
                 self.sidebar_list.structural_rebuilds += 1;
             }
             let ids = self.sidebar_session_ids(cx);
-            self.sync_rails(&ids, cx);
             let entries = self.session_entries(&ids, cx);
             let listed: HashSet<_> = ids.iter().copied().collect();
             self.session_row_bounds.retain(|id, _| listed.contains(id));
@@ -339,124 +378,104 @@ impl Shell {
 
     fn sidebar_scope(&self) -> String {
         format!(
-            "{}\0{}\0{:?}\0{}\0{}",
+            "{}\0{}\0{:?}\0{}\0{}\0{}",
             self.workspace.project,
             self.working_copy(),
             self.workspace.session_filters,
             self.workspace.preferences.show_archived,
             self.workspace.boxy_layout(),
+            self.workspace.preferences.sidebar_group_by,
         )
     }
 
+    /// Rail F1's list: Needs you, Running, the folders, then Pilots and
+    /// any machines. Every session shows once.
     pub(super) fn prepare_sidebar_list(&mut self, entries: &[Entry], cx: &App) {
-        let groups = self.project_groups();
-        let mut rows = vec![Row::Navigation, Row::Project, Row::NewThread, Row::Pilots];
-        if push_machine_rows(&mut rows, cx) {
-            rows.push(Row::Gap);
-        }
-        let mut folders = false;
-        for entry in entries {
-            let (members, collapsed) = match entry {
-                Entry::Pinned { sessions } => {
-                    // Pins sit between the folders and the dated sessions,
-                    // as ordinary cards under a plain label.
-                    if folders {
-                        rows.push(Row::Gap);
-                        folders = false;
-                    }
-                    rows.push(Row::Pinned);
-                    rows.extend(
-                        sessions
-                            .iter()
-                            .filter(|id| !self.rails.children.contains(id))
-                            .map(|id| Row::Session(*id)),
-                    );
-                    rows.push(Row::Gap);
-                    continue;
-                }
-                Entry::Reminders {
-                    sessions,
-                    collapsed,
-                } => (sessions, *collapsed),
-                Entry::Folder { id, sessions } => {
-                    (sessions, groups.folder(id).is_some_and(|g| g.collapsed))
-                }
-                Entry::Fixed { id, sessions, .. } => (sessions, groups.fixed_is_collapsed(id)),
-                Entry::Session(_) => continue,
-            };
-            if !folders {
-                rows.push(Row::Folders);
-                folders = true;
-            }
-            rows.push(Row::Group(entry.clone()));
-            if !collapsed {
-                let members: Vec<_> = members
-                    .iter()
-                    .copied()
-                    .filter(|id| !self.rails.children.contains(id))
-                    .collect();
-                rows.extend(
-                    members
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, id)| Row::GroupedSession {
-                            id: *id,
-                            first: ix == 0,
-                            last: ix + 1 == members.len(),
-                        }),
-                );
-            }
-        }
-        if folders {
-            rows.push(Row::Gap);
-        }
-        // One list under one heading; each row shows its own last-use time.
-        rows.push(Row::Heading {
-            label: "Sessions",
-            first: true,
-        });
-        let sessions: Vec<_> = entries
+        let ids: Vec<i64> = entries
             .iter()
-            .filter_map(|entry| match entry {
-                Entry::Session(id) if !self.rails.children.contains(id) => Some(Listed {
-                    id: *id,
-                    created_at: self.session_metadata(*id, cx).summary.created_at,
-                    path: self.session_working_copy(*id, cx).to_owned(),
-                }),
-                _ => None,
+            .flat_map(|entry| match entry {
+                Entry::Session(id) => vec![*id],
+                Entry::Reminders { sessions, .. }
+                | Entry::Folder { sessions, .. }
+                | Entry::Fixed { sessions, .. }
+                | Entry::Pinned { sessions } => sessions.clone(),
             })
             .collect();
-        let worktrees = worktree_groups(&sessions);
-        // A project that only works in its own folder needs no group headings.
-        let grouped = worktrees.len() > 1
-            || worktrees.first().is_some_and(|(path, _)| {
-                gespan_core::files::path_key(path)
-                    != gespan_core::files::path_key(&self.workspace.project)
-            });
-        for (path, ids) in worktrees {
-            if grouped {
-                rows.push(Row::Worktree(path));
+        let inputs = self.rail_folders(entries, &ids, cx);
+        let live = self.rail_live(cx);
+        let plan = rail_plan::plan(inputs, &live, &self.sidebar_list.expanded);
+        self.sidebar_list.summary = (plan.folders.len(), plan.sessions);
+        let folder_of: HashMap<i64, String> = plan
+            .folders
+            .iter()
+            .flat_map(|folder| {
+                entries_of(entries, &folder.key)
+                    .into_iter()
+                    .map(move |id| (id, folder.label.clone()))
+            })
+            .collect();
+        let label_of = |id: i64| {
+            folder_of.get(&id).cloned().unwrap_or_else(|| {
+                // By worktree, a session's folder is its worktree.
+                self.worktree_label(self.session_working_copy(id, cx))
+            })
+        };
+        let mut rows = Vec::new();
+        for (state, ids) in [
+            (Live::NeedsYou, &plan.needs_you),
+            (Live::Running, &plan.running),
+        ] {
+            if ids.is_empty() {
+                continue;
             }
-            rows.extend(ids.into_iter().map(Row::Session));
+            rows.push(Row::LiveHeading {
+                live: state,
+                count: ids.len(),
+            });
+            rows.extend(ids.iter().map(|id| Row::Live {
+                id: *id,
+                live: state,
+                folder: label_of(*id),
+            }));
         }
-        if entries.is_empty() {
+        let filtered = self
+            .workspace
+            .session_filters
+            .active(self.workspace.preferences.show_archived);
+        if plan.folders.is_empty() {
+            // A filter that hides everything keeps its button reachable.
+            if filtered {
+                rows.push(Row::FoldersHeading {
+                    folders: 0,
+                    sessions: 0,
+                });
+            }
             rows.push(Row::Empty);
+        } else {
+            rows.push(Row::FoldersHeading {
+                folders: plan.folders.len(),
+                sessions: plan.sessions,
+            });
+            for folder in plan.folders {
+                let (shown, more, key) = (folder.shown.clone(), folder.more, folder.key.clone());
+                rows.push(Row::Folder(folder));
+                rows.extend(shown.into_iter().map(Row::FolderSession));
+                if more > 0 {
+                    rows.push(Row::FolderMore { key, more });
+                }
+            }
+        }
+        rows.push(Row::Pilots);
+        let mut machines = Vec::new();
+        if push_machine_rows(&mut machines, cx) {
+            rows.extend(machines);
         }
         self.sidebar_list.update(self.sidebar_scope(), rows);
     }
 
     fn sync_sidebar_list_visibility(&mut self) {
-        // Open rails have variable height. Remeasure only materialized rows,
-        // rather than scanning every session in the project every frame.
-        for ix in self.sidebar_list.visible_rows.borrow_mut().drain(..) {
-            if let Some(Row::Session(id) | Row::GroupedSession { id, .. }) =
-                self.sidebar_list.rows.get(ix)
-                && (self.rails.started.contains_key(id)
-                    || self.orchestration_summaries.contains_key(id))
-            {
-                self.sidebar_list.state.remeasure_items(ix..ix + 1);
-            }
-        }
+        // Rail rows have fixed heights; only the laid-out set is tracked.
+        self.sidebar_list.visible_rows.borrow_mut().clear();
     }
 
     pub(super) fn virtual_sidebar(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -495,9 +514,54 @@ impl Shell {
         };
         self.sidebar_list.visible_rows.borrow_mut().push(ix);
         let content = match row {
-            Row::Navigation => return self.sidebar_navigation(cx),
-            Row::Project => return self.sidebar_project_row(cx),
-            Row::NewThread => return self.sidebar_new_thread(cx),
+            Row::LiveHeading { live, count } => section(match live {
+                Live::NeedsYou => "Needs you",
+                Live::Running => "Running",
+            })
+            .child(count_pill(count, live == Live::NeedsYou))
+            .into_any(),
+            Row::Live { id, live, folder } => {
+                self.rail_session_row(id, Some(live), Some(folder.into()), false, cx)
+            }
+            Row::FoldersHeading { folders, sessions } => section("Folders")
+                .child(div().flex_1())
+                .child(
+                    // Filters stay one click away without taking room on
+                    // the board's line: shown while one is on, or on hover.
+                    // A slot the line's height, so the 24px button never
+                    // makes the heading taller than the board's.
+                    div()
+                        .flex_shrink_0()
+                        .w(px(16.))
+                        .h(px(13.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(
+                            !self
+                                .workspace
+                                .session_filters
+                                .active(self.workspace.preferences.show_archived)
+                                && !self.menu_open(&MenuTarget::SessionFilter),
+                            |d| d.invisible().group_hover("rail-folders", |s| s.visible()),
+                        )
+                        .child(self.sidebar_filter_button(cx)),
+                )
+                .child(
+                    section_more(format!("{folders} · All {sessions} →"))
+                        .id("rail-all-sessions")
+                        .debug_selector(|| "rail-all-sessions".into())
+                        .role(Role::Button)
+                        .aria_label(format!("Search all {sessions} sessions"))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(content(1.)))
+                        .on_click(cx.listener(|this, _, window, cx| this.focus_search(window, cx))),
+                )
+                .group("rail-folders")
+                .into_any(),
+            Row::Folder(folder) => self.rail_folder_row(&folder, cx),
+            Row::FolderSession(id) => self.rail_session_row(id, None, None, true, cx),
+            Row::FolderMore { key, more } => self.rail_more_row(&key, more, cx),
             Row::Pilots => {
                 return self
                     .pilots
@@ -509,51 +573,7 @@ impl Shell {
                     })
                     .unwrap_or_else(|| div().into_any());
             }
-            Row::Pinned => section_label("Pinned").into_any(),
-            Row::Folders => section_label("Folders").into_any(),
-            Row::Group(entry) => {
-                if let Entry::Folder { id, .. } = &entry
-                    && let Some(anchor) = self.folder_bounds.get(id)
-                {
-                    self.sidebar_list.track_anchor(anchor.clone());
-                }
-                self.sidebar_group_header(&entry, cx)
-            }
-            Row::Gap => return div().h(px(12.)).into_any(),
-            Row::Heading { label, first } => section_label(label)
-                .when(!first, |d| d.mt_3())
-                // The New row above already starts a session.
-                .when(first, |d| d.child(self.sidebar_filter_button(cx)))
-                .into_any(),
-            Row::Session(id) => self.session_card(id, cx),
-            Row::Worktree(path) => {
-                let label = self.worktree_label(&path);
-                div()
-                    .debug_selector(|| "sidebar-worktree-group".into())
-                    .h(px(24.))
-                    .mt_1()
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .text_size(px(12.))
-                    .text_color(content(0.5))
-                    .child(icon("git-branch", 12.))
-                    .child(div().min_w_0().truncate().child(label))
-                    .into_any()
-            }
-            Row::GroupedSession { id, first, last } => {
-                return div()
-                    .px_2()
-                    .child(
-                        div()
-                            .ml(px(10.))
-                            .when(first, |d| d.pt_1())
-                            .child(rails::step(last, self.nested_session_card(id, cx))),
-                    )
-                    .into_any();
-            }
-            Row::MachinesHeading => section_label("Machines").into_any(),
+            Row::MachinesHeading => section("Machines").into_any(),
             Row::Machine(id) => {
                 let Some(view) = crate::machines::get(cx).and_then(|machines| {
                     let machines = machines.read(cx);
@@ -573,8 +593,7 @@ impl Shell {
             } => self.machine_agent_row(&machine, &terminal_id, cx),
             Row::Empty => div()
                 .debug_selector(|| "sidebar-sessions-empty".into())
-                .mx_1()
-                .mt_1()
+                .mt(px(12.))
                 .px_3()
                 .py(px(10.))
                 .rounded_lg()
@@ -608,13 +627,10 @@ impl Shell {
                 )
                 .into_any(),
         };
-        div().px_2().pb_px().child(content).into_any()
+        // The nav's 10px side padding, and its 1px gap between rows.
+        div().px(px(RAIL_PAD)).pb_px().child(content).into_any()
     }
 }
-
-/// The navigation rows' trailing column: centred 7px in from the row's
-/// padding, on the same axis as the section headers' 24px icon buttons.
-const TRAILING_SLOT: f32 = 14.;
 
 impl Shell {
     /// The machine list or a turn seen changed: marks follow, and the
@@ -834,287 +850,88 @@ impl Shell {
         cx.notify();
     }
 
-    pub(super) fn sidebar_navigation(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let flows_visible = crate::flows::visible(cx);
+    /// A `.rl-row` with a tinted icon, a label and a shortcut: New thread
+    /// and Settings.
+    fn rail_action_row(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        glyph: &'static str,
+        ink: gpui::Hsla,
+        shortcut: String,
+        selected: bool,
+    ) -> Stateful<Div> {
         div()
+            .id(id)
+            .debug_selector(move || id.into())
+            .role(Role::Button)
+            .aria_label(label)
+            .aria_selected(selected)
+            .cursor_pointer()
             .w_full()
-            .px_2()
-            .pt(px(4.))
-            // The New thread row below supplies its own top margin.
-            .pb(px(0.))
+            .h(px(super::rail::ROW_HEIGHT))
+            .px(px(10.))
+            .rounded(px(8.))
             .flex()
-            .flex_col()
-            .gap_px()
+            .items_center()
+            .gap(px(9.))
+            .text_size(px(12.5))
+            .text_color(if selected || label == "New thread" {
+                content(1.)
+            } else {
+                super::rail::row_ink()
+            })
+            .when(selected, |d| {
+                d.bg(content(0.11)).shadow(vec![
+                    gpui::BoxShadow::new(px(0.), px(1.), white(0.08)).inset(),
+                ])
+            })
+            .hover(|s| s.bg(content(0.06)).text_color(content(1.)))
+            .child(icon(glyph, 15.).text_color(ink))
+            .child(div().flex_1().min_w_0().truncate().child(label))
             .child(
-                div().w_full().flex().items_center().child(
-                    section_label("All projects")
-                        .flex_1()
-                        .debug_selector(|| "sidebar-all-projects".into()),
-                ),
+                super::rail::kbd(shortcut)
+                    .debug_selector(move || format!("sidebar-navigation-trailing-{label}")),
             )
-            .children(
-                [
-                    ("Home", "home"),
-                    ("My tasks", "circle-alert"),
-                    ("Inbox", "inbox"),
-                    ("Runs", "clock"),
-                    ("Automations", "zap"),
-                    ("Flows", "git-merge"),
-                    ("Board", "kanban"),
-                    ("Notes", "note"),
-                ]
-                .into_iter()
-                .filter(|(label, _)| match *label {
-                    "Notes" => self.workspace.preferences.notes,
-                    "Automations" => self.workspace.sidebar_automations_visible,
-                    "Flows" => flows_visible,
-                    "Board" => self.workspace.preferences.board,
-                    "Inbox" => self.workspace.sidebar_inbox_visible,
-                    _ => true,
-                })
-                .map(|(label, glyph)| {
-                    let selected = self.app_view_label() == Some(label);
-                    let waiting = if label == "My tasks" {
-                        self.my_task_count(cx)
-                    } else {
-                        0
-                    };
-                    let unread = label == "Inbox"
-                        && self
-                            .inbox
-                            .as_ref()
-                            .is_some_and(|inbox| inbox.read(cx).unread_count() > 0);
-                    div()
-                        .id(label)
-                        .debug_selector(move || format!("sidebar-navigation-{label}"))
-                        .role(Role::Button)
-                        .aria_label(if unread {
-                            SharedString::from("Inbox, new items")
-                        } else if waiting > 0 {
-                            SharedString::from(format!("My tasks, {waiting} waiting"))
-                        } else {
-                            SharedString::from(label)
-                        })
-                        .aria_selected(selected)
-                        .cursor_pointer()
-                        .group("rail-action")
-                        .h(px(32.))
-                        .px_2()
-                        .rounded_md()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(content(if selected || self.sidebar_hover == Some(label) {
-                            1.
-                        } else {
-                            0.5
-                        }))
-                        .when(selected, |d| d.bg(content(0.1)))
-                        .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-                        .child(icon(glyph, 16.).text_color(nav_icon_color(label, selected)))
-                        .child(div().flex_1().child(label))
-                        .when_some(
-                            match label {
-                                "My tasks" if waiting > 0 => Some(
-                                    div()
-                                        .debug_selector(|| {
-                                            "sidebar-navigation-count-My tasks".into()
-                                        })
-                                        .flex_shrink_0()
-                                        .min_w(px(18.))
-                                        .h(px(16.))
-                                        .px(px(5.))
-                                        .rounded_full()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .bg(gpui::rgb(0xffb900))
-                                        .text_color(black(0.9))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(waiting.to_string())
-                                        .into_any_element(),
-                                ),
-                                "Inbox" if unread => Some(
-                                    div()
-                                        .flex_shrink_0()
-                                        .size(px(6.))
-                                        .rounded_full()
-                                        .bg(accent_color())
-                                        .into_any_element(),
-                                ),
-                                _ => None,
-                            },
-                            // One column for hints, counts and the unread dot,
-                            // centred under the section buttons' icons below.
-                            |row, trailing| {
-                                row.child(
-                                    div()
-                                        .debug_selector(move || {
-                                            format!("sidebar-navigation-trailing-{label}")
-                                        })
-                                        .w(px(TRAILING_SLOT))
-                                        .flex_shrink_0()
-                                        .flex()
-                                        .justify_center()
-                                        .text_size(px(11.))
-                                        .font_weight(FontWeight::NORMAL)
-                                        .text_color(content(0.35))
-                                        .child(trailing),
-                                )
-                            },
-                        )
-                        .when(label == "Inbox", |d| {
-                            d.on_mouse_down(
-                                MouseButton::Right,
-                                cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
-                                    this.open_menu(
-                                        MenuTarget::InboxNav,
-                                        Anchor::Point(e.position),
-                                        w,
-                                        cx,
-                                    );
-                                    cx.stop_propagation();
-                                }),
-                            )
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| match label {
-                            "Home" => this.open_home(window, cx),
-                            "My tasks" => this.open_my_tasks(window, cx),
-                            "Inbox" => this.open_inbox(window, cx),
-                            "Runs" => this.show_runs(window, cx),
-                            "Notes" => this.open_notes(window, cx),
-                            "Automations" => this.open_automations(window, cx),
-                            "Flows" => this.open_flows(window, cx),
-                            "Board" => this.open_board(window, cx),
-                            _ => (),
-                        }))
-                        .on_hover(cx.listener(move |this, hovered, _, cx| {
-                            if *hovered {
-                                this.sidebar_hover = Some(label);
-                            } else if this.sidebar_hover == Some(label) {
-                                this.sidebar_hover = None;
-                            }
-                            this.notify_navigation(cx);
-                        }))
-                }),
-            )
-            .into_any()
     }
-    /// Settings, the sidebar's last row, below the agents footer. It is
-    /// styled like the navigation rows, with a neutral gear.
+    /// Settings, the sidebar's last row, below the agents footer.
     pub(super) fn sidebar_settings_row(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        const LABEL: &str = "Settings";
-        let hovered = self.sidebar_hover == Some(LABEL);
         div()
             .flex_shrink_0()
             .w_full()
-            .px_2()
-            .pb(px(8.))
+            .px(px(RAIL_PAD))
+            .pt(px(4.))
+            .pb(px(10.))
             .child(
-                div()
-                    .id("sidebar-settings")
-                    .debug_selector(|| "sidebar-navigation-Settings".into())
-                    .role(Role::Button)
-                    .aria_label(LABEL)
-                    .cursor_pointer()
-                    .h(px(32.))
-                    .px_2()
-                    .rounded_md()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(content(if hovered { 1. } else { 0.5 }))
-                    .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-                    .child(icon("settings", 16.).text_color(content(0.55)))
-                    .child(div().flex_1().child(LABEL))
-                    .child(
-                        div()
-                            .debug_selector(|| "sidebar-navigation-trailing-Settings".into())
-                            .w(px(TRAILING_SLOT))
-                            .flex_shrink_0()
-                            .flex()
-                            .justify_center()
-                            .text_size(px(11.))
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(content(0.35))
-                            .child(format!("{MOD},")),
-                    )
-                    .on_hover(cx.listener(|this, hovered, _, cx| {
-                        if *hovered {
-                            this.sidebar_hover = Some(LABEL);
-                        } else if this.sidebar_hover == Some(LABEL) {
-                            this.sidebar_hover = None;
-                        }
-                        this.notify_navigation(cx);
-                    }))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_settings(crate::settings::Section::General, window, cx)
-                    })),
+                self.rail_action_row(
+                    "sidebar-settings",
+                    "Settings",
+                    "settings",
+                    super::rail::muted_ink(),
+                    format!("{MOD},"),
+                    false,
+                )
+                .debug_selector(|| "sidebar-navigation-Settings".into())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_settings(crate::settings::Section::General, window, cx)
+                })),
             )
             .into_any()
     }
-    /// The row that starts a thread in this project, styled like the
-    /// navigation rows above it.
-    fn sidebar_new_thread(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    /// New thread in this project, ⌘T. Lit while the open session is blank.
+    pub(super) fn sidebar_new_thread(&mut self, cx: &mut Context<Self>) -> AnyElement {
         const LABEL: &str = "New thread";
         let selected = self.active_session_is_blank(cx);
-        div()
-            .w_full()
-            .px_2()
-            .pt(px(8.))
-            .pb(px(6.))
-            .child(
-                div()
-                    .id("sidebar-new-thread")
-                    .debug_selector(|| "sidebar-new-thread".into())
-                    .role(Role::Button)
-                    .aria_label(LABEL)
-                    .aria_selected(selected)
-                    .cursor_pointer()
-                    .h(px(32.))
-                    .px_2()
-                    .rounded_md()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(content(if selected || self.sidebar_hover == Some(LABEL) {
-                        1.
-                    } else {
-                        0.5
-                    }))
-                    .when(selected, |d| d.bg(content(0.1)))
-                    .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-                    .child(icon("pencil-edit-02", 16.).text_color(nav_icon_color(LABEL, selected)))
-                    .child(div().flex_1().child(LABEL))
-                    .child(
-                        div()
-                            .debug_selector(|| "sidebar-navigation-trailing-New thread".into())
-                            .w(px(TRAILING_SLOT))
-                            .flex_shrink_0()
-                            .flex()
-                            .justify_center()
-                            .text_size(px(11.))
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(content(0.35))
-                            .child(format!("{MOD}T")),
-                    )
-                    .on_hover(cx.listener(|this, hovered, _, cx| {
-                        if *hovered {
-                            this.sidebar_hover = Some(LABEL);
-                        } else if this.sidebar_hover == Some(LABEL) {
-                            this.sidebar_hover = None;
-                        }
-                        this.notify_navigation(cx);
-                    }))
-                    .on_click(cx.listener(|this, _, _, cx| this.new_chat(cx))),
-            )
-            .into_any()
+        self.rail_action_row(
+            "sidebar-new-thread",
+            LABEL,
+            "pencil-edit-02",
+            super::rail::rail_tint(LABEL).unwrap_or_else(|| content(1.)),
+            format!("{MOD}T"),
+            selected,
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.new_chat(cx)))
+        .into_any()
     }
     /// The workspace shows an open session that has no messages yet.
     fn active_session_is_blank(&self, cx: &App) -> bool {
@@ -1159,111 +976,245 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use super::Row;
     use gpui::TestAppContext;
 
-    #[gpui::test]
-    fn focused_navigation_keeps_the_settings_hint_on_the_filter_axis(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        let axis = visual
-            .debug_bounds("sidebar-filter-button")
-            .unwrap()
-            .center()
-            .x;
-        // New thread shows its shortcut in the same trailing column.
-        assert!(visual.debug_bounds("sidebar-new-thread").is_some());
-        let hint = visual
-            .debug_bounds("sidebar-navigation-trailing-New thread")
-            .expect("New thread shows its shortcut");
-        assert_eq!(hint.center().x, axis);
-        let settings = visual
-            .debug_bounds("sidebar-navigation-trailing-Settings")
-            .expect("Settings shows its shortcut");
-        assert_eq!(settings.center().x, axis);
-        // Notes is a plain row: no count beside it.
-        assert!(visual.debug_bounds("sidebar-navigation-Notes").is_some());
-        assert!(
-            visual
-                .debug_bounds("sidebar-navigation-trailing-Notes")
-                .is_none()
-        );
-    }
-    fn nav_order(visual: &mut gpui::VisualTestContext) -> Vec<&'static str> {
+    /// The page icons that are showing, left to right.
+    fn page_order(visual: &mut gpui::VisualTestContext) -> Vec<&'static str> {
         let mut found: Vec<_> = [
-            ("Inbox", "sidebar-navigation-Inbox"),
-            ("Runs", "sidebar-navigation-Runs"),
-            ("Automations", "sidebar-navigation-Automations"),
-            ("Flows", "sidebar-navigation-Flows"),
-            ("Board", "sidebar-navigation-Board"),
-            ("Notes", "sidebar-navigation-Notes"),
+            "Home",
+            "My tasks",
+            "Inbox",
+            "Runs",
+            "Automations",
+            "Flows",
+            "Board",
+            "Notes",
+            "Search",
         ]
         .into_iter()
-        .filter_map(|(label, selector)| {
-            visual
-                .debug_bounds(selector)
-                .map(|bounds| (bounds.top(), label))
+        .filter_map(|label| {
+            let selector: &'static str =
+                Box::leak(format!("sidebar-navigation-{label}").into_boxed_str());
+            visual.debug_bounds(selector).map(|bounds| (bounds, label))
         })
         .collect();
-        found.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        found.sort_by(|a, b| a.0.left().partial_cmp(&b.0.left()).unwrap());
+        // One row: every icon on the same line.
+        if let Some((first, _)) = found.first() {
+            let top = first.top();
+            assert!(found.iter().all(|(b, _)| b.top() == top), "{found:?}");
+        }
         found.into_iter().map(|(_, label)| label).collect()
     }
 
-    fn cx_flows_visible(
-        window: gpui::WindowHandle<Shell>,
-        visual: &mut gpui::VisualTestContext,
-    ) -> bool {
+    #[gpui::test]
+    fn pages_are_one_row_of_icons_in_the_boards_order(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         window
+            .update(visual, |shell, _, cx| {
+                // The board's six; Board and Notes are on by default.
+                shell.workspace.preferences.board = false;
+                shell.workspace.preferences.notes = false;
+                shell.invalidate_chrome(cx);
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        let flows = window
             .update(visual, |_, _, cx| crate::flows::visible(cx))
-            .unwrap()
+            .unwrap();
+        let mut expected = vec!["Home", "My tasks", "Inbox", "Runs", "Automations", "Search"];
+        if flows {
+            expected.insert(5, "Flows");
+        }
+        assert_eq!(page_order(visual), expected);
+        // The board's 42x32 buttons: six fit the rail without shrinking much.
+        let home = visual.debug_bounds("sidebar-navigation-Home").unwrap();
+        assert_eq!(home.size.height, px(32.));
+        assert!(
+            home.size.width > px(36.) && home.size.width <= px(42.),
+            "{home:?}"
+        );
+        // No "All projects" list is left above it.
+        assert!(visual.debug_bounds("sidebar-all-projects").is_none());
     }
 
     #[gpui::test]
-    fn all_projects_block_lists_global_entries_in_order(cx: &mut TestAppContext) {
+    fn extra_pages_join_the_row_and_hidden_ones_stay_out(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        let label = visual
-            .debug_bounds("sidebar-all-projects")
-            .expect("the block is labelled");
-        let mut expected = vec!["Inbox", "Runs", "Automations", "Board", "Notes"];
-        if cx_flows_visible(window, visual) {
-            expected.insert(3, "Flows");
-        }
-        let order = nav_order(visual);
-        assert_eq!(order, expected);
-        let first = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
-        assert!(label.bottom() <= first.top(), "label heads the entries");
-        assert!(visual.debug_bounds("sidebar-navigation-New").is_none());
-    }
-
-    #[gpui::test]
-    fn hidden_entries_stay_hidden_and_settings_stays_at_the_bottom(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        let order = page_order(visual);
+        // Board and Notes sit before Search, which ends the row.
+        assert_eq!(order.last(), Some(&"Search"));
+        let board = order.iter().position(|l| *l == "Board").unwrap();
+        assert!(order[board + 1] == "Notes");
+        let sidebar = visual.debug_bounds("sidebar-content").unwrap();
+        let search = visual.debug_bounds("sidebar-navigation-Search").unwrap();
+        assert!(search.right() <= sidebar.right(), "the row fits the rail");
         window
             .update(visual, |shell, _, cx| {
                 shell.workspace.sidebar_inbox_visible = false;
                 shell.workspace.sidebar_automations_visible = false;
                 shell.workspace.preferences.notes = false;
-                shell.sidebar_frame.update(cx, |_, cx| cx.notify());
+                shell.invalidate_chrome(cx);
                 cx.notify();
             })
             .unwrap();
         visual.run_until_parked();
-        let order = nav_order(visual);
-        assert!(!order.contains(&"Inbox"));
-        assert!(!order.contains(&"Automations"));
-        assert!(!order.contains(&"Notes"));
-        assert_eq!(order.last(), Some(&"Board"));
-        // Settings is not part of the top block: it stays the sidebar's
-        // last row however many entries are hidden.
+        let order = page_order(visual);
+        for gone in ["Inbox", "Automations", "Notes"] {
+            assert!(!order.contains(&gone), "{gone} hidden: {order:?}");
+        }
+        // Settings stays the last row of the sidebar either way.
         let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
-        let board = visual.debug_bounds("sidebar-navigation-Board").unwrap();
         let new = visual.debug_bounds("sidebar-new-thread").unwrap();
         assert!(new.bottom() <= settings.top());
-        assert!(board.bottom() <= settings.top());
+    }
+
+    #[gpui::test]
+    fn my_tasks_and_inbox_wear_count_badges(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let waiting = window
+            .update(visual, |shell, _, cx| shell.my_task_count(cx))
+            .unwrap();
+        let badge = visual.debug_bounds("sidebar-navigation-count-My tasks");
+        assert_eq!(badge.is_some(), waiting > 0);
+        if let Some(badge) = badge {
+            let icon = visual.debug_bounds("sidebar-navigation-My tasks").unwrap();
+            // Pinned to the icon's top-right corner, inside it.
+            assert!(icon.contains(&badge.origin));
+            assert_eq!(badge.size.height, px(14.));
+        }
+    }
+
+    #[gpui::test]
+    fn switcher_leads_then_pages_then_new_thread(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let sidebar = visual.debug_bounds("sidebar-content").unwrap();
+        let switcher = visual.debug_bounds("sidebar-project-button").unwrap();
+        let home = visual.debug_bounds("sidebar-navigation-Home").unwrap();
+        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
+        // The board: 4px from the top, 10px in from each side, 44px tall.
+        assert!(
+            switcher.top() - sidebar.top() <= px(6.),
+            "{switcher:?} {sidebar:?}"
+        );
+        assert_eq!(switcher.left() - sidebar.left(), px(10.));
+        assert_eq!(sidebar.right() - switcher.right(), px(10.));
+        assert_eq!(switcher.size.height, px(44.));
+        assert!(switcher.bottom() <= home.top());
+        assert!(home.bottom() <= new.top());
+        // New thread is a 28px `.rl-row` the switcher's width.
+        assert_eq!(new.size.height, px(28.));
+        assert_eq!(
+            (new.left(), new.right()),
+            (switcher.left(), switcher.right())
+        );
+        // No gear or divider beside the switcher any more.
+        assert!(visual.debug_bounds("sidebar-project-settings").is_none());
+        assert!(visual.debug_bounds("sidebar-project-divider").is_none());
+        let summary = visual.debug_bounds("sidebar-project-summary").unwrap();
+        let name = visual.debug_bounds("sidebar-project-name").unwrap();
+        assert!(name.bottom() <= summary.top());
+        assert!(visual.debug_bounds("sidebar-project-shortcut").is_some());
+    }
+
+    #[gpui::test]
+    fn new_thread_and_settings_share_the_rows_shape_and_shortcut_column(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
+        let settings = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        assert_eq!(new.left(), settings.left());
+        assert_eq!(new.size, settings.size);
+        let a = visual
+            .debug_bounds("sidebar-navigation-trailing-New thread")
+            .unwrap();
+        let b = visual
+            .debug_bounds("sidebar-navigation-trailing-Settings")
+            .unwrap();
+        assert_eq!(a.right(), b.right(), "shortcuts end on one edge");
+    }
+
+    #[gpui::test]
+    fn right_clicking_the_switcher_opens_the_projects_menu(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let switcher = visual.debug_bounds("sidebar-project-button").unwrap();
+        visual.simulate_event(gpui::MouseDownEvent {
+            position: switcher.center(),
+            button: gpui::MouseButton::Right,
+            modifiers: Default::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                let open = shell.menu.as_ref().expect("the project menu opened");
+                assert!(
+                    open.target
+                        == MenuTarget::Project {
+                            path: shell.workspace.project.clone(),
+                        }
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn cmd_o_opens_the_switcher_and_cmd_p_still_finds_files(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::input::bind(cx);
+            super::super::bind_keys(cx);
+        });
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let modifier = if cfg!(target_os = "macos") {
+            "cmd"
+        } else {
+            "ctrl"
+        };
+        visual.simulate_keystrokes(&format!("{modifier}-o"));
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert!(shell.menu_open(&MenuTarget::Header), "the switcher opened");
+            })
+            .unwrap();
+        assert!(visual.debug_bounds("project-picker").is_some());
+        // Pressed again, it closes.
+        window
+            .update(visual, |shell, window, cx| {
+                shell.toggle_project_switcher(window, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        window
+            .update(visual, |shell, _, _| {
+                assert!(!shell.menu_open(&MenuTarget::Header))
+            })
+            .unwrap();
+        // ⌘P keeps its own job.
+        let keys = window
+            .update(visual, |_, window, _| {
+                window
+                    .bindings_for_action(&super::super::GoToFile)
+                    .into_iter()
+                    .map(|b| b.keystrokes().first().unwrap().unparse())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        assert!(keys.contains(&format!("{modifier}-p")), "{keys:?}");
     }
 
     /// The rows that can end the sidebar, by selector.
@@ -1426,110 +1377,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn project_row_sits_between_all_projects_and_new_thread(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let rows = window
-            .update(cx, |shell, _, cx| {
-                shell.refresh_sidebar_structure(cx);
-                shell.sidebar_list.rows.clone()
-            })
-            .unwrap();
-        assert_eq!(
-            rows[..4],
-            [Row::Navigation, Row::Project, Row::NewThread, Row::Pilots]
-        );
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        let all = visual.debug_bounds("sidebar-all-projects").unwrap();
-        let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
-        let divider = visual.debug_bounds("sidebar-project-divider").unwrap();
-        let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
-        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
-        assert!(all.bottom() <= notes.top());
-        assert!(notes.bottom() <= divider.top());
-        assert!(divider.size.height <= px(1.));
-        assert!(divider.bottom() <= project.top());
-        assert!(project.bottom() <= new.top());
-        assert!(project.right() <= gear.left());
-        assert!((gear.center().y - project.center().y).abs() <= px(1.));
-        assert!(gear.bottom() <= new.top());
-    }
-
-    #[gpui::test]
-    fn project_row_matches_the_canvas_controls(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
-        let sidebar = visual.debug_bounds("sidebar-content").unwrap();
-        assert!((project.size.height - gear.size.height).abs() <= px(0.5));
-        assert!((project.top() - gear.top()).abs() <= px(0.5));
-        assert!((gear.size.width - gear.size.height).abs() <= px(0.5));
-        let gap = gear.left() - project.right();
-        assert!(gap >= px(4.) && gap <= px(8.), "gap {gap:?}");
-        // The dropdown takes the room the gear leaves: it is wide, not a
-        // text-width chip.
-        assert!(project.left() > sidebar.left());
-        assert!(project.size.width > px(100.), "{project:?}");
-        assert!(gear.right() <= sidebar.right());
-        assert!(
-            sidebar.right() - gear.right() <= px(16.),
-            "{gear:?} {sidebar:?}"
-        );
-    }
-
-    #[gpui::test]
-    fn all_projects_line_shows_only_its_label(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        window
-            .update(cx, |shell, _, cx| {
-                shell.sidebar_list.invalidate_structure();
-                cx.notify();
-            })
-            .unwrap();
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        let sidebar = visual.debug_bounds("sidebar-content").unwrap();
-        let all = visual.debug_bounds("sidebar-all-projects").unwrap();
-        // The list starts at the top: nothing sits above the label line.
-        assert!(all.top() - sidebar.top() <= px(8.), "{all:?} {sidebar:?}");
-        for gone in ["sidebar-search-button", "sidebar-options"] {
-            assert!(visual.debug_bounds(gone).is_none(), "{gone} left the line");
-        }
-        // The label runs the line's width, with nothing at its right end.
-        assert!(
-            all.right() >= sidebar.right() - px(16.),
-            "{all:?} {sidebar:?}"
-        );
-    }
-
-    #[gpui::test]
-    fn new_thread_row_matches_the_navigation_rows(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
-        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
-        assert_eq!(new.left(), inbox.left());
-        assert_eq!(new.size.width, inbox.size.width);
-        assert_eq!(new.size.height, inbox.size.height);
-        // Same hint column as Settings.
-        let hint = visual
-            .debug_bounds("sidebar-navigation-trailing-New thread")
-            .unwrap();
-        let settings = visual
-            .debug_bounds("sidebar-navigation-trailing-Settings")
-            .unwrap();
-        assert_eq!(hint.center().x, settings.center().x);
-        assert_eq!(hint.size.width, settings.size.width);
-        // Its own row: space above (project row) and below (Pilots).
-        let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        assert!(new.top() - project.bottom() >= px(4.));
-    }
-
-    #[gpui::test]
     fn settings_entry_opens_settings(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
@@ -1618,37 +1465,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn gear_opens_project_settings_beside_the_project_button(cx: &mut TestAppContext) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        let gear = visual.debug_bounds("sidebar-project-settings").unwrap();
-        assert!(project.right() <= gear.left());
-        assert!((gear.center().y - project.center().y).abs() <= px(1.));
-        assert!((gear.size.width - gear.size.height).abs() <= px(1.));
-        visual.simulate_click(gear.center(), Default::default());
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, _, _| {
-                let open = shell.menu.as_ref().expect("the gear opened a menu");
-                assert!(
-                    open.target
-                        == MenuTarget::Project {
-                            path: shell.workspace.project.clone(),
-                        }
-                );
-            })
-            .unwrap();
-        // A second click on the gear closes it.
-        visual.simulate_click(gear.center(), Default::default());
-        visual.run_until_parked();
-        window
-            .update(visual, |shell, _, _| assert!(shell.menu.is_none()))
-            .unwrap();
-    }
-
-    #[gpui::test]
     fn new_thread_sits_below_navigation_and_marks_blank_sessions(cx: &mut TestAppContext) {
         let (window, _, active) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
@@ -1704,82 +1520,6 @@ mod tests {
             .update(visual, |shell, w, cx| shell.close_settings(w, cx))
             .unwrap();
         visual.run_until_parked();
-    }
-
-    #[gpui::test]
-    fn compact_view_switch_changes_card_heights_and_persists_without_loading_history(
-        cx: &mut TestAppContext,
-    ) {
-        let (window, _, _) = super::super::tests::window(cx);
-        let (id, loaded) = window
-            .update(cx, |shell, _, cx| {
-                let mut summary = locked(&shell.store)
-                    .unwrap()
-                    .create("codex", "/work/gespan")
-                    .unwrap();
-                summary.has_messages = true;
-                summary.title =
-                    "A detailed session with a long title that must stay inside its card".into();
-                let id = summary.id;
-                shell.session_details.insert(
-                    id,
-                    gespan_core::store::MobileSessionMetadata {
-                        model: Some("gpt-6.1-sol".into()),
-                        branch: Some("feature/session-cards".into()),
-                        ..Default::default()
-                    },
-                );
-                shell.session_summaries.insert(id, summary);
-                shell.order.insert(0, id);
-                shell.notify_sidebar(cx);
-                (id, shell.sessions.len())
-            })
-            .unwrap();
-        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
-        let selector: &'static str = Box::leak(format!("sidebar-session-{id}").into_boxed_str());
-        let model_selector: &'static str =
-            Box::leak(format!("session-model-{id}").into_boxed_str());
-        let workspace_selector: &'static str =
-            Box::leak(format!("session-workspace-{id}").into_boxed_str());
-        let title_selector: &'static str =
-            Box::leak(format!("session-title-{id}").into_boxed_str());
-        for boxy in [false, true] {
-            window
-                .update(visual, |shell, _, cx| {
-                    shell.workspace.new_layout_boxy = boxy;
-                    shell.layout_changed(cx);
-                })
-                .unwrap();
-            visual.run_until_parked();
-            assert_eq!(visual.debug_bounds(selector).unwrap().size.height, px(32.));
-            flip_in_settings(window, visual, "compact-session-cards");
-            let row = visual.debug_bounds(selector).unwrap();
-            assert_eq!(row.size.height, px(60.));
-            let model = visual.debug_bounds(model_selector).unwrap();
-            let workspace = visual.debug_bounds(workspace_selector).unwrap();
-            let title = visual.debug_bounds(title_selector).unwrap();
-            assert!(row.top() <= title.top() && title.bottom() <= workspace.top());
-            assert_eq!(model.center().y, workspace.center().y);
-            assert!(workspace.right() <= model.left());
-            assert!(workspace.bottom() <= row.bottom());
-            assert!(
-                model.right() <= row.right()
-                    && workspace.right() <= row.right()
-                    && title.right() <= row.right()
-            );
-            window
-                .update(visual, |shell, _, _| {
-                    assert_eq!(shell.sessions.len(), loaded);
-                    assert!(!shell.sessions.contains_key(&id));
-                    let saved = shell.latest_state.lock().unwrap().clone();
-                    let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
-                    assert!(!restored.compact_session_cards);
-                })
-                .unwrap();
-            flip_in_settings(window, visual, "compact-session-cards");
-            assert_eq!(visual.debug_bounds(selector).unwrap().size.height, px(32.));
-            assert!(visual.debug_bounds(model_selector).is_none());
-        }
     }
 
     #[gpui::test]
@@ -1873,7 +1613,7 @@ mod tests {
         visual.simulate_resize(gpui::size(px(1200.), px(2600.)));
         visual.run_until_parked();
         // Appearance lists the sections in the order they appear in the
-        // sidebar, then the compact-view switch on its own row.
+        // sidebar.
         let ids = [
             "sidebar-inbox",
             "sidebar-automations",
@@ -1881,7 +1621,6 @@ mod tests {
             "sidebar-board",
             "sidebar-notes",
             "sidebar-activity",
-            "compact-session-cards",
         ];
         // The sidebar sections are chips that wrap across rows, so each one
         // comes after the last in reading order: on a later row, or further
@@ -1904,6 +1643,17 @@ mod tests {
         assert!(
             visual
                 .debug_bounds("settings-toggle-sidebar-search")
+                .is_none()
+        );
+        // The rail's grouping follows, as one choice; Compact view is gone.
+        let chips = origins.last().unwrap();
+        let group_by = visual
+            .debug_bounds("settings-segmented-sidebar-group-by")
+            .expect("Group sessions by has a control");
+        assert!(group_by.origin.y > chips.y);
+        assert!(
+            visual
+                .debug_bounds("settings-toggle-compact-session-cards")
                 .is_none()
         );
         // The General page no longer repeats these features.
@@ -2059,6 +1809,17 @@ mod tests {
             .unwrap();
     }
 
+    /// Opens `project`'s folder all the way and drops the Pilots section,
+    /// so the list ends with that folder's last session.
+    fn expand_everything(shell: &mut Shell, project: &str, cx: &mut Context<Shell>) {
+        let key = format!("wt:{}", gespan_core::files::path_key(project));
+        shell.workspace.rail_folds.insert(key.clone(), true);
+        shell.sidebar_list.expanded.insert(key);
+        shell.workspace.preferences.pilots = false;
+        shell.apply_preferences(cx);
+        shell.notify_sidebar(cx);
+    }
+
     #[gpui::test]
     fn large_project_only_lays_out_nearby_session_cards(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
@@ -2073,6 +1834,8 @@ mod tests {
                         summary.title =
                             format!("Session {i}: {}", "A long conversation title 🙂 ".repeat(4));
                         summary.has_messages = true;
+                        // Session 999 is the newest; ids alone are random.
+                        summary.updated_at += i;
                         summaries.push(summary);
                     }
                 }
@@ -2086,6 +1849,10 @@ mod tests {
                 }
                 shell.workspace.open(first);
                 shell.select_project("/work/many-sessions".into(), window, cx);
+                // The rail lists two rows of a folder until "N more" opens
+                // it all; a long list is only possible past that, and with
+                // no Pilots section after it.
+                expand_everything(shell, "/work/many-sessions", cx);
                 (first, next, last)
             })
             .unwrap();
@@ -2227,6 +1994,10 @@ mod tests {
                 }
                 shell.workspace.open(newest);
                 shell.select_project("/work/long-list".into(), window, cx);
+                // The rail lists two rows of a folder until "N more" opens
+                // it all; a long list is only possible past that, and with
+                // no Pilots section after it.
+                expand_everything(shell, "/work/long-list", cx);
                 (newest, oldest)
             })
             .unwrap();
@@ -2303,154 +2074,6 @@ mod tests {
             [vec![9], vec![4]]
         );
         assert!(super::worktree_groups(&[]).is_empty());
-    }
-
-    /// Both test sessions, with messages, in the project; `worktree` puts the
-    /// first one in a linked worktree.
-    fn grouped_rows(
-        window: &gpui::WindowHandle<Shell>,
-        cx: &mut TestAppContext,
-        ids: [i64; 2],
-        started: [u64; 2],
-        worktree: Option<&str>,
-    ) -> Vec<Row> {
-        window
-            .update(cx, |shell, _, cx| {
-                for (id, created_at) in ids.into_iter().zip(started) {
-                    shell.sessions[&id].update(cx, |session, _| {
-                        session.summary.cwd = "/work/gespan".into();
-                        session.summary.has_messages = true;
-                        session.summary.created_at = created_at;
-                    });
-                    if let Some(summary) = shell.session_summaries.get_mut(&id) {
-                        summary.cwd = "/work/gespan".into();
-                        summary.has_messages = true;
-                        summary.created_at = created_at;
-                    }
-                }
-                shell
-                    .session_worktrees
-                    .insert(ids[0], worktree.map(str::to_owned));
-                shell.sidebar_list.invalidate_structure();
-                shell.refresh_sidebar_structure(cx);
-                let start = shell
-                    .sidebar_list
-                    .rows
-                    .iter()
-                    .position(|row| {
-                        matches!(
-                            row,
-                            Row::Heading {
-                                label: "Sessions",
-                                ..
-                            }
-                        )
-                    })
-                    .unwrap();
-                shell.sidebar_list.rows[start + 1..].to_vec()
-            })
-            .unwrap()
-    }
-
-    #[gpui::test]
-    fn sessions_group_by_worktree_and_a_focused_worktree_hides_none(cx: &mut TestAppContext) {
-        let (window, a, b) = super::super::tests::window(cx);
-        let tree = "/work/gespan-worktrees/feature";
-        // The old project dropdown's worktree choice no longer narrows the list.
-        window
-            .update(cx, |shell, _, _| {
-                shell.worktree_focus.insert(
-                    "/work/gespan".into(),
-                    crate::worktree_switcher::WorktreeFocus {
-                        path: "/work/gespan".into(),
-                        branch: Some("main".into()),
-                    },
-                );
-            })
-            .unwrap();
-        let (tree_group, folder_group) = (
-            vec![Row::Worktree(tree.into()), Row::Session(a)],
-            vec![Row::Worktree("/work/gespan".into()), Row::Session(b)],
-        );
-        // The worktree where the newest session started leads, whatever the ids.
-        let rows = grouped_rows(&window, cx, [a, b], [200, 100], Some(tree));
-        assert_eq!(rows, [tree_group.clone(), folder_group.clone()].concat());
-        let rows = grouped_rows(&window, cx, [a, b], [100, 200], Some(tree));
-        assert_eq!(rows, [folder_group, tree_group].concat());
-        let label = window
-            .update(cx, |shell, _, _| shell.worktree_label(tree))
-            .unwrap();
-        assert_eq!(
-            label, "feature",
-            "the folder name until the branch is known"
-        );
-    }
-
-    #[gpui::test]
-    fn sessions_in_the_project_folder_alone_take_no_worktree_headings(cx: &mut TestAppContext) {
-        let (window, a, b) = super::super::tests::window(cx);
-        let rows = grouped_rows(&window, cx, [a, b], [100, 200], None);
-        assert!(
-            !rows.iter().any(|row| matches!(row, Row::Worktree(_))),
-            "{rows:?}"
-        );
-        let mut sessions: Vec<_> = rows
-            .iter()
-            .filter_map(|row| match row {
-                Row::Session(id) => Some(*id),
-                _ => None,
-            })
-            .collect();
-        sessions.sort();
-        let mut both = vec![a, b];
-        both.sort();
-        assert_eq!(sessions, both);
-    }
-
-    #[gpui::test]
-    fn sessions_of_any_age_share_one_sessions_heading(cx: &mut TestAppContext) {
-        let (window, a, b) = super::super::tests::window(cx);
-        let day = 24 * 60 * 60 * 1000;
-        let rows = window
-            .update(cx, |shell, _, cx| {
-                // One chat used just now, the other a month ago.
-                let now = gespan_core::time::now_ms();
-                for (id, updated_at) in [(a, now), (b, now - 30 * day)] {
-                    shell.sessions[&id].update(cx, |session, _| {
-                        session.summary.cwd = "/work/gespan".into();
-                        session.summary.updated_at = updated_at;
-                        session.summary.has_messages = true;
-                    });
-                    if let Some(summary) = shell.session_summaries.get_mut(&id) {
-                        summary.cwd = "/work/gespan".into();
-                        summary.updated_at = updated_at;
-                        summary.has_messages = true;
-                    }
-                }
-                shell.sidebar_list.invalidate_structure();
-                shell.refresh_sidebar_structure(cx);
-                shell.sidebar_list.rows.clone()
-            })
-            .unwrap();
-        let headings: Vec<_> = rows
-            .iter()
-            .filter_map(|row| match row {
-                Row::Heading { label, .. } => Some(*label),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(headings, ["Sessions"]);
-        let heading = rows
-            .iter()
-            .position(|row| matches!(row, Row::Heading { .. }))
-            .unwrap();
-        for id in [a, b] {
-            let at = rows
-                .iter()
-                .position(|row| matches!(row, Row::Session(s) if *s == id))
-                .unwrap_or_else(|| panic!("session {id} is listed"));
-            assert!(at > heading, "session {id} sits under Sessions");
-        }
     }
 
     mod machines {
@@ -2604,12 +2227,10 @@ mod tests {
         fn machines_follow_pilots_with_agents_in_workspace_order(cx: &mut TestAppContext) {
             let (window, _) = window(vec![two_agents(Online::Online)], true, cx);
             let rows = rows(&window, cx);
+            let pilots = rows.iter().position(|row| *row == Row::Pilots).unwrap();
             assert_eq!(
-                rows[..8],
+                rows[pilots..pilots + 5],
                 [
-                    Row::Navigation,
-                    Row::Project,
-                    Row::NewThread,
                     Row::Pilots,
                     Row::MachinesHeading,
                     Row::Machine("m1".into()),
@@ -2953,12 +2574,468 @@ mod tests {
         }
     }
 
+    /// Rail F1's list: what goes in Needs you, Running and each folder.
+    mod rail {
+        use super::super::super::*;
+        use super::super::Row;
+        use super::super::rail_plan::{FolderKind, Live};
+        use crate::conversation::SessionChanged;
+        use gpui::{TestAppContext, VisualTestContext, WindowHandle};
+
+        const PROJECT: &str = "/work/gespan";
+
+        /// A window whose project lists `worktrees.len()` talked-to sessions,
+        /// session `i` in worktree `worktrees[i]` (`None`: the project
+        /// folder), the first the newest.
+        fn rail_window(
+            worktrees: &[Option<&str>],
+            cx: &mut TestAppContext,
+        ) -> (WindowHandle<Shell>, Vec<i64>) {
+            let (window, a, b) = super::super::super::tests::window(cx);
+            let ids = window
+                .update(cx, |shell, _, cx| {
+                    for id in [a, b] {
+                        shell.sidebar_hidden_sessions.insert(id);
+                    }
+                    let now = gespan_core::time::now_ms();
+                    let mut ids = Vec::new();
+                    for (ix, worktree) in worktrees.iter().enumerate() {
+                        let mut summary = locked(&shell.store)
+                            .unwrap()
+                            .create("codex", PROJECT)
+                            .unwrap();
+                        summary.has_messages = true;
+                        summary.title = format!("Session {ix}");
+                        summary.updated_at = now - (ix as u64 + 1) * 60 * 60_000;
+                        summary.created_at = summary.updated_at;
+                        let id = summary.id;
+                        shell.add(summary, cx);
+                        shell
+                            .session_worktrees
+                            .insert(id, worktree.map(str::to_owned));
+                        ids.push(id);
+                    }
+                    shell.notify_sidebar(cx);
+                    ids
+                })
+                .unwrap();
+            cx.run_until_parked();
+            (window, ids)
+        }
+
+        fn rows(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> Vec<Row> {
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.sidebar_list.invalidate_structure();
+                    shell.refresh_sidebar_structure(cx);
+                    shell.sidebar_list.rows.clone()
+                })
+                .unwrap()
+        }
+
+        fn folder<'a>(rows: &'a [Row], label: &str) -> &'a super::super::rail_plan::Folder {
+            rows.iter()
+                .find_map(|row| match row {
+                    Row::Folder(f) if f.label == label => Some(f),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no folder {label} in {rows:?}"))
+        }
+
+        /// Every session id the rail lists, live rows and folder rows alike.
+        fn listed(rows: &[Row]) -> Vec<i64> {
+            rows.iter()
+                .filter_map(|row| match row {
+                    Row::Live { id, .. } | Row::FolderSession(id) => Some(*id),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn set_live(
+            window: &WindowHandle<Shell>,
+            id: i64,
+            live: Option<Live>,
+            cx: &mut TestAppContext,
+        ) {
+            window
+                .update(cx, |shell, _, cx| {
+                    // A real chat carries its worktree in its settings.
+                    let worktree = shell.session_worktrees.get(&id).cloned().flatten();
+                    shell.sessions[&id].update(cx, |view, cx| {
+                        view.settings.worktree_cwd = worktree;
+                        view.busy = live.is_some();
+                        view.set_approvals_for_test(match live {
+                            Some(Live::NeedsYou) => vec![gespan_core::agent::Approval {
+                                id: "a1".into(),
+                                title: "Run gh pr create?".into(),
+                                detail: "gh pr create".into(),
+                                can_remember: false,
+                                tool: None,
+                            }],
+                            _ => Vec::new(),
+                        });
+                        cx.emit(SessionChanged);
+                    })
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        #[gpui::test]
+        fn a_live_session_moves_to_its_section_once_and_back_when_idle(cx: &mut TestAppContext) {
+            let tree = "/work/gespan-worktrees/glass-home";
+            let (window, ids) = rail_window(&[None, Some(tree), Some(tree)], cx);
+            set_live(&window, ids[1], Some(Live::Running), cx);
+            set_live(&window, ids[0], Some(Live::NeedsYou), cx);
+            // No manual rebuild: the chat's own change moves it.
+            let rows = window
+                .update(cx, |shell, _, cx| {
+                    shell.refresh_sidebar_structure(cx);
+                    shell.sidebar_list.rows.clone()
+                })
+                .unwrap();
+            let headings: Vec<_> = rows
+                .iter()
+                .filter_map(|row| match row {
+                    Row::LiveHeading { live, count } => Some((*live, *count)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(headings, [(Live::NeedsYou, 1), (Live::Running, 1)]);
+            // Needs you comes first, each live row naming its folder.
+            let live: Vec<_> = rows
+                .iter()
+                .filter_map(|row| match row {
+                    Row::Live { id, live, folder } => Some((*id, *live, folder.clone())),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(live[0].0, ids[0]);
+            assert_eq!(live[1], (ids[1], Live::Running, "glass-home".to_owned()));
+            // Every session shows exactly once.
+            let mut seen = listed(&rows);
+            let glass = folder(&rows, "glass-home");
+            assert_eq!((glass.count, glass.live), (2, Some(Live::Running)));
+            if !glass.open {
+                seen.extend(glass.shown.iter());
+            }
+            seen.sort();
+            let mut all = ids.clone();
+            all.sort();
+            assert!(seen.iter().all(|id| all.contains(id)));
+            assert_eq!(listed(&rows).iter().filter(|id| **id == ids[1]).count(), 1);
+            // Idle again: back in its folder, out of Running.
+            set_live(&window, ids[1], None, cx);
+            let idle = self::rows(&window, cx);
+            assert!(!idle.iter().any(|r| matches!(
+                r,
+                Row::LiveHeading {
+                    live: Live::Running,
+                    ..
+                }
+            )));
+            assert_eq!(folder(&idle, "glass-home").live, None);
+        }
+
+        #[gpui::test]
+        fn folders_group_by_worktree_with_the_working_copy_open_first(cx: &mut TestAppContext) {
+            let tree = "/work/gespan-worktrees/glass-home";
+            let (window, ids) = rail_window(&[Some(tree), None, None, None, Some(tree)], cx);
+            let rows = rows(&window, cx);
+            let folders: Vec<_> = rows
+                .iter()
+                .filter_map(|row| match row {
+                    Row::Folder(f) => Some((f.label.clone(), f.kind.clone(), f.count, f.open)),
+                    _ => None,
+                })
+                .collect();
+            let main = window
+                .update(cx, |shell, _, _| shell.worktree_label(PROJECT))
+                .unwrap();
+            // The folder the project works in leads and starts open; the
+            // idle worktree starts closed even though it holds the newest.
+            assert_eq!(
+                folders,
+                [
+                    (main.clone(), FolderKind::Branch, 3, true),
+                    ("glass-home".into(), FolderKind::Branch, 2, false),
+                ]
+            );
+            assert!(rows.contains(&Row::FoldersHeading {
+                folders: 2,
+                sessions: 5
+            }));
+            // An open folder lists its two most recent, then "1 more".
+            let main_folder = folder(&rows, &main);
+            assert_eq!(main_folder.shown, [ids[1], ids[2]]);
+            assert!(rows.contains(&Row::FolderMore {
+                key: main_folder.key.clone(),
+                more: 1,
+            }));
+            // The switcher counts what the rail holds.
+            let summary = window
+                .update(cx, |shell, _, _| shell.sidebar_list.summary)
+                .unwrap();
+            assert_eq!(summary, (2, 5));
+        }
+
+        #[gpui::test]
+        fn opening_a_folder_is_remembered_and_n_more_lists_the_rest(cx: &mut TestAppContext) {
+            let tree = "/work/gespan-worktrees/glass-home";
+            let (window, ids) = rail_window(&[None, Some(tree), Some(tree), Some(tree)], cx);
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            let key = folder(&rows(&window, visual), "glass-home").key.clone();
+            let selector: &'static str = Box::leak(format!("rail-folder-{key}").into_boxed_str());
+            let header = visual.debug_bounds(selector).expect("the folder is drawn");
+            // The board's 26px `.fold`.
+            assert_eq!(header.size.height, px(26.));
+            visual.simulate_click(header.center(), Default::default());
+            visual.run_until_parked();
+            let rows_now = rows(&window, visual);
+            let glass = folder(&rows_now, "glass-home");
+            assert!(glass.open);
+            assert_eq!(glass.shown, [ids[1], ids[2]]);
+            // Saved with the workspace, so a relaunch keeps it open.
+            window
+                .update(visual, |shell, _, _| {
+                    assert_eq!(shell.workspace.rail_folds.get(&key), Some(&true));
+                    let saved = locked(&shell.store).unwrap().ui_state().unwrap().unwrap();
+                    let restored = Workspace::restore(Some(&saved), &[], PROJECT);
+                    assert_eq!(restored.rail_folds.get(&key), Some(&true));
+                })
+                .unwrap();
+            let more: &'static str = Box::leak(format!("rail-folder-more-{key}").into_boxed_str());
+            visual.run_until_parked();
+            let more = visual.debug_bounds(more).expect("1 more…");
+            visual.simulate_click(more.center(), Default::default());
+            visual.run_until_parked();
+            let rows_now = rows(&window, visual);
+            assert_eq!(
+                folder(&rows_now, "glass-home").shown,
+                [ids[1], ids[2], ids[3]]
+            );
+            assert!(!rows_now.iter().any(|r| matches!(r, Row::FolderMore { .. })));
+            // Closing it again hides its rows but keeps the header.
+            visual.simulate_click(header.center(), Default::default());
+            visual.run_until_parked();
+            let rows_now = rows(&window, visual);
+            assert!(!folder(&rows_now, "glass-home").open);
+            assert!(!rows_now.contains(&Row::FolderSession(ids[2])));
+        }
+
+        #[gpui::test]
+        fn a_live_dot_shows_on_a_closed_folder(cx: &mut TestAppContext) {
+            let tree = "/work/gespan-worktrees/auto-langfuse";
+            let (window, ids) = rail_window(&[None, Some(tree), Some(tree)], cx);
+            set_live(&window, ids[2], Some(Live::NeedsYou), cx);
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            let rows = rows(&window, visual);
+            let langfuse = folder(&rows, "auto-langfuse");
+            assert!(!langfuse.open);
+            let dot: &'static str =
+                Box::leak(format!("rail-folder-dot-{}", langfuse.key).into_boxed_str());
+            let dot = visual
+                .debug_bounds(dot)
+                .expect("the closed folder shows the dot");
+            assert_eq!(dot.size.width, px(7.));
+            // The count still includes the waiting session.
+            assert_eq!(langfuse.count, 2);
+        }
+
+        #[gpui::test]
+        fn automation_worktrees_take_the_bolt(cx: &mut TestAppContext) {
+            let tree = "/work/gespan-worktrees/auto-triage";
+            let (window, ids) = rail_window(&[None, Some(tree)], cx);
+            window
+                .update(cx, |shell, _, _| {
+                    shell
+                        .automation_state
+                        .session_automations
+                        .insert(ids[1], "nightly".into());
+                })
+                .unwrap();
+            assert_eq!(
+                folder(&rows(&window, cx), "auto-triage").kind,
+                FolderKind::Automation
+            );
+        }
+
+        #[gpui::test]
+        fn the_setting_groups_by_the_users_own_folders(cx: &mut TestAppContext) {
+            let (window, ids) = rail_window(&[None, None, None], cx);
+            window
+                .update(cx, |shell, _, cx| {
+                    shell.workspace.preferences.sidebar_group_by = "folders".into();
+                    shell.update_groups(cx, |g| {
+                        g.create_folder(&[ids[0], ids[2]], "Release".into());
+                    });
+                })
+                .unwrap();
+            let rows = rows(&window, cx);
+            let release = folder(&rows, "New folder");
+            assert_eq!(release.kind, FolderKind::Folder);
+            // A user folder keeps its own open state: open by default.
+            assert!(release.open);
+            assert_eq!(release.shown, [ids[0], ids[2]]);
+            let loose = folder(&rows, "Sessions");
+            assert_eq!(
+                (loose.kind.clone(), loose.shown.clone()),
+                (FolderKind::Loose, vec![ids[1]])
+            );
+            let summary = window
+                .update(cx, |shell, _, _| shell.sidebar_list.summary)
+                .unwrap();
+            assert_eq!(summary, (2, 3));
+            // Back to worktrees: no user folder in the rail.
+            window
+                .update(cx, |shell, _, _| {
+                    shell.workspace.preferences.sidebar_group_by = "worktree".into();
+                })
+                .unwrap();
+            assert!(!rows_has(&rows_after(&window, cx), "New folder"));
+        }
+
+        fn rows_after(window: &WindowHandle<Shell>, cx: &mut TestAppContext) -> Vec<Row> {
+            rows(window, cx)
+        }
+        fn rows_has(rows: &[Row], label: &str) -> bool {
+            rows.iter()
+                .any(|row| matches!(row, Row::Folder(f) if f.label == label))
+        }
+
+        #[gpui::test]
+        fn live_rows_and_folder_rows_match_the_boards_metrics(cx: &mut TestAppContext) {
+            let (window, ids) = rail_window(&[None, None], cx);
+            set_live(&window, ids[1], Some(Live::Running), cx);
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            let live: &'static str =
+                Box::leak(format!("sidebar-session-{}", ids[1]).into_boxed_str());
+            let kid: &'static str =
+                Box::leak(format!("sidebar-session-{}", ids[0]).into_boxed_str());
+            let (live, kid) = (
+                visual.debug_bounds(live).unwrap(),
+                visual.debug_bounds(kid).unwrap(),
+            );
+            assert_eq!(live.size.height, px(28.));
+            assert_eq!(kid.size.height, px(28.));
+            assert_eq!(live.left(), kid.left());
+            // The kid's dot is indented 22px, the live row's 10px.
+            let dot = |id: i64, v: &mut VisualTestContext| {
+                let s: &'static str = Box::leak(format!("rail-session-dot-{id}").into_boxed_str());
+                v.debug_bounds(s).unwrap()
+            };
+            assert_eq!(dot(ids[1], visual).left() - live.left(), px(10.));
+            assert_eq!(dot(ids[0], visual).left() - kid.left(), px(22.));
+            // Only the live row names its folder.
+            let label = |id: i64, v: &mut VisualTestContext| {
+                let s: &'static str =
+                    Box::leak(format!("rail-session-folder-{id}").into_boxed_str());
+                v.debug_bounds(s)
+            };
+            assert!(label(ids[1], visual).is_some());
+            assert!(label(ids[0], visual).is_none());
+            let section = visual.debug_bounds("rail-section-Running").unwrap();
+            assert!(section.bottom() <= live.top());
+        }
+
+        /// Adds Pilots named `names` that work on `project`.
+        fn add_pilots(
+            window: &WindowHandle<Shell>,
+            project: &str,
+            names: &[&str],
+            cx: &mut TestAppContext,
+        ) -> Vec<String> {
+            window
+                .update(cx, |shell, _, cx| {
+                    let ids = shell.pilot_manager().update(cx, |m, cx| {
+                        let ids: Vec<String> = names
+                            .iter()
+                            .map(|name| {
+                                let id = m.roster.create(vec![project.to_owned()]).id.clone();
+                                m.roster.get_mut(&id).unwrap().name = (*name).to_owned();
+                                id
+                            })
+                            .collect();
+                        cx.notify();
+                        ids
+                    });
+                    shell.notify_sidebar(cx);
+                    ids
+                })
+                .unwrap()
+        }
+
+        #[gpui::test]
+        fn pilots_list_this_projects_first_three_then_all_n(cx: &mut TestAppContext) {
+            let (window, _) = rail_window(&[None], cx);
+            let mine = add_pilots(&window, PROJECT, &["A", "B", "C", "D", "E"], cx);
+            let other = add_pilots(&window, "/work/elsewhere", &["Elsewhere"], cx);
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            let row = |id: &str, v: &mut VisualTestContext| {
+                let s: &'static str = Box::leak(format!("pilot-rail-{id}").into_boxed_str());
+                v.debug_bounds(s)
+            };
+            let shown: Vec<bool> = mine.iter().map(|id| row(id, visual).is_some()).collect();
+            assert_eq!(shown, [true, true, true, false, false]);
+            assert!(row(&other[0], visual).is_none(), "another project's Pilot");
+            // The board's 32px rows, under the section heading.
+            let first = row(&mine[0], visual).unwrap();
+            assert_eq!(first.size.height, px(32.));
+            let heading = visual.debug_bounds("rail-section-Pilots").unwrap();
+            assert!(heading.bottom() <= first.top());
+            // The 8px status dot sits on the 16px mascot's corner.
+            let dot: &'static str =
+                Box::leak(format!("pilot-status-dot-{}", mine[0]).into_boxed_str());
+            assert_eq!(visual.debug_bounds(dot).unwrap().size.width, px(8.));
+            // "All 5 →" lists the rest, and folds them away again.
+            let all = visual.debug_bounds("pilots-rail-all").expect("All 5 →");
+            visual.simulate_click(all.center(), Default::default());
+            visual.run_until_parked();
+            assert!(mine.iter().all(|id| row(id, visual).is_some()));
+            let all = visual.debug_bounds("pilots-rail-all").unwrap();
+            visual.simulate_click(all.center(), Default::default());
+            visual.run_until_parked();
+            assert!(row(&mine[4], visual).is_none());
+        }
+
+        #[test]
+        fn a_live_or_open_pilot_is_never_cut_off() {
+            use crate::pilots::rail_shown;
+            // Ranks: 0 needs you, 1 working, 2 open, 3 idle; sorted.
+            assert_eq!(rail_shown(&[3, 3, 3, 3, 3]), 3);
+            assert_eq!(rail_shown(&[0, 1, 1, 2, 3, 3]), 4);
+            assert_eq!(rail_shown(&[3, 3]), 2);
+            assert_eq!(rail_shown(&[]), 0);
+        }
+
+        #[gpui::test]
+        fn clicking_a_rail_row_opens_its_session(cx: &mut TestAppContext) {
+            let (window, ids) = rail_window(&[None, None], cx);
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            let row: &'static str =
+                Box::leak(format!("sidebar-session-{}", ids[1]).into_boxed_str());
+            let row = visual.debug_bounds(row).unwrap();
+            visual.simulate_click(row.center(), Default::default());
+            visual.run_until_parked();
+            window
+                .update(visual, |shell, _, _| {
+                    assert_eq!(shell.workspace.active, Some(ids[1]))
+                })
+                .unwrap();
+        }
+    }
+
     mod fixed_folders {
         use super::super::super::session_groups::RenameTarget;
         use super::super::super::*;
         use super::super::Row;
         use gespan_core::pilot::{Launch, Pilot};
-        use gespan_core::session_groups::Entry;
         use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 
         const AUTOMATIONS: &str = "fixed:automations";
@@ -2968,6 +3045,9 @@ mod tests {
             let (window, a, b) = super::super::super::tests::window(cx);
             window
                 .update(cx, |shell, _, cx| {
+                    // These folders are what "Group sessions by: My folders"
+                    // lists.
+                    shell.workspace.preferences.sidebar_group_by = "folders".into();
                     for id in [a, b] {
                         shell.sessions[&id].update(cx, |session, _| {
                             session.summary.cwd = shell.workspace.project.clone();
@@ -2990,33 +3070,47 @@ mod tests {
                 .unwrap()
         }
 
-        /// The fixed folder headers, as (id, name, sessions).
+        /// The fixed folder headers, as (id, name, the sessions they list).
         fn fixed(rows: &[Row]) -> Vec<(String, String, Vec<i64>)> {
-            rows.iter()
-                .filter_map(|row| match row {
-                    Row::Group(Entry::Fixed { id, name, sessions }) => {
-                        Some((id.clone(), name.clone(), sessions.clone()))
+            members(rows)
+                .into_iter()
+                .filter(|(f, _)| f.key.starts_with("fixed:"))
+                .map(|(f, ids)| (f.key, f.label, ids))
+                .collect()
+        }
+
+        /// Each folder with the sessions listed under it.
+        fn members(rows: &[Row]) -> Vec<(super::super::rail_plan::Folder, Vec<i64>)> {
+            let mut out: Vec<(super::super::rail_plan::Folder, Vec<i64>)> = Vec::new();
+            for row in rows {
+                match row {
+                    Row::Folder(folder) => out.push((folder.clone(), Vec::new())),
+                    Row::FolderSession(id) => {
+                        if let Some((_, ids)) = out.last_mut() {
+                            ids.push(*id);
+                        }
                     }
-                    _ => None,
-                })
-                .collect()
+                    _ => {}
+                }
+            }
+            out
         }
 
+        /// Sessions listed in a folder of their own.
         fn grouped(rows: &[Row]) -> Vec<i64> {
-            rows.iter()
-                .filter_map(|row| match row {
-                    Row::GroupedSession { id, .. } => Some(*id),
-                    _ => None,
-                })
+            members(rows)
+                .into_iter()
+                .filter(|(f, _)| !f.key.starts_with("loose:"))
+                .flat_map(|(_, ids)| ids)
                 .collect()
         }
 
+        /// Sessions in no folder: the rail's "Sessions" group.
         fn loose(rows: &[Row]) -> Vec<i64> {
-            rows.iter()
-                .filter_map(|row| match row {
-                    Row::Session(id) => Some(*id),
-                    _ => None,
-                })
+            members(rows)
+                .into_iter()
+                .filter(|(f, _)| f.key.starts_with("loose:"))
+                .flat_map(|(_, ids)| ids)
                 .collect()
         }
 
@@ -3076,10 +3170,7 @@ mod tests {
                 fixed(&rows),
                 [(AUTOMATIONS.into(), "Automation runs".into(), vec![b])]
             );
-            assert!(rows.contains(&Row::Group(Entry::Folder {
-                id: "work".into(),
-                sessions: vec![a],
-            })));
+            assert!(folders(&rows).contains(&("work".to_owned(), vec![a])));
         }
 
         #[gpui::test]
@@ -3112,7 +3203,7 @@ mod tests {
             let visual = &mut VisualTestContext::from_window(window.into(), cx);
             visual.run_until_parked();
             let header = visual
-                .debug_bounds("session-group-fixed:automations")
+                .debug_bounds("rail-folder-fixed:automations")
                 .expect("the Automation runs header is shown");
             visual.simulate_click(header.center(), Default::default());
             visual.run_until_parked();
@@ -3159,10 +3250,13 @@ mod tests {
             }
             mark_automation(&reopened, a, cx);
             let listed = rows(&reopened, cx);
+            // Still folded: the header counts the run, and lists no row.
             assert_eq!(
                 fixed(&listed),
-                [(AUTOMATIONS.into(), "Automation runs".into(), vec![a])]
+                [(AUTOMATIONS.into(), "Automation runs".into(), vec![])]
             );
+            let (header, _) = members(&listed).into_iter().next().unwrap();
+            assert_eq!((header.count, header.open), (1, false));
             assert!(grouped(&listed).is_empty(), "still folded after reopening");
         }
 
@@ -3200,13 +3294,9 @@ mod tests {
 
         /// The user folders the sidebar lists, as (id, sessions).
         fn folders(rows: &[Row]) -> Vec<(String, Vec<i64>)> {
-            rows.iter()
-                .filter_map(|row| match row {
-                    Row::Group(Entry::Folder { id, sessions }) => {
-                        Some((id.clone(), sessions.clone()))
-                    }
-                    _ => None,
-                })
+            members(rows)
+                .into_iter()
+                .filter_map(|(f, ids)| Some((f.key.strip_prefix("folder:")?.to_owned(), ids)))
                 .collect()
         }
 

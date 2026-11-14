@@ -1179,7 +1179,10 @@ mod interaction_tests {
                         && quad
                             .background
                             .as_solid()
-                            .is_some_and(|color| (color.a - 0.1).abs() < 0.001)
+                            // A Pilot row's 0.1 fill, or a rail row's 0.11.
+                            .is_some_and(|color| {
+                                (color.a - 0.1).abs() < 0.001 || (color.a - 0.11).abs() < 0.001
+                            })
                 })
             })
             .unwrap()
