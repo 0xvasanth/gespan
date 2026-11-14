@@ -462,6 +462,12 @@ impl TestAppContext {
         self.test_window(window_handle).simulate_resize(size);
     }
 
+    /// Simulates a screen reader connecting to the window.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn simulate_window_a11y_activation(&self, window_handle: AnyWindowHandle) {
+        self.test_window(window_handle).simulate_a11y_activation();
+    }
+
     /// Simulates a change in whether the platform is presenting the window.
     pub fn simulate_window_visibility_change(
         &self,
@@ -1001,6 +1007,12 @@ impl VisualTestContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_resize(&self, size: Size<Pixels>) {
         self.simulate_window_resize(self.window, size)
+    }
+
+    /// Simulates a screen reader connecting to this window.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn simulate_a11y_activation(&self) {
+        self.simulate_window_a11y_activation(self.window)
     }
 
     /// Simulates a change in whether the platform is presenting this window.
