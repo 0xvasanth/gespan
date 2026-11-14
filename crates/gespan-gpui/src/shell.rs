@@ -2356,7 +2356,8 @@ impl Shell {
         self.set_right_panel_open(!self.workspace.right_panel_open, window, cx);
     }
     fn set_right_panel_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.app_view_open()
+        if self.panels_locked()
+            || self.app_view_open()
             || (!self.pilot_active(cx) && !self.git.read(cx).available())
             || self.workspace.right_panel_open == open
         {
@@ -5127,6 +5128,9 @@ impl Shell {
         }
     }
     fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panels_locked() {
+            return;
+        }
         self.close_preview(cx);
         if self.workspace.sidebar_visible && self.sidebar_focus.contains_focused(window, cx) {
             self.focus_workspace(window, cx);
@@ -9184,7 +9188,10 @@ impl Render for Shell {
             )
             .relative()
             .child(self.right_panel_resize_watch(cx))
-            .children(self.layout_body(sidebar_width, right_shown, right_width, full, window, cx))
+            .children(match self.setup_screen(window, cx) {
+                Some(screen) => screen,
+                None => self.layout_body(sidebar_width, right_shown, right_width, full, window, cx),
+            })
             .children(self.peek_watch(window, cx))
             .child(self.notices_overlay(cx))
             .children(crate::worktree_setups::get(cx).filter(|view| !view.read(cx).is_empty()))
@@ -9222,7 +9229,6 @@ impl Render for Shell {
             .children(self.quick_open_modal(window, cx))
             .children(self.report_modal(window, cx))
             .children(self.search_modal(window, cx))
-            .children(self.setup_overlay(window, cx))
             .children(self.remote_project_modal(window, cx))
             .children(self.notice_modals(window, cx))
             .children(self.folder_picker_popover(window, cx))

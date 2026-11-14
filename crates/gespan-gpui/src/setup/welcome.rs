@@ -1,67 +1,38 @@
 //! The welcome card: the logo mark, what Gespan is, what a thread is, the
 //! agents it works with, and "Get started" or "Skip setup". No step header;
 //! Welcome sits before the three numbered cards.
-use super::{
-    SetupStep,
-    card::SetupCard,
-    ui::{self, muted},
-};
+use super::{SetupStep, card::SetupCard, ui};
 use crate::theme::content;
 use gpui::{AnyElement, Context, Div, Window, div, prelude::*, px, rgb};
 
-const TOP: f32 = 36.;
-const GAP: f32 = 28.;
 /// The agents named on the card; the rest are "and 6 more".
 const AGENTS: [&str; 6] = ["Claude Code", "Codex", "Cursor", "Grok", "OpenCode", "Kiro"];
 
 pub(super) fn render(_: &mut SetupCard, _: &mut Window, cx: &mut Context<SetupCard>) -> AnyElement {
-    let note = div()
-        .id("setup-welcome-note")
-        .text_size(px(13.))
-        .text_color(muted())
-        .child("You can change all of this later in Settings.");
-    let skip = ui::ghost("setup-skip-setup", "Skip setup")
+    let skip = ui::skip_link("setup-skip-setup")
         .debug_selector(|| "setup-skip-setup".into())
         .on_click(cx.listener(|card, _, _, cx| card.skip_setup(cx)));
+    let note = ui::t3("You can change all of this later in Settings.")
+        .id("setup-welcome-note")
+        .into_any_element();
     let start = ui::primary("setup-continue", "Get started", true)
         .debug_selector(|| "setup-continue".into())
         .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Agents, cx)));
 
-    frame(
-        TOP,
-        GAP,
-        vec![
-            mark().into_any_element(),
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(10.))
-                .child(ui::title("Welcome to Gespan.", 34.))
-                .child(ui::lead(
-                    "Run Claude Code, Codex, Cursor and nine more agents side by side, on the plans you already pay for.",
-                    16.,
-                    25.,
-                ))
-                .into_any_element(),
-            explainer().into_any_element(),
-            ui::footer(
-                Some(note),
-                vec![skip.into_any_element(), start.into_any_element()],
-            )
-            .into_any_element(),
-        ],
-    )
-    .into_any_element()
+    ui::card()
+        .child(ui::header(mark(), Some(skip)))
+        .child(ui::intro(
+            "Welcome to Gespan.",
+            "Run Claude Code, Codex, Cursor and nine more agents side by side, on the plans you already pay for.",
+        ))
+        .child(explainer())
+        .child(ui::footer(Some(note), vec![start.into_any_element()]))
+        .into_any_element()
 }
 
-/// `ui::card` holding `children` inside its padding.
-fn frame(top: f32, gap: f32, children: Vec<AnyElement>) -> Div {
-    ui::card(top, gap).children(children)
-}
-
-/// The 2x2 logo mark: 14pt squares, 3pt radius, 3pt apart.
+/// The 2x2 logo mark: 14pt squares, 4pt radius, 3pt apart.
 fn mark() -> Div {
-    let square = |hex: u32| div().size(px(14.)).rounded(px(3.)).bg(rgb(hex));
+    let square = |hex: u32| div().size(px(14.)).rounded(px(4.)).bg(rgb(hex));
     let row = |a: u32, b: u32| div().flex().gap(px(3.)).child(square(a)).child(square(b));
     div()
         .flex()
@@ -71,31 +42,37 @@ fn mark() -> Div {
         .child(row(0x8f64f6, 0x5b22b4))
 }
 
-/// The quiet box: what a thread is, and the agents Gespan works with.
+/// The inset box: what a thread is, and the agents Gespan works with.
 fn explainer() -> Div {
     let chip = |label: &'static str| {
         div()
-            .px(px(10.))
-            .py(px(4.))
+            .h(px(26.))
+            .px(px(11.))
+            .flex()
+            .items_center()
             .rounded_full()
+            .border_1()
+            .border_color(content(0.09))
+            .bg(content(0.05))
             .text_size(px(12.))
+            .text_color(content(0.86))
             .child(label)
     };
     div()
         .flex()
         .flex_col()
         .gap(px(12.))
-        .px(px(20.))
-        .py(px(18.))
+        .px(px(16.))
+        .py(px(14.))
         .rounded(px(14.))
-        .bg(ui::well())
+        .bg(ui::inset())
         .border_1()
-        .border_color(ui::rule())
+        .border_color(ui::inset_edge())
         .child(
             div()
-                .text_size(px(14.))
-                .line_height(px(22.))
-                .text_color(muted())
+                .text_size(px(13.5))
+                .line_height(px(21.))
+                .text_color(content(0.8))
                 .child(
                     "Each thread is one agent working in your project. Start several, watch them side by side, and review every change before it lands.",
                 ),
@@ -104,9 +81,10 @@ fn explainer() -> Div {
             div()
                 .flex()
                 .flex_wrap()
+                .items_center()
                 .gap(px(6.))
-                .children(AGENTS.map(|name| chip(name).bg(content(0.08))))
-                .child(chip("and 6 more").text_color(muted())),
+                .children(AGENTS.map(chip))
+                .child(ui::t3("and 6 more").ml(px(4.))),
         )
 }
 

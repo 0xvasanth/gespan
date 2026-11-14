@@ -14,7 +14,7 @@ use gpui::{
 };
 use std::collections::HashMap;
 
-const CARD_RADIUS: f32 = 10.;
+pub(super) const CARD_RADIUS: f32 = 10.;
 
 // GPUI overflow clips rectangles. Capture outside the bordered frame so the
 // final mask includes its background, border and children at the outer radius.
