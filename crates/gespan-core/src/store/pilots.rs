@@ -124,6 +124,7 @@ impl Store {
                 body,
                 created_at: created_at.max(0) as u64,
                 updated_at: updated_at.max(0) as u64,
+                ..Default::default()
             },
         ))
     }
@@ -171,6 +172,7 @@ impl Store {
                             body: String::new(),
                             created_at: 0,
                             updated_at: 0,
+                            ..Default::default()
                         });
                 document.summary = card["summary"].as_str().unwrap_or_default().into();
                 if let Some(old) = documents

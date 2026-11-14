@@ -861,6 +861,18 @@ impl Pilots {
                                 .map(str::to_owned)
                                 .unwrap_or_else(pilot::new_id);
                             let now = now_ms();
+                            // A rewrite keeps its pin and run unless told.
+                            let previous = pilot.documents.iter().find(|d| d.id == id);
+                            let pinned = input
+                                .get("pinned")
+                                .and_then(Value::as_bool)
+                                .unwrap_or_else(|| previous.is_some_and(|d| d.pinned));
+                            let run_id = input
+                                .get("runId")
+                                .and_then(Value::as_str)
+                                .filter(|r| !r.is_empty())
+                                .map(str::to_owned)
+                                .or_else(|| previous.and_then(|d| d.run_id.clone()));
                             let document = Document {
                                 id: id.clone(),
                                 kind: kind.into(),
@@ -880,6 +892,8 @@ impl Pilots {
                                     .map(|d| d.created_at)
                                     .unwrap_or(now),
                                 updated_at: now,
+                                pinned,
+                                run_id,
                             };
                             if let Some(m) = self.roster.get_mut(&pilot.id) {
                                 if let Some(old) = m.documents.iter_mut().find(|d| d.id == id) {

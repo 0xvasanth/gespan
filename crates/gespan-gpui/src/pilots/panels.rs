@@ -893,129 +893,6 @@ impl Pilots {
             .child(body)
             .into_any_element()
     }
-    fn document_list(&mut self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
-        let filter = self.field(
-            "pilot-document-search",
-            "Search documents…",
-            String::new(),
-            false,
-            cx,
-        );
-        let query = filter.read(cx).content.to_string();
-        let documents: Vec<_> = pilot
-            .documents
-            .iter()
-            .rev()
-            .filter(|d| matches_query(&query, &format!("{} {}", d.title, d.summary)))
-            .collect();
-        let list = div()
-            .id("pilot-document-list")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p_2()
-            .flex()
-            .flex_col()
-            .gap_px()
-            .when(pilot.documents.is_empty(), |d| {
-                d.child(empty_state(
-                    "file",
-                    &format!(
-                        "Ask {} to write something up, like a plan or a summary, and it shows up here.",
-                        pilot.label()
-                    ),
-                ))
-            })
-            .when(documents.is_empty() && !pilot.documents.is_empty(), |d| {
-                d.child(empty_state("search-01", "No documents match this search."))
-            })
-            .children(documents.into_iter().map(|document| {
-                // PilotOverview's DocumentRow: laid out like a habit.
-                let id = document.id.clone();
-                let label = if document.kind == "html" {
-                    "Visual"
-                } else {
-                    "Document"
-                };
-                div()
-                    .id(SharedString::from(format!("pilot-document-{id}")))
-                    .debug_selector({
-                        let id = id.clone();
-                        move || format!("pilot-document-{id}")
-                    })
-                    .role(Role::Button)
-                    .aria_label(format!("Open {} {}", label.to_lowercase(), document.title))
-                    .w_full()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap_2p5()
-                    .rounded_md()
-                    .px_2()
-                    .py_2()
-                    .hover(|s| s.bg(content(0.05)))
-                    .child(
-                        div()
-                            .size(px(28.))
-                            .flex_shrink_0()
-                            .rounded_md()
-                            .bg(content(0.06))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                icon(
-                                    if document.kind == "html" {
-                                        "chart-square"
-                                    } else {
-                                        "file"
-                                    },
-                                    14.,
-                                )
-                                .text_color(content(0.6)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(12.))
-                                    .line_height(px(20.))
-                                    .text_color(content(0.85))
-                                    .child(document.title.clone()),
-                            )
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(px(11.))
-                                    .line_height(px(16.))
-                                    .text_color(content(0.4))
-                                    .child(if document.summary.trim().is_empty() {
-                                        label.to_string()
-                                    } else {
-                                        document.summary.clone()
-                                    }),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_document(&id, cx);
-                        this.route = Some(Route::Document(id.clone()));
-                        cx.notify();
-                    }))
-            }));
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .when(!pilot.documents.is_empty(), |d| d.child(search_bar(filter)))
-            .child(list)
-            .into_any_element()
-    }
     pub(super) fn page_header(&self, title: &str, cx: &mut Context<Self>) -> Div {
         div()
             .h(px(40.))
@@ -1142,14 +1019,39 @@ impl Pilots {
                     .flex()
                     .flex_col()
                     .child(
-                        self.page_header(&document.title, cx).child(
-                            icon_button("pilot-document-copy", "Copy document", "response-copy")
+                        self.page_header(&document.title, cx)
+                            .child({
+                                // Pinned documents stay on top of Docs.
+                                let (pilot_id, doc_id) = (pilot.id.clone(), document.id.clone());
+                                let pinned = document.pinned;
+                                icon_button(
+                                    "pilot-document-pin",
+                                    if pinned {
+                                        "Unpin document"
+                                    } else {
+                                        "Pin document"
+                                    },
+                                    if pinned { "pin-off" } else { "pin" },
+                                )
+                                .debug_selector(|| "pilot-document-pin".into())
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.set_pinned(&pilot_id, &doc_id, !pinned, cx)
+                                    },
+                                ))
+                            })
+                            .child(
+                                icon_button(
+                                    "pilot-document-copy",
+                                    "Copy document",
+                                    "response-copy",
+                                )
                                 .on_click(move |_, _, cx| {
                                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(
                                         document.body.clone(),
                                     ))
                                 }),
-                        ),
+                            ),
                     )
                     .child(div().flex_1().min_h_0().child(view))
                     .into_any_element()

@@ -172,7 +172,7 @@ static ACTIONS: LazyLock<Vec<Action>> = LazyLock::new(|| {
         action(
             "artifacts.write",
             "Save a substantial report; it appears as a card in the chat.",
-            vec![opt("id", Id, "Replace this artifact"), opt("kind", Choice(&["document", "html"]), "Defaults to document"), req("title", Text, ""), req("body", Text, "The complete report"), opt("summary", Text, "One or two sentences")],
+            vec![opt("id", Id, "Replace this artifact"), opt("kind", Choice(&["document", "html"]), "Defaults to document"), req("title", Text, ""), req("body", Text, "The complete report"), opt("summary", Text, "One or two sentences"), opt("pinned", Bool, "Keep it on top of the Docs tab, like an SOP"), opt("runId", Id, "The flow run it was written for, from flows.start")],
             json!({"kind":"document","title":"Weekly review","summary":"Two regressions found.","body":"# Weekly review\n..."}),
         ),
         action("soul.read", "Read your soul (standing instructions) and its hash.", vec![], json!({})),

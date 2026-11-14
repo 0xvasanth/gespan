@@ -257,6 +257,10 @@ fn icon_body(path: &str) -> Option<&'static str> {
         // The Pipeline graph's done and failed marks, as the board draws them.
         "step-done" => "<polyline points='20 6 9 17 4 12' stroke-width='2.6'/>",
         "step-failed" => "<path d='M18 6 6 18M6 6l12 12' stroke-width='2.6'/>",
+        // The Docs tab's document row, as the board draws it.
+        "doc-page" => {
+            "<path d='M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z' stroke-width='1.8'/><polyline points='14 2 14 8 20 8' stroke-width='1.8'/>"
+        }
         // lucide's Maximize2, Shield and Pencil.
         "maximize-2" => "<path d='M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'/>",
         "shield" => {

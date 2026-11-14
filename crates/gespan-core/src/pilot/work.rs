@@ -289,9 +289,19 @@ impl super::Pilot {
     }
     pub fn apply_work(
         &mut self,
-        documents: Vec<super::Document>,
+        mut documents: Vec<super::Document>,
         mut launches: Vec<super::Launch>,
     ) -> Result<bool, String> {
+        // The desktop history knows a document's text, not that it was
+        // pinned or which run it was written for: those carry over.
+        for document in &mut documents {
+            if let Some(previous) = self.documents.iter().find(|old| old.id == document.id) {
+                document.pinned = previous.pinned;
+                if document.run_id.is_none() {
+                    document.run_id = previous.run_id.clone();
+                }
+            }
+        }
         let before = serde_json::to_string(&(self.documents.clone(), self.launches.clone()))
             .map_err(|e| e.to_string())?;
         for launch in &mut launches {
@@ -428,6 +438,7 @@ mod tests {
             body: "<h1>Saved</h1>".into(),
             created_at: 1,
             updated_at: 2,
+            ..Default::default()
         };
         let mut native = document.clone();
         native.id = "native".into();
@@ -437,5 +448,37 @@ mod tests {
         pilot.apply_work(Vec::new(), Vec::new()).unwrap();
         assert_eq!(pilot.documents.len(), 1);
         assert_eq!(pilot.documents[0].id, "native");
+    }
+    #[test]
+    fn a_rebuilt_document_keeps_its_pin_and_its_run() {
+        let mut pilot = super::super::Pilot::default();
+        let document = super::super::Document {
+            id: "plan".into(),
+            kind: "document".into(),
+            title: "Release plan 0.2.1".into(),
+            ..Default::default()
+        };
+        pilot
+            .apply_work(vec![document.clone()], Vec::new())
+            .unwrap();
+        pilot.documents[0].pinned = true;
+        pilot.documents[0].run_id = Some("run-1".into());
+        // The desktop history is read again: same document, newer text.
+        let mut again = document;
+        again.title = "Release plan 0.2.1, revised".into();
+        pilot.apply_work(vec![again], Vec::new()).unwrap();
+        let kept = &pilot.documents[0];
+        assert_eq!(kept.title, "Release plan 0.2.1, revised");
+        assert!(kept.pinned);
+        assert_eq!(kept.run_id.as_deref(), Some("run-1"));
+        // An old roster without the fields reads as unpinned, with no run.
+        let old: super::super::Document = serde_json::from_value(serde_json::json!({
+            "id":"x","kind":"document","title":"t","summary":"","body":"","createdAt":1,"updatedAt":2
+        }))
+        .unwrap();
+        assert!(!old.pinned);
+        assert_eq!(old.run_id, None);
+        let written = serde_json::to_value(&old).unwrap();
+        assert!(written.get("pinned").is_none() && written.get("runId").is_none());
     }
 }
