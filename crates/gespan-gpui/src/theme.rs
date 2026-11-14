@@ -483,19 +483,6 @@ pub(crate) fn inset_chrome_wash() -> Hsla {
 pub(crate) fn inset_pane_fill() -> Hsla {
     surfaces().map_or_else(pane_fill, |s| s.card)
 }
-pub(crate) fn section_label(label: &'static str) -> Div {
-    div()
-        .h(px(28.))
-        .px_2()
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap_1()
-        .text_size(px(12.))
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(content(0.5))
-        .child(div().flex_1().child(label))
-}
 pub(crate) fn icon(path: &'static str, side: f32) -> Svg {
     svg()
         .path(path)
@@ -523,11 +510,6 @@ pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
         _ => return None,
     };
     Some(rgb(if is_light() { light } else { dark }).into())
-}
-/// A navigation icon's colour: its tint when it has one, else content ink
-/// that brightens when the row is selected.
-pub(crate) fn nav_icon_color(label: &str, selected: bool) -> Hsla {
-    nav_tint(label).unwrap_or_else(|| content(if selected { 0.7 } else { 0.35 }))
 }
 /// A page's mark on a neutral title-tab tile: its navigation tint, so the tab
 /// matches its sidebar row, else the tile's usual ink.
@@ -1092,10 +1074,6 @@ mod nav_tint_tests {
             with_theme(theme);
             let home = nav_tint("Home").expect("Home has a colour like the other rows");
             assert_eq!(home, content(1.), "{theme}: Home is the full ink");
-            // Unselected rows without a tint get content(0.35); Home never does.
-            assert_eq!(nav_icon_color("Home", false), home);
-            assert_eq!(nav_icon_color("Home", true), home);
-            assert_ne!(nav_icon_color("Home", false), content(0.35));
         }
         with_theme("dark");
         let dark: Hsla = rgb(0xebebeb).into();
@@ -1120,9 +1098,6 @@ mod nav_tint_tests {
                     let gap = (a.h - b.h).abs().min(1. - (a.h - b.h).abs());
                     assert!(gap > 0.04, "{theme}: {label} and {} share a hue", TINTED[j]);
                 }
-                // Selection and hover never wash the tint back to ink.
-                assert_eq!(nav_icon_color(label, true), *a);
-                assert_eq!(nav_icon_color(label, false), *a);
             }
         }
     }
@@ -1157,13 +1132,11 @@ mod nav_tint_tests {
     }
 
     #[test]
-    fn other_rows_keep_content_ink_that_brightens_when_selected() {
+    fn other_rows_stay_untinted() {
         let _restore = Restore(TOKENS.with(|tokens| *tokens.borrow()));
         with_theme("dark");
         for label in ["Flows", "search", "inbox", ""] {
             assert_eq!(nav_tint(label), None, "{label:?} stays untinted");
-            assert_eq!(nav_icon_color(label, false), content(0.35));
-            assert_eq!(nav_icon_color(label, true), content(0.7));
         }
     }
 

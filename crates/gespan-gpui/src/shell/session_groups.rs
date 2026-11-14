@@ -3,7 +3,6 @@
 use super::*;
 #[cfg(test)]
 use crate::ticket_chip::{GROUP_UNKNOWN, group_tone};
-use crate::ticket_chip::{TicketChip, chip_element};
 use chrono::{Local, NaiveDateTime, TimeZone};
 #[cfg(test)]
 use gespan_core::provider_boards::StateGroup;
@@ -18,17 +17,13 @@ use gespan_core::{
 use gpui::EventEmitter;
 
 /// Fixed folder ids start with this; they are never user folders.
-const FIXED_PREFIX: &str = "fixed:";
-const AUTOMATION_RUNS: &str = "fixed:automations";
+pub(super) const FIXED_PREFIX: &str = "fixed:";
+pub(super) const AUTOMATION_RUNS: &str = "fixed:automations";
 
-/// Automation runs wears the Automations entry's yellow zap.
-fn fixed_folder_tint(id: &str) -> Option<gpui::Hsla> {
-    (id == AUTOMATION_RUNS).then(|| crate::theme::nav_tint("Automations"))?
-}
-const PILOT_PREFIX: &str = "fixed:pilot:";
+pub(super) const PILOT_PREFIX: &str = "fixed:pilot:";
 
 /// Folds or opens a group header, keyed as the sidebar keys it.
-fn toggle_group(groups: &mut Groups, key: &str) {
+pub(super) fn toggle_group(groups: &mut Groups, key: &str) {
     match key {
         "pinned" => groups.pinned_collapsed = !groups.pinned_collapsed,
         "reminders" => groups.reminders_collapsed = !groups.reminders_collapsed,
@@ -79,9 +74,16 @@ fn folder_color(ix: usize) -> Option<gpui::Hsla> {
         .get(ix)
         .map(|&(h, s, l)| gpui::hsla(h / 360., s, l, 1.))
 }
-/// Amber-500.
-const REMINDERS_COLOR: u32 = 0xf59e0b;
-
+/// A user folder's colour: its custom hex, else its palette swatch.
+pub(super) fn folder_tint(folder: &gespan_core::session_groups::Folder) -> Option<gpui::Hsla> {
+    folder
+        .custom_color
+        .as_deref()
+        .and_then(|color| color.strip_prefix('#'))
+        .and_then(|color| u32::from_str_radix(color, 16).ok())
+        .map(|color| rgb(color).into())
+        .or_else(|| folder.color_index.and_then(folder_color))
+}
 fn local_ms(at: NaiveDateTime) -> Option<u64> {
     Local
         .from_local_datetime(&at)
@@ -95,20 +97,6 @@ fn local_time(ms: u64) -> Option<NaiveDateTime> {
 pub(super) fn local_reminder_label(ms: u64) -> String {
     local_time(ms).map(format_reminder).unwrap_or_default()
 }
-pub(super) fn reminder_caption(ms: u64) -> String {
-    let Some(at) = local_time(ms) else {
-        return String::new();
-    };
-    let now = Local::now().naive_local();
-    if at <= now {
-        "Now".into()
-    } else if at.date() == now.date() {
-        at.format("%-H:%M").to_string()
-    } else {
-        at.format("%a").to_string()
-    }
-}
-
 #[derive(Clone, PartialEq)]
 pub(super) enum ListDrop {
     Folder(String),
@@ -119,6 +107,25 @@ pub(super) struct FolderDrag {
     start: Point<Pixels>,
     active: bool,
     over: Option<String>,
+}
+impl FolderDrag {
+    pub(super) fn new(id: String, start: Point<Pixels>) -> Self {
+        Self {
+            id,
+            start,
+            active: false,
+            over: None,
+        }
+    }
+    pub(super) fn id(&self) -> &str {
+        &self.id
+    }
+    pub(super) fn active(&self) -> bool {
+        self.active
+    }
+    pub(super) fn over(&self) -> Option<&String> {
+        self.over.as_ref()
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -154,26 +161,6 @@ pub(super) struct LinkDialog {
     request: u64,
     pub(super) editing: bool,
     _events: Vec<Subscription>,
-}
-
-/// SessionCard's linked ticket. The row's own menu carries Open, Refresh and
-/// Unlink; a click opens the ticket.
-fn ticket_chip(
-    id: i64,
-    chip: TicketChip,
-    url: Option<String>,
-    compact: bool,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    chip_element(&id.to_string(), &chip, compact)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |_, _, _, cx| {
-            cx.stop_propagation();
-            if let Some(url) = &url {
-                cx.open_url(url);
-            }
-        }))
-        .into_any_element()
 }
 
 /// FolderColorSwatches: the folder menu's palette row.
@@ -1209,323 +1196,6 @@ impl Shell {
         )
     }
 
-    /// SessionCard's linked issue or PR, opened on GitHub. Hover underlines
-    /// it as a link; with no number shown, the line runs under the icon.
-    pub(super) fn work_item_badge(
-        &self,
-        id: i64,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let item = match self.session_metadata(id, cx).summary.work_item.clone()? {
-            WorkItem::Github(item) => item,
-            WorkItem::Ticket(ticket) => {
-                let stale = self.stale_tickets.contains(&id)
-                    || self
-                        .connected_trackers
-                        .as_ref()
-                        .is_some_and(|connected| !connected.contains(&ticket.tracker));
-                let chip = TicketChip::new(&ticket, stale);
-                return Some(ticket_chip(id, chip, ticket.url.clone(), compact, cx));
-            }
-        };
-        let noun = if item.kind == "pr" { "PR" } else { "issue" };
-        let url = item.url.clone();
-        Some(
-            div()
-                .id(("work-item", id as usize))
-                .role(Role::Link)
-                .aria_label(format!("Open {noun} #{}", item.number))
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .gap(px(2.))
-                .px(px(2.))
-                .rounded_sm()
-                .text_size(px(11.))
-                .text_color(rgb(ACCENT))
-                .child(
-                    icon(
-                        if item.kind == "pr" {
-                            "git-pull-request"
-                        } else {
-                            "circle-dot"
-                        },
-                        12.,
-                    )
-                    .text_color(rgb(ACCENT)),
-                )
-                .when(!compact, |d| d.child(format!("#{}", item.number)))
-                .cursor_pointer()
-                .when(compact, |d| {
-                    d.border_b_1()
-                        .border_color(gpui::transparent_black())
-                        .hover(|s| s.border_color(rgb(ACCENT)))
-                })
-                .when(!compact, |d| d.hover(|s| s.underline()))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_mouse_down(MouseButton::Middle, |_, _, cx| cx.stop_propagation())
-                .on_mouse_up(MouseButton::Middle, {
-                    let url = url.clone();
-                    move |_, _, cx| {
-                        cx.stop_propagation();
-                        cx.open_url(&url);
-                    }
-                })
-                .on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    cx.open_url(&url);
-                })
-                .into_any(),
-        )
-    }
-
-    /// A virtualized group renders its header separately from its member cards.
-    pub(super) fn sidebar_group_header(&self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
-        let folders = self.project_groups();
-        let (key, name, glyph, color, collapsed, sessions): (
-            String,
-            String,
-            &'static str,
-            Option<gpui::Hsla>,
-            bool,
-            &Vec<i64>,
-        ) = match entry {
-            Entry::Reminders {
-                collapsed,
-                sessions,
-            } => (
-                "reminders".into(),
-                "Reminders".into(),
-                "clock",
-                Some(rgb(REMINDERS_COLOR).into()),
-                *collapsed,
-                sessions,
-            ),
-            Entry::Folder { id, sessions } => {
-                let Some(folder) = folders.folder(id) else {
-                    return div().into_any();
-                };
-                (
-                    format!("folder:{id}"),
-                    folder.name.clone(),
-                    "folder",
-                    folder
-                        .custom_color
-                        .as_deref()
-                        .and_then(|color| color.strip_prefix('#'))
-                        .and_then(|color| u32::from_str_radix(color, 16).ok())
-                        .map(|color| rgb(color).into())
-                        .or_else(|| folder.color_index.and_then(folder_color)),
-                    folder.collapsed,
-                    sessions,
-                )
-            }
-            Entry::Fixed { id, name, sessions } => (
-                id.clone(),
-                name.clone(),
-                "zap",
-                fixed_folder_tint(id),
-                folders.fixed_is_collapsed(id),
-                sessions,
-            ),
-            Entry::Pinned { .. } | Entry::Session(_) => return div().into_any(),
-        };
-        let expanded = !collapsed;
-        // A Pilot's folder shows the Pilot instead of a glyph.
-        let avatar = key.strip_prefix(PILOT_PREFIX).and_then(|pilot| {
-            let pilots = self.pilots.as_ref()?.read(cx);
-            let pilot = pilots.roster.get(pilot)?;
-            Some(crate::pilots::avatar::avatar(
-                &pilot.mascot,
-                pilot.color,
-                "idle",
-                16.,
-                true,
-            ))
-        });
-        let folder_id = key.strip_prefix("folder:").map(str::to_string);
-        folder_id
-            .as_ref()
-            .and_then(|f| self.rename_row(&RenameTarget::Folder(f.clone()), cx))
-            .unwrap_or_else(|| {
-                self.group_row(&key, name, glyph, avatar, color, expanded, sessions, cx)
-            })
-    }
-    #[allow(clippy::too_many_arguments)]
-    fn group_row(
-        &self,
-        key: &str,
-        name: String,
-        glyph: &'static str,
-        avatar: Option<AnyElement>,
-        color: Option<gpui::Hsla>,
-        expanded: bool,
-        sessions: &[i64],
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let approval = sessions
-            .iter()
-            .any(|id| self.session_metadata(*id, cx).needs_approval());
-        let done = sessions.iter().any(|id| self.unseen_finished.contains(id));
-        let group = SharedString::from(format!("group-row-{key}"));
-        let toggle_key = key.to_string();
-        let menu_key = key.to_string();
-        let drag_key = key.strip_prefix("folder:").map(str::to_string);
-        let bounds = drag_key
-            .as_ref()
-            .and_then(|id| self.folder_bounds.get(id))
-            .cloned();
-        let drop_target = drag_key.as_ref().is_some_and(|id| {
-            self.sidebar_drop == Some(ListDrop::Folder(id.clone()))
-                || self
-                    .folder_drag
-                    .as_ref()
-                    .is_some_and(|drag| drag.active && drag.over.as_ref() == Some(id))
-        });
-        let mark = |side| {
-            let glyph = icon(glyph, side);
-            match color {
-                Some(color) => glyph.text_color(color),
-                None => glyph,
-            }
-        };
-        div()
-            .id(SharedString::from(format!("session-group-{key}")))
-            .debug_selector({
-                let key = key.to_string();
-                move || format!("session-group-{key}")
-            })
-            .group(group.clone())
-            .role(Role::Button)
-            .aria_label(name.clone())
-            .aria_expanded(expanded)
-            .cursor_pointer()
-            .h(px(32.))
-            .px_2()
-            .rounded_md()
-            .flex()
-            .items_center()
-            .gap_2()
-            .text_color(content(0.5))
-            .when(expanded, |d| d.bg(content(0.05)).text_color(content(0.8)))
-            .hover(|s| s.bg(content(0.1)).text_color(content(1.)))
-            .when(drop_target, |d| d.bg(content(0.14)))
-            .when(
-                drag_key.as_ref().is_some_and(|id| {
-                    self.folder_drag
-                        .as_ref()
-                        .is_some_and(|drag| drag.active && &drag.id == id)
-                }),
-                |d| d.opacity(0.4),
-            )
-            .child(
-                div()
-                    .size(px(16.))
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .opacity(0.7)
-                    .child(
-                        div()
-                            .when(expanded, |d| d.invisible())
-                            .group_hover(group.clone(), |s| s.invisible())
-                            .child(avatar.unwrap_or_else(|| mark(16.).into_any_element())),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .invisible()
-                            .when(expanded, |d| d.visible())
-                            .group_hover(group.clone(), |s| s.visible())
-                            .child(
-                                icon(
-                                    if expanded {
-                                        "chevron-down"
-                                    } else {
-                                        "chevron-right"
-                                    },
-                                    16.,
-                                )
-                                .when_some(fixed_folder_tint(key), |chevron, tint| {
-                                    chevron.text_color(tint)
-                                }),
-                            ),
-                    )
-                    .relative(),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(14.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(name),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .text_size(px(11.))
-                    .text_color(content(0.4))
-                    .when(!expanded && approval, |d| {
-                        d.child(icon("circle-alert", 12.).text_color(rgb(0xfbbf24)))
-                    })
-                    .when(!expanded && !approval && done, |d| {
-                        d.child(icon("check-circle-2", 12.).text_color(rgb(0x2dd4bf)))
-                    })
-                    .child(sessions.len().to_string()),
-            )
-            .children(bounds.map(|slot| slot.probe().into_any_element()))
-            .relative()
-            .when_some(drag_key, |d, id| {
-                d.on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                        this.skip_folder_click = false;
-                        this.folder_drag = Some(FolderDrag {
-                            id: id.clone(),
-                            start: event.position,
-                            active: false,
-                            over: None,
-                        });
-                    }),
-                )
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if std::mem::take(&mut this.skip_folder_click) {
-                    return;
-                }
-                this.sidebar_target = toggle_key
-                    .strip_prefix("folder:")
-                    .map(|id| RenameTarget::Folder(id.into()));
-                window.focus(&this.sidebar_focus, cx);
-                let key = toggle_key.clone();
-                this.update_groups(cx, |groups| toggle_group(groups, &key));
-            }))
-            .when(
-                key.starts_with("folder:") || key.starts_with(FIXED_PREFIX),
-                |d| {
-                    d.on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                            let target = match menu_key.strip_prefix("folder:") {
-                                Some(folder) => MenuTarget::Folder(folder.to_string()),
-                                None => MenuTarget::FixedFolder(menu_key.clone()),
-                            };
-                            let anchor = Anchor::Point(event.position);
-                            this.open_menu(target, anchor, window, cx);
-                        }),
-                    )
-                },
-            )
-            .into_any()
-    }
-
     fn open_link_dialog(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         self.open_link_target(Some(id), None, window, cx);
     }
@@ -2241,20 +1911,6 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 
-    #[test]
-    fn automation_runs_takes_the_automations_yellow() {
-        let yellow = crate::theme::nav_tint("Automations");
-        assert!(yellow.is_some());
-        assert_eq!(fixed_folder_tint(AUTOMATION_RUNS), yellow);
-        assert_eq!(fixed_folder_tint("folder:user-folder"), None);
-        assert_eq!(fixed_folder_tint("reminders"), None);
-        // A Pilot's folder shows the Pilot, never the zap's colour.
-        assert_eq!(
-            fixed_folder_tint(&format!("{PILOT_PREFIX}some-pilot")),
-            None
-        );
-    }
-
     fn setup(cx: &mut TestAppContext) -> (WindowHandle<Shell>, i64, i64) {
         setup_at(cx, std::path::Path::new(":memory:"))
     }
@@ -2273,6 +1929,8 @@ mod tests {
         let (window, a, b) = crate::shell::tests::window_at(cx, path);
         window
             .update(cx, |shell, _, cx| {
+                // These tests work with the user's own folders.
+                shell.workspace.preferences.sidebar_group_by = "folders".into();
                 for id in [a, b] {
                     shell.sessions[&id].update(cx, |session, _| {
                         session.summary.cwd = shell.workspace.project.clone();
@@ -2285,174 +1943,6 @@ mod tests {
         cx.run_until_parked();
         cx.refresh().unwrap();
         (window, a, b)
-    }
-
-    #[gpui::test]
-    fn expanded_folders_use_compact_connected_rows_and_keep_operator_children(
-        cx: &mut TestAppContext,
-    ) {
-        let (window, a, b) = setup(cx);
-        let (plain, child) = window
-            .update(cx, |shell, _, cx| {
-                let mut ids = Vec::new();
-                for _ in 0..2 {
-                    let mut summary = locked(&shell.store)
-                        .unwrap()
-                        .create("codex", &shell.workspace.project)
-                        .unwrap();
-                    summary.has_messages = true;
-                    ids.push(summary.id);
-                    shell.add(summary, cx);
-                    shell.sessions[ids.last().unwrap()]
-                        .update(cx, |chat, _| chat.summary.has_messages = true);
-                }
-                let (plain, child) = (ids[0], ids[1]);
-                shell.groups.insert(
-                    shell.workspace.project.clone(),
-                    Groups {
-                        folders: vec![gespan_core::session_groups::Folder {
-                            id: "visual-folder".into(),
-                            name: "Review work".into(),
-                            session_ids: vec![a, b],
-                            ..Default::default()
-                        }],
-                        ..Default::default()
-                    },
-                );
-                shell.started_by.insert(child, a);
-                shell.workspace.active = Some(a);
-                shell.invalidate_chrome(cx);
-                (plain, child)
-            })
-            .unwrap();
-        cx.refresh().unwrap();
-        cx.run_until_parked();
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        let row = |cx: &mut VisualTestContext, id| {
-            cx.debug_bounds(Box::leak(format!("sidebar-session-{id}").into_boxed_str()))
-        };
-        let header = visual
-            .debug_bounds("session-group-folder:visual-folder")
-            .unwrap();
-        let first = row(visual, a).unwrap();
-        let second = row(visual, b).unwrap();
-        assert_eq!(first.left() - header.left(), px(30.));
-        assert_eq!(first.size.height, px(28.));
-        assert_eq!(second.left(), first.left());
-        assert_eq!(second.size.height, px(28.));
-        assert_eq!(row(visual, plain).unwrap().size.height, px(32.));
-        let started = row(visual, child).expect("a folder member keeps its Operator rail");
-        assert_eq!(started.left() - first.left(), px(30.));
-        window
-            .update(visual, |shell, _, cx| {
-                shell.change_sidebar_option("compact-session-cards", cx);
-            })
-            .unwrap();
-        visual.run_until_parked();
-        assert_eq!(row(visual, a).unwrap().size.height, px(28.));
-        assert_eq!(row(visual, b).unwrap().size.height, px(28.));
-        assert_eq!(row(visual, child).unwrap().size.height, px(28.));
-        assert_eq!(row(visual, plain).unwrap().size.height, px(60.));
-        window
-            .update(visual, |_, window, _| {
-                let scale = window.scale_factor();
-                assert!(
-                    window.painted_quads().iter().any(|quad| {
-                        (quad.bounds.left().0 - f32::from(header.left()) * scale).abs() < 1.
-                            && (quad.bounds.top().0 - f32::from(header.top()) * scale).abs() < 1.
-                            && (quad.bounds.size.width.0 - f32::from(header.size.width) * scale)
-                                .abs()
-                                < 1.
-                            && quad
-                                .background
-                                .as_solid()
-                                .is_some_and(|color| (color.a - 0.05).abs() < 0.001)
-                    }),
-                    "an open folder has a persistent header fill"
-                );
-                assert!(
-                    window.painted_quads().iter().any(|quad| {
-                        (quad.bounds.left().0 - f32::from(header.left() + px(16.)) * scale).abs()
-                            < 1.
-                            && (quad.bounds.size.width.0 - scale).abs() < 0.1
-                            && quad.bounds.top().0 > f32::from(header.bottom()) * scale
-                            && quad.bounds.top().0 < f32::from(first.bottom()) * scale
-                            && quad
-                                .background
-                                .as_solid()
-                                .is_some_and(|color| color == crate::theme::rail_color())
-                    }),
-                    "the same spine as Operator rows connects folder members"
-                );
-            })
-            .unwrap();
-        window
-            .update(visual, |shell, _, cx| {
-                shell.update_groups(cx, |groups| groups.toggle_folder("visual-folder"))
-            })
-            .unwrap();
-        visual.refresh().unwrap();
-        assert!(row(visual, a).is_none());
-        assert!(row(visual, b).is_none());
-        assert!(row(visual, child).is_none());
-    }
-
-    #[gpui::test]
-    fn sidebar_header_controls_share_the_trailing_alignment(cx: &mut TestAppContext) {
-        let (window, _, _) = setup(cx);
-        // The header's plus appears once this project has a Pilot. The empty
-        // state uses a full-width creation row instead.
-        window
-            .update(cx, |shell, _, cx| {
-                if let Some(pilots) = &shell.pilots {
-                    pilots.update(cx, |pilots, cx| {
-                        pilots.roster.pilots.push(gespan_core::pilot::Pilot {
-                            projects: vec![shell.workspace.project.clone()],
-                            ..Default::default()
-                        });
-                        cx.notify();
-                    });
-                }
-                shell.invalidate_chrome(cx);
-            })
-            .unwrap();
-        cx.refresh().unwrap();
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        let pilot = visual.debug_bounds("sidebar-pilot-button").unwrap();
-        let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
-        assert!((pilot.center().x - filter.center().x).abs() <= px(1.));
-        let project = visual.debug_bounds("sidebar-project-button").unwrap();
-        assert_eq!(project.size.height, px(32.));
-    }
-
-    #[gpui::test]
-    fn the_sessions_heading_leaves_new_sessions_to_the_new_row(cx: &mut TestAppContext) {
-        let (window, _, _) = setup(cx);
-        cx.refresh().unwrap();
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        // The New row above already starts a session, so the heading keeps
-        // only its filter.
-        let new_row = visual
-            .debug_bounds("sidebar-new-thread")
-            .expect("the New thread row starts sessions");
-        let filter = visual.debug_bounds("sidebar-filter-button").unwrap();
-        assert!(
-            new_row.bottom() <= filter.top(),
-            "{new_row:?} above {filter:?}"
-        );
-        assert!(visual.debug_bounds("sidebar-new-session").is_none());
-        // Boxy keeps the same rows.
-        window
-            .update(visual, |shell, _, cx| {
-                shell.workspace.new_layout_boxy = true;
-                shell.layout_changed(cx);
-            })
-            .unwrap();
-        visual.run_until_parked();
-        visual.refresh().unwrap();
-        assert!(visual.debug_bounds("sidebar-filter-button").is_some());
-        assert!(visual.debug_bounds("sidebar-new-thread").is_some());
-        assert!(visual.debug_bounds("sidebar-new-session").is_none());
     }
 
     #[gpui::test]
@@ -2804,7 +2294,7 @@ mod tests {
             .unwrap();
         let header = visual
             .debug_bounds(Box::leak(
-                format!("session-group-folder:{folder}").into_boxed_str(),
+                format!("rail-folder-folder:{folder}").into_boxed_str(),
             ))
             .unwrap();
         visual.simulate_mouse_down(row.center(), MouseButton::Left, Default::default());
@@ -2879,11 +2369,11 @@ mod tests {
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
         let first = visual
-            .debug_bounds("session-group-folder:first")
+            .debug_bounds("rail-folder-folder:first")
             .unwrap()
             .center();
         let second = visual
-            .debug_bounds("session-group-folder:second")
+            .debug_bounds("rail-folder-folder:second")
             .unwrap()
             .center();
         visual.simulate_mouse_down(second, MouseButton::Left, Default::default());
@@ -2900,7 +2390,7 @@ mod tests {
             .unwrap();
         visual.refresh().unwrap();
         let first = visual
-            .debug_bounds("session-group-folder:first")
+            .debug_bounds("rail-folder-folder:first")
             .unwrap()
             .center();
         visual.simulate_mouse_down(first, MouseButton::Right, Default::default());
@@ -2937,7 +2427,7 @@ mod tests {
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
         let folder = visual
-            .debug_bounds("session-group-folder:work")
+            .debug_bounds("rail-folder-folder:work")
             .unwrap()
             .center();
         visual.simulate_click(folder, Default::default());
@@ -2951,10 +2441,6 @@ mod tests {
     use crate::runtime::TicketChange;
     use crate::tickets::fakes::FakeTickets;
 
-    /// `debug_bounds` wants a `'static` selector; a leaked test string is fine.
-    fn sel(selector: String) -> &'static str {
-        Box::leak(selector.into_boxed_str())
-    }
 
     fn fake_tickets(
         window: WindowHandle<Shell>,
@@ -3191,135 +2677,9 @@ mod tests {
             .unwrap();
     }
 
-    #[gpui::test]
-    fn chip_shows_key_title_status_and_stale_when_disconnected(cx: &mut TestAppContext) {
-        let (window, a, _) = setup(cx);
-        let fake = fake_tickets(window, cx, &[Tracker::Plane]);
-        window
-            .update(cx, |shell, _, cx| {
-                shell.workspace.compact_session_cards = false;
-                shell.invalidate_chrome(cx);
-            })
-            .unwrap();
-        submit_link(window, cx, a, "ENG-7");
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        visual.refresh().unwrap();
-        window
-            .update(visual, |shell, _, cx| {
-                let Some(WorkItem::Ticket(ticket)) =
-                    shell.session_metadata(a, cx).summary.work_item.clone()
-                else {
-                    panic!("linked")
-                };
-                let chip = TicketChip::new(&ticket, false);
-                assert_eq!(chip.key, "ENG-7");
-                assert_eq!(chip.title.as_deref(), Some("Fix login"));
-                assert_eq!(chip.status.as_deref(), Some("In Progress"));
-                assert_eq!(chip.tone, ACCENT, "started tickets use the accent");
-                assert!(!chip.stale);
-            })
-            .unwrap();
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-{a}")))
-                .is_some()
-        );
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-title-{a}")))
-                .is_some()
-        );
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-status-{a}")))
-                .is_some()
-        );
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-stale-{a}")))
-                .is_none()
-        );
-
-        fake.disconnect();
-        window
-            .update(visual, |shell, _, cx| shell.refresh_ticket(a, true, cx))
-            .unwrap();
-        visual.run_until_parked();
-        visual.refresh().unwrap();
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-stale-{a}")))
-                .is_some()
-        );
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-title-{a}")))
-                .is_some(),
-            "cached data stays"
-        );
-        window
-            .update(visual, |shell, _, _| {
-                assert_eq!(shell.error.as_deref(), Some("Connect Plane in Settings"));
-            })
-            .unwrap();
-    }
-
-    #[gpui::test]
-    fn chip_is_stale_on_first_render_when_its_tracker_is_not_connected(cx: &mut TestAppContext) {
-        let (window, a, _) = setup(cx);
-        // Nothing is connected, and no refresh has ever run for this session.
-        fake_tickets(window, cx, &[]);
-        window
-            .update(cx, |shell, _, cx| {
-                let ticket = TicketRef {
-                    tracker: Tracker::Jira,
-                    key: "ENG-7".into(),
-                    url: Some("https://acme.atlassian.net/browse/ENG-7".into()),
-                    title: Some("Fix login".into()),
-                    status: Some("Done".into()),
-                    status_group: Some(StateGroup::Completed),
-                    fetched_at: Some(1),
-                };
-                shell.set_work_item(a, Some(WorkItem::Ticket(Box::new(ticket))), cx);
-                shell.refresh_connected_trackers(cx);
-            })
-            .unwrap();
-        cx.run_until_parked();
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        visual.refresh().unwrap();
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-stale-{a}")))
-                .is_some(),
-            "stale without any fetch"
-        );
-        window
-            .update(visual, |shell, _, cx| {
-                let Some(WorkItem::Ticket(ticket)) =
-                    shell.session_metadata(a, cx).summary.work_item.clone()
-                else {
-                    panic!("linked")
-                };
-                assert_eq!(
-                    TicketChip::new(&ticket, true).stale_hint(),
-                    "Jira is disconnected. Reconnect in Settings."
-                );
-                // Connecting the tracker clears the marker.
-                shell.tickets = Arc::new(FakeTickets::new(&[Tracker::Jira]));
-                shell.refresh_connected_trackers(cx);
-            })
-            .unwrap();
-        visual.run_until_parked();
-        visual.refresh().unwrap();
-        assert!(
-            visual
-                .debug_bounds(sel(format!("ticket-chip-stale-{a}")))
-                .is_none()
-        );
-    }
-
     #[test]
     fn chip_tone_follows_the_state_group() {
+        use crate::ticket_chip::TicketChip;
         assert_eq!(group_tone(StateGroup::Completed), 0x4ade80);
         assert_eq!(group_tone(StateGroup::Cancelled), 0xf87171);
         assert_eq!(group_tone(StateGroup::Backlog), GROUP_UNKNOWN);
@@ -3454,62 +2814,6 @@ mod tests {
             None
         );
         assert_eq!(fake.fetch_count(), 1);
-    }
-
-    /// R27: an agent's move is saved through `set_work_item`, which must
-    /// redraw the sidebar; the chip's status changes without anything else
-    /// touching the shell.
-    #[gpui::test]
-    fn agent_ticket_move_redraws_the_sidebar_chip(cx: &mut TestAppContext) {
-        let (window, a, _) = setup(cx);
-        fake_tickets(window, cx, &[Tracker::Linear]);
-        window
-            .update(cx, |shell, _, cx| {
-                shell.workspace.compact_session_cards = false;
-                shell.invalidate_chrome(cx);
-            })
-            .unwrap();
-        submit_link(window, cx, a, "ENG-7");
-        // Drawn once with the fetched status, whatever the link path redraws.
-        window
-            .update(cx, |shell, _, cx| shell.invalidate_chrome(cx))
-            .unwrap();
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        visual.refresh().unwrap();
-        let status = sel(format!("ticket-chip-status-{a}"));
-        let width = |visual: &mut VisualTestContext| {
-            visual
-                .debug_bounds(status)
-                .map(|bounds| f32::from(bounds.size.width))
-        };
-        let before = width(visual).expect("the fetched status shows");
-        let moved = window
-            .update(visual, |shell, _, _| saved_ticket(shell, a))
-            .unwrap()
-            .map(|ticket| TicketRef {
-                status: Some("Done".into()),
-                status_group: Some(StateGroup::Completed),
-                ..ticket
-            })
-            .unwrap();
-        window
-            .update(visual, |shell, _, cx| {
-                let view = shell.sessions.get(&a).unwrap().clone();
-                view.update(cx, |_, cx| {
-                    cx.emit(crate::conversation::TicketChanged(TicketChange::Moved(
-                        moved,
-                    )))
-                });
-            })
-            .unwrap();
-        visual.run_until_parked();
-        visual.refresh().unwrap();
-        let after = width(visual).expect("the moved status shows");
-        assert!(
-            after < before,
-            "the chip should redraw \"In Progress\" as \"Done\" ({before} -> {after})"
-        );
     }
 
     #[gpui::test]

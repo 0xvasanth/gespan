@@ -490,10 +490,10 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "sidebar entries show hide",
     ),
     (
-        "compact-session-cards",
+        "sidebar-group-by",
         Section::Appearance,
-        "Compact view",
-        "sidebar session cards density show hide",
+        "Group sessions by",
+        "sidebar folders worktree branch group sessions rail",
     ),
     (
         "interface-scale",

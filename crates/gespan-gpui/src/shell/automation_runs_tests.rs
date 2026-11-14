@@ -795,10 +795,17 @@ fn a_launched_run_shows_in_the_automation_runs_folder(cx: &mut TestAppContext) {
     let id = save(&data.db, draft(&data.project, vec![]));
     let window = open(&data, cx);
     let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+    // The Automation runs folder is one of "My folders".
+    window
+        .update(visual, |shell, _, cx| {
+            shell.workspace.preferences.sidebar_group_by = "folders".into();
+            shell.notify_sidebar(cx);
+        })
+        .unwrap();
     visual.run_until_parked();
     assert!(
         visual
-            .debug_bounds("session-group-fixed:automations")
+            .debug_bounds("rail-folder-fixed:automations")
             .is_none()
     );
     let automation = Service::open(&data.db)
@@ -849,7 +856,7 @@ fn a_launched_run_shows_in_the_automation_runs_folder(cx: &mut TestAppContext) {
     assert_eq!(fixed, Some(vec![session]));
     assert!(
         visual
-            .debug_bounds("session-group-fixed:automations")
+            .debug_bounds("rail-folder-fixed:automations")
             .is_some(),
         "the folder header is drawn"
     );

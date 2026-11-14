@@ -572,7 +572,6 @@ impl SettingsView {
                     | "sidebar-inbox"
                     | "sidebar-pilots"
                     | "sidebar-activity"
-                    | "compact-session-cards"
             )
         });
         let stacked = narrow && !toggle_only;

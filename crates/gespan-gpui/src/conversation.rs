@@ -580,10 +580,6 @@ impl Conversation {
     pub(crate) fn responding(&self) -> bool {
         self.busy && !self.stopping
     }
-    pub(crate) fn sidebar_details(&self) -> Option<(SharedString, Option<String>)> {
-        self.loaded
-            .then(|| (self.model_label(), self.branch.clone()))
-    }
     pub(crate) fn preview(&self, done: bool) -> AnyElement {
         let kind = Kind::from_id(&self.summary.provider);
         let model = self.resolved_model.as_deref().or(self.model.as_deref());

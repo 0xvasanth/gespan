@@ -94,12 +94,6 @@ impl SessionMark {
     pub(crate) fn state(&self) -> State {
         self.state
     }
-    pub(crate) fn set_size(&mut self, side: f32, cx: &mut Context<Self>) {
-        if self.side != side {
-            self.side = side;
-            cx.notify();
-        }
-    }
     pub(crate) fn set(&mut self, provider: &str, state: State, cx: &mut Context<Self>) {
         if self.state == state && self.provider == provider {
             return;
