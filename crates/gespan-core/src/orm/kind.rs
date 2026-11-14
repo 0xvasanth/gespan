@@ -47,7 +47,7 @@ impl Kind {
         use crate::decisions::store::DecisionFlag;
         use crate::decisions::vector::DecisionVectorModel;
         use crate::diagnostics::metrics::DiagnosticCounter;
-        use crate::flow::store::{FlowRow, FlowRunRow, FlowVisitRow};
+        use crate::flow::store::{FlowRow, FlowRunRow, FlowVersionRow, FlowVisitRow};
         use crate::store::my_tasks::{MyTask, TaskDecision};
         use crate::store::schema::*;
         match self {
@@ -75,7 +75,8 @@ impl Kind {
                     ReviewDraftRow,
                     FlowRow,
                     FlowRunRow,
-                    FlowVisitRow
+                    FlowVisitRow,
+                    FlowVersionRow
                 );
                 gespan_board_store::register_models(&mut models);
                 models

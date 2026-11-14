@@ -14,3 +14,8 @@ snapshot_name = "0001_snapshot.toml"
 id = 1071234168328475935
 name = "0002_decision_vectors.sql"
 snapshot_name = "0002_snapshot.toml"
+
+[[migrations]]
+id = 8363121330793224020
+name = "0003_flow_versions.sql"
+snapshot_name = "0003_snapshot.toml"

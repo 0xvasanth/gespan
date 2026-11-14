@@ -1,0 +1,2294 @@
+version = 1
+
+[schema]
+
+[[schema.tables]]
+id = 0
+name = "my_tasks"
+primary_key = { columns = [{ table = 0, index = 0 }], index = { table = 0, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 0, index = 0 }
+name = "key"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 1 }
+name = "kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 2 }
+name = "project"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 3 }
+name = "origin"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 4 }
+name = "source_label"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 5 }
+name = "headline"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 6 }
+name = "request_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 7 }
+name = "asked_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 0, index = 8 }
+name = "status"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 0, index = 9 }
+name = "answer"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 0, index = 10 }
+name = "answer_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 0, index = 11 }
+name = "closed_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 0, index = 12 }
+name = "decision_id"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 0, index = 0 }
+name = "index_my_tasks_by_key"
+on = 0
+columns = [{ column = { table = 0, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 0, index = 1 }
+name = "my_tasks_closed_idx"
+on = 0
+columns = [{ column = { table = 0, index = 8 }, op = "Eq", scope = "Partition" }, { column = { table = 0, index = 11 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables.indices]]
+id = { table = 0, index = 2 }
+name = "my_tasks_decision_idx"
+on = 0
+columns = [{ column = { table = 0, index = 12 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 1
+name = "task_decisions"
+primary_key = { columns = [{ table = 1, index = 0 }], index = { table = 1, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 1, index = 0 }
+name = "id"
+ty = "I32"
+storage_ty = { Integer = 4 }
+auto_increment = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 1 }
+name = "project"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 2 }
+name = "statement"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 3 }
+name = "why"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 4 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 1, index = 5 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 1, index = 6 }
+name = "archived_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 7 }
+name = "kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 8 }
+name = "status"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 9 }
+name = "scope"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 10 }
+name = "title"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 11 }
+name = "user_answer"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 12 }
+name = "session"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 13 }
+name = "question_ref"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 14 }
+name = "user_turn"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 15 }
+name = "import_src"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 16 }
+name = "pinned"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 1, index = 17 }
+name = "supersedes"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 18 }
+name = "replaced_by"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 1, index = 19 }
+name = "decided_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 1, index = 0 }
+name = "index_task_decisions_by_id"
+on = 1
+columns = [{ column = { table = 1, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 1, index = 1 }
+name = "task_decisions_scope_status_idx"
+on = 1
+columns = [{ column = { table = 1, index = 9 }, op = "Eq", scope = "Partition" }, { column = { table = 1, index = 8 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables.indices]]
+id = { table = 1, index = 2 }
+name = "task_decisions_replaced_by_idx"
+on = 1
+columns = [{ column = { table = 1, index = 18 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 2
+name = "decision_flags"
+primary_key = { columns = [{ table = 2, index = 0 }], index = { table = 2, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 2, index = 0 }
+name = "id"
+ty = "I32"
+storage_ty = { Integer = 4 }
+auto_increment = true
+
+[[schema.tables.columns]]
+id = { table = 2, index = 1 }
+name = "entry"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 2, index = 2 }
+name = "session"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 2, index = 3 }
+name = "reason"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 2, index = 4 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 2, index = 5 }
+name = "dismissed"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.indices]]
+id = { table = 2, index = 0 }
+name = "index_decision_flags_by_id"
+on = 2
+columns = [{ column = { table = 2, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 2, index = 1 }
+name = "decision_flags_entry_idx"
+on = 2
+columns = [{ column = { table = 2, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 2, index = 5 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 3
+name = "decision_vector_model"
+primary_key = { columns = [{ table = 3, index = 0 }], index = { table = 3, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 3, index = 0 }
+name = "vectors"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 3, index = 1 }
+name = "model"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 3, index = 2 }
+name = "dims"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 3, index = 0 }
+name = "index_decision_vector_model_by_vectors"
+on = 3
+columns = [{ column = { table = 3, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 4
+name = "sessions"
+primary_key = { columns = [{ table = 4, index = 0 }], index = { table = 4, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 4, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 1 }
+name = "cwd"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 2 }
+name = "harness"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 3 }
+name = "model"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 4 }
+name = "model_settings"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 5 }
+name = "runtime_mode"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 6 }
+name = "title"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 7 }
+name = "provider_session_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 8 }
+name = "blocks_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 9 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 4, index = 10 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 4, index = 11 }
+name = "branch"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 12 }
+name = "context_used"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 13 }
+name = "context_window"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 14 }
+name = "archived"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 15 }
+name = "worktree_cwd"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 16 }
+name = "has_user_message"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 17 }
+name = "pinned"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 18 }
+name = "linked_work_item_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 19 }
+name = "provider_account_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 20 }
+name = "worktree_removed"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 21 }
+name = "is_draft"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 22 }
+name = "automation_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 23 }
+name = "queued_messages_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 24 }
+name = "queue_status"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 4, index = 25 }
+name = "sidebar_hidden"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 4, index = 26 }
+name = "inbox_ask"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 4, index = 0 }
+name = "index_sessions_by_id"
+on = 4
+columns = [{ column = { table = 4, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 5
+name = "schema_migrations"
+primary_key = { columns = [{ table = 5, index = 0 }], index = { table = 5, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 5, index = 0 }
+name = "version"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 5, index = 1 }
+name = "applied_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 5, index = 0 }
+name = "index_schema_migrations_by_version"
+on = 5
+columns = [{ column = { table = 5, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 6
+name = "workspace_snapshot"
+primary_key = { columns = [{ table = 6, index = 0 }], index = { table = 6, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 6, index = 0 }
+name = "id"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 6, index = 1 }
+name = "snapshot_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 6, index = 2 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 6, index = 0 }
+name = "index_workspace_snapshot_by_id"
+on = 6
+columns = [{ column = { table = 6, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 7
+name = "in_flight_sessions"
+primary_key = { columns = [{ table = 7, index = 0 }], index = { table = 7, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 0 }
+name = "session_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 1 }
+name = "cwd"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 2 }
+name = "sort_index"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 7, index = 0 }
+name = "index_in_flight_sessions_by_session_id"
+on = 7
+columns = [{ column = { table = 7, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 8
+name = "notes"
+primary_key = { columns = [{ table = 8, index = 0 }], index = { table = 8, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 1 }
+name = "slug"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 2 }
+name = "title"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 3 }
+name = "body"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 4 }
+name = "tags_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 5 }
+name = "source_session_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 8, index = 6 }
+name = "source_cwd"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 8, index = 7 }
+name = "slug_pending"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 8 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 9 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 10 }
+name = "content_kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 11 }
+name = "artifact_kind"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 8, index = 0 }
+name = "index_notes_by_id"
+on = 8
+columns = [{ column = { table = 8, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 8, index = 1 }
+name = "index_notes_by_slug"
+on = 8
+columns = [{ column = { table = 8, index = 1 }, op = "Eq", scope = "Partition" }]
+unique = true
+
+[[schema.tables]]
+id = 9
+name = "session_reminders"
+primary_key = { columns = [{ table = 9, index = 0 }], index = { table = 9, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 9, index = 0 }
+name = "session_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 9, index = 1 }
+name = "due_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 9, index = 2 }
+name = "fired_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 9, index = 0 }
+name = "index_session_reminders_by_session_id"
+on = 9
+columns = [{ column = { table = 9, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 10
+name = "pilot_transcripts"
+primary_key = { columns = [{ table = 10, index = 0 }], index = { table = 10, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 10, index = 0 }
+name = "session_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 10, index = 0 }
+name = "index_pilot_transcripts_by_session_id"
+on = 10
+columns = [{ column = { table = 10, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 11
+name = "pilot_turns"
+primary_key = { columns = [{ table = 11, index = 0 }, { table = 11, index = 1 }], index = { table = 11, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 11, index = 0 }
+name = "session_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 11, index = 1 }
+name = "seq"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 11, index = 0 }
+name = "index_pilot_turns_by_session_id_and_seq"
+on = 11
+columns = [{ column = { table = 11, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 11, index = 1 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 12
+name = "pilot_blocks"
+primary_key = { columns = [{ table = 12, index = 0 }, { table = 12, index = 1 }], index = { table = 12, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 12, index = 0 }
+name = "session_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 12, index = 1 }
+name = "seq"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 12, index = 2 }
+name = "block_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 12, index = 3 }
+name = "block_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 12, index = 4 }
+name = "search_text"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 12, index = 5 }
+name = "is_user"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 12, index = 6 }
+name = "is_draft"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.indices]]
+id = { table = 12, index = 0 }
+name = "index_pilot_blocks_by_session_id_and_seq"
+on = 12
+columns = [{ column = { table = 12, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 12, index = 1 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 12, index = 1 }
+name = "index_pilot_blocks_by_session_id_and_block_id"
+on = 12
+columns = [{ column = { table = 12, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 12, index = 2 }, op = "Eq", scope = "Local" }]
+unique = true
+
+[[schema.tables.indices]]
+id = { table = 12, index = 2 }
+name = "pilot_blocks_user"
+on = 12
+columns = [{ column = { table = 12, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 12, index = 5 }, op = "Eq", scope = "Local" }, { column = { table = 12, index = 6 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 13
+name = "orchestration_runs"
+primary_key = { columns = [{ table = 13, index = 0 }], index = { table = 13, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 13, index = 0 }
+name = "lead_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 13, index = 1 }
+name = "state"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 13, index = 0 }
+name = "index_orchestration_runs_by_lead_id"
+on = 13
+columns = [{ column = { table = 13, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 14
+name = "orchestration_sidebar"
+primary_key = { columns = [{ table = 14, index = 0 }], index = { table = 14, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 14, index = 0 }
+name = "lead_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 14, index = 1 }
+name = "summary"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 14, index = 0 }
+name = "index_orchestration_sidebar_by_lead_id"
+on = 14
+columns = [{ column = { table = 14, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 15
+name = "orchestration_workers"
+primary_key = { columns = [{ table = 15, index = 0 }], index = { table = 15, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 15, index = 0 }
+name = "session_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 15, index = 1 }
+name = "lead_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 15, index = 0 }
+name = "index_orchestration_workers_by_session_id"
+on = 15
+columns = [{ column = { table = 15, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 16
+name = "automations"
+primary_key = { columns = [{ table = 16, index = 0 }], index = { table = 16, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 16, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 16, index = 1 }
+name = "definition_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 16, index = 2 }
+name = "enabled"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 16, index = 3 }
+name = "next_run_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 16, index = 4 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 16, index = 0 }
+name = "index_automations_by_id"
+on = 16
+columns = [{ column = { table = 16, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 16, index = 1 }
+name = "automations_due_idx"
+on = 16
+columns = [{ column = { table = 16, index = 2 }, op = "Eq", scope = "Partition" }, { column = { table = 16, index = 3 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 17
+name = "automation_runs"
+primary_key = { columns = [{ table = 17, index = 0 }], index = { table = 17, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 17, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 17, index = 1 }
+name = "automation_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 17, index = 2 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 17, index = 3 }
+name = "run_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 17, index = 0 }
+name = "index_automation_runs_by_id"
+on = 17
+columns = [{ column = { table = 17, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 17, index = 1 }
+name = "automation_runs_history_idx"
+on = 17
+columns = [{ column = { table = 17, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 17, index = 2 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 18
+name = "automation_event_claims"
+primary_key = { columns = [{ table = 18, index = 0 }, { table = 18, index = 1 }], index = { table = 18, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 18, index = 0 }
+name = "automation_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 18, index = 1 }
+name = "event_key"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 18, index = 2 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 18, index = 0 }
+name = "index_automation_event_claims_by_automation_id_and_event_key"
+on = 18
+columns = [{ column = { table = 18, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 18, index = 1 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 19
+name = "review_drafts"
+primary_key = { columns = [{ table = 19, index = 0 }], index = { table = 19, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 19, index = 0 }
+name = "run_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 19, index = 1 }
+name = "automation_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 19, index = 2 }
+name = "cwd"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 19, index = 3 }
+name = "title"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 19, index = 4 }
+name = "draft_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 19, index = 5 }
+name = "status"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 19, index = 6 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 19, index = 7 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 19, index = 0 }
+name = "index_review_drafts_by_run_id"
+on = 19
+columns = [{ column = { table = 19, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 20
+name = "flows"
+primary_key = { columns = [{ table = 20, index = 0 }], index = { table = 20, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 20, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 20, index = 1 }
+name = "definition_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 20, index = 2 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 20, index = 0 }
+name = "index_flows_by_id"
+on = 20
+columns = [{ column = { table = 20, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 21
+name = "flow_runs"
+primary_key = { columns = [{ table = 21, index = 0 }], index = { table = 21, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 21, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 21, index = 1 }
+name = "flow_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 21, index = 2 }
+name = "status"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 21, index = 3 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 21, index = 4 }
+name = "run_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 21, index = 0 }
+name = "index_flow_runs_by_id"
+on = 21
+columns = [{ column = { table = 21, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 21, index = 1 }
+name = "flow_runs_history_idx"
+on = 21
+columns = [{ column = { table = 21, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 21, index = 3 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables.indices]]
+id = { table = 21, index = 2 }
+name = "flow_runs_status_idx"
+on = 21
+columns = [{ column = { table = 21, index = 2 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 22
+name = "flow_visits"
+primary_key = { columns = [{ table = 22, index = 0 }], index = { table = 22, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 22, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 22, index = 1 }
+name = "run_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 22, index = 2 }
+name = "seq"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 22, index = 3 }
+name = "state_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 22, index = 4 }
+name = "status"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 22, index = 5 }
+name = "visit_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 22, index = 0 }
+name = "index_flow_visits_by_id"
+on = 22
+columns = [{ column = { table = 22, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 22, index = 1 }
+name = "flow_visits_order_idx"
+on = 22
+columns = [{ column = { table = 22, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 22, index = 2 }, op = "Eq", scope = "Local" }]
+unique = true
+
+[[schema.tables]]
+id = 23
+name = "flow_versions"
+primary_key = { columns = [{ table = 23, index = 0 }], index = { table = 23, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 23, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 23, index = 1 }
+name = "flow_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 23, index = 2 }
+name = "version"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 23, index = 3 }
+name = "status"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 23, index = 4 }
+name = "definition_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 23, index = 5 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 23, index = 0 }
+name = "index_flow_versions_by_id"
+on = 23
+columns = [{ column = { table = 23, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 23, index = 1 }
+name = "flow_versions_number_idx"
+on = 23
+columns = [{ column = { table = 23, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 23, index = 2 }, op = "Eq", scope = "Local" }]
+unique = true
+
+[[schema.tables]]
+id = 24
+name = "boards"
+primary_key = { columns = [{ table = 24, index = 0 }], index = { table = 24, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 24, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 24, index = 1 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 24, index = 2 }
+name = "card_seq"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 24, index = 3 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 24, index = 4 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 24, index = 0 }
+name = "index_boards_by_id"
+on = 24
+columns = [{ column = { table = 24, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 25
+name = "board_columns"
+primary_key = { columns = [{ table = 25, index = 0 }], index = { table = 25, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 25, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 25, index = 1 }
+name = "board_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 25, index = 2 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 25, index = 3 }
+name = "position"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 25, index = 4 }
+name = "role"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 25, index = 5 }
+name = "color"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 25, index = 6 }
+name = "wip_limit"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 25, index = 7 }
+name = "collapsed"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.indices]]
+id = { table = 25, index = 0 }
+name = "index_board_columns_by_id"
+on = 25
+columns = [{ column = { table = 25, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 25, index = 1 }
+name = "board_columns_board_idx"
+on = 25
+columns = [{ column = { table = 25, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 25, index = 3 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 26
+name = "board_cards"
+primary_key = { columns = [{ table = 26, index = 0 }], index = { table = 26, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 26, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 26, index = 1 }
+name = "board_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 26, index = 2 }
+name = "column_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 26, index = 3 }
+name = "number"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 26, index = 4 }
+name = "title"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 26, index = 5 }
+name = "body"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 26, index = 6 }
+name = "position"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 26, index = 7 }
+name = "link_kind"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 26, index = 8 }
+name = "link_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 26, index = 9 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 26, index = 10 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 26, index = 11 }
+name = "title_from_ticket"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 26, index = 12 }
+name = "body_from_ticket"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.indices]]
+id = { table = 26, index = 0 }
+name = "index_board_cards_by_id"
+on = 26
+columns = [{ column = { table = 26, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 26, index = 1 }
+name = "board_cards_column_idx"
+on = 26
+columns = [{ column = { table = 26, index = 2 }, op = "Eq", scope = "Partition" }, { column = { table = 26, index = 6 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables.indices]]
+id = { table = 26, index = 2 }
+name = "board_cards_link_idx"
+on = 26
+columns = [{ column = { table = 26, index = 7 }, op = "Eq", scope = "Partition" }, { column = { table = 26, index = 8 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 27
+name = "board_activity"
+primary_key = { columns = [{ table = 27, index = 0 }], index = { table = 27, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 27, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 27, index = 1 }
+name = "board_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 27, index = 2 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 27, index = 3 }
+name = "kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 27, index = 4 }
+name = "actor"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 27, index = 5 }
+name = "from_column"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 27, index = 6 }
+name = "to_column"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 27, index = 7 }
+name = "detail"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 27, index = 8 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 27, index = 0 }
+name = "index_board_activity_by_id"
+on = 27
+columns = [{ column = { table = 27, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 27, index = 1 }
+name = "board_activity_board_idx"
+on = 27
+columns = [{ column = { table = 27, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 27, index = 8 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables.indices]]
+id = { table = 27, index = 2 }
+name = "board_activity_card_idx"
+on = 27
+columns = [{ column = { table = 27, index = 2 }, op = "Eq", scope = "Partition" }, { column = { table = 27, index = 8 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 28
+name = "board_card_meta"
+primary_key = { columns = [{ table = 28, index = 0 }], index = { table = 28, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 28, index = 0 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 28, index = 1 }
+name = "priority"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 28, index = 2 }
+name = "due_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 28, index = 3 }
+name = "start_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 28, index = 4 }
+name = "estimate_minutes"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 28, index = 5 }
+name = "archived_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 28, index = 6 }
+name = "completed_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 28, index = 0 }
+name = "index_board_card_meta_by_card_id"
+on = 28
+columns = [{ column = { table = 28, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 29
+name = "board_labels"
+primary_key = { columns = [{ table = 29, index = 0 }], index = { table = 29, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 29, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 29, index = 1 }
+name = "board_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 29, index = 2 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 29, index = 3 }
+name = "color"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 29, index = 4 }
+name = "position"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 29, index = 0 }
+name = "index_board_labels_by_id"
+on = 29
+columns = [{ column = { table = 29, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 29, index = 1 }
+name = "board_labels_board_idx"
+on = 29
+columns = [{ column = { table = 29, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 29, index = 4 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 30
+name = "board_card_labels"
+primary_key = { columns = [{ table = 30, index = 0 }, { table = 30, index = 1 }], index = { table = 30, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 30, index = 0 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 30, index = 1 }
+name = "label_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 30, index = 0 }
+name = "index_board_card_labels_by_card_id_and_label_id"
+on = 30
+columns = [{ column = { table = 30, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 30, index = 1 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 30, index = 1 }
+name = "board_card_labels_label_idx"
+on = 30
+columns = [{ column = { table = 30, index = 1 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 31
+name = "board_subtasks"
+primary_key = { columns = [{ table = 31, index = 0 }], index = { table = 31, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 31, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 31, index = 1 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 31, index = 2 }
+name = "title"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 31, index = 3 }
+name = "done"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 31, index = 4 }
+name = "position"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 31, index = 0 }
+name = "index_board_subtasks_by_id"
+on = 31
+columns = [{ column = { table = 31, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 31, index = 1 }
+name = "board_subtasks_card_idx"
+on = 31
+columns = [{ column = { table = 31, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 31, index = 4 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 32
+name = "board_comments"
+primary_key = { columns = [{ table = 32, index = 0 }], index = { table = 32, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 32, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 32, index = 1 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 32, index = 2 }
+name = "body"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 32, index = 3 }
+name = "author"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 32, index = 4 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 32, index = 5 }
+name = "edited_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 32, index = 0 }
+name = "index_board_comments_by_id"
+on = 32
+columns = [{ column = { table = 32, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 32, index = 1 }
+name = "board_comments_card_idx"
+on = 32
+columns = [{ column = { table = 32, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 32, index = 4 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 33
+name = "board_card_projects"
+primary_key = { columns = [{ table = 33, index = 0 }, { table = 33, index = 1 }], index = { table = 33, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 33, index = 0 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 33, index = 1 }
+name = "project"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 33, index = 0 }
+name = "index_board_card_projects_by_card_id_and_project"
+on = 33
+columns = [{ column = { table = 33, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 33, index = 1 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 34
+name = "board_card_relations"
+primary_key = { columns = [{ table = 34, index = 0 }, { table = 34, index = 1 }, { table = 34, index = 2 }], index = { table = 34, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 34, index = 0 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 34, index = 1 }
+name = "related_card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 34, index = 2 }
+name = "kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 34, index = 0 }
+name = "index_board_card_relations_by_card_id_and_related_card_id_and_kind"
+on = 34
+columns = [{ column = { table = 34, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 34, index = 1 }, op = "Eq", scope = "Local" }, { column = { table = 34, index = 2 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 34, index = 1 }
+name = "board_card_relations_related_idx"
+on = 34
+columns = [{ column = { table = 34, index = 1 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 35
+name = "board_fields"
+primary_key = { columns = [{ table = 35, index = 0 }], index = { table = 35, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 35, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 35, index = 1 }
+name = "board_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 35, index = 2 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 35, index = 3 }
+name = "kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 35, index = 4 }
+name = "options_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 35, index = 5 }
+name = "position"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 35, index = 0 }
+name = "index_board_fields_by_id"
+on = 35
+columns = [{ column = { table = 35, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 35, index = 1 }
+name = "board_fields_board_idx"
+on = 35
+columns = [{ column = { table = 35, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 35, index = 5 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 36
+name = "board_card_field_values"
+primary_key = { columns = [{ table = 36, index = 0 }, { table = 36, index = 1 }], index = { table = 36, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 36, index = 0 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 36, index = 1 }
+name = "field_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 36, index = 2 }
+name = "value_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 36, index = 0 }
+name = "index_board_card_field_values_by_card_id_and_field_id"
+on = 36
+columns = [{ column = { table = 36, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 36, index = 1 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 36, index = 1 }
+name = "board_card_field_values_field_idx"
+on = 36
+columns = [{ column = { table = 36, index = 1 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 37
+name = "board_card_links"
+primary_key = { columns = [{ table = 37, index = 0 }, { table = 37, index = 1 }, { table = 37, index = 2 }], index = { table = 37, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 37, index = 0 }
+name = "card_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 37, index = 1 }
+name = "kind"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 37, index = 2 }
+name = "ref"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 37, index = 3 }
+name = "role"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 37, index = 4 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 37, index = 0 }
+name = "index_board_card_links_by_card_id_and_kind_and_ref"
+on = 37
+columns = [{ column = { table = 37, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 37, index = 1 }, op = "Eq", scope = "Local" }, { column = { table = 37, index = 2 }, op = "Eq", scope = "Local" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 37, index = 1 }
+name = "board_card_links_ref_idx"
+on = 37
+columns = [{ column = { table = 37, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 37, index = 2 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 38
+name = "board_settings"
+primary_key = { columns = [{ table = 38, index = 0 }], index = { table = 38, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 38, index = 0 }
+name = "board_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 38, index = 1 }
+name = "run_with"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 38, index = 2 }
+name = "write_back"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 38, index = 3 }
+name = "ticket_status_changes"
+ty = "Bool"
+storage_ty = "Boolean"
+
+[[schema.tables.columns]]
+id = { table = 38, index = 4 }
+name = "auto_move_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 38, index = 5 }
+name = "icon"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 38, index = 6 }
+name = "color"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 38, index = 7 }
+name = "default_view_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 38, index = 8 }
+name = "display_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 38, index = 9 }
+name = "priority_json"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 38, index = 10 }
+name = "run_in_worktree"
+ty = "Bool"
+storage_ty = "Boolean"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 38, index = 11 }
+name = "run_worktree_choice"
+ty = "Bool"
+storage_ty = "Boolean"
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 38, index = 0 }
+name = "index_board_settings_by_board_id"
+on = 38
+columns = [{ column = { table = 38, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 39
+name = "board_views"
+primary_key = { columns = [{ table = 39, index = 0 }], index = { table = 39, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 39, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 39, index = 1 }
+name = "board_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 39, index = 2 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 39, index = 3 }
+name = "position"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 39, index = 4 }
+name = "spec_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 39, index = 5 }
+name = "layout_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 39, index = 6 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 39, index = 7 }
+name = "updated_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 39, index = 0 }
+name = "index_board_views_by_id"
+on = 39
+columns = [{ column = { table = 39, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 39, index = 1 }
+name = "board_views_board_idx"
+on = 39
+columns = [{ column = { table = 39, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 39, index = 3 }, op = "Eq", scope = "Local" }]
+
+[[schema.tables]]
+id = 40
+name = "board_templates"
+primary_key = { columns = [{ table = 40, index = 0 }], index = { table = 40, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 40, index = 0 }
+name = "id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 40, index = 1 }
+name = "name"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 40, index = 2 }
+name = "spec_json"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 40, index = 3 }
+name = "created_at"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.indices]]
+id = { table = 40, index = 0 }
+name = "index_board_templates_by_id"
+on = 40
+columns = [{ column = { table = 40, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables]]
+id = 41
+name = "board_session_settings"
+primary_key = { columns = [{ table = 41, index = 0 }], index = { table = 41, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 41, index = 0 }
+name = "session_key"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 41, index = 1 }
+name = "may_change_status"
+ty = "Bool"
+storage_ty = "Boolean"
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 41, index = 0 }
+name = "index_board_session_settings_by_session_key"
+on = 41
+columns = [{ column = { table = 41, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
