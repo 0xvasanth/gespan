@@ -517,9 +517,11 @@ impl Input {
     pub(crate) fn set_centered(&mut self, centered: bool) {
         self.centered = centered;
     }
+    /// The empty field's height; it grows with its text from there. Lower
+    /// than the default two lines makes a one-line field.
     pub(crate) fn set_min_height(&mut self, height: f32) {
         self.min_height = height;
-        self.height = self.height.max(height);
+        self.height = height;
     }
     pub(crate) fn set_max_height(&mut self, height: f32) {
         self.max_height = height;
