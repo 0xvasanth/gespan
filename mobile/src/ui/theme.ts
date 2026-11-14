@@ -38,8 +38,6 @@ const dark = {
   fill: "rgba(255, 255, 255, 0.08)",
   /** A segmented switch's thumb, inside the glass. */
   thumb: "rgba(255, 255, 255, 0.14)",
-  /** Laid over the Gespan mark, which is drawn white. */
-  mark: "#ffffff",
   /** A transcript's fold rails and connectors. */
   rail: "#323232",
   /** The user's message bubble. */
@@ -75,7 +73,6 @@ const light: Palette = {
   // Light glass washes faint ink out, so these are heavier than dark's.
   fill: "rgba(46, 46, 46, 0.09)",
   thumb: "rgba(46, 46, 46, 0.10)",
-  mark: "#2e2e2e",
   rail: "#dadada",
   bubble: "#e9e9e9",
   listCard: "#ffffff",
