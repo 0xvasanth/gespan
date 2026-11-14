@@ -920,9 +920,10 @@ impl Pilots {
         let interactive = self.route.as_ref() == Some(&route);
         match route {
             Route::Session(id) => {
-                let view = self.owner.upgrade().and_then(|owner| {
-                    owner.update(cx, |owner, cx| owner.pilot_ensure_session(id, cx))
-                });
+                let view = self
+                    .owner
+                    .update(cx, |owner, cx| owner.pilot_ensure_session(id, cx))
+                    .flatten();
                 if let Some(view) = &view {
                     view.update(cx, |v, cx| v.load(cx));
                 }
@@ -1531,14 +1532,10 @@ impl Pilots {
                         let remove = project.clone();
                         let appearance = self
                             .owner
-                            .upgrade()
-                            .and_then(|o| {
-                                o.read(cx)
-                                    .workspace
-                                    .project_appearance
-                                    .get(project)
-                                    .cloned()
+                            .read(cx, |o, _| {
+                                o.workspace.project_appearance.get(project).cloned()
                             })
+                            .flatten()
                             .unwrap_or_default();
                         let label = appearance.label(project);
                         let pretty = std::env::var("HOME")
@@ -1890,8 +1887,7 @@ impl Pilots {
     fn pick_project(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let projects = self
             .owner
-            .upgrade()
-            .map(|owner| owner.read(cx).workspace.projects.clone())
+            .read(cx, |owner, _| owner.workspace.projects.clone())
             .unwrap_or_default();
         let pilot = id.to_string();
         let paths = projects.clone();

@@ -277,7 +277,8 @@ impl Pilots {
         let history = self.histories.entry(pilot.to_owned()).or_default();
         history.generation += 1;
         let generation = history.generation;
-        let owner = self.owner.clone();
+        // Spawned work runs from the event loop, outside any update.
+        let owner = self.owner.handle().clone();
         let pilot = pilot.to_owned();
         let launched: Vec<(i64, String)> = self
             .roster
@@ -374,8 +375,7 @@ impl Pilots {
         let query = filter.read(cx).content.to_string();
         let views = self
             .owner
-            .upgrade()
-            .map(|owner| owner.read(cx).pilot_session_views(cx))
+            .read(cx, |owner, cx| owner.pilot_session_views(cx))
             .unwrap_or_default();
         let view = |id: i64| views.iter().find(|v| v.id == id);
         let now = gespan_core::time::now_ms() as i64;

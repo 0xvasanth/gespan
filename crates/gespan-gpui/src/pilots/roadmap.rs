@@ -112,7 +112,7 @@ fn run_label(run: &FlowRun) -> String {
 
 pub(crate) struct Roadmap {
     pilot: String,
-    owner: WeakEntity<Shell>,
+    owner: crate::owner::Owner<Shell>,
     /// The Pilot's Flows, newest `updatedAt` first.
     pub(super) flows: Vec<Flow>,
     /// Runs of the shown Flow, newest first.
@@ -176,7 +176,7 @@ impl EventEmitter<OpenSession> for Roadmap {}
 impl EventEmitter<AskPilot> for Roadmap {}
 
 impl Roadmap {
-    pub fn new(pilot: String, owner: WeakEntity<Shell>, cx: &mut Context<Self>) -> Self {
+    pub fn new(pilot: String, owner: crate::owner::Owner<Shell>, cx: &mut Context<Self>) -> Self {
         let graph = cx.new(PipelineGraph::new);
         let events = cx.subscribe(&graph, |this, _, event: &GraphEvent, cx| {
             match event {
@@ -281,7 +281,7 @@ impl Roadmap {
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
-        let (owner, pilot) = (self.owner.clone(), self.pilot.clone());
+        let (owner, pilot) = (self.owner.handle().clone(), self.pilot.clone());
         let flow = self.flow.clone().filter(|_| self.picked);
         let run = self.run.clone();
         // Until the person picks, the tab shows the run still going; a
@@ -428,7 +428,7 @@ impl Roadmap {
             self.watching = running
                 .into_iter()
                 .filter_map(|(state, session)| {
-                    let view = owner.upgrade()?.read(cx).session_view(session)?;
+                    let view = owner.read(cx, |shell, _| shell.session_view(session))??;
                     let watch = cx.observe(&view, |this, _, cx| this.mark_waiting(cx));
                     Some((state, session, watch))
                 })
@@ -438,16 +438,13 @@ impl Roadmap {
     }
 
     fn mark_waiting(&mut self, cx: &mut Context<Self>) {
-        let Some(shell) = self.owner.upgrade() else {
-            return;
-        };
         let waiting: HashSet<String> = self
             .watching
             .iter()
             .filter(|(_, session, _)| {
-                shell
-                    .read(cx)
-                    .session_view(*session)
+                self.owner
+                    .read(cx, |shell, _| shell.session_view(*session))
+                    .flatten()
                     .is_some_and(|view| view.read(cx).needs_approval())
             })
             .map(|(state, _, _)| state.clone())
@@ -571,7 +568,7 @@ impl Roadmap {
         let Some(flow) = self.flow.clone() else {
             return;
         };
-        let owner = self.owner.clone();
+        let owner = self.owner.handle().clone();
         cx.spawn(async move |this, cx| {
             // Read here, as `reload` does: this may run inside a Shell update.
             let store = owner

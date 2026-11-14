@@ -504,7 +504,7 @@ impl Pilots {
                         .update(cx, |owner, cx| {
                             owner.app_placement(&input, call.session, &project, cx)
                         })
-                        .map_err(|e| e.to_string())??;
+                        .ok_or_else(|| "Gespan is closing".to_string())??;
                     Ok::<_, String>((prompt, provider, kind, source_provider, settings, placement))
                 })();
                 let (prompt, provider, kind, source_provider, settings, placement) = match parsed {
@@ -568,8 +568,7 @@ impl Pilots {
             "sessions.list" | "sessions.read" => {
                 let views = self
                     .owner
-                    .upgrade()
-                    .map(|owner| owner.read(cx).pilot_session_views(cx))
+                    .read(cx, |owner, cx| owner.pilot_session_views(cx))
                     .unwrap_or_default();
                 self.call_work(call,target,move|store|{
                     let db=locked(&store)?;let all=db.sessions()?;
@@ -597,10 +596,8 @@ impl Pilots {
                 };
                 let view = self
                     .owner
-                    .upgrade()
-                    .and_then(|owner| {
-                        owner.update(cx, |owner, cx| owner.pilot_ensure_session(session, cx))
-                    })
+                    .update(cx, |owner, cx| owner.pilot_ensure_session(session, cx))
+                    .flatten()
                     .filter(|v| {
                         gespan_core::files::path_key(&v.read(cx).summary.cwd)
                             == gespan_core::files::path_key(&project)
@@ -660,12 +657,12 @@ impl Pilots {
                                     }
                                 }
                                 self.save(cx);
-                                let loose = self.owner.upgrade().is_some_and(|o| {
-                                    o.read(cx)
-                                        .pilot_groups(&project)
-                                        .folder_of(session)
-                                        .is_none()
-                                });
+                                let loose = self
+                                    .owner
+                                    .read(cx, |o, _| {
+                                        o.pilot_groups(&project).folder_of(session).is_none()
+                                    })
+                                    .unwrap_or(false);
                                 if loose {
                                     let pid = pilot.id.clone();
                                     self.group_launch(&pid, session, cx);
@@ -705,8 +702,7 @@ impl Pilots {
             }
             "folders.list" => Ok(json!(
                 self.owner
-                    .upgrade()
-                    .map(|o| o.read(cx).pilot_groups(&project))
+                    .read(cx, |o, _| o.pilot_groups(&project))
                     .unwrap_or_default()
                     .folders
             )),
@@ -720,8 +716,8 @@ impl Pilots {
                 };
                 let allowed = self
                     .owner
-                    .upgrade()
-                    .and_then(|o| o.update(cx, |owner, cx| owner.pilot_ensure_session(session, cx)))
+                    .update(cx, |owner, cx| owner.pilot_ensure_session(session, cx))
+                    .flatten()
                     .is_some_and(|v| v.read(cx).summary.cwd == project);
                 if !allowed {
                     self.finish_call(call, Err("Session is outside this project".into()), cx);
@@ -729,8 +725,7 @@ impl Pilots {
                 }
                 let mut groups = self
                     .owner
-                    .upgrade()
-                    .map(|o| o.read(cx).pilot_groups(&project))
+                    .read(cx, |o, _| o.pilot_groups(&project))
                     .unwrap_or_default();
                 if let Some(name) = input.get("newFolderName").and_then(Value::as_str) {
                     if let Some(folder) = groups.create_folder(&[session], pilot::new_id()) {
@@ -793,10 +788,8 @@ impl Pilots {
                     let session = card["sessionId"].as_i64().unwrap();
                     let view = self
                         .owner
-                        .upgrade()
-                        .and_then(|o| {
-                            o.update(cx, |owner, cx| owner.pilot_ensure_session(session, cx))
-                        })
+                        .update(cx, |owner, cx| owner.pilot_ensure_session(session, cx))
+                        .flatten()
                         .filter(|v| pilot.works_on(&v.read(cx).summary.cwd));
                     let Some(view) = view else {
                         self.finish_call(
@@ -952,9 +945,8 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
     fn flows_call(&mut self, call: Call, pilot: &pilot::Pilot, cx: &mut Context<Self>) {
         let store = self
             .owner
-            .upgrade()
-            .ok_or_else(|| FLOWS_NOT_READY.to_string())
-            .and_then(|shell| shell.read(cx).pilot_flows_store());
+            .read(cx, |shell, _| shell.pilot_flows_store())
+            .unwrap_or_else(|| Err(FLOWS_NOT_READY.to_string()));
         let store = match store {
             Ok(store) => store,
             Err(error) => return self.finish_call(call, Err(error), cx),
@@ -1060,7 +1052,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
             .update(cx, |shell, cx| {
                 shell.start_pilot_flow_step(&owner, flow_id, step, inputs, tag, cx)
             })
-            .map_err(|_| FLOWS_NOT_READY.to_string())?
+            .ok_or_else(|| FLOWS_NOT_READY.to_string())?
             .map_err(|errors| errors.join("; "))
     }
     fn change_flows(
@@ -1105,7 +1097,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                 (result, json!({"resumed": true}))
             }
         };
-        result.map_err(|_| FLOWS_NOT_READY.to_string())??;
+        result.ok_or_else(|| FLOWS_NOT_READY.to_string())??;
         Ok(done)
     }
     /// Files a Pilot-started session in its folder; every launch is filed.
@@ -1138,8 +1130,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         };
         let mut groups = self
             .owner
-            .upgrade()
-            .map(|o| o.read(cx).pilot_groups(&project))
+            .read(cx, |o, _| o.pilot_groups(&project))
             .unwrap_or_default();
         file_in_pilot_folder(&mut groups, &pilot, session);
         self.apply_groups(project, groups, cx);
@@ -1181,14 +1172,14 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         saved: HashMap<String, Groups>,
         cx: &mut Context<Self>,
     ) {
-        let owner = self.owner.upgrade();
+        let owner = self.owner.clone();
         // The sidebar's copy wins for projects it has open; it may have moved on since startup.
         let mut groups: HashMap<String, Groups> = saved
             .into_iter()
             .map(|(project, saved)| {
                 let open = owner
-                    .as_ref()
-                    .and_then(|o| o.read(cx).pilot_loaded_groups(&project));
+                    .read(cx, |o, _| o.pilot_loaded_groups(&project))
+                    .flatten();
                 (project, open.unwrap_or(saved))
             })
             .collect();
@@ -1225,8 +1216,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
     pub(super) fn check_completions(&mut self, cx: &mut Context<Self>) {
         let views = self
             .owner
-            .upgrade()
-            .map(|o| o.read(cx).pilot_session_views(cx))
+            .read(cx, |o, cx| o.pilot_session_views(cx))
             .unwrap_or_default();
         let source_busy = |source: i64| {
             self.chats
