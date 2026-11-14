@@ -647,7 +647,7 @@ fn memory_editor_saves_with_enter_and_stays_open_for_the_next_fact(cx: &mut Test
 }
 
 #[gpui::test]
-fn activity_opens_from_history_and_returns_to_it(cx: &mut TestAppContext) {
+fn activity_opened_from_history_returns_to_it(cx: &mut TestAppContext) {
     let s = setup(cx);
     let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
     visual.run_until_parked();
@@ -655,11 +655,12 @@ fn activity_opens_from_history_and_returns_to_it(cx: &mut TestAppContext) {
         .update(visual, |m, cx| m.select_overview(OverviewTab::History, cx));
     visual.run_until_parked();
     visual.refresh().unwrap();
-    // History holds the Activity view: its toggle sits in History's bar.
-    let toggle = visual
-        .debug_bounds("pilot-activity")
-        .expect("History shows the Activity toggle");
-    visual.simulate_click(toggle.center(), Default::default());
+    // History's bar is the board's search alone; Activity opens from a
+    // reply's activity link, as the chat does.
+    assert!(visual.debug_bounds("pilot-activity").is_none());
+    assert!(visual.debug_bounds("pilot-history-search").is_some());
+    s.manager
+        .update(visual, |m, cx| m.select_overview(OverviewTab::Activity, cx));
     visual.run_until_parked();
     s.manager.read_with(visual, |m, _| {
         assert!(m.overview_tab == OverviewTab::Activity);
@@ -5784,6 +5785,125 @@ mod roadmap {
         assert_eq!(selected(visual).as_deref(), Some("win"));
         visual.simulate_keystrokes("escape");
         assert_eq!(selected(visual), None);
+    }
+
+    // History, grouped by run as the board draws it.
+
+    #[gpui::test]
+    fn history_groups_a_runs_sessions_under_it_and_opens_one(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let flow_id = save_parallel_flow(&s, visual);
+        let run_id = start_pilot_run(&s, &flow_id, "Ship 0.2.1", "Release 0.2.1", visual);
+        // The plan ran in one session; the macOS branch runs in another.
+        let (plan, mac) = s
+            .window
+            .update(visual, |shell, _, cx| {
+                (
+                    shell.add_session_for_test(&s.project, cx),
+                    shell.add_session_for_test(&s.project, cx),
+                )
+            })
+            .unwrap();
+        let store = flows_store(&s, visual);
+        {
+            let store = store.lock().unwrap();
+            let mut visits = store.visits(&run_id).unwrap();
+            visits[0].session_id = Some(plan.to_string());
+            visits[0].status = VisitStatus::Completed;
+            visits[0].finished_at = Some(visits[0].started_at + 4 * 60_000);
+            store.save_visit(&visits[0]).unwrap();
+            for (seq, state, session) in [(2, "build", None), (3, "mac", Some(mac))] {
+                let mut next = visits[0].clone();
+                next.id = format!("{}-{seq}", visits[0].id);
+                next.seq = seq;
+                next.state_id = state.into();
+                next.status = VisitStatus::Running;
+                next.session_id = session.map(|s: i64| s.to_string());
+                next.finished_at = None;
+                store.save_visit(&next).unwrap();
+            }
+        }
+        s.manager.update(visual, |m, cx| {
+            m.settings = None;
+            m.select_overview(OverviewTab::History, cx)
+        });
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+
+        let group = visual
+            .debug_bounds(Box::leak(
+                format!("pilot-history-group-{run_id}").into_boxed_str(),
+            ))
+            .expect("the run is a group");
+        let row = |id: i64, visual: &mut gpui::VisualTestContext| {
+            visual.debug_bounds(Box::leak(format!("pilot-launch-{id}").into_boxed_str()))
+        };
+        let (mac_row, plan_row) = (row(mac, visual).unwrap(), row(plan, visual).unwrap());
+        assert!(group.contains(&mac_row.center()) && group.contains(&plan_row.center()));
+        assert!(mac_row.top() < plan_row.top(), "the newest step first");
+
+        // Search narrows to what matches; the run's name keeps its group.
+        let search = s
+            .manager
+            .read_with(visual, |m, _| m.fields["pilot-session-search"].clone());
+        search.update(visual, |input, cx| {
+            input.set_text("Build & test".into(), cx)
+        });
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(row(mac, visual).is_some());
+        assert!(
+            row(plan, visual).is_none(),
+            "the plan step is not Build & test"
+        );
+        search.update(visual, |input, cx| {
+            input.set_text("nothing like this".into(), cx)
+        });
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(row(mac, visual).is_none());
+        search.update(visual, |input, cx| input.set_text(String::new(), cx));
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+
+        // A row opens its session.
+        let mac_row = row(mac, visual).unwrap();
+        visual.simulate_click(mac_row.center(), Default::default());
+        visual.run_until_parked();
+        s.manager.read_with(visual, |m, _| {
+            assert!(matches!(m.route, Some(Route::Session(id)) if id == mac));
+        });
+    }
+
+    #[gpui::test]
+    fn history_reloads_when_a_run_moves_on(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let flow_id = save_parallel_flow(&s, visual);
+        s.manager.update(visual, |m, cx| {
+            m.settings = None;
+            m.select_overview(OverviewTab::History, cx)
+        });
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let runs = |visual: &mut gpui::VisualTestContext| {
+            s.manager
+                .read_with(visual, |m, _| m.histories[&s.id].runs.len())
+        };
+        assert_eq!(runs(visual), 0);
+        start_pilot_run(&s, &flow_id, "Ship 0.2.1", "Release 0.2.1", visual);
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+        assert_eq!(runs(visual), 1, "a new run shows without a manual reload");
     }
 }
 

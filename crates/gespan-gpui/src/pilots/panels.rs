@@ -880,7 +880,7 @@ impl Pilots {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let body = match self.overview_tab {
-            OverviewTab::History => self.session_list(pilot, cx),
+            OverviewTab::History => self.history_list(pilot, cx),
             OverviewTab::Schedule => self.habits_list(pilot, cx),
             OverviewTab::Docs => self.document_list(pilot, cx),
             OverviewTab::Pipeline => self.shown_roadmap(&pilot.id, cx).into_any_element(),
@@ -892,112 +892,6 @@ impl Pilots {
             .min_h_0()
             .child(body)
             .into_any_element()
-    }
-    fn session_list(&mut self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
-        let filter = self.field(
-            "pilot-session-search",
-            "Search sessions…",
-            String::new(),
-            false,
-            cx,
-        );
-        let query = filter.read(cx).content.to_lowercase();
-        let views = self
-            .owner
-            .upgrade()
-            .map(|owner| owner.read(cx).pilot_session_views(cx))
-            .unwrap_or_default();
-        let mut launches: Vec<_> = pilot
-            .launches
-            .iter()
-            .rev()
-            .filter(|l| {
-                self.session_filters
-                    .matches(l, views.iter().find(|v| v.id == l.session_id))
-                    && format!(
-                        "{} {} {}",
-                        views
-                            .iter()
-                            .find(|v| v.id == l.session_id)
-                            .map(|v| v.title.as_str())
-                            .unwrap_or(&l.title),
-                        views
-                            .iter()
-                            .find(|v| v.id == l.session_id)
-                            .map(|v| v.cwd.as_str())
-                            .unwrap_or(&l.cwd),
-                        l.harness
-                    )
-                    .to_lowercase()
-                    .contains(&query)
-            })
-            .cloned()
-            .collect();
-        // Most recent activity first: running or waiting sessions, then by
-        // last update. Launch order alone puts re-attached old sessions on top.
-        launches.sort_by_cached_key(|l| {
-            std::cmp::Reverse(
-                views
-                    .iter()
-                    .find(|v| v.id == l.session_id)
-                    .map(|v| (v.busy || v.needs_input, v.updated_at)),
-            )
-        });
-        let search_bar = search_bar(filter)
-            .child(
-                icon_button("pilot-session-filter", "Filter Pilot sessions", "filter")
-                    .relative()
-                    .child(self.session_filter_anchor.probe())
-                    .on_click(cx.listener(|this, _, window, cx| this.filter_menu(window, cx))),
-            )
-            // History holds the step-by-step Activity view too.
-            .child(
-                icon_button("pilot-activity", "Show activity", "list-bullet")
-                    .debug_selector(|| "pilot-activity".into())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.select_overview(OverviewTab::Activity, cx)
-                    })),
-            );
-        let no_matches = launches.is_empty() && !pilot.launches.is_empty();
-        div().size_full().flex().flex_col()
-            .child(search_bar)
-            .child(div().id("pilot-session-list").debug_selector(|| "pilot-session-list".into()).flex_1().min_h_0().overflow_y_scroll().px(px(6.)).py_2().flex().flex_col().gap_1()
-                .when(pilot.launches.is_empty(),|d|d.child(empty_state("message-multiple",&format!("Ask {} to start a session on one of your projects, like a bug fix or a review, and it shows up here.",pilot.label()))))
-                .when(no_matches,|d|d.child(empty_state("search-01",if query.trim().is_empty(){"No sessions match these filters."}else{"No sessions match this search."})))
-                .children(launches.into_iter().map(|launch|{
-                    // A session card with its model in the footer.
-                    let id=launch.session_id;let state=views.iter().find(|v|v.id==id);
-                    let title=state.map(|s|s.title.clone()).unwrap_or(launch.title.clone());
-                    let cwd=state.map(|s|&s.cwd).unwrap_or(&launch.cwd);
-                    let project=pilot.projects.iter().find(|p|gespan_core::files::path_key(p)==gespan_core::files::path_key(cwd)).unwrap_or(cwd);
-                    let project=std::path::Path::new(project).file_name().map_or(project.clone(),|n|n.to_string_lossy().to_string());
-                    let branch=state.and_then(|s|s.branch.clone());
-                    let model:SharedString=state.map(|s|s.model.clone()).filter(|model| !model.is_empty()).unwrap_or_else(||launch.model.clone().unwrap_or_default().into());
-                    let status=match state{
-                        Some(s) if s.needs_input=>div().flex().items_center().gap_1().text_color(rgb(0xfbbf24)).child(icon("circle-alert",12.).text_color(rgb(0xfbbf24))).child("Need approval").into_any_element(),
-                        Some(s) if s.busy=>div().text_color(crate::theme::accent_color()).child("Working...").into_any_element(),
-                        Some(s)=>div().text_color(content(0.45)).child(gespan_core::time::relative(s.updated_at,gespan_core::time::now_ms())).into_any_element(),
-                        None=>div().text_color(content(0.45)).child("Unavailable").into_any_element(),
-                    };
-                    let place=match &branch{Some(b)=>format!("{project} · {b}"),None=>project};
-                    div().id(("pilot-launch",id as usize)).debug_selector(move||format!("pilot-launch-{id}")).group("pilot-launch").role(Role::Button).aria_label(title.clone())
-                        .px(px(10.)).py_2().rounded_md().border_1().border_color(if state.is_some_and(|s|s.needs_input){content(0.3)}else{gpui::transparent_black()})
-                        .when(state.is_some_and(|s|s.needs_input),|d|d.bg(content(0.2)))
-                        .hover(|s|s.bg(content(0.05)))
-                        .when(state.is_none(),|d|d.opacity(0.5))
-                        .flex().flex_col()
-                        .child(div().flex().min_w_0().items_center().gap_1p5()
-                            .child(div().min_w_0().truncate().text_size(px(13.)).line_height(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(content(1.)).child(title))
-                            .child(div().ml_auto().pl_2().flex_shrink_0().text_size(px(11.)).child(status)))
-                        .child(div().mt_1().flex().min_w_0().items_center().gap_2()
-                            .child(div().flex_1().min_w_0().flex().items_center().gap_1().text_size(px(11.)).text_color(content(0.45))
-                                .child(icon(if branch.is_some(){"git-branch"}else{"folder-01"},12.).text_color(content(0.45)))
-                                .child(div().min_w_0().truncate().child(place)))
-                            .child(div().flex_shrink_0().flex().items_center().text_size(px(11.)).text_color(content(0.5))
-                                .child(div().max_w(px(0.)).overflow_hidden().whitespace_nowrap().group_hover("pilot-launch",|s|s.max_w(px(128.)).pr(px(6.))).child(model))
-                                .child(provider_icon(&launch.harness,14.))))
-                        .on_click(cx.listener(move|this,_,_,cx|{this.route=Some(Route::Session(id));cx.notify();}))
-}))).into_any_element()
     }
     fn document_list(&mut self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
         let filter = self.field(

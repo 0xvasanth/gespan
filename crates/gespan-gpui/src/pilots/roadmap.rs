@@ -1706,8 +1706,13 @@ impl Pilots {
         roadmap
     }
 
-    /// Marks `pilot`'s roadmap for a reload the next time it is drawn.
+    /// Marks `pilot`'s roadmap and History for a reload the next time each
+    /// is drawn.
     fn stale_roadmap(&mut self, pilot: &str, cx: &mut Context<Self>) {
+        if self.histories.contains_key(pilot) {
+            self.stale_histories.insert(pilot.to_owned());
+            cx.notify();
+        }
         if self.roadmaps.contains_key(pilot) {
             self.stale_roadmaps.insert(pilot.to_owned());
             cx.notify();
@@ -1738,6 +1743,10 @@ impl Pilots {
             .is_some_and(|(r, _)| r.read(cx).run.as_deref() == Some(run_id));
         if shows {
             self.stale_roadmap(pilot, cx);
+        } else if self.histories.contains_key(pilot) {
+            // History lists every run.
+            self.stale_histories.insert(pilot.to_owned());
+            cx.notify();
         }
     }
 }
