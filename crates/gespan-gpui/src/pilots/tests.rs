@@ -6910,3 +6910,75 @@ fn the_same_flow_update_is_not_queued_twice(cx: &mut TestAppContext) {
     assert_eq!(flow_updates(&s, cx).len(), 2);
     assert!(pilot_state(&s, cx).flow_alerts.is_empty());
 }
+
+/// PilotChat: the question that ends the chat waits above the composer as
+/// one-tap answers instead of a card in the conversation; picking one sends it
+/// once and takes the buttons away.
+#[gpui::test]
+fn an_open_question_answers_from_above_the_composer(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.dismiss_settings(w, cx));
+        })
+        .unwrap();
+    // A failed update at the head holds the queue, so the answer stays queued.
+    queue_internal(&s, &["Held"], Some("Retry required"), cx);
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let chat = s.manager.read_with(visual, |m, _| m.chats[&s.id].clone());
+    let post = |role: &str, text: String, visual: &mut gpui::VisualTestContext| {
+        chat.update(visual, |v, cx| v.pilot_post(role, text, cx).unwrap());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    };
+    let card = json!({"type": "choices", "options": ["Cut from main", "Cut from release/0.2"]});
+    post("assistant", "Which branch?".into(), visual);
+    post("pilot-card", card.to_string(), visual);
+    let cards = |visual: &mut gpui::VisualTestContext| {
+        chat.read_with(visual, |v, cx| v.transcript.read(cx).pilot_card_count())
+    };
+    assert_eq!(
+        cards(visual),
+        0,
+        "the open question is not a card in the chat"
+    );
+    let row = visual.debug_bounds("pilot-open-choices").unwrap();
+    let composer = visual.debug_bounds("pilot-composer").unwrap();
+    assert_eq!(
+        composer.top() - row.bottom(),
+        px(8.),
+        "8px above the composer"
+    );
+    let first = visual.debug_bounds("pilot-open-choice-0").unwrap();
+    let second = visual.debug_bounds("pilot-open-choice-1").unwrap();
+    assert_eq!(first.size.height, px(30.));
+    assert_eq!(second.left() - first.right(), px(8.));
+    assert_eq!(first.left(), composer.left());
+
+    visual.simulate_click(second.center(), Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let answers = |visual: &mut gpui::VisualTestContext| {
+        s.manager.read_with(visual, |m, _| {
+            m.roster
+                .get(&s.id)
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|q| !q.internal)
+                .map(|q| q.text.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(answers(visual), vec!["Cut from release/0.2".to_string()]);
+    assert!(
+        visual.debug_bounds("pilot-open-choices").is_none(),
+        "a queued answer takes the buttons away"
+    );
+
+    // Once the chat moves on, the question shows as a card in its history.
+    post("user", "Cut from release/0.2".into(), visual);
+    assert_eq!(cards(visual), 1);
+}

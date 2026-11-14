@@ -668,6 +668,7 @@ impl Conversation {
                     .children(self.usage_notice(true, cx))
                     .children(self.auth_notice(cx))
                     .child(self.approval_shelf(window, cx))
+                    .children(self.open_choices(cx))
                     .child({
                         let composer = div()
                             .child(self.pilot_composer_box(window, cx))
@@ -682,6 +683,54 @@ impl Conversation {
             .into_any_element()
     }
 
+    /// PilotChat's one-tap answers above the composer: glass buttons for the
+    /// question that ends the chat, until an answer is queued.
+    fn open_choices(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // An answer already on its way (picked here, typed, or from My Tasks)
+        // takes the buttons away, so one question gets one answer.
+        if self.pilot_ui.pending.iter().any(|m| !m.internal) {
+            return None;
+        }
+        let options = self.transcript.read(cx).open_choices();
+        if options.is_empty() {
+            return None;
+        }
+        let transcript = self.transcript.clone();
+        Some(
+            div()
+                .debug_selector(|| "pilot-open-choices".into())
+                .mb_2()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .children(options.into_iter().enumerate().map(|(ix, option)| {
+                    let transcript = transcript.clone();
+                    let label = option.clone();
+                    div()
+                        .id(("pilot-open-choice", ix))
+                        .debug_selector(move || format!("pilot-open-choice-{ix}"))
+                        .role(Role::Button)
+                        .aria_label(label.clone())
+                        .h(px(30.))
+                        .px(px(14.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(9.))
+                        .border_1()
+                        .border_color(content(0.09))
+                        .bg(content(0.06))
+                        .text_size(px(13.))
+                        .text_color(content(1.))
+                        .hover(|s| s.bg(content(0.1)))
+                        .child(label)
+                        .on_click(move |_, _, cx| {
+                            let option = option.clone();
+                            transcript.update(cx, |t, cx| t.choose(option, cx));
+                        })
+                }))
+                .into_any_element(),
+        )
+    }
     /// Messages Gespan queued for the Pilot while it is busy. They wait as one
     /// line above the composer, however many there are, so the conversation and
     /// the message box keep their room; a failed one shows its error with retry
