@@ -59,18 +59,16 @@ pub(crate) fn launch(
     cx: &mut Context<crate::transcript::TranscriptView>,
 ) -> AnyElement {
     let title = view.map_or("Agent session".to_string(), |v| v.title.clone());
+    // PilotChat's step chip: a 30px glass line with the step's state, its
+    // title and the project it ran in.
     let (label, glyph, color) = match view.map(|v| v.state) {
         Some("working") => ("Working", "loader-03", content(0.55)),
         Some("input") => ("Needs input", "clock", rgb(0xfbbf24).into()),
         Some("draft") => ("Draft", "circle-dashed-hi", content(0.45)),
-        Some("failed") => ("Failed", "alert-circle", rgb(0xf87171).into()),
+        Some("failed") => ("Failed", "step-failed", rgb(0xfda4af).into()),
         Some("stopped") => ("Stopped", "circle-x", content(0.45)),
         Some("unavailable") => ("Unavailable", "chatting", content(0.45)),
-        Some(_) => ("Done", "check-circle", {
-            let mut c: gpui::Hsla = rgb(0x34d399).into();
-            c.a = 0.9;
-            c
-        }),
+        Some(_) => ("Done", "step-done", rgb(0x6ee7b7).into()),
         None => ("", "chatting", content(0.45)),
     };
     // A working session's loader turns on the shared clock, at 15fps since
@@ -81,14 +79,14 @@ pub(crate) fn launch(
             std::time::Duration::from_secs(1),
             crate::pulse::Rate::Half,
             move |turn| {
-                icon(glyph, 16.)
+                icon(glyph, 12.)
                     .text_color(color)
                     .with_transformation(gpui::Transformation::rotate(gpui::percentage(turn)))
             },
         )
         .into_any_element()
     } else {
-        icon(glyph, 16.).text_color(color).into_any_element()
+        icon(glyph, 12.).text_color(color).into_any_element()
     };
     let project = view
         .map(|v| {
@@ -101,43 +99,56 @@ pub(crate) fn launch(
     div()
         .flex()
         .child(
-            line_card(("pilot-launched-session", id as usize))
+            div()
+                .id(("pilot-launched-session", id as usize))
+                .role(Role::Button)
                 .aria_label(if label.is_empty() {
                     format!("Open session {title}")
                 } else {
                     format!("Open session {title}, {}", label.to_lowercase())
                 })
                 .debug_selector(move || format!("pilot-launch-card-{id}"))
-                .py(px(6.))
-                .pl_3()
-                .pr(px(6.))
+                .flex()
+                .max_w(px(384.))
+                .min_w_0()
+                .h(px(30.))
+                .px(px(10.))
+                .items_center()
+                .gap_2()
+                .rounded(px(9.))
+                .border_1()
+                .border_color(content(0.09))
+                .bg(content(0.03))
+                .hover(|s| s.border_color(content(0.16)).bg(content(0.06)))
                 .child(mark)
                 .child(
                     div()
                         .min_w_0()
                         .truncate()
-                        .text_size(px(13.))
-                        .text_color(content(1.))
+                        .text_size(px(12.))
+                        .line_height(px(17.))
+                        .text_color(rgb(0xebebeb))
                         .child(title),
                 )
                 .when(view.is_some(), |d| {
+                    // The board's `.mini` tag.
                     d.child(
                         div()
                             .flex()
                             .flex_shrink_0()
                             .max_w(px(160.))
                             .min_w_0()
+                            .h(px(20.))
                             .items_center()
-                            .gap_1()
+                            .gap(px(5.))
                             .rounded_full()
                             .border_1()
-                            .border_color(content(0.1))
+                            .border_color(content(0.09))
                             .bg(content(0.05))
-                            .px_2()
-                            .py(px(2.))
-                            .text_size(px(12.))
-                            .text_color(content(0.65))
-                            .child(provider_icon(&harness, 14.))
+                            .px(px(7.))
+                            .text_size(px(11.))
+                            .text_color(rgb(0xa3a3a3))
+                            .child(provider_icon(&harness, 12.))
                             .child(div().min_w_0().truncate().child(project)),
                     )
                 })
