@@ -563,12 +563,19 @@ impl Shell {
             Row::FolderSession(id) => self.rail_session_row(id, None, None, true, cx),
             Row::FolderMore { key, more } => self.rail_more_row(&key, more, cx),
             Row::Pilots => {
+                // When each session last changed, for an idle Pilot's age:
+                // the section cannot read the Shell while it draws.
+                let updated: HashMap<i64, u64> = self
+                    .session_summaries
+                    .iter()
+                    .map(|(id, s)| (*id, s.updated_at))
+                    .collect();
                 return self
                     .pilots
                     .clone()
                     .map(|pilots| {
                         pilots.update(cx, |pilots, cx| {
-                            pilots.rail(Some(self.workspace.project.clone()), cx)
+                            pilots.rail(Some(self.workspace.project.clone()), &updated, cx)
                         })
                     })
                     .unwrap_or_else(|| div().into_any());

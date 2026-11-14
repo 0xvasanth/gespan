@@ -6385,6 +6385,72 @@ fn stopping_a_watch_from_the_chip_drops_only_that_report(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn the_pilots_section_spans_the_rail_with_its_status_at_the_right_edge(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    s.window
+        .update(cx, |_, _, cx| {
+            s.manager.update(cx, |m, cx| {
+                m.settings = None;
+                m.close(cx);
+            })
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let section = visual
+        .debug_bounds("rail-pilots")
+        .expect("the Pilots section");
+    let heading = visual.debug_bounds("rail-section-Pilots").unwrap();
+    let row = visual
+        .debug_bounds(Box::leak(format!("pilot-rail-{}", s.id).into_boxed_str()))
+        .unwrap();
+    let status = visual
+        .debug_bounds(Box::leak(
+            format!("pilot-rail-status-{}", s.id).into_boxed_str(),
+        ))
+        .unwrap();
+    // Every other rail row is as wide as the rail; so is this section.
+    let folders = visual.debug_bounds("rail-all-sessions").map(|b| b.right());
+    if let Some(right) = folders {
+        assert!(
+            (heading.right() - right).abs() < px(12.),
+            "the heading reaches the rail's edge"
+        );
+    }
+    assert_eq!(
+        row.right(),
+        section.right() - px(10.),
+        "a row spans the section"
+    );
+    assert!(
+        row.right() - status.right() <= px(9.),
+        "the status sits at the row's right edge, not after the name"
+    );
+}
+
+#[gpui::test]
+fn an_idle_pilots_age_comes_from_its_chats_summary_when_unopened(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let day = 24 * 60 * 60_000;
+    let now = gespan_core::time::now_ms();
+    s.manager.update(cx, |m, cx| {
+        let mut pilot = m.roster.get(&s.id).unwrap().clone();
+        // Not opened: no chat loaded for it.
+        m.chats.remove(&s.id);
+        pilot.session_id = Some(42);
+        let ages = HashMap::from([(42, now - 2 * day)]);
+        assert_eq!(m.rail_status(&pilot, "idle", &ages, cx), "2d");
+        assert_eq!(m.rail_status(&pilot, "working", &ages, cx), "working");
+        assert_eq!(m.rail_status(&pilot, "needs-you", &ages, cx), "needs you");
+        // Never chatted: nothing to say.
+        pilot.session_id = None;
+        assert_eq!(m.rail_status(&pilot, "idle", &ages, cx), "");
+    });
+}
+
+#[gpui::test]
 fn focused_rail_shows_status_dot_not_words(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| cx.set_reduce_motion(true));
