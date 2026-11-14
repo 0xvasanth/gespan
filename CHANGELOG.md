@@ -1307,7 +1307,7 @@ automatically.
 ### Added
 
 - **BTW** opens a read-only side conversation on a completed agent response without changing the main thread. Use the response's BTW control or `/btw` in the composer. Side conversations support Claude, Codex, Cursor, Grok, OpenCode, Pi, and omp, retain their threads and model settings, and use the provider that produced the original turn even after a handoff. In #353.
-- `/operator` gives an agent opt-in access to Gespan in that thread through a local `app` CLI. It can inspect models, start or draft sessions, read and message project sessions, organize folders, and read notes. App access lasts for that thread; `/gespan` remains a supported alias. See [Agent access to Gespan](README.md#agent-access-to-gespan). In #423.
+- `/operator` gives an agent opt-in access to Gespan in that thread through a local `app` CLI. It can inspect models, start or draft sessions, read and message project sessions, organize folders, and read notes. App access lasts for that thread; `/gespan` remains a supported alias. See [Agent access to Gespan](docs/agent-access.md). In #423.
 - Claude and Codex account controls show the cached account's plan, email, and organization in Settings, the account picker, and the usage popover. Identity refreshes after reconnecting. In #372.
 - A usage-limit notice shows the provider's reset time and countdown, pauses queued messages, and offers manual resume or automatic resume after the limit resets.
 - The macOS Quick composer global shortcut can be changed in Settings → Keybindings. The default remains Command+Shift+Space.
