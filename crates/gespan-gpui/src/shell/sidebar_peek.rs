@@ -65,7 +65,10 @@ impl SidebarPeek {
 impl Shell {
     /// The collapsed sidebar peeks, rounded or boxy.
     fn peek_available(&self) -> bool {
-        !self.workspace.sidebar_visible && self.sidebar_slide.is_none() && self.settings.is_none()
+        !self.workspace.sidebar_visible
+            && self.sidebar_slide.is_none()
+            && self.settings.is_none()
+            && !self.panels_locked()
     }
 
     /// Whether the sidebar must paint uncached: inherited opacity is not part

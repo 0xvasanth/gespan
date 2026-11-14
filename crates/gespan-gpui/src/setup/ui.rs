@@ -1,61 +1,68 @@
-//! The setup card's shared pieces, sized and coloured to the design canvas
-//! (docs/design/first-run-setup.md, "Card spec"). Every step builds from
-//! these so the four cards stay identical in frame, header and footer.
+//! The setup card's shared pieces, sized and coloured to the onboarding
+//! boards of the design canvas (OnboardWelcome/Agents/Look/Project): a 620pt
+//! glass card, a 3-step bar in the accent, options on a darker inset list
+//! and a footer with Back on the left. Every step builds from these so the
+//! four cards stay identical in frame, header and footer.
+use crate::glass::{self, Button};
 use crate::theme::*;
 use gpui::{
-    AnyElement, Div, ElementId, FontWeight, Hsla, Role, SharedString, Stateful, canvas, div,
-    linear_color_stop, linear_gradient, prelude::*, px, rgb, rgba,
+    AnyElement, BoxShadow, Div, ElementId, FontWeight, Hsla, Role, SharedString, Stateful, canvas,
+    div, linear_color_stop, linear_gradient, prelude::*, px, rgb,
 };
 
-pub(crate) const WIDTH: f32 = 720.;
-pub(crate) const RADIUS: f32 = 24.;
+pub(crate) const WIDTH: f32 = 620.;
+pub(crate) const RADIUS: f32 = 22.;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-const BLUR: f32 = 40.;
+const BLUR: f32 = 30.;
 
-/// Violet 300 from the logo ramp: progress, radios and selected rings.
-pub(crate) fn violet() -> Hsla {
-    rgb(0xaf97fa).into()
+/// The accent at `alpha`: the progress bar, radios and the picked option's
+/// tint all follow the user's accent colour.
+pub(crate) fn accent(alpha: f32) -> Hsla {
+    let mut color = accent_color();
+    color.a = alpha;
+    color
 }
-/// The selected option's fill.
-pub(crate) fn selected_fill() -> Hsla {
-    rgba(0x8f64f61f).into()
-}
-/// The selected option's 1px edge.
-pub(crate) fn selected_edge() -> Hsla {
-    rgba(0xaf97fa8c).into()
-}
-/// The 1px glass edge, the popovers' 10% hairline.
-pub(crate) fn glass_edge() -> Hsla {
-    content(if is_light() { 0.08 } else { 0.10 })
-}
-/// The frosted pane under lists and options: a thin ink tint, as the
-/// composer's surface is, so the card's blur shows through it.
-pub(crate) fn well() -> Hsla {
-    content(if is_light() { 0.03 } else { 0.04 })
+/// The card's 1px edge: the strong glass card's 12% white.
+fn card_edge() -> Hsla {
+    if is_light() {
+        content(0.1)
+    } else {
+        white(0.12)
+    }
 }
 /// Rules inside the card: the footer line and list separators.
 pub(crate) fn rule() -> Hsla {
-    if is_light() {
-        content(0.07)
-    } else {
-        rgba(0xffffff12).into()
-    }
+    content(0.07)
 }
 /// Secondary text, #a3a3a3 on dark.
 pub(crate) fn muted() -> Hsla {
-    content(0.64)
+    content(0.62)
 }
-/// Meta text, #737373 on dark.
+/// Meta text, #8a8a8a on dark.
 pub(crate) fn faint() -> Hsla {
-    content(0.45)
+    content(0.55)
+}
+/// The darker inset well that lists and the welcome explainer sit in.
+pub(crate) fn inset() -> Hsla {
+    if is_light() {
+        content(0.03)
+    } else {
+        black(0.14)
+    }
+}
+/// The inset well's 1px edge.
+pub(crate) fn inset_edge() -> Hsla {
+    if is_light() {
+        content(0.08)
+    } else {
+        white(0.08)
+    }
 }
 
-/// The frosted fill behind the card: a 6% ink tint under a 40pt blur, the
-/// composer's glass, so the shell reads through it. Light themes paint it
-/// opaque, as every other modal does.
-fn glass(radius: f32) -> impl IntoElement {
+/// The frosted backdrop behind the card: a blur of whatever is behind it.
+/// Light themes paint it opaque, as every other modal does.
+fn blur(radius: f32) -> impl IntoElement {
     let light = is_light();
-    let tint = content(0.06);
     let opaque = floating_fill();
     canvas(
         |_, _, _| {},
@@ -64,12 +71,12 @@ fn glass(radius: f32) -> impl IntoElement {
             let quad = if light {
                 gpui::fill(bounds, opaque)
             } else {
-                gpui::fill(bounds, tint)
+                gpui::fill(bounds, gpui::transparent_black())
                     .border_color(gpui::backdrop_blur_marker(BLUR * window.scale_factor()))
             };
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let quad = {
-                let _ = (light, tint, &window);
+                let _ = (light, &window);
                 gpui::fill(bounds, opaque)
             };
             window.paint_quad(quad.corner_radii(px(radius)));
@@ -81,8 +88,8 @@ fn glass(radius: f32) -> impl IntoElement {
     .size_full()
 }
 
-/// The light falling across the glass: a faint white wash at the top that
-/// fades out a third of the way down.
+/// The card's glass fill: white at 7.5% at the top fading to the glass
+/// fill's 3.5% at the bottom.
 fn sheen() -> impl IntoElement {
     div()
         .absolute()
@@ -90,191 +97,242 @@ fn sheen() -> impl IntoElement {
         .rounded(px(RADIUS - 1.))
         .bg(linear_gradient(
             180.,
-            linear_color_stop(white(0.07), 0.),
-            linear_color_stop(white(0.), 0.35),
+            linear_color_stop(white(0.075), 0.),
+            linear_color_stop(glass::fill(), 1.),
         ))
 }
 
-/// The 720pt card: glass, a hairline edge, the long soft drop and the
-/// 28/40/28 padding. `top` is 36 on Welcome, 28 elsewhere. Add the card's
-/// blocks with `.child`: the glass layers are out of flow, so they take no
-/// gap.
-pub(crate) fn card(top: f32, gap: f32) -> Div {
+/// The 620pt card: blur, gradient glass, a 12% edge with the glass top
+/// highlight, the long soft drop and 30/32/22 padding with 18pt between
+/// blocks. Add blocks with `.child`: the glass layers are out of flow, so
+/// they take no gap.
+pub(crate) fn card() -> Stateful<Div> {
+    let light = is_light();
     div()
+        .id("setup-card")
+        .debug_selector(|| "setup-card".into())
+        .role(Role::Dialog)
+        .aria_label("Setup")
         .relative()
         .w(px(WIDTH))
+        .flex_shrink_0()
         .rounded(px(RADIUS))
         .border_1()
-        .border_color(glass_edge())
+        .border_color(card_edge())
         .shadow(vec![
-            gpui::BoxShadow::new(px(0.), px(24.), black(if is_light() { 0.12 } else { 0.55 }))
-                .blur_radius(px(64.)),
+            BoxShadow::new(
+                px(0.),
+                px(1.),
+                if light { white(0.95) } else { white(0.10) },
+            )
+            .inset(),
+            BoxShadow::new(px(0.), px(30.), black(if light { 0.12 } else { 0.45 }))
+                .blur_radius(px(80.)),
         ])
-        .child(glass(RADIUS - 1.))
-        .when(!is_light(), |card| card.child(sheen()))
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left(px(RADIUS))
-                .right(px(RADIUS))
-                .h(px(1.))
-                .bg(if is_light() { white(0.95) } else { white(0.18) }),
-        )
+        .child(blur(RADIUS - 1.))
+        .when(!light, |card| card.child(sheen()))
         .text_color(content(1.))
-        .text_size(px(14.))
-        .pt(px(top))
-        .px(px(40.))
-        .pb(px(28.))
+        .text_size(px(13.))
+        .pt(px(30.))
+        .px(px(32.))
+        .pb(px(22.))
         .flex()
         .flex_col()
-        .gap(px(gap))
+        .gap(px(18.))
 }
 
-/// "Step N of 3", the three progress pills and, unless on Project, "Skip
-/// setup" on the right.
-pub(crate) fn header(step: usize, skip: Option<Stateful<Div>>) -> Div {
+/// The card's top row: the step bar (or Welcome's mark) and, unless on
+/// Project, "Skip setup" on the right.
+pub(crate) fn header(lead: impl IntoElement, skip: Option<Stateful<Div>>) -> Div {
     div()
         .flex()
         .items_center()
-        .gap(px(14.))
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(muted())
-                .child(SharedString::from(format!("Step {step} of 3"))),
-        )
-        .child(div().flex().gap(px(4.)).children((1..=3).map(|n| {
-            div().w(px(28.)).h(px(4.)).rounded_full().bg(if n <= step {
-                violet()
-            } else {
-                content(0.14)
-            })
-        })))
+        .child(lead)
         .child(div().flex_1())
         .children(skip)
 }
 
-/// A text link styled control: "Skip setup", "Back".
-pub(crate) fn text_button(
-    id: impl Into<ElementId>,
-    label: &'static str,
-    size: f32,
-) -> Stateful<Div> {
+/// "Step N of 3" and three 26×3 bars, the first `step` in the accent.
+pub(crate) fn steps(step: usize) -> Div {
+    div()
+        .debug_selector(|| "setup-step-header".into())
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .text_size(px(12.))
+        .text_color(faint())
+        .child(SharedString::from(format!("Step {step} of 3")))
+        .children((1..=3).map(|n| {
+            div().w(px(26.)).h(px(3.)).rounded(px(2.)).bg(if n <= step {
+                accent(1.)
+            } else {
+                content(0.12)
+            })
+        }))
+}
+
+/// The quiet "Skip setup" link in the header.
+pub(crate) fn skip_link(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id)
         .role(Role::Button)
-        .aria_label(label)
+        .aria_label("Skip setup")
         .cursor_pointer()
-        .text_size(px(size))
-        .text_color(muted())
+        .text_size(px(11.5))
+        .line_height(px(16.))
+        .text_color(faint())
         .hover(|s| s.text_color(content(1.)))
-        .child(label)
+        .child("Skip setup")
 }
 
-/// The card title: 28pt (34 on Welcome), medium weight.
-pub(crate) fn title(text: &'static str, size: f32) -> Div {
+/// The card title over its lead: 26pt semibold, then 13.5/21 muted, 8pt
+/// apart.
+pub(crate) fn intro(title: &'static str, lead: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(size))
-        .line_height(px(size * 1.15))
-        .font_weight(FontWeight::MEDIUM)
-        .child(text)
+        .flex()
+        .flex_col()
+        .gap(px(8.))
+        .child(
+            div()
+                .text_size(px(26.))
+                .line_height(px(31.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_size(px(13.5))
+                .line_height(px(21.))
+                .text_color(muted())
+                .child(lead.into()),
+        )
 }
 
-/// The lead under a title: 14/22 (16/25 on Welcome) in muted ink.
-pub(crate) fn lead(text: impl Into<SharedString>, size: f32, line: f32) -> Div {
+/// 13/18 body ink.
+pub(crate) fn t1(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(size))
-        .line_height(px(line))
+        .text_size(px(13.))
+        .line_height(px(18.))
+        .child(text.into())
+}
+/// 12/17 secondary.
+pub(crate) fn t2(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(12.))
+        .line_height(px(17.))
         .text_color(muted())
         .child(text.into())
 }
+/// 11.5/16 meta.
+pub(crate) fn t3(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(11.5))
+        .line_height(px(16.))
+        .text_color(faint())
+        .child(text.into())
+}
 
-/// The light primary pill with the brand glow; dimmed and inert when
-/// `enabled` is false.
+/// The main answer: a 34pt glass primary. Dimmed and inert when `enabled`
+/// is false.
 pub(crate) fn primary(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     enabled: bool,
 ) -> Stateful<Div> {
     let label = label.into();
-    let base = div()
-        .id(id)
+    let button = glass::button(id, label.clone(), Button::Primary)
         .role(Role::Button)
-        .aria_label(label.clone())
-        .px(px(20.))
-        .py(px(9.))
-        .rounded_full()
-        .font_weight(FontWeight::SEMIBOLD)
-        .whitespace_nowrap()
-        .child(label);
+        .aria_label(label)
+        .h(px(34.))
+        .px(px(18.));
     if enabled {
-        base.cursor_pointer()
-            .bg(content(0.92))
-            .text_color(if is_light() {
-                white(1.)
-            } else {
-                rgb(0x111111).into()
-            })
-            .shadow(vec![
-                gpui::BoxShadow::new(px(0.), px(0.), rgba(0xaf97fa59).into()).spread_radius(px(1.)),
-                gpui::BoxShadow::new(px(0.), px(8.), rgba(0x8f64f673).into()).blur_radius(px(32.)),
-            ])
-            .hover(|s| s.bg(content(0.8)))
+        button
     } else {
-        base.bg(content(0.12)).text_color(faint())
+        button.opacity(0.35).cursor_default()
     }
 }
 
-/// The ghost pill: "Skip".
-pub(crate) fn ghost(id: impl Into<ElementId>, label: &'static str) -> Stateful<Div> {
-    div()
-        .id(id)
+/// The quiet way on: "Skip" (34pt) and "Back" (32pt).
+pub(crate) fn ghost(id: impl Into<ElementId>, label: &'static str, height: f32) -> Stateful<Div> {
+    glass::button(id, label, Button::Ghost)
         .role(Role::Button)
         .aria_label(label)
-        .cursor_pointer()
-        .px(px(16.))
-        .py(px(9.))
-        .rounded_full()
-        .text_color(muted())
-        .hover(|s| s.bg(content(0.07)).text_color(content(1.)))
-        .child(label)
+        .h(px(height))
 }
 
-/// The footer: a rule with 16pt above it, Back on the left and the given
-/// actions on the right.
-pub(crate) fn footer(back: Option<Stateful<Div>>, right: Vec<AnyElement>) -> Div {
+/// The footer: a rule with 14pt above it, `left` (Back or a note) and the
+/// given actions on the right.
+pub(crate) fn footer(left: Option<AnyElement>, right: Vec<AnyElement>) -> Div {
     div()
-        .pt(px(16.))
+        .pt(px(14.))
         .border_t_1()
         .border_color(rule())
         .flex()
         .items_center()
-        .gap(px(12.))
-        .children(back)
+        .gap(px(10.))
+        .children(left)
         .child(div().flex_1())
-        .children(right)
+        .child(div().flex().items_center().gap(px(8.)).children(right))
 }
 
-/// An 18pt radio: a violet ring and 8pt dot when on, a faint ring when off.
-pub(crate) fn radio(on: bool) -> Div {
+/// The darker inset list options sit in, 14pt round.
+pub(crate) fn list() -> Div {
     div()
-        .size(px(18.))
+        .flex()
+        .flex_col()
+        .rounded(px(14.))
+        .overflow_hidden()
+        .border_1()
+        .border_color(inset_edge())
+        .bg(inset())
+}
+
+/// A 54pt list row; every row but the first has a hairline above it.
+pub(crate) fn row(first: bool) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .h(px(54.))
         .flex_shrink_0()
-        .rounded_full()
-        .border(px(1.5))
-        .border_color(if on { violet() } else { content(0.30) })
+        .px(px(14.))
+        .text_size(px(13.))
+        .when(!first, |d| d.border_t_1().border_color(content(0.06)))
+}
+
+/// A picked row's tint: the accent at 10%.
+pub(crate) fn picked() -> Hsla {
+    accent(0.10)
+}
+
+/// A 15pt radio: a 4.5pt accent ring round a white centre when on, a faint
+/// ring when off.
+pub(crate) fn radio(on: bool) -> Div {
+    let ring = div().size(px(15.)).flex_shrink_0().rounded_full();
+    if on {
+        ring.border(px(4.5)).border_color(accent(1.)).bg(white(1.))
+    } else {
+        ring.border(px(1.5)).border_color(content(0.28))
+    }
+}
+
+/// The 30pt glyph tile: a faint plate with a hairline edge.
+pub(crate) fn tile() -> Div {
+    div()
+        .size(px(30.))
+        .flex_shrink_0()
+        .rounded(px(8.))
+        .bg(content(0.06))
+        .border_1()
+        .border_color(inset_edge())
         .flex()
         .items_center()
         .justify_center()
-        .when(on, |d| {
-            d.child(div().size(px(8.)).rounded_full().bg(violet()))
-        })
 }
 
 /// A 7pt status dot.
 pub(crate) fn dot(color: Hsla) -> Div {
-    div().size(px(7.)).rounded_full().bg(color)
+    div().size(px(7.)).flex_shrink_0().rounded_full().bg(color)
 }
 pub(crate) fn green() -> Hsla {
     rgb(0x10b981).into()

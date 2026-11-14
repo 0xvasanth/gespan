@@ -1,11 +1,10 @@
 //! The look card: theme, accent and glass, each applied live behind
 //! the card as it is picked. Built to the Look board of the design canvas.
 use super::{SetupStep, card::SetupCard, ui};
+use crate::glass;
 use crate::settings::ACCENTS;
 use crate::theme::*;
-use gpui::{
-    AnyElement, Context, Div, FontWeight, Role, SharedString, Window, div, prelude::*, px, rgb,
-};
+use gpui::{AnyElement, Context, Div, Role, SharedString, Window, div, prelude::*, px, rgb};
 
 const THEMES: [(&str, &str); 3] = [("system", "System"), ("dark", "Dark"), ("light", "Light")];
 
@@ -20,103 +19,83 @@ pub(super) fn render(
     _: &mut Window,
     cx: &mut Context<SetupCard>,
 ) -> AnyElement {
-    let skip_setup = ui::text_button("setup-skip-setup", "Skip setup", 13.)
+    let skip_setup = ui::skip_link("setup-skip-setup")
         .debug_selector(|| "setup-skip-setup".into())
         .on_click(cx.listener(|card, _, _, cx| card.skip_setup(cx)));
-    ui::card(28., 22.)
-        .child(ui::header(2, Some(skip_setup)))
+    let back = ui::ghost("setup-back", "Back", 32.)
+        .debug_selector(|| "setup-back".into())
+        .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Agents, cx)));
+    let skip = ui::ghost("setup-skip", "Skip", 34.)
+        .debug_selector(|| "setup-skip".into())
+        .on_click(cx.listener(|card, _, _, cx| card.skip(SetupStep::Project, cx)));
+    let next = ui::primary("setup-continue", "Continue", true)
+        .debug_selector(|| "setup-continue".into())
+        .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Project, cx)));
+    ui::card()
+        .child(ui::header(ui::steps(2), Some(skip_setup)))
+        .child(ui::intro(
+            "Make it yours.",
+            "Changes show behind this card as you pick.",
+        ))
         .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(ui::title("Make it yours.", 28.))
-                .child(ui::lead(
-                    "Changes show behind this card as you pick.",
-                    14.,
-                    22.,
-                )),
-        )
-        .child(row("Theme").child(theme_control(&card.prefs.theme, cx)))
-        .child(row("Accent color").child(accents(card.prefs.accent_color.as_deref(), cx)))
-        .child(
-            row("Glass")
+            ui::list()
                 .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(13.))
-                        .text_color(ui::muted())
-                        .child("Let the desktop show through the window."),
+                    ui::row(true)
+                        .child(label("Theme"))
+                        .child(div().flex_1())
+                        .child(theme_control(&card.prefs.theme, cx)),
                 )
-                .child(glass_switch(card.prefs.inset_glass, cx)),
+                .child(
+                    ui::row(false)
+                        .child(label("Accent color"))
+                        .child(div().flex_1())
+                        .child(accents(card.prefs.accent_color.as_deref(), cx)),
+                )
+                .child(
+                    ui::row(false)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.))
+                                .child(ui::t2("Glass"))
+                                .child(ui::t3("Let the desktop show through the window.")),
+                        )
+                        .child(div().flex_1())
+                        .child(glass_switch(card.prefs.inset_glass, cx)),
+                ),
         )
         .child(ui::footer(
-            Some(
-                ui::text_button("setup-back", "Back", 14.)
-                    .debug_selector(|| "setup-back".into())
-                    .py(px(9.))
-                    .px(px(4.))
-                    .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Agents, cx))),
-            ),
-            vec![
-                ui::ghost("setup-skip", "Skip")
-                    .debug_selector(|| "setup-skip".into())
-                    .on_click(cx.listener(|card, _, _, cx| card.skip(SetupStep::Project, cx)))
-                    .into_any_element(),
-                ui::primary("setup-continue", "Continue", true)
-                    .debug_selector(|| "setup-continue".into())
-                    .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Project, cx)))
-                    .into_any_element(),
-            ],
+            Some(back.into_any_element()),
+            vec![skip.into_any_element(), next.into_any_element()],
         ))
         .into_any_element()
 }
 
-/// A labelled row: the 120pt semibold label column, then the control.
-fn row(label: &'static str) -> Div {
-    div().w_full().flex().gap(px(16.)).items_center().child(
-        div()
-            .w(px(120.))
-            .flex_shrink_0()
-            .font_weight(FontWeight::SEMIBOLD)
-            .child(label),
-    )
+/// A row's 110pt label.
+fn label(text: &'static str) -> Div {
+    ui::t2(text).w(px(110.)).flex_shrink_0()
 }
 
 fn theme_control(current: &str, cx: &mut Context<SetupCard>) -> impl IntoElement {
-    div()
+    glass::segmented()
         .id("setup-theme")
         .role(Role::RadioGroup)
         .aria_label("Theme")
-        .flex()
-        .p(px(3.))
-        .gap(px(2.))
-        .rounded(px(9.))
-        .bg(content(0.06))
         .children(THEMES.iter().map(|&(id, label)| {
             let selected = current == id;
-            div()
-                .id(SharedString::from(format!("setup-theme-{id}")))
-                .debug_selector(move || format!("setup-theme-{id}"))
-                .role(Role::RadioButton)
-                .aria_label(label)
-                .aria_selected(selected)
-                .cursor_pointer()
-                .px(px(16.))
-                .py(px(6.))
-                .rounded(px(7.))
-                .text_size(px(13.))
-                .bg(if selected {
-                    content(0.14)
-                } else {
-                    gpui::transparent_black()
-                })
-                .text_color(if selected { content(1.) } else { ui::muted() })
-                .when(!selected, |d| d.hover(|s| s.text_color(content(1.))))
-                .child(label)
-                .on_click(
-                    cx.listener(move |card, _, _, cx| card.set_prefs(|p| p.theme = id.into(), cx)),
-                )
+            glass::segment(
+                SharedString::from(format!("setup-theme-{id}")),
+                label,
+                selected,
+            )
+            .debug_selector(move || format!("setup-theme-{id}"))
+            .role(Role::RadioButton)
+            .aria_label(label)
+            .aria_selected(selected)
+            .on_click(
+                cx.listener(move |card, _, _, cx| card.set_prefs(|p| p.theme = id.into(), cx)),
+            )
         }))
 }
 
@@ -132,7 +111,7 @@ fn accents(current: Option<&str>, cx: &mut Context<SetupCard>) -> impl IntoEleme
         .role(Role::RadioGroup)
         .aria_label("Accent color")
         .flex()
-        .gap(px(10.))
+        .gap(px(12.))
         .children(ACCENTS.iter().map(|&(color, name)| {
             let hex = accent_hex(color);
             let selected = current.is_some_and(|c| c.eq_ignore_ascii_case(&hex));
@@ -144,7 +123,7 @@ fn accents(current: Option<&str>, cx: &mut Context<SetupCard>) -> impl IntoEleme
                 .aria_label(name)
                 .aria_selected(selected)
                 .cursor_pointer()
-                .size(px(26.))
+                .size(px(18.))
                 .rounded_full()
                 .bg(rgb(color))
                 .when(selected, |d| {
@@ -162,6 +141,7 @@ fn accents(current: Option<&str>, cx: &mut Context<SetupCard>) -> impl IntoEleme
         }))
 }
 
+/// The glass switch: 30×18 with a 14pt knob, the accent when on.
 fn glass_switch(on: bool, cx: &mut Context<SetupCard>) -> impl IntoElement {
     div()
         .id("setup-glass")
@@ -176,18 +156,21 @@ fn glass_switch(on: bool, cx: &mut Context<SetupCard>) -> impl IntoElement {
         .cursor_pointer()
         .relative()
         .flex_shrink_0()
-        .w(px(36.))
-        .h(px(22.))
+        .w(px(30.))
+        .h(px(18.))
         .rounded_full()
-        .bg(if on { accent_color() } else { content(0.18) })
+        .bg(if on { accent_color() } else { content(0.14) })
         .child(
             div()
                 .absolute()
-                .top(px(3.))
-                .left(px(if on { 17. } else { 3. }))
-                .size(px(16.))
+                .top(px(2.))
+                .left(px(if on { 14. } else { 2. }))
+                .size(px(14.))
                 .rounded_full()
-                .bg(rgb(0xffffff)),
+                .bg(rgb(0xffffff))
+                .shadow(vec![
+                    gpui::BoxShadow::new(px(0.), px(1.), black(0.4)).blur_radius(px(3.)),
+                ]),
         )
         .on_click(
             cx.listener(|card, _, _, cx| card.set_prefs(|p| p.inset_glass = !p.inset_glass, cx)),

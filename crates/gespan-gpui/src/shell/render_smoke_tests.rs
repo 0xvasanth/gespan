@@ -92,6 +92,26 @@ const LAYOUTS: &[(&str, Setup)] = &[
         }
         shell.open_settings(crate::settings::Section::Archive, window, cx);
     }),
+    // The setup screen on each card, in place of the shell's body.
+    ("setup: welcome", |shell, _, _, _, _| {
+        shell.workspace.setup = Some(crate::setup::SetupStep::Welcome);
+    }),
+    ("setup: agents", |shell, _, _, _, _| {
+        shell.workspace.setup = Some(crate::setup::SetupStep::Agents);
+    }),
+    ("setup: look", |shell, _, _, _, _| {
+        shell.workspace.setup = Some(crate::setup::SetupStep::Look);
+    }),
+    ("setup: project", |shell, _, _, _, _| {
+        shell.workspace.setup = Some(crate::setup::SetupStep::Project);
+    }),
+    (
+        "run setup again from settings",
+        |shell, _, _, window, cx| {
+            shell.open_settings(crate::settings::Section::General, window, cx);
+            shell.run_setup_again(window, cx);
+        },
+    ),
 ];
 
 #[gpui::test]

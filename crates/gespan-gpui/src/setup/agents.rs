@@ -7,15 +7,15 @@ use super::{
     rules::{found_count, not_found_line},
     ui,
 };
-use crate::theme::{content, icon, is_light, provider_icon};
+use crate::glass::{self, Button};
+use crate::theme::{content, provider_icon};
 use gespan_core::provider::Kind;
 use gpui::{
-    AnyElement, Context, Div, FontWeight, Hsla, Role, SharedString, Stateful, Window, div,
-    prelude::*, px, rgba,
+    AnyElement, Context, Div, FontWeight, Role, SharedString, Stateful, Window, div, prelude::*, px,
 };
 
-/// The installed-agents list scrolls past this height (about five rows).
-const LIST_MAX_H: f32 = 286.;
+/// The installed-agents list scrolls past this height (five rows).
+const LIST_MAX_H: f32 = 270.;
 /// The agents the empty state suggests installing.
 const SUGGESTED: [Kind; 3] = [Kind::Claude, Kind::Codex, Kind::Cursor];
 
@@ -36,49 +36,32 @@ pub(super) fn render(
             "Gespan found these on this Mac. Pick the one new threads start with.",
         )
     };
-    let skip_setup = ui::text_button("setup-skip-setup", "Skip setup", 13.)
+    let skip_setup = ui::skip_link("setup-skip-setup")
         .debug_selector(|| "setup-skip-setup".into())
         .on_click(cx.listener(|card, _, _, cx| card.skip_setup(cx)));
 
-    let title_row = div()
-        .flex()
-        .items_end()
-        .gap(px(16.))
-        .child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(ui::title(title, 28.))
-                .child(ui::lead(lead, 14., 22.)),
-        )
-        .child(rescan_button(cx));
-
     let list = if empty {
-        install_list()
+        install_list(card, cx)
     } else {
         agent_list(card, cx)
     };
 
-    let back = ui::text_button("setup-back", "Back", 14.)
-        .px(px(4.))
-        .py(px(9.))
+    let back = ui::ghost("setup-back", "Back", 32.)
         .debug_selector(|| "setup-back".into())
         .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Welcome, cx)));
-    let skip = ui::ghost("setup-skip", "Skip")
+    let skip = ui::ghost("setup-skip", "Skip", 34.)
         .debug_selector(|| "setup-skip".into())
         .on_click(cx.listener(|card, _, _, cx| card.skip(SetupStep::Look, cx)));
     let next = ui::primary("setup-continue", "Continue", true)
         .debug_selector(|| "setup-continue".into())
         .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Look, cx)));
 
-    ui::card(28., 22.)
-        .child(ui::header(1, Some(skip_setup)).debug_selector(|| "setup-step-header".into()))
-        .child(title_row)
+    ui::card()
+        .child(ui::header(ui::steps(1), Some(skip_setup)))
+        .child(ui::intro(title, lead))
         .child(list)
         .child(ui::footer(
-            Some(back),
+            Some(back.into_any_element()),
             vec![skip.into_any_element(), next.into_any_element()],
         ))
         .into_any_element()
@@ -90,50 +73,23 @@ fn missing_line(card: &SetupCard) -> String {
     not_found_line(&labels)
 }
 
-/// The 1px line between rows: a touch fainter than the box edge.
-fn separator() -> Hsla {
-    if is_light() {
-        content(0.06)
-    } else {
-        rgba(0xffffff0f).into()
-    }
-}
-
-/// The rounded box the rows sit in.
-fn list_box() -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .rounded(px(14.))
-        .overflow_hidden()
-        .border_1()
-        .border_color(ui::rule())
-        .bg(ui::well())
-}
-
-/// The bordered "Rescan" button beside the title.
-fn rescan_button(cx: &mut Context<SetupCard>) -> Stateful<Div> {
-    div()
-        .id("setup-rescan")
-        .debug_selector(|| "setup-rescan".into())
-        .role(Role::Button)
-        .aria_label("Rescan for coding agents")
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .px(px(12.))
-        .py(px(7.))
-        .rounded(px(8.))
-        .border_1()
-        .border_color(content(0.12))
-        .text_size(px(13.))
-        .text_color(content(1.))
-        .cursor_pointer()
-        .hover(|s| s.bg(content(0.06)))
-        .child(icon("refresh-cw", 14.).text_color(content(1.)))
-        .child("Rescan")
-        .on_click(cx.listener(|card, _, _, cx| card.rescan(cx)))
+/// The list's last row: what is not installed, the count and Rescan.
+fn scan_row(card: &SetupCard, first: bool, cx: &mut Context<SetupCard>) -> Div {
+    ui::row(first)
+        .h(px(38.))
+        .text_size(px(12.))
+        .child(ui::t3(missing_line(card)).flex_1().min_w_0().truncate())
+        .child(ui::t3(found_count(card.agents.len(), Kind::ALL.len())).flex_shrink_0())
+        .child(
+            glass::button("setup-rescan", "Rescan", Button::Ghost)
+                .debug_selector(|| "setup-rescan".into())
+                .role(Role::Button)
+                .aria_label("Rescan for coding agents")
+                .h(px(24.))
+                .px(px(10.))
+                .text_size(px(11.5))
+                .on_click(cx.listener(|card, _, _, cx| card.rescan(cx))),
+        )
 }
 
 /// The installed agents, then the not-found line.
@@ -141,13 +97,14 @@ fn agent_list(card: &SetupCard, cx: &mut Context<SetupCard>) -> Div {
     let rows: Vec<_> = card
         .agents
         .iter()
-        .map(|agent| {
+        .enumerate()
+        .map(|(ix, agent)| {
             let on = card.default_agent == Some(agent.kind);
             let waiting = card.signing_in == Some(agent.kind);
-            agent_row(agent, on, waiting, cx)
+            agent_row(agent, ix == 0, on, waiting, cx)
         })
         .collect();
-    list_box()
+    ui::list()
         .child(
             div()
                 .id("setup-agents-list")
@@ -159,28 +116,16 @@ fn agent_list(card: &SetupCard, cx: &mut Context<SetupCard>) -> Div {
                 .flex_col()
                 .children(rows),
         )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .px(px(16.))
-                .py(px(12.))
-                .border_t_1()
-                .border_color(separator())
-                .text_size(px(13.))
-                .text_color(ui::muted())
-                .child(div().flex_1().child(missing_line(card)))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(ui::faint())
-                        .child(found_count(card.agents.len(), Kind::ALL.len())),
-                ),
-        )
+        .child(scan_row(card, false, cx))
 }
 
-fn agent_row(agent: &Agent, on: bool, waiting: bool, cx: &mut Context<SetupCard>) -> Stateful<Div> {
+fn agent_row(
+    agent: &Agent,
+    first: bool,
+    on: bool,
+    waiting: bool,
+    cx: &mut Context<SetupCard>,
+) -> Stateful<Div> {
     let kind = agent.kind;
     let id = kind.id();
     let (color, status) = match agent.signed_in {
@@ -188,7 +133,7 @@ fn agent_row(agent: &Agent, on: bool, waiting: bool, cx: &mut Context<SetupCard>
         Some(false) => (ui::yellow(), "Not signed in"),
         None => (ui::faint(), "Signs in on first use"),
     };
-    div()
+    ui::row(first)
         .id(SharedString::from(format!("setup-agent-{id}")))
         .debug_selector(move || format!("setup-agent-{id}"))
         .role(Role::RadioButton)
@@ -197,28 +142,11 @@ fn agent_row(agent: &Agent, on: bool, waiting: bool, cx: &mut Context<SetupCard>
             kind.label()
         )))
         .aria_selected(on)
-        .flex()
-        .items_center()
-        .gap(px(14.))
-        .px(px(16.))
-        .py(px(12.))
-        .border_b_1()
-        .border_color(separator())
         .cursor_pointer()
-        .when(on, |d| d.bg(ui::selected_fill()))
+        .when(on, |d| d.bg(ui::picked()))
         .when(!on, |d| d.hover(|s| s.bg(content(0.03))))
         .child(ui::radio(on))
-        .child(
-            div()
-                .size(px(32.))
-                .flex_shrink_0()
-                .rounded(px(8.))
-                .bg(content(0.08))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(provider_icon(id, 20.)),
-        )
+        .child(ui::tile().child(provider_icon(id, 15.)))
         .child(
             div()
                 .flex_1()
@@ -227,17 +155,11 @@ fn agent_row(agent: &Agent, on: bool, waiting: bool, cx: &mut Context<SetupCard>
                 .flex_col()
                 .gap(px(2.))
                 .child(
-                    div()
+                    ui::t1(kind.label())
                         .font_weight(FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(kind.label()),
+                        .truncate(),
                 )
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(ui::muted())
-                        .child("Installed"),
-                ),
+                .child(ui::t3("Installed")),
         )
         .child(
             div()
@@ -245,8 +167,8 @@ fn agent_row(agent: &Agent, on: bool, waiting: bool, cx: &mut Context<SetupCard>
                 .items_center()
                 .gap(px(6.))
                 .flex_shrink_0()
-                .text_size(px(12.))
-                .text_color(ui::muted())
+                .text_size(px(11.5))
+                .text_color(ui::faint())
                 .child(ui::dot(color))
                 .child(status),
         )
@@ -264,48 +186,35 @@ fn sign_in_button(kind: Kind, waiting: bool, cx: &mut Context<SetupCard>) -> Sta
     } else {
         "Sign in"
     };
-    div()
-        .id(SharedString::from(format!("setup-sign-in-{id}")))
-        .debug_selector(move || format!("setup-sign-in-{id}"))
-        .role(Role::Button)
-        .aria_label(SharedString::from(format!("Sign in to {}", kind.label())))
-        .flex_shrink_0()
-        .px(px(12.))
-        .py(px(6.))
-        .rounded_full()
-        .border_1()
-        .border_color(content(0.12))
-        .bg(content(0.06))
-        .text_size(px(13.))
-        .text_color(content(1.))
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .hover(|s| s.bg(content(0.1)))
-        .child(label)
-        .on_click(cx.listener(move |card, _, _, cx| {
-            // The row behind is a radio: signing in should not also pick it.
-            cx.stop_propagation();
-            card.sign_in(kind, cx);
-        }))
+    glass::button(
+        SharedString::from(format!("setup-sign-in-{id}")),
+        label,
+        Button::Glass,
+    )
+    .debug_selector(move || format!("setup-sign-in-{id}"))
+    .role(Role::Button)
+    .aria_label(SharedString::from(format!("Sign in to {}", kind.label())))
+    .h(px(28.))
+    .px(px(12.))
+    .text_size(px(12.))
+    .on_click(cx.listener(move |card, _, _, cx| {
+        // The row behind is a radio: signing in should not also pick it.
+        cx.stop_propagation();
+        card.sign_in(kind, cx);
+    }))
 }
 
-/// No agent installed: the agents worth installing first.
-fn install_list() -> Div {
-    list_box().children(SUGGESTED.into_iter().enumerate().map(|(ix, kind)| {
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .px(px(16.))
-            .py(px(12.))
-            .when(ix + 1 < SUGGESTED.len(), |d| {
-                d.border_b_1().border_color(separator())
-            })
-            .text_size(px(13.))
-            .child(kind.label())
-        // "How to install" opens the agent's install docs once the provider
-        // spec carries a docs URL; none does yet, so the link is left out.
-    }))
+/// No agent installed: the agents worth installing first, then Rescan.
+fn install_list(card: &SetupCard, cx: &mut Context<SetupCard>) -> Div {
+    ui::list()
+        .children(SUGGESTED.into_iter().enumerate().map(|(ix, kind)| {
+            ui::row(ix == 0)
+                .child(ui::tile().child(provider_icon(kind.id(), 15.)))
+                .child(ui::t1(kind.label()).font_weight(FontWeight::SEMIBOLD))
+            // "How to install" opens the agent's install docs once the provider
+            // spec carries a docs URL; none does yet, so the link is left out.
+        }))
+        .child(scan_row(card, false, cx))
 }
 
 #[cfg(test)]
