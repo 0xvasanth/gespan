@@ -6,10 +6,10 @@ mod color_picker;
 #[cfg(test)]
 mod dictation_tests;
 mod files;
-mod filters;
 mod floating;
 mod flow_reviews;
 mod graph;
+mod history;
 mod host;
 pub(crate) use host::pilot_folder_id;
 mod html;
@@ -123,6 +123,10 @@ pub(crate) struct Pilots {
     roadmaps: HashMap<String, (Entity<roadmap::Roadmap>, [Subscription; 2])>,
     /// Roadmaps to reload when next drawn.
     stale_roadmaps: HashSet<String>,
+    /// Each Pilot's History, as last loaded.
+    histories: HashMap<String, history::History>,
+    /// Pilots whose History reloads the next time it is drawn.
+    stale_histories: HashSet<String>,
     route: Option<Route>,
     settings: Option<SettingsSection>,
     settings_focus: gpui::FocusHandle,
@@ -176,8 +180,6 @@ pub(crate) struct Pilots {
     /// failed queued messages.
     chat_choices: HashMap<String, (String, Option<String>)>,
     card_refresh: HashMap<String, u64>,
-    session_filters: filters::Filters,
-    session_filter_anchor: AnchorSlot,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
     /// Side reviews of finished Flow steps, by review session.
@@ -346,11 +348,6 @@ impl Pilots {
             .iter()
             .flat_map(|m| m.outbox.iter().map(|q| q.id.clone()))
             .collect();
-        let session_filters = locked(&store)
-            .ok()
-            .and_then(|s| s.setting("pilot-session-filters").ok().flatten())
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
         let manager = cx.entity();
         let details = cx.new(|cx| overview::Overview::new(manager, cx));
         let mut this = Self {
@@ -378,6 +375,8 @@ impl Pilots {
             overview_previous: OverviewTab::Pipeline,
             roadmaps: HashMap::new(),
             stale_roadmaps: HashSet::new(),
+            histories: HashMap::new(),
+            stale_histories: HashSet::new(),
             route: None,
             settings: None,
             settings_focus: cx.focus_handle(),
@@ -421,8 +420,6 @@ impl Pilots {
             inflight: HashMap::new(),
             chat_choices: HashMap::new(),
             card_refresh: HashMap::new(),
-            session_filters,
-            session_filter_anchor: AnchorSlot::default(),
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
             reviews: HashMap::new(),
