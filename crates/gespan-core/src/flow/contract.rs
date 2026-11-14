@@ -165,6 +165,12 @@ fn matches(
     }
 }
 
+/// Whether a parallel step's branch runs: its `when`, if any, matches the
+/// outputs of the step that led into the parallel step.
+pub fn branch_runs(when: &Option<Guard>, entry: &HashMap<String, OutputValue>) -> bool {
+    when.is_none() || matches(when, VisitResult::Completed, entry)
+}
+
 /// The first transition whose guard matches. A failed visit only follows
 /// `status: failed` guards; unguarded transitions need a completed visit.
 pub fn select_transition<'a>(
@@ -217,6 +223,7 @@ mod tests {
             outputs: vec![],
             transitions,
             max_visits: 3,
+            when: None,
         })
     }
     fn vals(pairs: &[(&str, OutputValue)]) -> HashMap<String, OutputValue> {

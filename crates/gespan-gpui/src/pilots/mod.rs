@@ -9,6 +9,7 @@ mod files;
 mod filters;
 mod floating;
 mod flow_reviews;
+mod graph;
 mod host;
 pub(crate) use host::pilot_folder_id;
 mod html;

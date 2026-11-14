@@ -56,10 +56,7 @@ fn step_title<'a>(run: &'a FlowRun, state_id: &'a str) -> &'a str {
         .states
         .iter()
         .find(|s| s.id() == state_id)
-        .map(|s| match s {
-            crate::flow::FlowState::Agent(a) => a.title.as_str(),
-            crate::flow::FlowState::Approval(a) => a.title.as_str(),
-        })
+        .map(crate::flow::FlowState::title)
         .filter(|t| !t.trim().is_empty())
         .unwrap_or(state_id)
 }
@@ -284,6 +281,7 @@ mod tests {
                     when: None,
                 }],
                 max_visits: 3,
+                when: None,
             })
         };
         FlowRun {

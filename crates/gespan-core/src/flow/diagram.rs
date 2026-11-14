@@ -221,6 +221,9 @@ pub fn structure_key(flow: &Flow) -> u64 {
     for state in &flow.states {
         state.id().hash(&mut h);
         matches!(state, FlowState::Approval(_)).hash(&mut h);
+        if let FlowState::Parallel(p) = state {
+            p.branches.hash(&mut h);
+        }
         let transitions = state.transitions();
         transitions.len().hash(&mut h);
         for t in transitions {
@@ -259,7 +262,7 @@ pub fn build(flow: &Flow) -> Diagram {
     };
     let mut kinds: Vec<NodeKind> = vec![NodeKind::Start];
     kinds.extend(states.iter().map(|s| match s {
-        FlowState::Agent(_) => NodeKind::Agent,
+        FlowState::Agent(_) | FlowState::Parallel(_) => NodeKind::Agent,
         FlowState::Approval(_) => NodeKind::Approval,
     }));
     for (id, kind) in [(SUCCEEDED, NodeKind::Succeeded), (FAILED, NodeKind::Failed)] {
@@ -287,6 +290,21 @@ pub fn build(flow: &Flow) -> Diagram {
         });
     }
     for (i, state) in states.iter().enumerate() {
+        // A parallel step leads to each of its branches.
+        if let FlowState::Parallel(p) = state {
+            for branch in &p.branches {
+                if let Some(&to) = index.get(branch.as_str()).filter(|&&n| is_state(n)) {
+                    edges.push(Edge {
+                        from: i + 1,
+                        to,
+                        label: None,
+                        implicit: true,
+                        back: false,
+                        failure: false,
+                    });
+                }
+            }
+        }
         let labels = transition_labels(state.transitions());
         for (t, label) in state.transitions().iter().zip(labels) {
             let Some(&to) = index.get(t.to.as_str()) else {
@@ -464,11 +482,7 @@ pub fn build(flow: &Flow) -> Diagram {
             NodeKind::Failed => (FAILED.to_string(), "Failed".to_string()),
             NodeKind::Agent | NodeKind::Approval => {
                 let s = states[n - 1];
-                let title = match s {
-                    FlowState::Agent(a) => a.title.clone(),
-                    FlowState::Approval(a) => a.title.clone(),
-                };
-                (s.id().to_string(), title)
+                (s.id().to_string(), s.title().to_string())
             }
         };
         let (w, h) = match kind {
@@ -1104,6 +1118,7 @@ mod tests {
             outputs: vec![],
             transitions,
             max_visits: 3,
+            when: None,
         })
     }
 

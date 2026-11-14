@@ -63,6 +63,7 @@ fn agent(
         outputs,
         transitions,
         max_visits: DEFAULT_MAX_VISITS,
+        when: None,
     })
 }
 

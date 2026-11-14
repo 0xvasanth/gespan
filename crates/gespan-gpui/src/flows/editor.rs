@@ -511,11 +511,10 @@ mod tests {
             .iter_mut()
             .for_each(|i| i.default = None);
         for state in &mut with_optionals.states {
-            let transitions = match state {
-                FlowState::Agent(s) => &mut s.transitions,
-                FlowState::Approval(s) => &mut s.transitions,
-            };
-            transitions.iter_mut().for_each(|t| t.when = None);
+            state
+                .transitions_mut()
+                .iter_mut()
+                .for_each(|t| t.when = None);
         }
         let text = pretty(&with_optionals);
         assert!(!text.contains("\"default\"") && !text.contains("\"when\""));

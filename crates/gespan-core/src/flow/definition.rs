@@ -103,6 +103,36 @@ pub struct AgentState {
     pub outputs: Vec<OutputField>,
     pub transitions: Vec<Transition>,
     pub max_visits: u8,
+    /// Only on a parallel step's branch: the branch runs only when this
+    /// output guard matches the outputs of the step that led into the
+    /// parallel step; otherwise it is skipped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<Guard>,
+}
+
+/// How a parallel step's branches join. Only `all` exists: the step ends
+/// once every branch that runs has ended.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Join {
+    #[default]
+    All,
+}
+
+/// Runs its `branches` (agent states) side by side, then follows its
+/// transitions once they have all completed (`completed`) or one has failed
+/// past its `maxVisits` (`failed`). A failed branch is launched again, told
+/// what failed, while it has visits left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParallelState {
+    pub id: String,
+    pub title: String,
+    pub branches: Vec<String>,
+    #[serde(default)]
+    pub join: Join,
+    pub transitions: Vec<Transition>,
+    pub max_visits: u8,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -120,6 +150,7 @@ pub struct ApprovalState {
 pub enum FlowState {
     Agent(AgentState),
     Approval(ApprovalState),
+    Parallel(ParallelState),
 }
 
 impl FlowState {
@@ -127,25 +158,57 @@ impl FlowState {
         match self {
             Self::Agent(s) => &s.id,
             Self::Approval(s) => &s.id,
+            Self::Parallel(s) => &s.id,
+        }
+    }
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Agent(s) => &s.title,
+            Self::Approval(s) => &s.title,
+            Self::Parallel(s) => &s.title,
         }
     }
     pub fn transitions(&self) -> &[Transition] {
         match self {
             Self::Agent(s) => &s.transitions,
             Self::Approval(s) => &s.transitions,
+            Self::Parallel(s) => &s.transitions,
+        }
+    }
+    pub fn transitions_mut(&mut self) -> &mut Vec<Transition> {
+        match self {
+            Self::Agent(s) => &mut s.transitions,
+            Self::Approval(s) => &mut s.transitions,
+            Self::Parallel(s) => &mut s.transitions,
         }
     }
     pub fn max_visits(&self) -> u8 {
         match self {
             Self::Agent(s) => s.max_visits,
             Self::Approval(s) => s.max_visits,
+            Self::Parallel(s) => s.max_visits,
         }
     }
     fn text(&self) -> &str {
         match self {
             Self::Agent(s) => &s.brief,
             Self::Approval(s) => &s.message,
+            Self::Parallel(_) => "",
         }
+    }
+}
+
+impl Flow {
+    pub fn state(&self, id: &str) -> Option<&FlowState> {
+        self.states.iter().find(|s| s.id() == id)
+    }
+
+    /// The parallel step that runs `id` as one of its branches.
+    pub fn parent_of(&self, id: &str) -> Option<&ParallelState> {
+        self.states.iter().find_map(|s| match s {
+            FlowState::Parallel(p) if p.branches.iter().any(|b| b == id) => Some(p),
+            _ => None,
+        })
     }
 }
 
@@ -243,7 +306,13 @@ pub fn outputs_of(state: &FlowState) -> Vec<OutputField> {
     match state {
         FlowState::Agent(s) => s.outputs.clone(),
         FlowState::Approval(_) => approval_outputs(),
+        FlowState::Parallel(_) => Vec::new(),
     }
+}
+
+/// Whether `name` is a valid state, input or output name.
+pub(crate) fn is_state_name(name: &str) -> bool {
+    valid_name(name)
 }
 
 /// `^[a-z][a-z0-9_]{0,39}$`
@@ -370,6 +439,7 @@ pub fn validate_flow(flow: &Flow) -> Validation {
     if !flow.states.is_empty() && !by_id.contains_key(flow.initial.as_str()) {
         errors.push(format!("initial state \"{}\" is not a state", flow.initial));
     }
+    let branch_of = validate_parallel(flow, &by_id, &mut errors);
 
     let mut succ: HashMap<&str, Vec<&str>> = HashMap::new();
     for state in &flow.states {
@@ -415,6 +485,13 @@ pub fn validate_flow(flow: &Flow) -> Validation {
             }
         }
         succ.entry(id).or_default().extend(targets);
+        if let Some(parent) = branch_of.get(id) {
+            if !state.transitions().is_empty() {
+                errors.push(format!(
+                    "State \"{id}\": a branch of \"{parent}\" has no transitions; \"{parent}\"'s transitions follow it"
+                ));
+            }
+        }
 
         for (r, _) in list_bindings(state.text()) {
             let parts: Vec<&str> = r.split('.').collect();
@@ -439,6 +516,29 @@ pub fn validate_flow(flow: &Flow) -> Validation {
                 }
             }
         }
+    }
+
+    // A parallel step reads as its branches one after another, then its
+    // transitions: every branch is reachable through it, and a step after
+    // it may bind any branch's outputs.
+    for state in &flow.states {
+        let FlowState::Parallel(parallel) = state else {
+            continue;
+        };
+        let chain: Vec<&str> = parallel
+            .branches
+            .iter()
+            .map(String::as_str)
+            .filter(|b| by_id.contains_key(b))
+            .collect();
+        let (Some(first), Some(last)) = (chain.first(), chain.last()) else {
+            continue;
+        };
+        let targets = succ.insert(&parallel.id, vec![*first]).unwrap_or_default();
+        for pair in chain.windows(2) {
+            succ.entry(pair[0]).or_default().push(pair[1]);
+        }
+        succ.entry(*last).or_default().extend(targets);
     }
 
     if by_id.contains_key(flow.initial.as_str()) {
@@ -501,6 +601,96 @@ pub fn validate_flow(flow: &Flow) -> Validation {
     Validation { errors, warnings }
 }
 
+/// Checks every parallel step and its branches, and returns each branch's
+/// parallel step.
+fn validate_parallel<'a>(
+    flow: &'a Flow,
+    by_id: &HashMap<&'a str, &'a FlowState>,
+    errors: &mut Vec<String>,
+) -> HashMap<&'a str, &'a str> {
+    let mut branch_of: HashMap<&str, &str> = HashMap::new();
+    for state in &flow.states {
+        let FlowState::Parallel(parallel) = state else {
+            continue;
+        };
+        let id = parallel.id.as_str();
+        if parallel.branches.len() < 2 {
+            errors.push(format!(
+                "State \"{id}\": a parallel step needs at least 2 branches"
+            ));
+        }
+        let mut listed: HashSet<&str> = HashSet::new();
+        for branch in &parallel.branches {
+            if !listed.insert(branch) {
+                errors.push(format!(
+                    "State \"{id}\": branch \"{branch}\" is listed twice"
+                ));
+                continue;
+            }
+            match by_id.get(branch.as_str()) {
+                None => errors.push(format!("State \"{id}\": unknown branch \"{branch}\"")),
+                Some(FlowState::Agent(_)) => {
+                    if let Some(other) = branch_of.insert(branch, id) {
+                        errors.push(format!(
+                            "State \"{branch}\": a branch of both \"{other}\" and \"{id}\""
+                        ));
+                    }
+                }
+                Some(_) => errors.push(format!(
+                    "State \"{id}\": branch \"{branch}\" must be an agent step"
+                )),
+            }
+        }
+    }
+    // The steps whose transitions lead to each state.
+    let mut leading: HashMap<&str, Vec<&FlowState>> = HashMap::new();
+    for state in &flow.states {
+        for t in state.transitions() {
+            leading.entry(t.to.as_str()).or_default().push(state);
+        }
+    }
+    for state in &flow.states {
+        let FlowState::Agent(agent) = state else {
+            continue;
+        };
+        let id = agent.id.as_str();
+        let Some(parent) = branch_of.get(id) else {
+            if agent.when.is_some() {
+                errors.push(format!(
+                    "State \"{id}\": only a parallel step's branch can have \"when\""
+                ));
+            }
+            continue;
+        };
+        if id == flow.initial {
+            errors.push(format!(
+                "State \"{id}\": a branch of \"{parent}\" cannot be the initial state"
+            ));
+        }
+        if leading.contains_key(id) {
+            errors.push(format!(
+                "State \"{id}\": a branch of \"{parent}\" runs only from it, so no transition may lead to it"
+            ));
+        }
+        match &agent.when {
+            None => {}
+            Some(Guard::Status { .. }) => errors.push(format!(
+                "State \"{id}\": a branch's \"when\" must be an output guard"
+            )),
+            Some(Guard::Output { field, .. }) => {
+                let before = leading.get(parent).map(Vec::as_slice).unwrap_or_default();
+                let named = |s: &&FlowState| outputs_of(s).iter().any(|f| &f.name == field);
+                if before.is_empty() || !before.iter().all(named) {
+                    errors.push(format!(
+                        "State \"{id}\": \"when\" needs output \"{field}\" on every step that leads to \"{parent}\""
+                    ));
+                }
+            }
+        }
+    }
+    branch_of
+}
+
 /// The JSON keys each Flow type writes. Serde ignores keys it doesn't know,
 /// so the editor compares typed text against these to catch typos. A test
 /// pins every list to what serde writes.
@@ -528,9 +718,19 @@ pub const AGENT_STATE_KEYS: &[&str] = &[
     "outputs",
     "transitions",
     "maxVisits",
+    "when",
 ];
 pub const APPROVAL_STATE_KEYS: &[&str] =
     &["kind", "id", "title", "message", "transitions", "maxVisits"];
+pub const PARALLEL_STATE_KEYS: &[&str] = &[
+    "kind",
+    "id",
+    "title",
+    "branches",
+    "join",
+    "transitions",
+    "maxVisits",
+];
 pub const OUTPUT_FIELD_KEYS: &[&str] = &["name", "type", "description"];
 pub const TRANSITION_KEYS: &[&str] = &["to", "when"];
 pub const STATUS_GUARD_KEYS: &[&str] = &["kind", "is"];
@@ -572,10 +772,10 @@ pub fn unknown_fields(flow_json: &serde_json::Value) -> Vec<String> {
     for (position, state) in list(flow_json, "states").iter().enumerate() {
         let id = name_of(state, "id", position);
         let place = format!("state {id}");
-        let known = if state.get("kind").and_then(Value::as_str) == Some("approval") {
-            APPROVAL_STATE_KEYS
-        } else {
-            AGENT_STATE_KEYS
+        let known = match state.get("kind").and_then(Value::as_str) {
+            Some("approval") => APPROVAL_STATE_KEYS,
+            Some("parallel") => PARALLEL_STATE_KEYS,
+            _ => AGENT_STATE_KEYS,
         };
         scan(state, known, &place, &mut errors);
         for (index, output) in list(state, "outputs").iter().enumerate() {
@@ -645,6 +845,24 @@ mod tests {
             ],
             max_visits: 1,
         });
+        let mut branch = agent("mobile");
+        branch.transitions.clear();
+        branch.outputs = vec![field("built", OutputType::Boolean)];
+        branch.when = Some(Guard::Output {
+            field: "changed".into(),
+            op: GuardOp::Truthy,
+            value: None,
+        });
+        flow.states.push(FlowState::Agent(branch));
+        flow.states.push(FlowState::Parallel(ParallelState {
+            id: "both".into(),
+            title: "Both".into(),
+            branches: vec!["gate".into(), "mobile".into()],
+            join: Join::All,
+            transitions: vec![to(SUCCEEDED)],
+            max_visits: 1,
+        }));
+        // The approval stays last, where the unknown-field test edits it.
         flow.states.push(approval);
         flow
     }
@@ -698,10 +916,12 @@ mod tests {
         assert_eq!(keys(&json), sorted(FLOW_KEYS));
         assert_eq!(keys(&json["inputs"][0]), sorted(INPUT_KEYS));
         let states = json["states"].as_array().unwrap();
-        let agent = states.iter().find(|s| s["kind"] == "agent").unwrap();
+        let agent = states.iter().find(|s| s["id"] == "mobile").unwrap();
         let approval = states.iter().find(|s| s["id"] == "gate").unwrap();
+        let parallel = states.iter().find(|s| s["kind"] == "parallel").unwrap();
         assert_eq!(keys(agent), sorted(AGENT_STATE_KEYS));
         assert_eq!(keys(approval), sorted(APPROVAL_STATE_KEYS));
+        assert_eq!(keys(parallel), sorted(PARALLEL_STATE_KEYS));
         assert_eq!(keys(&agent["outputs"][0]), sorted(OUTPUT_FIELD_KEYS));
         assert_eq!(keys(&approval["transitions"][0]), sorted(TRANSITION_KEYS));
         assert_eq!(
@@ -769,6 +989,7 @@ mod tests {
             outputs: vec![],
             transitions: vec![to(SUCCEEDED)],
             max_visits: 3,
+            when: None,
         }
     }
 
@@ -1296,5 +1517,164 @@ mod tests {
                 OutputValue::List(vec!["x".into(), "y".into()]),
             ]
         );
+    }
+
+    // ---- parallel steps ------------------------------------------------
+
+    /// a (reports `changed`) → both (x, y side by side) → z, whose brief
+    /// binds an output of branch x.
+    fn with_parallel() -> Flow {
+        let leaf = |id: &str| {
+            FlowState::Agent(AgentState {
+                transitions: vec![],
+                ..agent(id)
+            })
+        };
+        let mut x = AgentState {
+            transitions: vec![],
+            outputs: vec![field("artifact", OutputType::String)],
+            ..agent("x")
+        };
+        x.brief = "Build it.".into();
+        make_flow(vec![
+            FlowState::Agent(AgentState {
+                outputs: vec![field("changed", OutputType::Boolean)],
+                transitions: vec![to("both")],
+                ..agent("a")
+            }),
+            FlowState::Parallel(ParallelState {
+                id: "both".into(),
+                title: "Both".into(),
+                branches: vec!["x".into(), "y".into()],
+                join: Join::All,
+                transitions: vec![to("z")],
+                max_visits: 1,
+            }),
+            FlowState::Agent(x),
+            leaf("y"),
+            FlowState::Agent(AgentState {
+                brief: "Ship {{states.x.outputs.artifact}}.".into(),
+                ..agent("z")
+            }),
+        ])
+    }
+
+    fn parallel_mut(flow: &mut Flow) -> &mut ParallelState {
+        flow.states
+            .iter_mut()
+            .find_map(|s| match s {
+                FlowState::Parallel(p) => Some(p),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    fn agent_mut<'a>(flow: &'a mut Flow, id: &str) -> &'a mut AgentState {
+        flow.states
+            .iter_mut()
+            .find_map(|s| match s {
+                FlowState::Agent(a) if a.id == id => Some(a),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_parallel_step_is_valid_and_a_later_step_may_bind_any_branch() {
+        // Branches are reachable through their step, and a branch's output
+        // is guaranteed after the join, so binding it gives no warning.
+        assert_eq!(validate_flow(&with_parallel()), Validation::default());
+    }
+
+    #[test]
+    fn a_parallel_step_needs_two_known_agent_branches_listed_once() {
+        let mut flow = with_parallel();
+        parallel_mut(&mut flow).branches = vec!["x".into()];
+        assert!(
+            errors_of(&flow).contains("State \"both\": a parallel step needs at least 2 branches")
+        );
+
+        let mut flow = with_parallel();
+        parallel_mut(&mut flow).branches.push("nope".into());
+        assert!(errors_of(&flow).contains("State \"both\": unknown branch \"nope\""));
+
+        let mut flow = with_parallel();
+        parallel_mut(&mut flow).branches.push("x".into());
+        assert!(errors_of(&flow).contains("State \"both\": branch \"x\" is listed twice"));
+
+        let mut flow = with_parallel();
+        parallel_mut(&mut flow).branches.push("both".into());
+        assert!(errors_of(&flow).contains("State \"both\": branch \"both\" must be an agent step"));
+    }
+
+    #[test]
+    fn a_branch_belongs_to_its_step_alone() {
+        let mut flow = with_parallel();
+        agent_mut(&mut flow, "x").transitions = vec![to("z")];
+        assert!(errors_of(&flow).contains(
+            "State \"x\": a branch of \"both\" has no transitions; \"both\"'s transitions follow it"
+        ));
+
+        let mut flow = with_parallel();
+        agent_mut(&mut flow, "a").transitions = vec![to("x")];
+        assert!(errors_of(&flow).contains(
+            "State \"x\": a branch of \"both\" runs only from it, so no transition may lead to it"
+        ));
+
+        let mut flow = with_parallel();
+        flow.initial = "x".into();
+        assert!(errors_of(&flow)
+            .contains("State \"x\": a branch of \"both\" cannot be the initial state"));
+
+        let mut flow = with_parallel();
+        flow.states.push(FlowState::Parallel(ParallelState {
+            id: "again".into(),
+            branches: vec!["x".into(), "y".into()],
+            ..parallel_mut(&mut with_parallel()).clone()
+        }));
+        agent_mut(&mut flow, "z").transitions = vec![to("again")];
+        let errors = errors_of(&flow);
+        assert!(
+            errors.contains("State \"x\": a branch of both \"both\" and \"again\""),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn a_branch_condition_names_an_output_of_every_step_before_it() {
+        let changed = |field: &str| {
+            Some(Guard::Output {
+                field: field.into(),
+                op: GuardOp::Truthy,
+                value: None,
+            })
+        };
+        let mut flow = with_parallel();
+        agent_mut(&mut flow, "y").when = changed("changed");
+        assert_eq!(validate_flow(&flow), Validation::default());
+
+        agent_mut(&mut flow, "y").when = changed("missing");
+        assert!(errors_of(&flow).contains(
+            "State \"y\": \"when\" needs output \"missing\" on every step that leads to \"both\""
+        ));
+
+        agent_mut(&mut flow, "y").when = Some(Guard::Status {
+            is: VisitResult::Completed,
+        });
+        assert!(
+            errors_of(&flow).contains("State \"y\": a branch's \"when\" must be an output guard")
+        );
+
+        let mut flow = with_parallel();
+        agent_mut(&mut flow, "z").when = changed("changed");
+        assert!(errors_of(&flow)
+            .contains("State \"z\": only a parallel step's branch can have \"when\""));
+    }
+
+    #[test]
+    fn a_pilot_flow_may_hold_a_parallel_step() {
+        let mut flow = with_parallel();
+        flow.owner = Some("p1".into());
+        assert_eq!(validate_flow(&flow).errors, Vec::<String>::new());
     }
 }

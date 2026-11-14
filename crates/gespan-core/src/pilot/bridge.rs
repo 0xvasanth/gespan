@@ -481,7 +481,8 @@ mod capability_tests {
             .call(&grant(80), "app_help", json!({"action":"flows.save"}))
             .unwrap();
         assert_eq!(
-            flow["input"]["properties"]["flow"]["properties"]["states"]["items"]["required"],
+            flow["input"]["properties"]["flow"]["properties"]["states"]["items"]["oneOf"][0]
+                ["required"],
             json!(["id", "title", "harness", "model", "brief", "transitions"])
         );
         let unknown = Toolkit::APP

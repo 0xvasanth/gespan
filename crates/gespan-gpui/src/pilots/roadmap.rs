@@ -1,21 +1,22 @@
-//! The Pilot's SOP Roadmap tab: the Flows a Pilot owns, drawn as diagrams,
-//! with a Flow picker, a Run picker and a details drawer for one state.
+//! The Pilot's Pipeline tab: the Flows a Pilot owns, drawn top to bottom as
+//! the board draws them, with pipeline and version pickers, the run shown
+//! ("This run"), its earlier runs and a details drawer for one step.
 //!
 //! The tab only reads the store, off the main thread; Flows change through
-//! the Pilot's `flows.*` actions. With a run picked it draws that run's
+//! the Pilot's `flows.*` actions. With a run shown it draws that run's
 //! snapshot (which may have been edited), otherwise the saved Flow.
+use super::graph::{GraphEvent, PipelineGraph, faint_ink};
 use super::panels::{Route, empty_state};
 use super::*;
-use crate::flows::diagram::{DiagramEvent, DiagramView};
 use crate::popover::{Anchor, MenuAction, MenuItem, menu_popover};
+use gespan_core::flow::graph::{self as layout, GraphRow};
 use gespan_core::flow::{
-    FAILED, Flow, FlowRun, FlowState, FlowStore, FlowVisit, SUCCEEDED, diagram,
+    FAILED, Flow, FlowRun, FlowState, FlowStore, FlowVisit, RunStatus, SUCCEEDED, diagram,
 };
-use gpui::FontWeight;
+use gpui::{FontWeight, Hsla, ScrollHandle};
 
 /// The empty state's copy, exactly.
 pub(super) const EMPTY: &str = "This Pilot has no Flows yet. Ask it to create one below.";
-const BLUEPRINT: &str = "Blueprint only";
 /// Runs offered for the shown Flow, newest first.
 const RUN_LIMIT: usize = 50;
 const NOT_READY: &str = "Flows are not ready";
@@ -37,7 +38,6 @@ pub(crate) struct AskPilot(pub String);
 enum Picker {
     Flow,
     Version,
-    Run,
 }
 
 /// One load from the store, for the selection it was asked for.
@@ -52,12 +52,14 @@ struct Load {
 
 /// Reads `pilot`'s Flows, newest `updatedAt` first, and resolves the asked
 /// selection: a Flow that is gone falls back to the newest, a run that is
-/// gone (or not of the shown Flow) to the blueprint.
+/// gone (or not of the shown Flow) to the blueprint. With no run asked for
+/// and `follow` set, the newest run still going is shown.
 fn load(
     store: &FlowStore,
     pilot: &str,
     flow: Option<&str>,
     run: Option<&str>,
+    follow: bool,
 ) -> Result<Load, String> {
     let mut flows = store.owned(pilot)?;
     flows.sort_by(|a, b| {
@@ -80,8 +82,13 @@ fn load(
     // never load, so it is not offered.
     let mut runs = store.runs(&shown, RUN_LIMIT)?;
     runs.retain(|r| r.flow.owner.as_deref() == Some(pilot));
-    let run = match run {
-        Some(id) if kept.is_some() => store
+    let going = runs
+        .iter()
+        .find(|r| r.status.is_active())
+        .map(|r| r.id.clone())
+        .filter(|_| follow);
+    let run = match run.or(going.as_deref()) {
+        Some(id) if kept.is_some() || going.as_deref() == Some(id) => store
             .owned_run(pilot, id)?
             .filter(|(run, _)| run.flow_id == shown),
         _ => None,
@@ -130,15 +137,15 @@ pub(crate) struct Roadmap {
     visits: Vec<FlowVisit>,
     /// The definition on screen: the run's snapshot, else the saved Flow.
     pub(super) drawn: Option<Flow>,
-    /// The last laid-out definition; status-only reloads reuse its layout.
-    layout: Option<(Flow, diagram::Diagram)>,
+    /// The last laid-out definition; status-only reloads reuse its rows.
+    layout: Option<(Flow, Vec<GraphRow>)>,
     /// Per Flow id (blueprint) or run id (snapshot): the definition last
     /// loaded and how many of the run's edits were seen, so a reload badges
     /// only what changed since.
     last_loaded: HashMap<String, (Flow, usize)>,
     /// The state whose details are open.
     pub(super) drawer: Option<String>,
-    /// The diagram's selected state.
+    /// The graph's selected step.
     selected: Option<String>,
     pub(super) generation: u64,
     /// How many times a definition was laid out.
@@ -146,18 +153,22 @@ pub(crate) struct Roadmap {
     pub(super) layouts: usize,
     pub(super) loaded: bool,
     pub(super) error: Option<String>,
-    pub(super) diagram: Entity<DiagramView>,
+    pub(super) graph: Entity<PipelineGraph>,
+    /// Scrolls the run card, the graph and the earlier runs together.
+    pub(super) scroll: ScrollHandle,
+    /// Watches the shown run's running sessions, to mark a step waiting on
+    /// the user the moment its session asks.
+    watching: Vec<(String, i64, Subscription)>,
     picker: Option<(Picker, Entity<Menu>, Subscription)>,
     flow_anchor: AnchorSlot,
     version_anchor: AnchorSlot,
-    run_anchor: AnchorSlot,
     /// The question or change request for the Pilot.
     pub(super) ask: Entity<Input>,
     /// Messages sent from the tab that the Pilot has not taken yet.
     pub(super) queued: Vec<String>,
     /// One of `queued` failed to send and waits for a retry in the chat.
     queue_failed: bool,
-    _diagram_events: Subscription,
+    _graph_events: Subscription,
     _ask_events: Subscription,
 }
 
@@ -166,17 +177,18 @@ impl EventEmitter<AskPilot> for Roadmap {}
 
 impl Roadmap {
     pub fn new(pilot: String, owner: WeakEntity<Shell>, cx: &mut Context<Self>) -> Self {
-        let diagram = cx.new(DiagramView::new);
-        let events = cx.subscribe(&diagram, |this, _, event: &DiagramEvent, cx| {
+        let graph = cx.new(PipelineGraph::new);
+        let events = cx.subscribe(&graph, |this, _, event: &GraphEvent, cx| {
             match event {
-                DiagramEvent::Selected(id) => {
+                GraphEvent::Selected(id) => {
                     this.selected = id.clone();
                     // An open drawer follows the selection.
                     if let (Some(_), Some(id)) = (&this.drawer, id) {
                         this.drawer = Some(id.clone());
                     }
                 }
-                DiagramEvent::Open(id) => this.drawer = Some(id.clone()),
+                GraphEvent::Open(id) => this.drawer = Some(id.clone()),
+                GraphEvent::Answer(session) => cx.emit(OpenSession(*session)),
             }
             cx.notify();
         });
@@ -213,15 +225,16 @@ impl Roadmap {
             layouts: 0,
             loaded: false,
             error: None,
-            diagram,
+            graph,
+            scroll: ScrollHandle::new(),
+            watching: Vec::new(),
             picker: None,
             flow_anchor: AnchorSlot::default(),
             version_anchor: AnchorSlot::default(),
-            run_anchor: AnchorSlot::default(),
             ask,
             queued: Vec::new(),
             queue_failed: false,
-            _diagram_events: events,
+            _graph_events: events,
             _ask_events: ask_events,
         }
     }
@@ -271,6 +284,9 @@ impl Roadmap {
         let (owner, pilot) = (self.owner.clone(), self.pilot.clone());
         let flow = self.flow.clone().filter(|_| self.picked);
         let run = self.run.clone();
+        // Until the person picks, the tab shows the run still going; a
+        // drawn earlier version or draft has no runs here.
+        let follow = !self.picked && self.version.is_none();
         cx.spawn(async move |this, cx| {
             // Read here, not in `reload`, which may run inside a Shell update.
             // A change that just reported success may still be writing.
@@ -289,7 +305,7 @@ impl Roadmap {
                             let store = store
                                 .lock()
                                 .map_err(|_| "Flows are unavailable".to_string())?;
-                            load(&store, &pilot, flow.as_deref(), run.as_deref())
+                            load(&store, &pilot, flow.as_deref(), run.as_deref(), follow)
                         })
                         .await
                 }
@@ -329,13 +345,12 @@ impl Roadmap {
             self.version = None;
         }
         self.run = load.run.as_ref().map(|(run, _)| run.id.clone());
-        let (drawn, overlay, visits, edits) = match load.run {
+        let (drawn, current, visits, edits) = match load.run {
             Some((run, visits)) => {
-                let overlay = diagram::overlay(&run, &visits);
                 let key = run.id.clone();
                 (
                     Some(run.flow),
-                    Some(overlay),
+                    run.current_state,
                     visits,
                     Some((key, run.edits)),
                 )
@@ -359,29 +374,31 @@ impl Roadmap {
         }
         match &drawn {
             Some(flow) => {
-                let laid_out = match &self.layout {
-                    Some((before, laid_out)) if before == flow => laid_out.clone(),
+                let rows = match &self.layout {
+                    Some((before, rows)) if before == flow => rows.clone(),
                     _ => {
-                        let laid_out = diagram::build(flow);
+                        let rows = layout::layout(flow);
                         #[cfg(test)]
                         {
                             self.layouts += 1;
                         }
-                        self.layout = Some((flow.clone(), laid_out.clone()));
-                        laid_out
+                        self.layout = Some((flow.clone(), rows.clone()));
+                        rows
                     }
                 };
                 let (key, edits) = edits.unwrap_or_else(|| (flow.id.clone(), Vec::new()));
                 let changed = self.changed_since_last_load(key, flow, &edits);
-                let structure = diagram::structure_key(flow);
-                self.diagram.update(cx, |view, cx| {
-                    view.set(laid_out, overlay, changed, structure, cx)
+                let cards = layout::cards(flow, &rows, &self.visits);
+                let flow = flow.clone();
+                self.graph.update(cx, |graph, cx| {
+                    graph.set(flow, rows, cards, current, changed, cx)
                 });
             }
-            // `selected` stays the widget's: it keeps its selection too.
+            // `selected` stays the graph's: it keeps its selection too.
             None => self.layout = None,
         }
         self.drawn = drawn;
+        self.watch_waiting(cx);
         // Forget Flows and runs that are gone; the picked run is kept even
         // when it has fallen out of the newest runs.
         let (flows, runs, run) = (&self.flows, &self.runs, &self.run);
@@ -390,6 +407,53 @@ impl Roadmap {
                 || runs.iter().any(|r| &r.id == key)
                 || run.as_ref() == Some(key)
         });
+    }
+
+    /// Watches the session of each running step of the shown run, and tells
+    /// the graph which of them wait for the user.
+    fn watch_waiting(&mut self, cx: &mut Context<Self>) {
+        let running: Vec<(String, i64)> = self
+            .visits
+            .iter()
+            .filter(|v| v.status == gespan_core::flow::VisitStatus::Running)
+            .filter_map(|v| Some((v.state_id.clone(), v.session_id.as_deref()?.parse().ok()?)))
+            .collect();
+        let same = running.len() == self.watching.len()
+            && running
+                .iter()
+                .zip(&self.watching)
+                .all(|((s, id), (ws, wid, _))| s == ws && id == wid);
+        if !same {
+            let owner = self.owner.clone();
+            self.watching = running
+                .into_iter()
+                .filter_map(|(state, session)| {
+                    let view = owner.upgrade()?.read(cx).session_view(session)?;
+                    let watch = cx.observe(&view, |this, _, cx| this.mark_waiting(cx));
+                    Some((state, session, watch))
+                })
+                .collect();
+        }
+        self.mark_waiting(cx);
+    }
+
+    fn mark_waiting(&mut self, cx: &mut Context<Self>) {
+        let Some(shell) = self.owner.upgrade() else {
+            return;
+        };
+        let waiting: HashSet<String> = self
+            .watching
+            .iter()
+            .filter(|(_, session, _)| {
+                shell
+                    .read(cx)
+                    .session_view(*session)
+                    .is_some_and(|view| view.read(cx).needs_approval())
+            })
+            .map(|(state, _, _)| state.clone())
+            .collect();
+        self.graph
+            .update(cx, |graph, cx| graph.set_waiting(waiting, cx));
     }
 
     /// The states of `flow` (shown under `key`) changed since `key` last
@@ -463,16 +527,14 @@ impl Roadmap {
         self.version.or_else(|| self.live_version())
     }
 
-    /// Draws `version` of the shown Flow (`None`: the live one). Another
-    /// version is a blueprint: it has no runs of its own here.
+    /// Draws `version` of the shown Flow (`None`: the live one) as a
+    /// blueprint: picking a version leaves the run shown.
     pub(super) fn select_version(&mut self, version: Option<i64>, cx: &mut Context<Self>) {
         let version = version.filter(|v| Some(*v) != self.live_version());
         self.diff = false;
-        if self.version != version {
+        if self.version != version || self.run.is_some() {
             self.version = version;
-            if version.is_some() {
-                self.run = None;
-            }
+            self.run = None;
             self.drawer = None;
         }
         self.picked = true;
@@ -547,17 +609,6 @@ impl Roadmap {
         .detach();
     }
 
-    /// "Blueprint only", then the shown Flow's runs as "<task> · <goal>".
-    pub(super) fn run_choices(&self) -> Vec<(Option<String>, String)> {
-        std::iter::once((None, BLUEPRINT.to_string()))
-            .chain(
-                self.runs
-                    .iter()
-                    .map(|run| (Some(run.id.clone()), run_label(run))),
-            )
-            .collect()
-    }
-
     /// The line naming what the user is looking at, for a message to the Pilot:
     /// `[SOP Roadmap · Flow "<name>" (<flowId>) · run <runId|blueprint> · step "<stateId>"]`,
     /// the step only while a state is selected.
@@ -611,21 +662,10 @@ impl Roadmap {
                         .into()
                 })
                 .collect(),
-            Picker::Run => self
-                .run_choices()
-                .into_iter()
-                .map(|(id, label)| {
-                    let checked = self.run == id;
-                    MenuAction::new(format!("run:{}", id.unwrap_or_default()), label)
-                        .checked(checked)
-                        .into()
-                })
-                .collect(),
         };
         let label = match which {
             Picker::Flow => "Pipeline",
             Picker::Version => "Version",
-            Picker::Run => "Run",
         };
         let menu = cx.new(|cx| Menu::new(label, items, window, cx).width(280.));
         let events = cx.subscribe(&menu, |this, _, event: &MenuEvent, cx| {
@@ -635,8 +675,6 @@ impl Roadmap {
                     this.select_flow(flow.to_owned(), cx);
                 } else if let Some(version) = id.strip_prefix("version:") {
                     this.select_version(version.parse().ok(), cx);
-                } else if let Some(run) = id.strip_prefix("run:") {
-                    this.select_run((!run.is_empty()).then(|| run.to_owned()), cx);
                 }
             }
             cx.notify();
@@ -655,11 +693,9 @@ impl Roadmap {
         let (id, anchor) = match which {
             Picker::Flow => ("pilot-roadmap-flow-picker", &self.flow_anchor),
             Picker::Version => ("pilot-roadmap-version-picker", &self.version_anchor),
-            Picker::Run => ("pilot-roadmap-run-picker", &self.run_anchor),
         };
-        // The pipeline and version are the board's `.select` chips: their
-        // value and a caret. The run keeps its caption.
-        let chip = which != Picker::Run;
+        // The board's `.select` chips: their value and a caret.
+        let chip = true;
         let open = self.picker.as_ref().is_some_and(|(p, _, _)| *p == which);
         div()
             .id(id)
@@ -701,9 +737,9 @@ impl Roadmap {
                     .when(which == Picker::Flow, |d| {
                         d.font_weight(gpui::FontWeight::SEMIBOLD)
                     })
-                    .child(value),
+                    // The board's caret is part of the label.
+                    .child(format!("{value} ▾")),
             )
-            .child(icon("chevron-down", 12.))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if this.picker.as_ref().is_some_and(|(p, _, _)| *p == which) {
                     this.picker = None;
@@ -724,6 +760,11 @@ impl Roadmap {
                 s.title.clone(),
                 s.message.clone(),
                 gespan_core::flow::definition::approval_outputs(),
+            ),
+            FlowState::Parallel(s) => (
+                s.title.clone(),
+                format!("Runs side by side: {}.", s.branches.join(", ")),
+                Vec::new(),
             ),
         };
         let target = |to: &str| match to {
@@ -898,10 +939,224 @@ impl Roadmap {
 }
 
 fn state_title(state: &FlowState) -> &str {
-    match state {
-        FlowState::Agent(s) => &s.title,
-        FlowState::Approval(s) => &s.title,
+    state.title()
+}
+
+/// When a run started or ended, as the board writes it: "Nov 12".
+fn day(ms: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map_or_else(String::new, |t| t.format("%b %-d").to_string())
+}
+
+impl Roadmap {
+    /// The run shown is `run`; its version is the saved one whose
+    /// definition its snapshot started from, if any.
+    fn run_version(&self, run: &FlowRun) -> Option<i64> {
+        let same = |a: &Flow, b: &Flow| {
+            let mut a = a.clone();
+            a.created_at = b.created_at;
+            a.updated_at = b.updated_at;
+            a == *b
+        };
+        self.versions
+            .iter()
+            .filter(|v| !v.draft)
+            .find(|v| same(&v.flow, &run.flow))
+            .map(|v| v.version)
     }
+
+    /// "This run · <task> · v<n>", how far it is and how long it has taken.
+    fn run_card(&self, cx: &App) -> Option<AnyElement> {
+        let run_id = self.run.as_deref()?;
+        let run = self.runs.iter().find(|r| r.id == run_id)?;
+        let rows = self.layout.as_ref().map(|(_, rows)| rows.as_slice())?;
+        let newest = self.runs.first().is_some_and(|r| r.id == run.id);
+        let name = run
+            .tag
+            .as_ref()
+            .map_or(run.flow.name.as_str(), |t| t.task.as_str());
+        let mut label = format!("{} · {name}", if newest { "This run" } else { "Run" });
+        if let Some(version) = self.run_version(run) {
+            label.push_str(&format!(" · v{version}"));
+        }
+        let step = layout::current_row(rows, &self.visits).map_or(0, |i| i + 1);
+        let waiting = self.graph.read(cx).any_waiting();
+        let (status, tone) = match run.status {
+            RunStatus::Succeeded => ("Done".to_string(), StatusTone::Ok),
+            RunStatus::Failed => ("Failed".to_string(), StatusTone::Bad),
+            RunStatus::Cancelled => ("Stopped".to_string(), StatusTone::Muted),
+            _ if waiting => (format!("Step {step} of {}", rows.len()), StatusTone::Wait),
+            _ => (format!("Step {step} of {}", rows.len()), StatusTone::Run),
+        };
+        let end = run
+            .finished_at
+            .unwrap_or_else(|| gespan_core::time::now_ms() as i64);
+        let took = crate::shell::running_elapsed((end - run.created_at).max(0) as u64);
+        Some(
+            crate::glass::card()
+                .debug_selector(|| "pilot-roadmap-run-card".into())
+                .flex_shrink_0()
+                .mb(px(12.))
+                .px(px(10.))
+                .py(px(8.))
+                .rounded(px(10.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(12.))
+                        .line_height(px(17.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(content(0.92))
+                        .child(label),
+                )
+                .child(status_chip(status, tone))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .text_size(px(11.5))
+                        .line_height(px(16.))
+                        .text_color(faint_ink())
+                        .child(took),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// "Earlier runs": every other run of the shown Flow, newest first;
+    /// picking one shows it.
+    fn earlier_runs(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let others: Vec<&FlowRun> = self
+            .runs
+            .iter()
+            .filter(|r| Some(r.id.as_str()) != self.run.as_deref())
+            .collect();
+        if others.is_empty() {
+            return None;
+        }
+        Some(
+            div()
+                .debug_selector(|| "pilot-roadmap-earlier".into())
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .px(px(4.))
+                        .pt(px(14.))
+                        .pb(px(6.))
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(faint_ink())
+                        .child("EARLIER RUNS"),
+                )
+                .child(div().px(px(4.)).flex().flex_col().gap(px(2.)).children(
+                    others.into_iter().map(|run| {
+                        let id = run.id.clone();
+                        let name = run
+                            .tag
+                            .as_ref()
+                            .map_or_else(|| run_label(run), |t| t.task.clone());
+                        let end = run
+                            .finished_at
+                            .unwrap_or_else(|| gespan_core::time::now_ms() as i64);
+                        let when = format!(
+                            "{} · {}",
+                            day(run.created_at),
+                            crate::shell::running_elapsed((end - run.created_at).max(0) as u64)
+                        );
+                        let dot = match run.status {
+                            RunStatus::Succeeded => rgb(0x6ee7b7).into(),
+                            RunStatus::Failed => rgb(0xfda4af).into(),
+                            RunStatus::Running | RunStatus::WaitingApproval => rgb(0x459bf7).into(),
+                            _ => content(0.22),
+                        };
+                        let selector = format!("pilot-roadmap-earlier-{id}");
+                        div()
+                            .id(SharedString::from(selector.clone()))
+                            .debug_selector(move || selector.clone())
+                            .role(Role::Button)
+                            .aria_label(SharedString::from(format!("{name}, {when}")))
+                            .cursor_pointer()
+                            .rounded(px(6.))
+                            .hover(|s| s.bg(content(0.05)))
+                            .flex()
+                            .gap(px(8.))
+                            .text_size(px(12.))
+                            .line_height(px(17.))
+                            .text_color(content(0.64))
+                            .child(
+                                div()
+                                    .mt(px(5.))
+                                    .size(px(7.))
+                                    .rounded_full()
+                                    .flex_shrink_0()
+                                    .bg(dot),
+                            )
+                            .child(div().min_w_0().truncate().child(name))
+                            .child(
+                                div()
+                                    .ml_auto()
+                                    .flex_shrink_0()
+                                    .text_size(px(11.5))
+                                    .line_height(px(16.))
+                                    .text_color(faint_ink())
+                                    .child(when),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.version = None;
+                                this.select_run(Some(id.clone()), cx);
+                            }))
+                    }),
+                ))
+                .into_any_element(),
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StatusTone {
+    Ok,
+    Bad,
+    Run,
+    Wait,
+    Muted,
+}
+
+/// The board's `.status` chip: a dot and a word on a tint of its colour.
+fn status_chip(label: String, tone: StatusTone) -> AnyElement {
+    let (ink, base): (Hsla, Hsla) = match tone {
+        StatusTone::Ok => (rgb(0x6ee7b7).into(), rgb(0x6ee7b7).into()),
+        StatusTone::Bad => (rgb(0xfda4af).into(), rgb(0xfda4af).into()),
+        StatusTone::Run => (rgb(0x8cc4ff).into(), rgb(0x459bf7).into()),
+        StatusTone::Wait => (rgb(0xf5dc84).into(), rgb(0xe8c547).into()),
+        StatusTone::Muted => (content(0.62), content(0.4)),
+    };
+    div()
+        .debug_selector(|| "pilot-roadmap-run-status".into())
+        .flex_none()
+        .h(px(22.))
+        .pl(px(8.))
+        .pr(px(9.))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .rounded_full()
+        .bg(base.opacity(0.10))
+        .border_1()
+        .border_color(base.opacity(0.22))
+        .text_size(px(11.5))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(ink)
+        .child(div().size(px(6.)).rounded_full().bg(ink))
+        .child(label)
+        .into_any_element()
 }
 
 impl Roadmap {
@@ -976,11 +1231,6 @@ impl Roadmap {
             .saved_flow()
             .map(|f| f.name.clone())
             .unwrap_or_default();
-        let run_name = self
-            .run_choices()
-            .into_iter()
-            .find(|(id, _)| *id == self.run)
-            .map_or_else(|| BLUEPRINT.to_string(), |(_, label)| label);
         let version_name = match (self.shown_version(), self.picked_version()) {
             (_, Some(v)) if v.draft => format!("v{} draft", v.version),
             (Some(v), _) => format!("v{v}"),
@@ -991,7 +1241,6 @@ impl Roadmap {
             let anchor = match which {
                 Picker::Flow => self.flow_anchor.clone(),
                 Picker::Version => self.version_anchor.clone(),
-                Picker::Run => self.run_anchor.clone(),
             };
             menu_popover(menu, Anchor::Slot(anchor), cx).priority(60)
         });
@@ -1020,18 +1269,6 @@ impl Roadmap {
                         .child(div().flex_1())
                         .child(self.view_switch(cx)),
                 )
-                // A drawn earlier version or draft is a blueprint; the live
-                // version picks a run.
-                .when(self.version.is_none() && !self.yaml, |d| {
-                    d.child(
-                        div()
-                            .flex_shrink_0()
-                            .px(px(16.))
-                            .pb(px(8.))
-                            .flex()
-                            .child(self.picker_button(Picker::Run, "Run", run_name, cx)),
-                    )
-                })
                 .when_some(self.error.clone(), |d, error| {
                     d.child(
                         div()
@@ -1047,6 +1284,10 @@ impl Roadmap {
                     if self.yaml {
                         d.child(self.yaml_view(cx))
                     } else {
+                        // The run card, the graph and the earlier runs
+                        // scroll together under the pickers.
+                        let run_card = self.run_card(cx);
+                        let earlier = self.earlier_runs(cx);
                         d.child(
                             div()
                                 .id("pilot-roadmap-canvas")
@@ -1054,8 +1295,20 @@ impl Roadmap {
                                 .flex_1()
                                 .min_h_0()
                                 .min_w_0()
-                                .overflow_hidden()
-                                .when(self.drawn.is_some(), |d| d.child(self.diagram.clone()))
+                                .child(
+                                    div()
+                                        .id("pilot-roadmap-scroll")
+                                        .size_full()
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.scroll)
+                                        .px(px(12.))
+                                        .pb(px(12.))
+                                        .flex()
+                                        .flex_col()
+                                        .children(run_card)
+                                        .when(self.drawn.is_some(), |d| d.child(self.graph.clone()))
+                                        .children(earlier),
+                                )
                                 .children(drawer),
                         )
                     }

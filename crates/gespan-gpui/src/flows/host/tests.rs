@@ -98,6 +98,7 @@ fn agent(id: &str, outputs: Vec<OutputField>, to: &str) -> FlowState {
             when: None,
         }],
         max_visits: 3,
+        when: None,
     })
 }
 

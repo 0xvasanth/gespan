@@ -46,6 +46,8 @@ const KEY_ORDER: &[&str] = &[
     "brief",
     "message",
     "outputs",
+    "branches",
+    "join",
     "maxVisits",
     "states",
     "to",
@@ -133,6 +135,13 @@ fn write_value(out: &mut String, value: &Value, indent: usize, inline: bool) {
 /// the next lines, indented, for the rest.
 fn write_entry(out: &mut String, value: &Value, indent: usize) {
     match value {
+        // A short list of names, like a parallel step's branches, reads best
+        // on one line, as the board writes it.
+        Value::Array(items) if !items.is_empty() && inline_list(value).is_some() => {
+            out.push(' ');
+            out.push_str(&inline_list(value).unwrap_or_default());
+            out.push('\n');
+        }
         Value::Object(map) if !map.is_empty() => {
             out.push('\n');
             write_value(out, value, indent + 2, false);
@@ -158,6 +167,21 @@ fn write_entry(out: &mut String, value: &Value, indent: usize) {
             write_value(out, value, indent, true);
         }
     }
+}
+
+/// `[a, b, c]` for a short list of plain names, like a parallel step's
+/// branches; `None` for anything else.
+fn inline_list(value: &Value) -> Option<String> {
+    let items = value.as_array()?;
+    let names: Vec<&str> = items
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .filter(|s| !s.is_empty() && super::definition::is_state_name(s))
+        })
+        .collect::<Option<_>>()?;
+    let line = format!("[{}]", names.join(", "));
+    (line.len() <= 60).then_some(line)
 }
 
 fn scalar_key(key: &str) -> String {
@@ -290,18 +314,41 @@ mod tests {
     }
 
     #[test]
-    fn long_text_is_a_block_and_empty_collections_stay_inline() {
+    fn long_text_is_a_block_and_short_name_lists_and_empty_collections_stay_inline() {
         let value = serde_json::json!({
             "brief": "Read the changes.\nWrite the plan.\n",
             "outputs": [],
             "when": {},
             "tags": ["one", "two"],
+            "notes": ["Read it.", "Ship it."],
         });
         let mut out = String::new();
         write_value(&mut out, &value, 0, false);
         assert_eq!(
             out,
-            "brief: |\n  Read the changes.\n  Write the plan.\noutputs: []\nwhen: {}\ntags:\n  - one\n  - two\n"
+            "brief: |\n  Read the changes.\n  Write the plan.\noutputs: []\nwhen: {}\nnotes:\n  - Read it.\n  - Ship it.\ntags: [one, two]\n"
+        );
+    }
+
+    #[test]
+    fn a_parallel_step_lists_its_branches_on_one_line() {
+        let state = crate::flow::FlowState::Parallel(crate::flow::definition::ParallelState {
+            id: "build".into(),
+            title: "Build & test".into(),
+            branches: vec![
+                "build_macos".into(),
+                "build_windows".into(),
+                "build_linux".into(),
+            ],
+            join: crate::flow::definition::Join::All,
+            transitions: vec![],
+            max_visits: 1,
+        });
+        let mut out = String::new();
+        write_value(&mut out, &serde_json::to_value(&state).unwrap(), 0, false);
+        assert_eq!(
+            out,
+            "kind: parallel\nid: build\ntitle: Build & test\nbranches: [build_macos, build_windows, build_linux]\njoin: all\nmaxVisits: 1\ntransitions: []\n"
         );
     }
 }
