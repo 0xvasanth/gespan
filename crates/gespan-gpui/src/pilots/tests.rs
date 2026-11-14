@@ -4201,7 +4201,7 @@ mod roadmap {
                 .as_ref()
                 .map(|f| f.states.iter().map(|s| s.id().to_owned()).collect())
                 .unwrap_or_default();
-            let painted = r.diagram.read(cx).state_ids();
+            let painted = r.graph.read(cx).order();
             assert_eq!(defined, painted, "the diagram paints the drawn definition");
             defined
         })
@@ -4268,7 +4268,7 @@ mod roadmap {
         visual.refresh().unwrap();
         roadmap.read_with(visual, |r, _| assert!(r.yaml && r.diff));
         assert!(visual.debug_bounds("pilot-roadmap-diff").is_some());
-        assert!(visual.debug_bounds("flow-diagram").is_none());
+        assert!(visual.debug_bounds("pilot-roadmap-graph").is_none());
         let marked = |prefix: &str, v: &mut gpui::VisualTestContext| {
             (0..400)
                 .filter(|ix| {
@@ -4367,7 +4367,7 @@ mod roadmap {
         visual.refresh().unwrap();
         assert!(visual.debug_bounds("pilot-roadmap-yaml").is_some());
         assert!(visual.debug_bounds("pilot-roadmap-yaml-text").is_some());
-        assert!(visual.debug_bounds("flow-diagram").is_none());
+        assert!(visual.debug_bounds("pilot-roadmap-graph").is_none());
         let graph = visual.debug_bounds("pilot-roadmap-Graph").unwrap();
         visual.simulate_click(graph.center(), Default::default());
         visual.run_until_parked();
@@ -4493,7 +4493,7 @@ mod roadmap {
             assert_eq!(r.selection_context(), None);
         });
         assert!(visual.debug_bounds("pilot-roadmap-empty").is_some());
-        assert!(visual.debug_bounds("flow-diagram").is_none());
+        assert!(visual.debug_bounds("pilot-roadmap-graph").is_none());
         assert!(visual.debug_bounds("pilot-roadmap-flow-picker").is_none());
     }
     #[gpui::test]
@@ -4547,23 +4547,15 @@ mod roadmap {
                 Some(newer.as_str()),
                 "the newest is shown"
             );
-            assert_eq!(r.run, None, "the blueprint until a run is picked");
+            // As on the board, the run still going is shown until the
+            // person picks something else.
+            assert_eq!(r.run.as_deref(), Some(newer_run.as_str()));
             let runs: Vec<&str> = r.runs.iter().map(|run| run.id.as_str()).collect();
             assert_eq!(runs, [newer_run.as_str()], "only the shown Flow's runs");
-            assert_eq!(
-                r.run_choices(),
-                vec![
-                    (None, "Blueprint only".to_string()),
-                    (
-                        Some(newer_run.clone()),
-                        "Write intro · Ship docs".to_string()
-                    ),
-                ]
-            );
         });
-        assert!(visual.debug_bounds("flow-diagram").is_some());
+        assert!(visual.debug_bounds("pilot-roadmap-graph").is_some());
         assert!(visual.debug_bounds("pilot-roadmap-flow-picker").is_some());
-        assert!(visual.debug_bounds("pilot-roadmap-run-picker").is_some());
+        assert!(visual.debug_bounds("pilot-roadmap-run-card").is_some());
 
         roadmap.update(visual, |r, cx| r.select_flow(older.clone(), cx));
         visual.run_until_parked();
@@ -4599,8 +4591,20 @@ mod roadmap {
             visual,
         );
 
+        // The run still going is shown first, as its edited snapshot.
         let roadmap = open_roadmap(&s, visual);
+        assert_eq!(
+            drawn_states(&roadmap, visual),
+            ["plan", "build", "review"],
+            "the run's edited snapshot"
+        );
+        // Picking the live version from the version picker draws its
+        // blueprint; picking the run again draws the snapshot.
+        let live = roadmap.read_with(visual, |r, _| r.live_version());
+        roadmap.update(visual, |r, cx| r.select_version(live, cx));
+        visual.run_until_parked();
         assert_eq!(drawn_states(&roadmap, visual), ["plan", "build"]);
+        roadmap.read_with(visual, |r, _| assert_eq!(r.run, None));
         roadmap.update(visual, |r, cx| r.select_run(Some(run_id.clone()), cx));
         visual.run_until_parked();
         assert_eq!(
@@ -4620,12 +4624,10 @@ mod roadmap {
         assert_eq!(drawn_states(&roadmap, visual), ["plan", "build", "review"]);
 
         // Opening a state shows its details, with the visit that ran it.
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         diagram.update(visual, |_, cx| {
-            cx.emit(crate::flows::diagram::DiagramEvent::Selected(Some(
-                "plan".into(),
-            )));
-            cx.emit(crate::flows::diagram::DiagramEvent::Open("plan".into()));
+            cx.emit(super::graph::GraphEvent::Selected(Some("plan".into())));
+            cx.emit(super::graph::GraphEvent::Open("plan".into()));
         });
         visual.run_until_parked();
         roadmap.read_with(visual, |r, _| {
@@ -4724,7 +4726,7 @@ mod roadmap {
             assert_eq!(r.drawn.as_ref().map(|f| f.id.as_str()), Some(kept.as_str()));
             assert_eq!(r.error, None);
         });
-        assert!(visual.debug_bounds("flow-diagram").is_some());
+        assert!(visual.debug_bounds("pilot-roadmap-graph").is_some());
 
         // The last Flow goes: the empty state, with nothing drawn.
         flows_ok(
@@ -4740,16 +4742,16 @@ mod roadmap {
             assert!(r.drawn.is_none() && r.drawer.is_none());
         });
         assert!(visual.debug_bounds("pilot-roadmap-empty").is_some());
-        assert!(visual.debug_bounds("flow-diagram").is_none());
+        assert!(visual.debug_bounds("pilot-roadmap-graph").is_none());
     }
     #[gpui::test]
-    fn roadmap_diagram_is_reachable_with_tab(cx: &mut TestAppContext) {
+    fn the_pipeline_graph_is_reachable_with_tab(cx: &mut TestAppContext) {
         let s = setup(cx);
         cx.update(crate::shell::bind_keys);
         let visual = &mut roadmap_visual(&s, cx);
         save_pilot_flow(&s, "save", "Login", visual);
         let roadmap = open_roadmap(&s, visual);
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         let details = s.manager.read_with(visual, |m, _| m.details.clone());
         s.window
             .update(visual, |_, w, cx| w.focus(&details.focus_handle(cx), cx))
@@ -4783,7 +4785,7 @@ mod roadmap {
     /// States wearing the "changed" badge now, sorted.
     fn badges(roadmap: &Entity<Roadmap>, cx: &mut gpui::VisualTestContext) -> Vec<String> {
         cx.update(|_, cx| {
-            let diagram = roadmap.read(cx).diagram.clone();
+            let diagram = roadmap.read(cx).graph.clone();
             diagram.read(cx).badges(cx)
         })
     }
@@ -4851,7 +4853,7 @@ mod roadmap {
         assert_eq!(badges(&roadmap, visual), ["build"], "only the edited state");
 
         // A reload with nothing new keeps the layout and adds no badge.
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         diagram.update(visual, |d, cx| d.clear_badges_for_test(cx));
         reload_roadmap(&roadmap, visual);
         assert!(badges(&roadmap, visual).is_empty(), "nothing changed since");
@@ -4912,7 +4914,7 @@ mod roadmap {
         );
 
         // The blueprint was not edited: showing it badges nothing.
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         diagram.update(visual, |d, cx| d.clear_badges_for_test(cx));
         roadmap.update(visual, |r, cx| r.select_run(None, cx));
         visual.run_until_parked();
@@ -4965,14 +4967,11 @@ mod roadmap {
         let roadmap = open_roadmap(&s, visual);
         roadmap.update(visual, |r, cx| r.select_run(Some(run_id.clone()), cx));
         visual.run_until_parked();
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         assert_eq!(
             diagram.read_with(visual, |d, _| d.current()),
             Some("plan".to_string())
         );
-        // The user pans; a refit would undo it.
-        diagram.update(visual, |d, cx| d.pan_for_test(40., 25., cx));
-        let viewport = diagram.read_with(visual, |d, _| d.viewport());
         let (layouts, key) = roadmap.read_with(visual, |r, _| {
             (
                 r.layouts,
@@ -5014,11 +5013,6 @@ mod roadmap {
                 key
             );
         });
-        assert_eq!(
-            diagram.read_with(visual, |d, _| d.viewport()),
-            viewport,
-            "no refit: the user's pan stays"
-        );
         assert!(
             badges(&roadmap, visual).is_empty(),
             "a status change is not a change"
@@ -5325,11 +5319,9 @@ mod roadmap {
 
         // A selected step is named; surrounding whitespace is dropped so
         // the context stays the last line on its own.
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         diagram.update(visual, |_, cx| {
-            cx.emit(crate::flows::diagram::DiagramEvent::Selected(Some(
-                "build".into(),
-            )))
+            cx.emit(super::graph::GraphEvent::Selected(Some("build".into())))
         });
         visual.run_until_parked();
         ask(&roadmap, "  Add a review step after this\n\n", visual);
@@ -5490,9 +5482,9 @@ mod roadmap {
             assert_eq!(r.selection_context().as_deref(), Some(expected.as_str()));
         });
         // The step id is collapsed the same way.
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         diagram.update(visual, |_, cx| {
-            cx.emit(crate::flows::diagram::DiagramEvent::Selected(Some(
+            cx.emit(super::graph::GraphEvent::Selected(Some(
                 " build\nnow ".into(),
             )))
         });
@@ -5521,9 +5513,9 @@ mod roadmap {
         });
         // A step id cannot close the quote or the bracket early either, and
         // a backslash is escaped so the quotes stay unambiguous.
-        let diagram = roadmap.read_with(visual, |r, _| r.diagram.clone());
+        let diagram = roadmap.read_with(visual, |r, _| r.graph.clone());
         diagram.update(visual, |_, cx| {
-            cx.emit(crate::flows::diagram::DiagramEvent::Selected(Some(
+            cx.emit(super::graph::GraphEvent::Selected(Some(
                 "x\\\"] · run r9]\nz".into(),
             )))
         });
@@ -5542,6 +5534,256 @@ mod roadmap {
         assert!(last.starts_with("[SOP Roadmap · "));
         assert_eq!(last.matches(']').count(), 1);
         assert!(last.ends_with(']'));
+    }
+
+    // The Pipeline graph, drawn as the board draws it.
+
+    /// plan → build (mac and win side by side, each retried up to twice)
+    /// → ship, saved by the Pilot through `flows.save`.
+    fn save_parallel_flow(s: &Setup, cx: &mut TestAppContext) -> String {
+        let agent = |id: &str, title: &str, to: &[&str], max: u8| {
+            let transitions: Vec<Value> = to.iter().map(|t| json!({"to": t})).collect();
+            json!({"kind":"agent","id":id,"title":title,"harness":"codex","model":"",
+                "brief":format!("{title} {{{{inputs.task}}}}"),"outputs":[],
+                "transitions":transitions,"maxVisits":max})
+        };
+        let flow = json!({"name":"Release","description":"Build both, then ship","cwd":s.project,
+        "inputs":[{"name":"task","label":"Task","required":true}],"initial":"plan",
+        "states":[
+            agent("plan","Plan",&["build"],1),
+            {"kind":"parallel","id":"build","title":"Build & test",
+             "branches":["mac","win"],"transitions":[{"to":"ship"}]},
+            agent("mac","macOS build",&[],3),
+            agent("win","Windows",&[],3),
+            agent("ship","Publish",&["$succeeded"],1),
+        ]});
+        flows_ok(s, "save-release", "flows.save", json!({ "flow": flow }), cx)["flow"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn step_bounds(cx: &mut gpui::VisualTestContext, id: &str) -> gpui::Bounds<gpui::Pixels> {
+        cx.debug_bounds(Box::leak(format!("pipeline-step-{id}").into_boxed_str()))
+            .unwrap_or_else(|| panic!("step {id} is drawn"))
+    }
+
+    #[gpui::test]
+    fn a_parallel_pipeline_draws_its_branches_side_by_side(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        save_parallel_flow(&s, visual);
+        let roadmap = open_roadmap(&s, visual);
+        visual.refresh().unwrap();
+        let graph = roadmap.read_with(visual, |r, _| r.graph.clone());
+        assert_eq!(
+            graph.read_with(visual, |g, _| g.order()),
+            ["plan", "mac", "win", "ship"],
+            "the parallel step is its branches"
+        );
+        let (plan, mac, win, ship) = (
+            step_bounds(visual, "plan"),
+            step_bounds(visual, "mac"),
+            step_bounds(visual, "win"),
+            step_bounds(visual, "ship"),
+        );
+        // The branches share a row between the steps before and after.
+        assert_eq!(mac.top(), win.top());
+        assert!(mac.right() < win.left(), "side by side");
+        assert_eq!(mac.size.width, win.size.width, "equal columns");
+        assert!(plan.bottom() < mac.top() && win.bottom() < ship.top());
+        // A step on its own row is the board's 220px, centred over the
+        // branches; together the branches span the row.
+        assert_eq!(plan.size.width, px(220.));
+        let centre = |b: gpui::Bounds<gpui::Pixels>| b.left() + b.size.width / 2.;
+        let row_centre = (mac.left() + win.right()) / 2.;
+        assert!((centre(plan) - row_centre).abs() < px(1.));
+        assert!((centre(ship) - row_centre).abs() < px(1.));
+        assert!(plan.size.width < win.right() - mac.left());
+        // A failed branch runs again up to twice, and the graph says so.
+        assert!(visual.debug_bounds("pipeline-retries").is_some());
+        // Nothing has run: there is no run card.
+        assert!(visual.debug_bounds("pilot-roadmap-run-card").is_none());
+    }
+
+    #[gpui::test]
+    fn the_run_still_going_shows_how_far_it_is_and_a_step_waiting_offers_answer(
+        cx: &mut TestAppContext,
+    ) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let flow_id = save_parallel_flow(&s, visual);
+        let run_id = start_pilot_run(&s, &flow_id, "Ship 0.2.1", "Release 0.2.1", visual);
+        let roadmap = open_roadmap(&s, visual);
+        visual.refresh().unwrap();
+        // Shown without being picked, with how far it is.
+        roadmap.read_with(visual, |r, _| {
+            assert_eq!(r.run.as_deref(), Some(run_id.as_str()))
+        });
+        assert!(visual.debug_bounds("pilot-roadmap-run-card").is_some());
+        let graph = roadmap.read_with(visual, |r, _| r.graph.clone());
+        assert_eq!(
+            graph.read_with(visual, |g, _| g.current()),
+            Some("plan".into())
+        );
+
+        // The Pilot's plan step runs in a session, which asks the user
+        // something.
+        let session = s
+            .window
+            .update(visual, |shell, _, cx| {
+                shell.add_session_for_test(&s.project, cx)
+            })
+            .unwrap();
+        let store = flows_store(&s, visual);
+        {
+            let store = store.lock().unwrap();
+            let mut visits = store.visits(&run_id).unwrap();
+            visits[0].session_id = Some(session.to_string());
+            store.save_visit(&visits[0]).unwrap();
+        }
+        reload_roadmap(&roadmap, visual);
+        assert!(
+            visual.debug_bounds("pipeline-answer-plan").is_none(),
+            "running, not yet waiting"
+        );
+        s.window
+            .update(visual, |shell, _, cx| {
+                shell.session_view(session).unwrap().update(cx, |view, cx| {
+                    view.set_approvals_for_test(vec![gespan_core::agent::Approval {
+                        id: "a1".into(),
+                        title: "Cut from main?".into(),
+                        detail: "git switch -c release/0.2".into(),
+                        can_remember: false,
+                        tool: None,
+                    }]);
+                    cx.notify();
+                })
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        // The step turns to "Waiting on you" the moment its session asks.
+        let answer = visual
+            .debug_bounds("pipeline-answer-plan")
+            .expect("Answer shows on the waiting step");
+        visual.simulate_click(answer.center(), Default::default());
+        visual.run_until_parked();
+        s.manager.read_with(visual, |m, _| {
+            assert!(matches!(m.route, Some(Route::Session(id)) if id == session));
+        });
+
+        // The plan step completes and the branches start: step 2 of 3.
+        {
+            let store = store.lock().unwrap();
+            let mut run = store.run(&run_id).unwrap().unwrap();
+            let mut visits = store.visits(&run_id).unwrap();
+            visits[0].status = VisitStatus::Completed;
+            visits[0].finished_at = Some(visits[0].started_at + 4 * 60_000);
+            store.save_visit(&visits[0]).unwrap();
+            for (seq, state) in [(2, "build"), (3, "mac"), (4, "win")] {
+                let mut next = visits[0].clone();
+                next.id = format!("{}-{seq}", visits[0].id);
+                next.seq = seq;
+                next.state_id = state.into();
+                next.status = VisitStatus::Running;
+                next.session_id = None;
+                next.finished_at = None;
+                store.save_visit(&next).unwrap();
+            }
+            run.current_state = Some("build".into());
+            store.save_run(&run).unwrap();
+        }
+        reload_roadmap(&roadmap, visual);
+        use gespan_core::flow::graph::CardStatus;
+        let status = |id: &str, visual: &mut gpui::VisualTestContext| {
+            roadmap.read_with(visual, |r, _| {
+                let flow = r.drawn.clone().unwrap();
+                let rows = gespan_core::flow::graph::layout(&flow);
+                let visits = {
+                    let store = store.lock().unwrap();
+                    store.visits(&run_id).unwrap()
+                };
+                gespan_core::flow::graph::cards(&flow, &rows, &visits)[id].status
+            })
+        };
+        assert_eq!(status("plan", visual), CardStatus::Done);
+        assert_eq!(status("mac", visual), CardStatus::Running);
+        assert_eq!(
+            status("ship", visual),
+            CardStatus::Next,
+            "the row after the branches"
+        );
+        assert!(visual.debug_bounds("pipeline-answer-plan").is_none());
+    }
+
+    #[gpui::test]
+    fn an_earlier_run_shows_when_picked(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        hold_flow_launches(&s, cx);
+        hold_outbox(&s, cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        let flow_id = save_parallel_flow(&s, visual);
+        let first = start_pilot_run(&s, &flow_id, "Ship 0.2.0", "Release 0.2.0", visual);
+        let second = start_pilot_run(&s, &flow_id, "Ship 0.2.1", "Release 0.2.1", visual);
+        let roadmap = open_roadmap(&s, visual);
+        visual.refresh().unwrap();
+        roadmap.read_with(visual, |r, _| {
+            assert_eq!(r.run.as_deref(), Some(second.as_str()))
+        });
+        let earlier = visual
+            .debug_bounds(Box::leak(
+                format!("pilot-roadmap-earlier-{first}").into_boxed_str(),
+            ))
+            .expect("the earlier run is listed");
+        assert!(
+            visual
+                .debug_bounds(Box::leak(
+                    format!("pilot-roadmap-earlier-{second}").into_boxed_str()
+                ))
+                .is_none(),
+            "the shown run is not listed again"
+        );
+        visual.simulate_click(earlier.center(), Default::default());
+        visual.run_until_parked();
+        roadmap.read_with(visual, |r, _| {
+            assert_eq!(r.run.as_deref(), Some(first.as_str()))
+        });
+    }
+
+    #[gpui::test]
+    fn arrows_walk_the_graph_in_reading_order_and_within_a_row(cx: &mut TestAppContext) {
+        let s = setup(cx);
+        let visual = &mut roadmap_visual(&s, cx);
+        save_parallel_flow(&s, visual);
+        let roadmap = open_roadmap(&s, visual);
+        let graph = roadmap.read_with(visual, |r, _| r.graph.clone());
+        s.window
+            .update(visual, |_, w, cx| w.focus(&graph.focus_handle(cx), cx))
+            .unwrap();
+        visual.run_until_parked();
+        let selected = |visual: &mut gpui::VisualTestContext| {
+            graph.read_with(visual, |g, _| g.selected().map(str::to_owned))
+        };
+        visual.simulate_keystrokes("down");
+        assert_eq!(selected(visual).as_deref(), Some("plan"));
+        visual.simulate_keystrokes("down");
+        assert_eq!(selected(visual).as_deref(), Some("mac"));
+        visual.simulate_keystrokes("right");
+        assert_eq!(selected(visual).as_deref(), Some("win"));
+        visual.simulate_keystrokes("right");
+        assert_eq!(selected(visual).as_deref(), Some("win"), "the row's end");
+        visual.simulate_keystrokes("down");
+        assert_eq!(selected(visual).as_deref(), Some("ship"));
+        visual.simulate_keystrokes("enter");
+        visual.run_until_parked();
+        roadmap.read_with(visual, |r, _| assert_eq!(r.drawer.as_deref(), Some("ship")));
+        visual.simulate_keystrokes("up");
+        assert_eq!(selected(visual).as_deref(), Some("win"));
+        visual.simulate_keystrokes("escape");
+        assert_eq!(selected(visual), None);
     }
 }
 

@@ -4930,7 +4930,15 @@ impl Shell {
             window.focus(&self.focus, cx);
         }
     }
+    /// Creates a Claude session in `cwd` and loads its chat; returns its id.
     #[cfg(test)]
+    pub(crate) fn add_session_for_test(&mut self, cwd: &str, cx: &mut Context<Self>) -> i64 {
+        let summary = locked(&self.store).unwrap().create("claude", cwd).unwrap();
+        let id = summary.id;
+        self.add(summary, cx);
+        id
+    }
+    /// Session `id`'s chat, if it is loaded.
     pub(crate) fn session_view(&self, id: i64) -> Option<Entity<Conversation>> {
         self.sessions.get(&id).cloned()
     }

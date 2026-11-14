@@ -97,10 +97,7 @@ fn state_title(flow: &Flow, id: &str) -> String {
     flow.states
         .iter()
         .find(|s| s.id() == id)
-        .map(|state| match state {
-            FlowState::Agent(s) => s.title.clone(),
-            FlowState::Approval(s) => s.title.clone(),
-        })
+        .map(|state| state.title().to_owned())
         .unwrap_or_else(|| id.to_owned())
 }
 

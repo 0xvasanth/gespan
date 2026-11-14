@@ -34,9 +34,17 @@ pub fn schema() -> Value {
         },"required":["kind","field","op"],"additionalProperties":false,
          "description":"Matches one of this step's outputs after it completed."},
     ]});
+    let transitions = json!({"type":"array","items":{
+        "type":"object",
+        "properties":{
+            "to":{"type":"string","description":format!("A state id, {SUCCEEDED} or {FAILED}")},
+            "when":guard,
+        },
+        "required":["to"],"additionalProperties":false,
+    },"description":"Checked in order; the first that matches is taken. One without `when` matches any completed step. A parallel step's branch has none: its parallel step's transitions follow it."});
     let state = json!({
         "type":"object",
-        "description":"One agent step. A Pilot's Flow has agent states only.",
+        "description":"One agent step. A Pilot's Flow has agent and parallel steps only.",
         "properties":{
             "kind":{"const":"agent","default":"agent"},
             "id":name("Unique state id, like `build`"),
@@ -53,17 +61,32 @@ pub fn schema() -> Value {
                 },
                 "required":["name","type","description"],"additionalProperties":false,
             },"description":"Values the step must report, for later briefs and guards"},
-            "transitions":{"type":"array","minItems":1,"items":{
-                "type":"object",
-                "properties":{
-                    "to":{"type":"string","description":format!("A state id, {SUCCEEDED} or {FAILED}")},
-                    "when":guard,
-                },
-                "required":["to"],"additionalProperties":false,
-            },"description":"Checked in order; the first that matches is taken. One without `when` matches any completed step."},
-            "maxVisits":{"type":"integer","minimum":MIN_VISITS,"maximum":MAX_VISITS,"default":DEFAULT_MAX_VISITS},
+            "transitions":transitions.clone(),
+            "maxVisits":{"type":"integer","minimum":MIN_VISITS,"maximum":MAX_VISITS,"default":DEFAULT_MAX_VISITS,"description":"On a parallel step's branch, a failed branch runs again, told what failed, until it has run this many times"},
+            "when":{"type":"object","properties":{
+                "kind":{"const":"output"},
+                "field":{"type":"string","description":"An output of every step that leads to the parallel step"},
+                "op":{"enum":["eq","neq","truthy","falsy","contains"]},
+                "value":{"type":["string","number","boolean"]},
+            },"required":["kind","field","op"],"additionalProperties":false,
+             "description":"Only on a parallel step's branch: the branch runs only when this matches the outputs of the step that led to the parallel step, and is skipped otherwise."},
         },
         "required":["id","title","harness","model","brief","transitions"],
+        "additionalProperties":false,
+    });
+    let parallel = json!({
+        "type":"object",
+        "description":"Runs its branches side by side, then follows its transitions once every branch that ran has completed (a `completed` status), or once one has failed past its maxVisits (`failed`; the others are stopped).",
+        "properties":{
+            "kind":{"const":"parallel"},
+            "id":name("Unique state id, like `build`"),
+            "title":{"type":"string","description":"Names the step in Flow edits"},
+            "branches":{"type":"array","minItems":2,"items":{"type":"string"},"description":"Ids of agent steps run side by side. Each belongs to this step alone, has no transitions, and nothing else leads to it."},
+            "join":{"const":"all","default":"all","description":"Waits for every branch"},
+            "transitions":transitions,
+            "maxVisits":{"type":"integer","minimum":MIN_VISITS,"maximum":MAX_VISITS,"default":DEFAULT_MAX_VISITS},
+        },
+        "required":["kind","id","title","branches","transitions"],
         "additionalProperties":false,
     });
     json!({
@@ -86,7 +109,7 @@ pub fn schema() -> Value {
                 "required":["name","label","required"],"additionalProperties":false,
             },"description":"Values flows.start passes in `inputs`"},
             "initial":{"type":"string","description":"The first state's id"},
-            "states":{"type":"array","minItems":1,"maxItems":MAX_STATES,"items":state},
+            "states":{"type":"array","minItems":1,"maxItems":MAX_STATES,"items":{"oneOf":[state, parallel]}},
             "owner":{"type":"string","description":"Set by Gespan"},
             "createdAt":{"type":"integer","description":"Set by Gespan"},
             "updatedAt":{"type":"integer","description":"Set by Gespan"},
@@ -138,11 +161,13 @@ fn fill_defaults(flow: &mut Map<String, Value>, owner: &str) {
         .filter_map(Value::as_object_mut)
     {
         state.entry("kind").or_insert(json!("agent"));
-        if state["kind"] == "agent" {
-            state.entry("outputs").or_insert(json!([]));
+        if state["kind"] == "agent" || state["kind"] == "parallel" {
             state
                 .entry("maxVisits")
                 .or_insert(json!(DEFAULT_MAX_VISITS));
+        }
+        if state["kind"] == "agent" {
+            state.entry("outputs").or_insert(json!([]));
         }
     }
 }
@@ -200,13 +225,24 @@ fn missing_fields(flow: &Map<String, Value>) -> Vec<String> {
     for (index, state) in states.iter().enumerate() {
         let id = label(state, "id", index);
         let place = format!("state {id}");
-        if state.get("kind").and_then(Value::as_str) == Some("approval") {
-            nested.push((
-                state.clone(),
-                vec!["id", "title", "message", "transitions"],
-                place,
-            ));
-            continue;
+        match state.get("kind").and_then(Value::as_str) {
+            Some("approval") => {
+                nested.push((
+                    state.clone(),
+                    vec!["id", "title", "message", "transitions"],
+                    place,
+                ));
+                continue;
+            }
+            Some("parallel") => {
+                nested.push((
+                    state.clone(),
+                    vec!["id", "title", "branches", "transitions"],
+                    place,
+                ));
+                continue;
+            }
+            _ => {}
         }
         nested.push((
             state.clone(),
@@ -461,7 +497,15 @@ mod tests {
             schema["required"],
             json!(["name", "cwd", "initial", "states"])
         );
-        let state = &schema["properties"]["states"]["items"];
+        let state = &schema["properties"]["states"]["items"]["oneOf"][0];
+        let parallel = &schema["properties"]["states"]["items"]["oneOf"][1];
+        assert_eq!(
+            parallel["required"],
+            json!(["kind", "id", "title", "branches", "transitions"])
+        );
+        for key in crate::flow::definition::PARALLEL_STATE_KEYS {
+            assert!(parallel["properties"].get(*key).is_some(), "{key}");
+        }
         assert_eq!(
             state["required"],
             json!(["id", "title", "harness", "model", "brief", "transitions"])
@@ -478,5 +522,43 @@ mod tests {
         for key in crate::flow::definition::AGENT_STATE_KEYS {
             assert!(state["properties"].get(*key).is_some(), "{key}");
         }
+    }
+
+    #[test]
+    fn a_pilot_saves_a_parallel_step_with_defaults_filled_in() {
+        let step = |id: &str| json!({"id":id,"title":id,"harness":"claude","model":"opus","brief":"Build.","transitions":[]});
+        let flow = json!({
+            "name":"Release","cwd":"/w","initial":"plan",
+            "states":[
+                {"id":"plan","title":"Plan","harness":"claude","model":"opus","brief":"Plan.",
+                 "outputs":[{"name":"mobile","type":"boolean","description":"mobile/ changed"}],
+                 "transitions":[{"to":"build"}]},
+                {"kind":"parallel","id":"build","title":"Build & test","branches":["mac","ios"],
+                 "transitions":[{"to":SUCCEEDED}]},
+                step("mac"),
+                {"id":"ios","title":"iOS","harness":"claude","model":"opus","brief":"Build iOS.",
+                 "transitions":[],"when":{"kind":"output","field":"mobile","op":"truthy"}},
+            ],
+        });
+        let saved = pilot_flow(&flow, "p1").expect("saves");
+        let crate::flow::FlowState::Parallel(build) = &saved.states[1] else {
+            panic!("a parallel step");
+        };
+        assert_eq!(build.branches, ["mac", "ios"]);
+        assert_eq!(build.join, crate::flow::definition::Join::All);
+        assert_eq!(build.max_visits, DEFAULT_MAX_VISITS);
+
+        let mut missing = flow.clone();
+        missing["states"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("branches");
+        assert_eq!(problems(missing), ["state build is missing \"branches\""]);
+        let mut typo = flow;
+        typo["states"][1]["brnaches"] = json!([]);
+        assert_eq!(
+            problems(typo),
+            ["Unknown field \"brnaches\" in state build"]
+        );
     }
 }

@@ -238,6 +238,7 @@ fn agent(
         outputs,
         transitions,
         max_visits,
+        when: None,
     })
 }
 
@@ -1444,4 +1445,377 @@ fn edit_run_refuses_visited_states_identity_changes_and_invalid_flows() {
     assert_eq!(host.last_run().status, RunStatus::Succeeded);
     let err = host.runner.edit_run(&run.id, flow, "n").unwrap_err();
     assert_eq!(err, ["Run not found"]);
+}
+
+// ---- parallel steps ----------------------------------------------------
+
+fn branch(id: &str, max_visits: u8) -> FlowState {
+    agent(id, &format!("Build on {id}."), vec![], vec![], max_visits)
+}
+
+fn parallel(id: &str, branches: &[&str], transitions: Vec<Transition>) -> FlowState {
+    FlowState::Parallel(crate::flow::definition::ParallelState {
+        id: id.into(),
+        title: "Build & test".into(),
+        branches: branches.iter().map(|b| b.to_string()).collect(),
+        join: crate::flow::definition::Join::All,
+        transitions,
+        max_visits: 1,
+    })
+}
+
+/// plan → build (mac, win, linux side by side) → publish → done.
+/// With a transition to `report`, that step reports a failed build.
+fn release(max_visits: u8, build_transitions: Vec<Transition>) -> Flow {
+    let reports = build_transitions.iter().any(|t| t.to == "report");
+    let mut states = vec![
+        agent("plan", "Plan it.", vec![], vec![to("build")], 1),
+        parallel("build", &["mac", "win", "linux"], build_transitions),
+        branch("mac", max_visits),
+        branch("win", max_visits),
+        branch("linux", max_visits),
+        agent("publish", "Publish it.", vec![], vec![to(SUCCEEDED)], 1),
+    ];
+    if reports {
+        states.push(agent("report", "Report it.", vec![], vec![to(FAILED)], 1));
+    }
+    custom("plan", states)
+}
+
+impl Host {
+    /// The newest launch of `state`.
+    fn launch_of(&self, state: &str) -> LaunchRequest {
+        let visits = self.visits();
+        self.launches()
+            .into_iter()
+            .rev()
+            .find(|l| {
+                visits
+                    .iter()
+                    .any(|v| v.id == l.visit_id && v.state_id == state)
+            })
+            .unwrap_or_else(|| panic!("no launch of {state}"))
+    }
+
+    fn launched_states(&self) -> Vec<String> {
+        let visits = self.visits();
+        self.launches()
+            .iter()
+            .filter_map(|l| visits.iter().find(|v| v.id == l.visit_id))
+            .map(|v| v.state_id.clone())
+            .collect()
+    }
+
+    fn settle_state(&mut self, run_id: &str, state: &str, outcome: AgentOutcome) -> Vec<Effect> {
+        let visit_id = self.launch_of(state).visit_id;
+        let effects = self.runner.on_agent_settled(run_id, &visit_id, outcome);
+        self.apply(effects)
+    }
+
+    fn complete(&mut self, run_id: &str, state: &str) -> Vec<Effect> {
+        self.settle_state(
+            run_id,
+            state,
+            AgentOutcome {
+                status: AgentStatus::Completed,
+                text: "Done.".into(),
+                error: None,
+            },
+        )
+    }
+
+    fn fail_state(&mut self, run_id: &str, state: &str, error: &str) -> Vec<Effect> {
+        self.settle_state(
+            run_id,
+            state,
+            AgentOutcome {
+                status: AgentStatus::Failed,
+                text: String::new(),
+                error: Some(error.into()),
+            },
+        )
+    }
+
+    fn visit_of(&self, state: &str) -> FlowVisit {
+        self.visits()
+            .into_iter()
+            .rev()
+            .find(|v| v.state_id == state)
+            .unwrap_or_else(|| panic!("no visit of {state}"))
+    }
+}
+
+#[test]
+fn branches_launch_together_and_the_step_joins_once_every_branch_completes() {
+    let mut h = Host::new();
+    let (run, _) = h.start(&release(2, vec![to("publish")]), &[]);
+    let effects = h.complete(&run.id, "plan");
+    // Each branch is persisted before its launch, all in one step.
+    assert_eq!(
+        kinds(&effects),
+        [
+            "persist",
+            "persist",
+            "persist",
+            "launch",
+            "persist",
+            "launch",
+            "persist",
+            "launch",
+            "visit-finished"
+        ]
+    );
+    assert_eq!(h.launched_states(), ["plan", "mac", "win", "linux"]);
+    assert_eq!(h.visit_of("build").status, VisitStatus::Running);
+    assert_eq!(h.last_run().current_state.as_deref(), Some("build"));
+
+    // Two of three done: nothing moves on.
+    h.complete(&run.id, "linux");
+    h.complete(&run.id, "mac");
+    assert_eq!(h.launches().len(), 4);
+    assert_eq!(h.visit_of("build").status, VisitStatus::Running);
+
+    // The last one joins the step, which follows its transition.
+    h.complete(&run.id, "win");
+    assert_eq!(h.visit_of("build").status, VisitStatus::Completed);
+    assert_eq!(
+        h.launched_states().last().map(String::as_str),
+        Some("publish")
+    );
+    h.complete(&run.id, "publish");
+    assert_eq!(h.finished(), [RunStatus::Succeeded]);
+}
+
+#[test]
+fn a_failed_branch_runs_again_told_what_failed_while_it_has_visits_left() {
+    let mut h = Host::new();
+    let (run, _) = h.start(&release(2, vec![to("publish")]), &[]);
+    h.complete(&run.id, "plan");
+    let first = h.launch_of("mac");
+    h.fail_state(&run.id, "mac", "linker error in src/app.rs");
+
+    let retry = h.launch_of("mac");
+    assert_ne!(
+        retry.visit_id, first.visit_id,
+        "a new visit, in a new session"
+    );
+    assert!(
+        retry.prompt.starts_with("Build on mac."),
+        "{}",
+        retry.prompt
+    );
+    assert!(
+        retry
+            .prompt
+            .contains("The last attempt at this step failed: linker error in src/app.rs"),
+        "{}",
+        retry.prompt
+    );
+    // Only the failed branch runs again; the step is still in flight.
+    assert_eq!(h.launched_states(), ["plan", "mac", "win", "linux", "mac"]);
+    assert_eq!(h.visit_of("build").status, VisitStatus::Running);
+    assert_eq!(h.last_run().current_state.as_deref(), Some("build"));
+
+    for state in ["mac", "win", "linux"] {
+        h.complete(&run.id, state);
+    }
+    assert_eq!(h.visit_of("build").status, VisitStatus::Completed);
+    assert_eq!(
+        h.launched_states().last().map(String::as_str),
+        Some("publish")
+    );
+}
+
+#[test]
+fn a_branch_failing_past_its_visits_stops_the_others_and_fails_the_step() {
+    let mut h = Host::new();
+    let (run, _) = h.start(&release(1, vec![to("publish")]), &[]);
+    h.complete(&run.id, "plan");
+    let win = h.launch_of("win").visit_id;
+    let linux = h.launch_of("linux").visit_id;
+    h.complete(&run.id, "linux");
+    let effects = h.fail_state(&run.id, "mac", "boom");
+
+    // The branch still running is stopped; the finished one is left alone.
+    let cancelled: Vec<_> = effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Cancel { session_id } => Some(session_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cancelled, [format!("sess-{win}")]);
+    assert_eq!(h.visit_of("win").status, VisitStatus::Cancelled);
+    assert_eq!(
+        h.visits().iter().find(|v| v.id == linux).unwrap().status,
+        VisitStatus::Completed
+    );
+    let step = h.visit_of("build");
+    assert_eq!(step.status, VisitStatus::Failed);
+    assert_eq!(step.error.as_deref(), Some("MAC failed: boom"));
+    // No failure transition: the run fails with the branch's error.
+    assert_eq!(h.finished(), [RunStatus::Failed]);
+    assert_eq!(h.last_run().error.as_deref(), Some("MAC failed: boom"));
+    // A late report from the stopped branch changes nothing.
+    h.complete(&run.id, "win");
+    assert_eq!(h.finished(), [RunStatus::Failed]);
+}
+
+#[test]
+fn a_failed_step_follows_its_failure_transition() {
+    let mut h = Host::new();
+    let (run, _) = h.start(&release(1, vec![when_failed("report"), to("publish")]), &[]);
+    h.complete(&run.id, "plan");
+    h.fail_state(&run.id, "linux", "tests failed");
+    assert_eq!(h.visit_of("build").status, VisitStatus::Failed);
+    assert_eq!(
+        h.launched_states().last().map(String::as_str),
+        Some("report")
+    );
+    assert!(h.finished().is_empty());
+}
+
+/// cut (reports `mobile_changed`) → finish (notes, mobile if changed) → done.
+fn notes_and_mobile() -> Flow {
+    let mut mobile = branch("mobile", 1);
+    if let FlowState::Agent(a) = &mut mobile {
+        a.when = Some(Guard::Output {
+            field: "mobile_changed".into(),
+            op: GuardOp::Truthy,
+            value: None,
+        });
+    }
+    custom(
+        "cut",
+        vec![
+            agent(
+                "cut",
+                "Cut the branch.",
+                vec![field("mobile_changed", OutputType::Boolean)],
+                vec![to("finish")],
+                1,
+            ),
+            parallel("finish", &["notes", "mobile"], vec![to(SUCCEEDED)]),
+            branch("notes", 1),
+            mobile,
+        ],
+    )
+}
+
+#[test]
+fn a_conditional_branch_runs_only_when_the_step_before_says_so() {
+    let mut h = Host::new();
+    let (run, _) = h.start(&notes_and_mobile(), &[]);
+    h.outputs(&run.id, json!({"mobile_changed": false}));
+    assert_eq!(h.launched_states(), ["cut", "notes"], "mobile is skipped");
+    h.complete(&run.id, "notes");
+    assert_eq!(h.visit_of("finish").status, VisitStatus::Completed);
+    assert_eq!(h.finished(), [RunStatus::Succeeded]);
+
+    let mut h = Host::new();
+    let (run, _) = h.start(&notes_and_mobile(), &[]);
+    h.outputs(&run.id, json!({"mobile_changed": true}));
+    assert_eq!(h.launched_states(), ["cut", "notes", "mobile"]);
+    h.complete(&run.id, "notes");
+    assert!(h.finished().is_empty(), "waits for mobile");
+    h.complete(&run.id, "mobile");
+    assert_eq!(h.finished(), [RunStatus::Succeeded]);
+}
+
+#[test]
+fn a_parallel_step_with_every_branch_skipped_completes_at_once() {
+    let mut flow = notes_and_mobile();
+    if let Some(FlowState::Agent(notes)) = flow.states.iter_mut().find(|s| s.id() == "notes") {
+        notes.when = Some(Guard::Output {
+            field: "mobile_changed".into(),
+            op: GuardOp::Truthy,
+            value: None,
+        });
+    }
+    let mut h = Host::new();
+    let (run, _) = h.start(&flow, &[]);
+    h.outputs(&run.id, json!({"mobile_changed": false}));
+    assert_eq!(h.launched_states(), ["cut"]);
+    assert_eq!(h.visit_of("finish").status, VisitStatus::Completed);
+    assert_eq!(h.finished(), [RunStatus::Succeeded]);
+}
+
+#[test]
+fn cancel_stops_every_running_branch() {
+    let mut h = Host::new();
+    let (run, _) = h.start(&release(2, vec![to("publish")]), &[]);
+    h.complete(&run.id, "plan");
+    h.complete(&run.id, "win");
+    let effects = h.runner.cancel(&run.id);
+    h.apply(effects.clone());
+    let mut cancelled: Vec<_> = effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Cancel { session_id } => Some(session_id.clone()),
+            _ => None,
+        })
+        .collect();
+    cancelled.sort();
+    let mut expected = vec![
+        format!("sess-{}", h.launch_of("mac").visit_id),
+        format!("sess-{}", h.launch_of("linux").visit_id),
+    ];
+    expected.sort();
+    assert_eq!(cancelled, expected);
+    for state in ["mac", "linux", "build"] {
+        assert_eq!(h.visit_of(state).status, VisitStatus::Cancelled, "{state}");
+    }
+    assert_eq!(h.visit_of("win").status, VisitStatus::Completed);
+    assert_eq!(h.finished(), [RunStatus::Cancelled]);
+    assert_eq!(kinds(&effects).last(), Some(&"finished"));
+}
+
+#[test]
+fn a_stopped_branch_session_cancels_the_run_and_its_other_branches() {
+    let mut h = Host::new();
+    let (run, _) = h.start(&release(2, vec![to("publish")]), &[]);
+    h.complete(&run.id, "plan");
+    let effects = h.settle_state(
+        &run.id,
+        "mac",
+        AgentOutcome {
+            status: AgentStatus::Cancelled,
+            text: String::new(),
+            error: None,
+        },
+    );
+    let stopped = effects
+        .iter()
+        .filter(|e| matches!(e, Effect::Cancel { .. }))
+        .count();
+    assert_eq!(stopped, 2, "win and linux");
+    assert_eq!(h.finished(), [RunStatus::Cancelled]);
+    assert_eq!(h.visit_of("build").status, VisitStatus::Cancelled);
+}
+
+#[test]
+fn resuming_a_failed_branch_runs_its_parallel_step_again() {
+    let mut h = Host::new();
+    let mut flow = release(1, vec![to("publish")]);
+    if let Some(FlowState::Parallel(p)) = flow.states.iter_mut().find(|s| s.id() == "build") {
+        p.max_visits = 2;
+    }
+    let (run, _) = h.start(&flow, &[]);
+    h.complete(&run.id, "plan");
+    h.fail_state(&run.id, "mac", "boom");
+    assert_eq!(h.finished(), [RunStatus::Failed]);
+
+    let failed = h.last_run();
+    let effects = h.runner.resume(failed, h.visits(), "mac");
+    h.apply(effects);
+    assert_eq!(h.last_run().current_state.as_deref(), Some("build"));
+    assert_eq!(
+        h.visits().iter().filter(|v| v.state_id == "build").count(),
+        2
+    );
+    assert_eq!(
+        &h.launched_states()[4..],
+        ["mac", "win", "linux"],
+        "every branch runs again"
+    );
 }

@@ -1,8 +1,11 @@
 //! The Flow state machine. Step-driven: every method returns the `Effect`s the
 //! host must apply, and the host reports session results back.
-use super::contract::{contract_footer, parse_outputs, retry_prompt, select_transition};
+use super::contract::{
+    branch_runs, contract_footer, parse_outputs, retry_prompt, select_transition,
+};
 use super::definition::{
-    outputs_of, validate_flow, Flow, FlowState, OutputValue, VisitResult, FAILED, SUCCEEDED,
+    outputs_of, validate_flow, Flow, FlowState, OutputValue, ParallelState, VisitResult, FAILED,
+    SUCCEEDED,
 };
 use super::run::{FlowRun, FlowVisit, RunEdit, RunStatus, RunTag, VisitStatus};
 use super::template::{render_template, resolve_inputs, BindingContext};
@@ -87,6 +90,25 @@ struct ActiveRun {
 }
 
 impl ActiveRun {
+    /// Visits of `state_id` that count against its `maxVisits`: every one,
+    /// or for a parallel step's branch, those since its step last started,
+    /// so each run of the step gives a branch its full tries.
+    fn visits_of(&self, state_id: &str) -> usize {
+        let since = match self.run.flow.parent_of(state_id) {
+            Some(parent) => self
+                .visits
+                .iter()
+                .rev()
+                .find(|v| v.state_id == parent.id)
+                .map_or(0, |v| v.seq),
+            None => 0,
+        };
+        self.visits
+            .iter()
+            .filter(|v| v.state_id == state_id && v.seq > since)
+            .count()
+    }
+
     fn persist(&self, with_visit: bool) -> Effect {
         Effect::Persist {
             run: self.run.clone(),
@@ -102,11 +124,29 @@ impl ActiveRun {
         self.run.flow.states.iter().find(|s| s.id() == id).cloned()
     }
 
-    /// The current visit, if it is `visit_id` and still has `status`.
-    fn current_mut(&mut self, visit_id: &str, status: VisitStatus) -> Option<&mut FlowVisit> {
+    /// Persists the run with visit `visit_id`.
+    fn persist_visit(&self, visit_id: &str) -> Effect {
+        Effect::Persist {
+            run: self.run.clone(),
+            visit: self.visits.iter().find(|v| v.id == visit_id).cloned(),
+        }
+    }
+
+    /// Visit `visit_id`, if it still has `status`. Several visits are in
+    /// flight while a parallel step's branches run.
+    fn visit_mut(&mut self, visit_id: &str, status: VisitStatus) -> Option<&mut FlowVisit> {
         self.visits
-            .last_mut()
-            .filter(|v| v.id == visit_id && v.status == status)
+            .iter_mut()
+            .rev()
+            .find(|v| v.id == visit_id && v.status == status)
+    }
+
+    fn visit(&mut self, visit_id: &str) -> &mut FlowVisit {
+        self.visits
+            .iter_mut()
+            .rev()
+            .find(|v| v.id == visit_id)
+            .expect("visit of this run")
     }
 
     /// Outputs of the latest completed visit of each state.
@@ -204,14 +244,14 @@ impl Runner {
             }];
         }
         self.with_run(run_id, |_, active| {
-            let Some(visit) = active.current_mut(visit_id, VisitStatus::Running) else {
+            let Some(visit) = active.visit_mut(visit_id, VisitStatus::Running) else {
                 return vec![];
             };
             if visit.session_id.as_deref() == Some(session_id) {
                 return vec![];
             }
             visit.session_id = Some(session_id.to_owned());
-            vec![active.persist(true)]
+            vec![active.persist_visit(visit_id)]
         })
     }
 
@@ -233,7 +273,7 @@ impl Runner {
         outcome: AgentOutcome,
     ) -> Vec<Effect> {
         self.with_run(run_id, |runner, active| {
-            if active.current_mut(visit_id, VisitStatus::Running).is_none() {
+            if active.visit_mut(visit_id, VisitStatus::Running).is_none() {
                 return vec![];
             }
             let mut effects = runner.settle(active, visit_id, outcome);
@@ -252,8 +292,8 @@ impl Runner {
         })
     }
 
-    /// Records the outcome on the running current visit `visit_id` and
-    /// follows its transition.
+    /// Records the outcome on running visit `visit_id` and follows its
+    /// transition, or, for a parallel step's branch, joins it.
     fn settle(
         &mut self,
         active: &mut ActiveRun,
@@ -261,7 +301,7 @@ impl Runner {
         outcome: AgentOutcome,
     ) -> Vec<Effect> {
         let now = (self.clock)();
-        let Some(visit) = active.current_mut(visit_id, VisitStatus::Running) else {
+        let Some(visit) = active.visit_mut(visit_id, VisitStatus::Running) else {
             return vec![];
         };
         let state_id = visit.state_id.clone();
@@ -269,23 +309,29 @@ impl Runner {
             AgentStatus::Cancelled => {
                 visit.status = VisitStatus::Cancelled;
                 visit.finished_at = Some(now);
-                self.finish(active, RunStatus::Cancelled, None, true)
+                self.finish(active, RunStatus::Cancelled, None, Some(visit_id))
             }
             AgentStatus::Failed => {
                 let error = outcome.error.unwrap_or_else(|| "Agent failed".into());
                 visit.status = VisitStatus::Failed;
                 visit.error = Some(error.clone());
                 visit.finished_at = Some(now);
-                self.advance(active, VisitResult::Failed, &HashMap::new(), error)
+                self.after_visit(
+                    active,
+                    visit_id,
+                    VisitResult::Failed,
+                    &HashMap::new(),
+                    error,
+                )
             }
             AgentStatus::Completed => {
                 let Some(state) = active.state(&state_id) else {
                     let error = format!("Unknown state {state_id}");
-                    let visit = active.visits.last_mut().expect("current visit");
+                    let visit = active.visit(visit_id);
                     visit.status = VisitStatus::Failed;
                     visit.error = Some(error.clone());
                     visit.finished_at = Some(now);
-                    return self.finish(active, RunStatus::Failed, Some(error), true);
+                    return self.finish(active, RunStatus::Failed, Some(error), Some(visit_id));
                 };
                 let declared = outputs_of(&state);
                 let parsed = if declared.is_empty() {
@@ -293,20 +339,20 @@ impl Runner {
                 } else {
                     parse_outputs(&outcome.text, &declared)
                 };
-                let visit = active.visits.last_mut().expect("current visit");
+                let visit = active.visit(visit_id);
                 match parsed {
                     Ok(values) => {
                         visit.status = VisitStatus::Completed;
                         visit.outputs = Some(values.clone());
                         visit.finished_at = Some(now);
                         let error = format!("No transition matched from {state_id}");
-                        self.advance(active, VisitResult::Completed, &values, error)
+                        self.after_visit(active, visit_id, VisitResult::Completed, &values, error)
                     }
                     Err(errors) => match visit.session_id.clone() {
                         Some(session_id) if !visit.retried => {
                             visit.retried = true;
                             vec![
-                                active.persist(true),
+                                active.persist_visit(visit_id),
                                 Effect::FollowUp {
                                     session_id,
                                     prompt: retry_prompt(&errors),
@@ -318,12 +364,159 @@ impl Runner {
                             visit.status = VisitStatus::Failed;
                             visit.error = Some(error.clone());
                             visit.finished_at = Some(now);
-                            self.advance(active, VisitResult::Failed, &HashMap::new(), error)
+                            self.after_visit(
+                                active,
+                                visit_id,
+                                VisitResult::Failed,
+                                &HashMap::new(),
+                                error,
+                            )
                         }
                     },
                 }
             }
         }
+    }
+
+    /// Visit `visit_id` ended: a branch joins its parallel step; any other
+    /// step follows its transition.
+    fn after_visit(
+        &mut self,
+        active: &mut ActiveRun,
+        visit_id: &str,
+        result: VisitResult,
+        values: &HashMap<String, OutputValue>,
+        error: String,
+    ) -> Vec<Effect> {
+        let state_id = active.visit(visit_id).state_id.clone();
+        match active.run.flow.parent_of(&state_id).cloned() {
+            Some(parent) => self.join(active, &parent, visit_id, result, error),
+            None => self.advance(active, &state_id, visit_id, result, values, error),
+        }
+    }
+
+    /// Branch visit `visit_id` of `parent` ended. A failed branch with
+    /// visits left runs again; one without fails the parallel step and stops
+    /// the other branches. Once every branch has completed, the parallel step
+    /// completes and follows its transition.
+    fn join(
+        &mut self,
+        active: &mut ActiveRun,
+        parent: &ParallelState,
+        visit_id: &str,
+        result: VisitResult,
+        error: String,
+    ) -> Vec<Effect> {
+        let mut effects = vec![active.persist_visit(visit_id)];
+        let Some(step) = active
+            .visits
+            .iter()
+            .rposition(|v| v.state_id == parent.id && v.status == VisitStatus::Running)
+        else {
+            return effects;
+        };
+        let step_id = active.visits[step].id.clone();
+        let step_seq = active.visits[step].seq;
+        let branch = active.visit(visit_id).state_id.clone();
+        if result == VisitResult::Failed {
+            let used = active.visits_of(&branch);
+            let max = active.state(&branch).map_or(0, |s| s.max_visits());
+            if used < usize::from(max) {
+                effects.extend(self.enter(active, &branch, Some(&error)));
+                if active.run.status.is_active() {
+                    active.run.current_state = Some(parent.id.clone());
+                }
+                return effects;
+            }
+            let title = active
+                .state(&branch)
+                .map_or(branch.clone(), |s| s.title().to_owned());
+            let failure = format!("{title} failed: {error}");
+            let now = (self.clock)();
+            let step = active.visit(&step_id);
+            step.status = VisitStatus::Failed;
+            step.error = Some(failure.clone());
+            step.finished_at = Some(now);
+            effects.extend(self.stop_others(active, step_seq, None));
+            effects.extend(self.advance(
+                active,
+                &parent.id,
+                &step_id,
+                VisitResult::Failed,
+                &HashMap::new(),
+                failure,
+            ));
+            return effects;
+        }
+        let waiting = active
+            .visits
+            .iter()
+            .any(|v| v.seq > step_seq && v.status == VisitStatus::Running);
+        if waiting {
+            return effects;
+        }
+        let now = (self.clock)();
+        let step = active.visit(&step_id);
+        step.status = VisitStatus::Completed;
+        step.finished_at = Some(now);
+        let error = format!("No transition matched from {}", parent.id);
+        effects.extend(self.advance(
+            active,
+            &parent.id,
+            &step_id,
+            VisitResult::Completed,
+            &HashMap::new(),
+            error,
+        ));
+        effects
+    }
+
+    /// Cancels every visit still in flight after `after_seq`, except
+    /// `keep`: the other branches of a parallel step that failed or of a run
+    /// that ended. Persists each, then stops its session.
+    fn stop_others(
+        &mut self,
+        active: &mut ActiveRun,
+        after_seq: u32,
+        keep: Option<&str>,
+    ) -> Vec<Effect> {
+        let now = (self.clock)();
+        let mut stopped = Vec::new();
+        let mut sessions = Vec::new();
+        for v in active.visits.iter_mut().filter(|v| v.seq > after_seq) {
+            if Some(v.id.as_str()) == keep
+                || !matches!(
+                    v.status,
+                    VisitStatus::Running | VisitStatus::WaitingApproval
+                )
+            {
+                continue;
+            }
+            let agent = active
+                .run
+                .flow
+                .state(&v.state_id)
+                .is_some_and(|s| matches!(s, FlowState::Agent(_)));
+            if v.status == VisitStatus::Running && agent {
+                match &v.session_id {
+                    Some(session) => sessions.push(session.clone()),
+                    None => {
+                        self.cancelled_unreported
+                            .insert((active.run.id.clone(), v.id.clone()));
+                    }
+                }
+            }
+            v.status = VisitStatus::Cancelled;
+            v.finished_at = Some(now);
+            stopped.push(v.id.clone());
+        }
+        let mut effects: Vec<Effect> = stopped.iter().map(|id| active.persist_visit(id)).collect();
+        effects.extend(
+            sessions
+                .into_iter()
+                .map(|session_id| Effect::Cancel { session_id }),
+        );
+        effects
     }
 
     /// Decides the run's pending approval; the note is the visit's `note` output.
@@ -333,12 +526,14 @@ impl Runner {
             if active.run.status != RunStatus::WaitingApproval {
                 return vec![];
             }
-            let Some(visit) = active.visits.last_mut() else {
+            let Some(visit) = active
+                .visits
+                .iter_mut()
+                .rev()
+                .find(|v| v.status == VisitStatus::WaitingApproval)
+            else {
                 return vec![];
             };
-            if visit.status != VisitStatus::WaitingApproval {
-                return vec![];
-            }
             let values = HashMap::from([
                 ("approved".to_string(), OutputValue::Bool(approved)),
                 ("note".to_string(), OutputValue::String(note.to_owned())),
@@ -348,8 +543,16 @@ impl Runner {
             visit.note = Some(note.to_owned());
             visit.finished_at = Some(now);
             let error = format!("No transition matched from {}", visit.state_id);
+            let (state_id, visit_id) = (visit.state_id.clone(), visit.id.clone());
             active.run.status = RunStatus::Running;
-            runner.advance(active, VisitResult::Completed, &values, error)
+            runner.advance(
+                active,
+                &state_id,
+                &visit_id,
+                VisitResult::Completed,
+                &values,
+                error,
+            )
         })
     }
 
@@ -416,31 +619,29 @@ impl Runner {
             return vec![];
         };
         let now = (self.clock)();
-        let mut session = None;
-        let mut visit_changed = false;
-        if let Some(visit) = active.visits.last_mut() {
-            if matches!(
-                visit.status,
-                VisitStatus::Running | VisitStatus::WaitingApproval
-            ) {
-                if visit.status == VisitStatus::Running {
-                    session = visit.session_id.clone();
-                    if session.is_none() {
-                        self.cancelled_unreported
-                            .insert((active.run.id.clone(), visit.id.clone()));
-                    }
-                }
-                visit.status = VisitStatus::Cancelled;
-                visit.finished_at = Some(now);
-                visit_changed = true;
-            }
-        }
+        let stopped = self.stop_others(&mut active, 0, None);
         active.run.status = RunStatus::Cancelled;
         active.run.finished_at = Some(now);
-        let mut effects = vec![active.persist(visit_changed)];
-        if let Some(session_id) = session {
-            effects.push(Effect::Cancel { session_id });
+        // The run as it ends, with each visit it stopped, then the sessions.
+        let mut effects = Vec::new();
+        let (persists, cancels): (Vec<_>, Vec<_>) = stopped
+            .into_iter()
+            .partition(|e| matches!(e, Effect::Persist { .. }));
+        if persists.is_empty() {
+            effects.push(active.persist(false));
         }
+        for effect in persists {
+            if let Effect::Persist {
+                visit: Some(visit), ..
+            } = effect
+            {
+                effects.push(Effect::Persist {
+                    run: active.run.clone(),
+                    visit: active.visits.iter().find(|v| v.id == visit.id).cloned(),
+                });
+            }
+        }
+        effects.extend(cancels);
         effects.push(Effect::Finished {
             run_id: active.run.id.clone(),
             status: RunStatus::Cancelled,
@@ -461,6 +662,12 @@ impl Runner {
         {
             return vec![];
         }
+        // A branch runs again through its parallel step.
+        let state_id = run
+            .flow
+            .parent_of(state_id)
+            .map_or(state_id.to_owned(), |p| p.id.clone());
+        let state_id = state_id.as_str();
         run.status = RunStatus::Running;
         run.error = None;
         run.finished_at = None;
@@ -553,82 +760,98 @@ impl Runner {
         }
     }
 
-    /// Ends the run. `with_visit` persists the current visit alongside it.
+    /// Ends the run, persisting visit `visit_id` alongside it. Any other
+    /// visit still in flight (a parallel step's branch) is stopped.
     fn finish(
         &mut self,
         active: &mut ActiveRun,
         status: RunStatus,
         error: Option<String>,
-        with_visit: bool,
+        visit_id: Option<&str>,
     ) -> Vec<Effect> {
+        let stopped = self.stop_others(active, 0, visit_id);
         active.run.status = status;
         active.run.error = error;
         active.run.finished_at = Some((self.clock)());
-        vec![
-            active.persist(with_visit),
-            Effect::Finished {
-                run_id: active.run.id.clone(),
-                status,
-            },
-        ]
+        let mut effects = vec![match visit_id {
+            Some(id) => active.persist_visit(id),
+            None => active.persist(false),
+        }];
+        // Each stopped visit is persisted as the run now stands.
+        for effect in stopped {
+            effects.push(match effect {
+                Effect::Persist {
+                    visit: Some(visit), ..
+                } => active.persist_visit(&visit.id),
+                other => other,
+            });
+        }
+        effects.push(Effect::Finished {
+            run_id: active.run.id.clone(),
+            status,
+        });
+        effects
     }
 
-    /// Follows the transition chosen for the just-settled current visit.
-    /// `unmatched` is the run's error when no transition matches.
+    /// Follows the transition of `state_id` chosen for its just-ended visit
+    /// `visit_id`. `unmatched` is the run's error when no transition matches.
     fn advance(
         &mut self,
         active: &mut ActiveRun,
+        state_id: &str,
+        visit_id: &str,
         result: VisitResult,
         values: &HashMap<String, OutputValue>,
         unmatched: String,
     ) -> Vec<Effect> {
-        let state_id = active
-            .visits
-            .last()
-            .map(|v| v.state_id.clone())
-            .unwrap_or_default();
         let target = active
-            .state(&state_id)
+            .state(state_id)
             .and_then(|s| select_transition(&s, result, values).map(|t| t.to.clone()));
         match target.as_deref() {
-            None => self.finish(active, RunStatus::Failed, Some(unmatched), true),
-            Some(SUCCEEDED) => self.finish(active, RunStatus::Succeeded, None, true),
+            None => self.finish(active, RunStatus::Failed, Some(unmatched), Some(visit_id)),
+            Some(SUCCEEDED) => self.finish(active, RunStatus::Succeeded, None, Some(visit_id)),
             Some(FAILED) => {
                 let error = format!("Reached {FAILED} from {state_id}");
-                self.finish(active, RunStatus::Failed, Some(error), true)
+                self.finish(active, RunStatus::Failed, Some(error), Some(visit_id))
             }
             Some(next) => {
-                let mut effects = vec![active.persist(true)];
+                let mut effects = vec![active.persist_visit(visit_id)];
                 effects.extend(self.enter_state(active, next));
                 effects
             }
         }
     }
 
-    /// Creates the next visit of `state_id`, after the visit and step caps.
     fn enter_state(&mut self, active: &mut ActiveRun, state_id: &str) -> Vec<Effect> {
+        self.enter(active, state_id, None)
+    }
+
+    /// Creates the next visit of `state_id`, after the visit and step caps.
+    /// `failed` is the error of the branch visit this one retries.
+    fn enter(
+        &mut self,
+        active: &mut ActiveRun,
+        state_id: &str,
+        failed: Option<&str>,
+    ) -> Vec<Effect> {
         let Some(state) = active.state(state_id) else {
             let error = format!("Unknown state {state_id}");
-            return self.finish(active, RunStatus::Failed, Some(error), false);
+            return self.finish(active, RunStatus::Failed, Some(error), None);
         };
         let max = state.max_visits();
-        let visited = active
-            .visits
-            .iter()
-            .filter(|v| v.state_id == state_id)
-            .count();
-        if visited >= usize::from(max) {
+        if active.visits_of(state_id) >= usize::from(max) {
             let error = format!("State {state_id} exceeded {max} visits");
-            return self.finish(active, RunStatus::Failed, Some(error), false);
+            return self.finish(active, RunStatus::Failed, Some(error), None);
         }
         if active.visits.len() >= MAX_RUN_STEPS as usize {
             let error = format!("Run exceeded {MAX_RUN_STEPS} steps");
-            return self.finish(active, RunStatus::Failed, Some(error), false);
+            return self.finish(active, RunStatus::Failed, Some(error), None);
         }
 
         let template = match &state {
-            FlowState::Agent(s) => &s.brief,
-            FlowState::Approval(s) => &s.message,
+            FlowState::Agent(s) => s.brief.as_str(),
+            FlowState::Approval(s) => s.message.as_str(),
+            FlowState::Parallel(_) => "",
         };
         let outputs = active.latest_outputs();
         let rendered = render_template(
@@ -664,13 +887,20 @@ impl Runner {
                 visit.status = VisitStatus::Failed;
                 visit.error = Some(error.clone());
                 visit.finished_at = Some(now);
+                let id = visit.id.clone();
                 active.visits.push(visit);
-                return self.finish(active, RunStatus::Failed, Some(error), true);
+                return self.finish(active, RunStatus::Failed, Some(error), Some(&id));
             }
         };
 
         match &state {
             FlowState::Agent(agent) => {
+                let text = match failed {
+                    Some(error) => format!(
+                        "{text}\n\nThe last attempt at this step failed: {error}\nFix what failed, then do the step again."
+                    ),
+                    None => text,
+                };
                 let footer = contract_footer(&agent.outputs);
                 let prompt = if footer.is_empty() {
                     text
@@ -699,8 +929,9 @@ impl Runner {
                     ),
                     prompt,
                 };
+                let id = visit.id.clone();
                 active.visits.push(visit);
-                vec![active.persist(true), Effect::Launch(launch)]
+                vec![active.persist_visit(&id), Effect::Launch(launch)]
             }
             FlowState::Approval(_) => {
                 visit.status = VisitStatus::WaitingApproval;
@@ -710,10 +941,65 @@ impl Runner {
                     run_id: active.run.id.clone(),
                     visit_id: visit.id.clone(),
                 };
+                let id = visit.id.clone();
                 active.visits.push(visit);
-                vec![active.persist(true), needs]
+                vec![active.persist_visit(&id), needs]
+            }
+            FlowState::Parallel(parallel) => self.enter_parallel(active, parallel, visit),
+        }
+    }
+
+    /// Starts parallel step `visit` and launches each branch whose `when`
+    /// matches the outputs of the step that led here. With none to run, the
+    /// step completes at once.
+    fn enter_parallel(
+        &mut self,
+        active: &mut ActiveRun,
+        parallel: &ParallelState,
+        visit: FlowVisit,
+    ) -> Vec<Effect> {
+        let entry = active
+            .visits
+            .iter()
+            .rev()
+            .find(|v| v.status == VisitStatus::Completed)
+            .and_then(|v| v.outputs.clone())
+            .unwrap_or_default();
+        active.run.status = RunStatus::Running;
+        let step_id = visit.id.clone();
+        active.visits.push(visit);
+        let mut effects = vec![active.persist_visit(&step_id)];
+        let mut ran = false;
+        for branch in &parallel.branches {
+            let Some(FlowState::Agent(agent)) = active.state(branch) else {
+                continue;
+            };
+            if !branch_runs(&agent.when, &entry) {
+                continue;
+            }
+            ran = true;
+            effects.extend(self.enter(active, branch, None));
+            if !active.run.status.is_active() {
+                return effects;
             }
         }
+        active.run.current_state = Some(parallel.id.clone());
+        if !ran {
+            let now = (self.clock)();
+            let step = active.visit(&step_id);
+            step.status = VisitStatus::Completed;
+            step.finished_at = Some(now);
+            let error = format!("No transition matched from {}", parallel.id);
+            effects.extend(self.advance(
+                active,
+                &parallel.id,
+                &step_id,
+                VisitResult::Completed,
+                &HashMap::new(),
+                error,
+            ));
+        }
+        effects
     }
 }
 

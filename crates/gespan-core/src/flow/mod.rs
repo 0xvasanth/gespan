@@ -2,6 +2,7 @@
 pub mod contract;
 pub mod definition;
 pub mod diagram;
+pub mod graph;
 pub mod pilot_schema;
 pub mod run;
 pub mod runner;
@@ -12,8 +13,8 @@ pub mod yaml;
 
 pub use definition::{
     approval_outputs, outputs_of, validate_flow, AgentState, ApprovalState, Flow, FlowInput,
-    FlowState, Guard, GuardOp, OutputField, OutputType, OutputValue, Transition, Validation,
-    VisitResult, ACCESS_MODES, DEFAULT_ACCESS, FAILED, SUCCEEDED,
+    FlowState, Guard, GuardOp, Join, OutputField, OutputType, OutputValue, ParallelState,
+    Transition, Validation, VisitResult, ACCESS_MODES, DEFAULT_ACCESS, FAILED, SUCCEEDED,
 };
 pub use run::{FlowRun, FlowVisit, RunEdit, RunStatus, RunTag, VisitStatus};
 pub use runner::{AgentOutcome, AgentStatus, Effect, LaunchRequest, Runner, MAX_RUN_STEPS};

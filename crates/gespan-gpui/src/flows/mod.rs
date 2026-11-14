@@ -2,7 +2,6 @@
 //! host that runs each agent visit as a background session, and the view.
 use gpui::App;
 
-pub(crate) mod diagram;
 mod editor;
 mod host;
 mod run_view;
