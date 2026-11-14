@@ -708,6 +708,37 @@ impl TranscriptView {
         self.list.set_follow_mode(FollowMode::Tail);
         self.scroll_bound = false;
     }
+    /// PilotChat's one-tap answers: the options of a choices card that ends
+    /// the chat, which wait above the composer until one is picked.
+    pub(crate) fn open_choices(&self) -> Vec<String> {
+        self.source
+            .last()
+            .filter(|row| self.pilot && row.role == "pilot-card")
+            .and_then(|row| serde_json::from_str::<serde_json::Value>(&row.text).ok())
+            .filter(|value| value["type"] == "choices")
+            .and_then(|value| {
+                value["options"].as_array().map(|options| {
+                    options
+                        .iter()
+                        .filter_map(|o| o.as_str().map(str::to_owned))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+    #[cfg(test)]
+    pub(crate) fn pilot_card_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|r| matches!(r.body, Body::PilotCard(_)))
+            .count()
+    }
+    /// Answers the open question as if its chip in the chat were clicked.
+    pub(crate) fn choose(&mut self, text: String, cx: &mut Context<Self>) {
+        cx.emit(crate::pilots::cards::CardAction(
+            serde_json::json!({"type":"choice","text":text}),
+        ));
+    }
     /// The messages the find bar matches, by source row.
     pub(crate) fn find_matches(&self, query: &str) -> Vec<usize> {
         gespan_core::search::transcript_matches(&self.source, query)
@@ -1893,6 +1924,11 @@ impl TranscriptView {
             .rows
             .get(ix + 1)
             .is_some_and(|r| matches!(r.body, Body::Launch(_) | Body::PilotCard(_)));
+        let step_after = self.rows.get(ix + 1).is_some_and(|r| match &r.body {
+            Body::Launch(_) => true,
+            Body::PilotCard(v) => v["type"] == "session",
+            _ => false,
+        });
         let first =
             ix == 0 || !matches!(self.rows[ix - 1].body, Body::Launch(_) | Body::PilotCard(_));
         let view = self.launches.get(&id).cloned();
@@ -1907,7 +1943,13 @@ impl TranscriptView {
                     .max_w(px(COLUMN))
                     .px(px(COLUMN_PAD))
                     .pt(px(if first { 4. } else { 0. }))
-                    .pb(px(if card_after { 8. } else { 12. }))
+                    .pb(px(if step_after {
+                        6.
+                    } else if card_after {
+                        8.
+                    } else {
+                        12.
+                    }))
                     .child(crate::pilots::cards::launch(id, view.as_ref(), cx)),
             )
             .into_any_element()
@@ -3631,7 +3673,11 @@ impl TranscriptView {
                     });
                 }
             } else if matches!(role.as_str(), "pilot-card" | "pilot-note") {
-                if let Ok(value) = serde_json::from_str(&text) {
+                // The question still open sits above the composer instead.
+                let open = self.pilot && at + 1 == self.source.len();
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+                    && !(open && value["type"] == "choices")
+                {
                     self.rows.push(UiRow {
                         key: (0, 0),
                         body: Body::PilotCard(value),
@@ -5629,8 +5675,17 @@ impl TranscriptView {
                 .rows
                 .get(ix + 1)
                 .is_some_and(|r| matches!(r.body, Body::PilotCard(_) | Body::Launch(_)));
+        // Step chips stack 6px apart, as on PilotChat.
+        let step = |r: &UiRow| matches!(&r.body, Body::PilotCard(v) if v["type"] == "session");
+        let steps = step(&self.rows[ix]) && self.rows.get(ix + 1).is_some_and(step);
         let bottom = if card {
-            if card_after { 8. } else { 12. }
+            if steps {
+                6.
+            } else if card_after {
+                8.
+            } else {
+                12.
+            }
         } else if inside_tools || matches!(self.rows[ix].body, Body::Phase { .. }) {
             0.
         } else if receipt || (last && is_tool) {
@@ -7333,11 +7388,11 @@ mod scroll_tests {
         visual.run_until_parked();
         let document = visual.debug_bounds("pilot-artifact-card").unwrap();
         let session = visual.debug_bounds("pilot-launch-card-7").unwrap();
-        // ArtifactCard: min-h-[38px] and w-fit; LaunchedSessionCard: py-1.5
+        // ArtifactCard: min-h-[38px] and w-fit; PilotChat step chip: 30px
         // around its project chip, both at most 24rem wide.
         assert_eq!(document.size.height, px(38.));
         assert!(document.size.width < px(384.));
-        assert_eq!(session.size.height, px(40.));
+        assert_eq!(session.size.height, px(30.));
         assert!(session.size.width <= px(384.));
     }
 

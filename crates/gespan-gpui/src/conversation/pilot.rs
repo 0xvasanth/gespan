@@ -664,85 +664,11 @@ impl Conversation {
                     .pb_1p5()
                     .flex()
                     .flex_col()
-                    .children(
-                        self.pilot_ui
-                            .pending
-                            .iter()
-                            .filter(|m| m.internal)
-                            .map(|message| {
-                                let retry = message.id.clone();
-                                let remove = retry.clone();
-                                div()
-                                    .id(SharedString::from(format!("pilot-queued-{}", message.id)))
-                                    .mb_1()
-                                    .flex()
-                                    .justify_end()
-                                    .child(
-                                        div()
-                                            .max_w(px(440.))
-                                            .px_3()
-                                            .py_2()
-                                            .rounded_xl()
-                                            .border_1()
-                                            .border_color(content(0.15))
-                                            .bg(content(0.04))
-                                            .text_size(px(13.))
-                                            .text_color(content(0.6))
-                                            .child(internal_header(&message.text))
-                                            .child(
-                                                div()
-                                                    .text_size(px(11.))
-                                                    .text_color(content(0.4))
-                                                    .child(
-                                                        message
-                                                            .error
-                                                            .clone()
-                                                            .unwrap_or_else(|| "Pending".into()),
-                                                    ),
-                                            )
-                                            .when(message.error.is_some(), |d| {
-                                                d.child(
-                                                    div()
-                                                        .flex()
-                                                        .gap_2()
-                                                        .child(
-                                                            icon_button(
-                                                                "pilot-queue-retry",
-                                                                "Retry queued message",
-                                                                "refresh-cw",
-                                                            )
-                                                            .on_click(cx.listener(
-                                                                move |_, _, _, cx| {
-                                                                    cx.emit(QueueChanged {
-                                                                        id: retry.clone(),
-                                                                        remove: false,
-                                                                    })
-                                                                },
-                                                            )),
-                                                        )
-                                                        .child(
-                                                            icon_button(
-                                                                "pilot-queue-discard",
-                                                                "Discard queued message",
-                                                                "close",
-                                                            )
-                                                            .on_click(cx.listener(
-                                                                move |_, _, _, cx| {
-                                                                    cx.emit(QueueChanged {
-                                                                        id: remove.clone(),
-                                                                        remove: true,
-                                                                    })
-                                                                },
-                                                            )),
-                                                        ),
-                                                )
-                                            }),
-                                    )
-                            }),
-                    )
+                    .children(self.queued_internal(cx))
                     .children(self.usage_notice(true, cx))
                     .children(self.auth_notice(cx))
                     .child(self.approval_shelf(window, cx))
+                    .children(self.open_choices(cx))
                     .child({
                         let composer = div()
                             .child(self.pilot_composer_box(window, cx))
@@ -757,6 +683,154 @@ impl Conversation {
             .into_any_element()
     }
 
+    /// PilotChat's one-tap answers above the composer: glass buttons for the
+    /// question that ends the chat, until an answer is queued.
+    fn open_choices(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // An answer already on its way (picked here, typed, or from My Tasks)
+        // takes the buttons away, so one question gets one answer.
+        if self.pilot_ui.pending.iter().any(|m| !m.internal) {
+            return None;
+        }
+        let options = self.transcript.read(cx).open_choices();
+        if options.is_empty() {
+            return None;
+        }
+        let transcript = self.transcript.clone();
+        Some(
+            div()
+                .debug_selector(|| "pilot-open-choices".into())
+                .mb_2()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .children(options.into_iter().enumerate().map(|(ix, option)| {
+                    let transcript = transcript.clone();
+                    let label = option.clone();
+                    div()
+                        .id(("pilot-open-choice", ix))
+                        .debug_selector(move || format!("pilot-open-choice-{ix}"))
+                        .role(Role::Button)
+                        .aria_label(label.clone())
+                        .h(px(30.))
+                        .px(px(14.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(9.))
+                        .border_1()
+                        .border_color(content(0.09))
+                        .bg(content(0.06))
+                        .text_size(px(13.))
+                        .text_color(content(1.))
+                        .hover(|s| s.bg(content(0.1)))
+                        .child(label)
+                        .on_click(move |_, _, cx| {
+                            let option = option.clone();
+                            transcript.update(cx, |t, cx| t.choose(option, cx));
+                        })
+                }))
+                .into_any_element(),
+        )
+    }
+    /// Messages Gespan queued for the Pilot while it is busy. They wait as one
+    /// line above the composer, however many there are, so the conversation and
+    /// the message box keep their room; a failed one shows its error with retry
+    /// and discard.
+    fn queued_internal(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let internal = || self.pilot_ui.pending.iter().filter(|m| m.internal);
+        let mut rows = Vec::new();
+        if let Some(message) = internal().find(|m| m.error.is_some()) {
+            let retry = message.id.clone();
+            let remove = retry.clone();
+            rows.push(
+                div()
+                    .id("pilot-queue-failed")
+                    .debug_selector(|| "pilot-queue-failed".into())
+                    .mb_1()
+                    .flex()
+                    .justify_end()
+                    .child(
+                        div()
+                            .max_w(px(440.))
+                            .px_3()
+                            .py_2()
+                            .rounded_xl()
+                            .border_1()
+                            .border_color(content(0.15))
+                            .bg(content(0.04))
+                            .text_size(px(13.))
+                            .text_color(content(0.6))
+                            .child(internal_header(&message.text))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(content(0.4))
+                                    .child(message.error.clone().unwrap_or_default()),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        icon_button(
+                                            "pilot-queue-retry",
+                                            "Retry queued message",
+                                            "refresh-cw",
+                                        )
+                                        .on_click(
+                                            cx.listener(move |_, _, _, cx| {
+                                                cx.emit(QueueChanged {
+                                                    id: retry.clone(),
+                                                    remove: false,
+                                                })
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        icon_button(
+                                            "pilot-queue-discard",
+                                            "Discard queued message",
+                                            "close",
+                                        )
+                                        .on_click(
+                                            cx.listener(move |_, _, _, cx| {
+                                                cx.emit(QueueChanged {
+                                                    id: remove.clone(),
+                                                    remove: true,
+                                                })
+                                            }),
+                                        ),
+                                    ),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let waiting: Vec<_> = internal().filter(|m| m.error.is_none()).collect();
+        if let Some(first) = waiting.first() {
+            let label = match waiting.len() {
+                1 => format!("{} waiting", internal_header(&first.text)),
+                n => format!("{n} updates waiting"),
+            };
+            rows.push(
+                div()
+                    .id("pilot-queued")
+                    .debug_selector(|| "pilot-queued".into())
+                    .mb_1()
+                    .px(px(12.))
+                    .h(px(24.))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(6.))
+                    .text_size(px(11.5))
+                    .text_color(content(0.45))
+                    .child(div().size(px(6.)).rounded_full().bg(content(0.3)))
+                    .child(label)
+                    .into_any_element(),
+            );
+        }
+        rows
+    }
     /// Whether the model list and a composer menu are open.
     #[cfg(test)]
     pub(crate) fn pilot_menus_open(&self) -> (bool, bool) {

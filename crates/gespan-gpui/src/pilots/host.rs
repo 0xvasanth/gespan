@@ -1379,7 +1379,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         self.ensure_chat(&id, cx);
     }
     /// Reports the chat has been handed, delivered or in flight; they are never rewritten.
-    fn handed_reports(&self, id: &str, cx: &App) -> HashSet<String> {
+    pub(super) fn handed_reports(&self, id: &str, cx: &App) -> HashSet<String> {
         self.chats
             .get(id)
             .map(|v| v.read(cx).pilot_delivered().clone())

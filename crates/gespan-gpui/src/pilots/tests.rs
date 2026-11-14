@@ -7044,3 +7044,190 @@ fn a_pilot_choice_is_sent_once_however_often_it_is_clicked(cx: &mut TestAppConte
         .read_with(visual, |m, _| m.roster.get(&s.id).unwrap().outbox.len());
     assert_eq!(after - before, 1);
 }
+
+fn queue_internal(s: &Setup, texts: &[&str], error: Option<&str>, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            let pilot = m.roster.get_mut(&s.id).unwrap();
+            for text in texts {
+                pilot.outbox.push(Message {
+                    sent_at: None,
+                    id: pilot::new_id(),
+                    text: (*text).into(),
+                    internal: true,
+                    error: error.map(Into::into),
+                    attachments: Vec::new(),
+                    report: Vec::new(),
+                });
+            }
+            m.configure_chat(&s.id, cx);
+        })
+    });
+    cx.run_until_parked();
+}
+
+/// However many updates wait for a busy Pilot, they take one line above the
+/// composer, so the conversation and the message box keep their room.
+#[gpui::test]
+fn waiting_updates_take_one_line_and_leave_the_composer_in_view(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.dismiss_settings(w, cx));
+        })
+        .unwrap();
+    hold_outbox(&s, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let field = visual.debug_bounds("pilot-composer").unwrap();
+    assert!(visual.debug_bounds("pilot-queued").is_none());
+
+    let texts: Vec<String> = (0..15).map(|n| format!("Report {n}")).collect();
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+    queue_internal(&s, &texts[..1], None, visual);
+    visual.refresh().unwrap();
+    let one = visual.debug_bounds("pilot-queued").unwrap();
+    assert_eq!(one.size.height, px(24.));
+    let text = visual.debug_bounds("pilot-composer").unwrap();
+    assert_eq!(
+        text, field,
+        "the composer stays put; the conversation gives the room"
+    );
+    assert!(
+        one.bottom() <= text.top(),
+        "the line sits above the composer"
+    );
+
+    queue_internal(&s, &texts[1..], None, visual);
+    visual.refresh().unwrap();
+    let many = visual.debug_bounds("pilot-queued").unwrap();
+    assert_eq!(many, one, "fifteen wait on the same line");
+    assert_eq!(visual.debug_bounds("pilot-composer").unwrap(), text);
+    let viewport = s
+        .window
+        .update(visual, |_, w, _| w.viewport_size())
+        .unwrap();
+    assert!(
+        text.bottom() < viewport.height,
+        "the composer stays on screen"
+    );
+    assert!(visual.debug_bounds("pilot-queue-failed").is_none());
+
+    // A failed update shows its error with retry and discard, once.
+    queue_internal(
+        &s,
+        &["Broken", "Broken too"],
+        Some("Provider unavailable"),
+        visual,
+    );
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("pilot-queue-failed").is_some());
+    assert_eq!(
+        visual.debug_bounds("pilot-queued").unwrap().size.height,
+        px(24.)
+    );
+}
+
+/// A run that fails the same way on every launch queues its update once while
+/// that update still waits; a different update still queues.
+#[gpui::test]
+fn the_same_flow_update_is_not_queued_twice(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    hold_outbox(&s, cx);
+    let raise = |alert: &str, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            s.manager.update(cx, |m, cx| {
+                m.roster
+                    .get_mut(&s.id)
+                    .unwrap()
+                    .flow_alerts
+                    .push(alert.into());
+                m.flush_flow_alerts(&s.id, cx);
+            })
+        });
+        cx.run_until_parked();
+    };
+    let failed = "A step of task \"Release 0.2.1\" failed.\nError: Interrupted by app restart";
+    raise(failed, cx);
+    raise(failed, cx);
+    raise(failed, cx);
+    assert_eq!(flow_updates(&s, cx).len(), 1, "{:?}", flow_updates(&s, cx));
+    raise("[Goal finished] Ship 0.2.1", cx);
+    assert_eq!(flow_updates(&s, cx).len(), 2);
+    assert!(pilot_state(&s, cx).flow_alerts.is_empty());
+}
+
+/// PilotChat: the question that ends the chat waits above the composer as
+/// one-tap answers instead of a card in the conversation; picking one sends it
+/// once and takes the buttons away.
+#[gpui::test]
+fn an_open_question_answers_from_above_the_composer(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.dismiss_settings(w, cx));
+        })
+        .unwrap();
+    // A failed update at the head holds the queue, so the answer stays queued.
+    queue_internal(&s, &["Held"], Some("Retry required"), cx);
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let chat = s.manager.read_with(visual, |m, _| m.chats[&s.id].clone());
+    let post = |role: &str, text: String, visual: &mut gpui::VisualTestContext| {
+        chat.update(visual, |v, cx| v.pilot_post(role, text, cx).unwrap());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+    };
+    let card = json!({"type": "choices", "options": ["Cut from main", "Cut from release/0.2"]});
+    post("assistant", "Which branch?".into(), visual);
+    post("pilot-card", card.to_string(), visual);
+    let cards = |visual: &mut gpui::VisualTestContext| {
+        chat.read_with(visual, |v, cx| v.transcript.read(cx).pilot_card_count())
+    };
+    assert_eq!(
+        cards(visual),
+        0,
+        "the open question is not a card in the chat"
+    );
+    let row = visual.debug_bounds("pilot-open-choices").unwrap();
+    let composer = visual.debug_bounds("pilot-composer").unwrap();
+    assert_eq!(
+        composer.top() - row.bottom(),
+        px(8.),
+        "8px above the composer"
+    );
+    let first = visual.debug_bounds("pilot-open-choice-0").unwrap();
+    let second = visual.debug_bounds("pilot-open-choice-1").unwrap();
+    assert_eq!(first.size.height, px(30.));
+    assert_eq!(second.left() - first.right(), px(8.));
+    assert_eq!(first.left(), composer.left());
+
+    visual.simulate_click(second.center(), Default::default());
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let answers = |visual: &mut gpui::VisualTestContext| {
+        s.manager.read_with(visual, |m, _| {
+            m.roster
+                .get(&s.id)
+                .unwrap()
+                .outbox
+                .iter()
+                .filter(|q| !q.internal)
+                .map(|q| q.text.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(answers(visual), vec!["Cut from release/0.2".to_string()]);
+    assert!(
+        visual.debug_bounds("pilot-open-choices").is_none(),
+        "a queued answer takes the buttons away"
+    );
+
+    // Once the chat moves on, the question shows as a card in its history.
+    post("user", "Cut from release/0.2".into(), visual);
+    assert_eq!(cards(visual), 1);
+}
