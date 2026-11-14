@@ -234,8 +234,8 @@ impl Pilots {
         cx: &App,
     ) -> Option<std::sync::Arc<std::sync::Mutex<gespan_core::flow::FlowStore>>> {
         self.owner
-            .upgrade()
-            .and_then(|shell| shell.read(cx).pilot_flows_store().ok())
+            .read(cx, |shell, _| shell.pilot_flows_store().ok())
+            .flatten()
     }
     /// A run that ended failed or cancelled without a failing step event,
     /// such as a visit that failed before its session launched.

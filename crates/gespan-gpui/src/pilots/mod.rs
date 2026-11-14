@@ -100,7 +100,7 @@ pub(crate) struct Pilots {
     #[cfg(all(target_os = "macos", not(test)))]
     status: Option<status::Status>,
     parent_window: Option<gpui::AnyWindowHandle>,
-    owner: WeakEntity<Shell>,
+    owner: crate::owner::Owner<Shell>,
     store: Database,
     root: PathBuf,
     prefs: crate::settings::Preferences,
@@ -355,7 +355,7 @@ impl Pilots {
             #[cfg(all(target_os = "macos", not(test)))]
             status: None,
             parent_window: None,
-            owner,
+            owner: owner.into(),
             store,
             root,
             prefs,

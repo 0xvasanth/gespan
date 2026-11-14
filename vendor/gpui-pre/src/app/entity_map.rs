@@ -156,6 +156,15 @@ impl EntityMap {
             .unwrap_or_else(|| double_lease_panic("read", type_name::<T>()))
     }
 
+    /// Like [`Self::read`], but `None` while the entity is being updated
+    /// instead of a double-lease panic.
+    #[inline]
+    pub fn try_read<T: 'static>(&self, entity: &Entity<T>) -> Option<&T> {
+        self.assert_valid_context(entity);
+        self.read_inner(entity.entity_id)
+            .and_then(|entity| entity.downcast_ref())
+    }
+
     #[track_caller]
     pub(super) fn lease_erased(&mut self, pointer: &AnyEntity, entity_type: &str) -> LeaseInner {
         self.assert_valid_context(pointer);
@@ -484,6 +493,13 @@ impl<T: 'static> Entity<T> {
     #[inline]
     pub fn read<'a>(&self, cx: &'a App) -> &'a T {
         cx.entities.read(self)
+    }
+
+    /// Grab a reference to this entity, or `None` while it is being updated
+    /// (for example while it renders), where [`Self::read`] would panic.
+    #[inline]
+    pub fn try_read<'a>(&self, cx: &'a App) -> Option<&'a T> {
+        cx.entities.try_read(self)
     }
 
     /// Read the entity referenced by this handle with the given function.

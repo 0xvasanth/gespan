@@ -118,25 +118,24 @@ impl Pilots {
             if run.view.read(cx).needs_approval() {
                 views.push(run.view.clone());
             }
-            if let Some(owner) = self.owner.upgrade() {
-                for launch in self
-                    .roster
-                    .pilots
-                    .iter()
-                    .flat_map(|m| m.launches.iter())
-                    .filter(|l| {
-                        completions::launched_from(l.origin_turn, session)
-                            && !l.completed
-                            && !l.dismissed
-                    })
+            for launch in self
+                .roster
+                .pilots
+                .iter()
+                .flat_map(|m| m.launches.iter())
+                .filter(|l| {
+                    completions::launched_from(l.origin_turn, session)
+                        && !l.completed
+                        && !l.dismissed
+                })
+            {
+                if let Some(view) = self
+                    .owner
+                    .read(cx, |owner, _| owner.pilot_session_entity(launch.session_id))
+                    .flatten()
+                    .filter(|v| v.read(cx).needs_approval())
                 {
-                    if let Some(view) = owner
-                        .read(cx)
-                        .pilot_session_entity(launch.session_id)
-                        .filter(|v| v.read(cx).needs_approval())
-                    {
-                        views.push(view);
-                    }
+                    views.push(view);
                 }
             }
         }
@@ -342,11 +341,13 @@ impl Pilots {
                     l.session_id
                 })
                 .collect::<Vec<_>>();
-            if let Some(owner) = self.owner.upgrade() {
-                for child in children {
-                    if let Some(view) = owner.read(cx).pilot_session_entity(child) {
-                        view.update(cx, |v, cx| v.stop_if_busy(cx));
-                    }
+            for child in children {
+                let view = self
+                    .owner
+                    .read(cx, |owner, _| owner.pilot_session_entity(child))
+                    .flatten();
+                if let Some(view) = view {
+                    view.update(cx, |v, cx| v.stop_if_busy(cx));
                 }
             }
             self.habit_changed(id, cx);

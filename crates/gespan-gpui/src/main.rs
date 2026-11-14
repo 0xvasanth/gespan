@@ -71,6 +71,7 @@ mod model_welcome;
 mod my_tasks;
 mod notes;
 mod notifications;
+mod owner;
 mod pane_layout;
 mod pane_motion;
 mod particle_text;

@@ -319,8 +319,7 @@ impl Pilots {
         // Saved summaries keep cards current without opening their providers.
         let summaries = self
             .owner
-            .upgrade()
-            .map(|owner| owner.read(cx).pilot_session_views(cx))
+            .read(cx, |owner, cx| owner.pilot_session_views(cx))
             .unwrap_or_default();
         // LaunchedSessionCard: each launch's live state, for the chat's cards.
         let launches: HashMap<i64, crate::transcript::LaunchView> = pilot
@@ -329,8 +328,8 @@ impl Pilots {
             .map(|launch| {
                 let session = self
                     .owner
-                    .upgrade()
-                    .and_then(|o| o.read(cx).pilot_session_entity(launch.session_id));
+                    .read(cx, |o, _| o.pilot_session_entity(launch.session_id))
+                    .flatten();
                 let view = match session {
                     Some(session) => {
                         let session = session.read(cx);
@@ -396,8 +395,8 @@ impl Pilots {
             if value["type"] == "session" {
                 if let Some(session) = value["sessionId"].as_i64().and_then(|id| {
                     self.owner
-                        .upgrade()
-                        .and_then(|o| o.read(cx).pilot_session_entity(id))
+                        .read(cx, |o, _| o.pilot_session_entity(id))
+                        .flatten()
                 }) {
                     let session = session.read(cx);
                     value["title"] = json!(session.summary.title);

@@ -213,7 +213,7 @@ enum ChromeKind {
     Tabs,
 }
 struct Chrome {
-    owner: gpui::WeakEntity<Shell>,
+    owner: crate::owner::Owner<Shell>,
     kind: ChromeKind,
     renders: usize,
 }
@@ -226,7 +226,7 @@ impl Render for Chrome {
                 ChromeKind::Sidebar => shell.sidebar(cx),
                 ChromeKind::Tabs => shell.tabs(window, cx),
             })
-            .unwrap_or_else(|_| div().into_any())
+            .unwrap_or_else(|| div().into_any())
     }
 }
 
@@ -1159,7 +1159,7 @@ impl Shell {
             })
             .detach();
         }
-        let owner = cx.weak_entity();
+        let owner = crate::owner::Owner::from(cx.weak_entity());
         let sidebar_frame = cx.new(|_| Chrome {
             owner: owner.clone(),
             kind: ChromeKind::Sidebar,

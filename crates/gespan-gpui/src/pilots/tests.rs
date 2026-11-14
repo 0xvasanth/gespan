@@ -338,6 +338,7 @@ fn detail_pages_slide_over_the_overview_and_back_without_recreating_content(
             "html" => m.html_documents["slide-document"].entity_id(),
             "session" => m
                 .owner
+                .handle()
                 .upgrade()
                 .unwrap()
                 .read(cx)
@@ -384,6 +385,7 @@ fn detail_pages_slide_over_the_overview_and_back_without_recreating_content(
                 "html" => m.html_documents["slide-document"].entity_id(),
                 "session" => m
                     .owner
+                    .handle()
                     .upgrade()
                     .unwrap()
                     .read(cx)
@@ -979,7 +981,7 @@ fn app_actions_are_project_scoped_and_mutation_retries_are_idempotent(cx: &mut T
     cx.update(|cx| {
         let m = s.manager.read(cx);
         assert_eq!(m.roster.get(&s.id).unwrap().launches.len(), 1);
-        let owner = m.owner.upgrade().unwrap();
+        let owner = m.owner.handle().upgrade().unwrap();
         let view = owner.read(cx).pilot_session_entity(child).unwrap();
         assert!(view.read(cx).has_saved_draft());
         assert_eq!(
@@ -1013,7 +1015,7 @@ fn pilot_launches_still_list_in_the_pilot_panel_after_a_restart(cx: &mut TestApp
     .unwrap()
     .unwrap();
     let child = started["sessionId"].as_i64().unwrap();
-    let owner = cx.update(|cx| s.manager.read(cx).owner.upgrade().unwrap());
+    let owner = cx.update(|cx| s.manager.read(cx).owner.handle().upgrade().unwrap());
     // Pilot launches stay visible in the sidebar, in the Pilot's folder.
     cx.update(|cx| {
         assert!(!s.manager.read(cx).hidden_session(child));
@@ -1760,7 +1762,7 @@ fn delegated_pair(s: &Setup, cx: &mut TestAppContext) -> (i64, i64) {
 }
 fn set_child(s: &Setup, child: i64, busy: bool, cx: &mut TestAppContext) {
     cx.update(|cx| {
-        let owner = s.manager.read(cx).owner.upgrade().unwrap();
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
         let view = owner.read(cx).pilot_session_entity(child).unwrap();
         // A turn starting or ending says so, as a real one does.
         view.update(cx, |v, cx| {
@@ -1932,7 +1934,7 @@ pub(super) fn habit_run(s: &Setup, cx: &mut TestAppContext) -> i64 {
     .unwrap();
     let run = start["sessionId"].as_i64().unwrap();
     cx.update(|cx| {
-        let owner = s.manager.read(cx).owner.upgrade().unwrap();
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
         let view = owner.read(cx).pilot_session_entity(run).unwrap();
         s.manager.update(cx, |m, _| {
             let pilot = m.roster.get_mut(&s.id).unwrap();
@@ -2172,13 +2174,13 @@ fn start_child(s: &Setup, request: &str, cx: &mut TestAppContext) -> i64 {
 }
 fn groups_of(s: &Setup, cx: &mut TestAppContext) -> gespan_core::session_groups::Groups {
     cx.update(|cx| {
-        let owner = s.manager.read(cx).owner.upgrade().unwrap();
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
         owner.read(cx).pilot_groups(&s.project)
     })
 }
 fn set_groups(s: &Setup, groups: gespan_core::session_groups::Groups, cx: &mut TestAppContext) {
     cx.update(|cx| {
-        let owner = s.manager.read(cx).owner.upgrade().unwrap();
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
         owner.update(cx, |o, cx| {
             o.pilot_apply_groups(s.project.clone(), groups, cx)
         });
@@ -2262,7 +2264,7 @@ fn a_follow_up_files_a_loose_session_but_leaves_a_foldered_one_alone(cx: &mut Te
     assert!(groups_of(&s, cx).folder_of(loose).is_none());
     // Drafts leave their prompt in the input; clear it so a follow-up is accepted.
     cx.update(|cx| {
-        let owner = s.manager.read(cx).owner.upgrade().unwrap();
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
         for child in [loose, kept] {
             let view = owner.read(cx).pilot_session_entity(child).unwrap();
             let input = view.read(cx).input.clone();
@@ -4029,7 +4031,7 @@ fn hold_app(cx: &mut TestAppContext) {
 }
 fn set_held(s: &Setup, child: i64, held: bool, cx: &mut TestAppContext) {
     cx.update(|cx| {
-        let owner = s.manager.read(cx).owner.upgrade().unwrap();
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
         let view = owner.read(cx).pilot_session_entity(child).unwrap();
         view.update(cx, |v, _| {
             v.held = held.then_some(gespan_core::hold::Reason::Interrupted);
