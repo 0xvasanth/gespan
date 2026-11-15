@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-15
+
+### Added
+
+- **Pilot redesign:** a Pilot has four tabs and a Setup page. Pipeline shows
+  parallel steps as a top-down graph, with versions, drafts and a YAML view.
+  Schedule runs a pipeline, a step or an instruction and reports on each run.
+  History groups sessions by run with their diff sizes, and Docs shows pinned
+  documents and each run's drafts.
+- **Pilot chat:** step chips and one-tap answers, as on the board. Waiting
+  updates take one line, and a repeated Flow update queues only once.
+- **First run:** setup appears alone on the glass plane, and navigation stays
+  locked until it is done.
+- **Project-scoped rail:** the left nav can be scoped to one project, and the
+  Pilots section spans the rail.
+
+### Changed
+
+- The purple Gespan mark is used everywhere instead of the grey one.
+- The backdrop uses the design's soft glows, and the empty-session Tetris is
+  two-tone and stays quiet while idle.
+- The Inbox view tabs stay inside the list.
+
+### Fixed
+
+- The shell is guarded so it cannot be re-entered while it is updating.
+- Worktrees stay plain Git checkouts when copying build output fails.
+- Docs: the desktop guide is up to date and dead links are fixed.
+
 ## [0.2.0] - 2026-11-14
 
 ### Added
@@ -2335,7 +2364,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/0xvasanth/gespan/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/0xvasanth/gespan/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/0xvasanth/gespan/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/0xvasanth/gespan/compare/v0.1.1...v0.1.2
