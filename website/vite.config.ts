@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { parseChangelog, readRelease } from "./scripts/release.mjs";
@@ -15,7 +16,7 @@ const releases = parseChangelog(changelog).slice(0, 6);
 export default defineConfig({
   // Vite 8 bundles with Rolldown and transforms with Oxc; `compiler` turns on
   // React Compiler through oxc-transform-react.
-  plugins: [react({ compiler: true })],
+  plugins: [react({ compiler: true }), tailwindcss()],
   define: {
     __GESPAN_RELEASE__: JSON.stringify(release),
     __GESPAN_CHANGELOG__: JSON.stringify(releases),

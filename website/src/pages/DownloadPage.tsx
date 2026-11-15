@@ -61,7 +61,7 @@ export function DownloadPage() {
       <section className="w-sec-tight" aria-labelledby="pl-h">
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
           <h2 id="pl-h" className="w-h3">Every platform</h2>
-          <div className="w-g3">
+          <div data-stagger="" className="w-g3">
             <div className="w-glass dl-card">
               <div className="hd">
                 <div className="w-tile" style={{ color: "#ebebeb" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.8zM14.1 5.8c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z" /></svg></div>

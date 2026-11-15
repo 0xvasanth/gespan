@@ -25,7 +25,7 @@ export function FeaturesPage() {
             <h2 id="g1" className="w-h3">Many agents, side by side.</h2>
             <p className="w-small">Every conversation is a tab, and every parallel task can have its own worktree so agents never clash.</p>
           </div>
-          <div className="w-g2">
+          <div data-stagger="" className="w-g2">
             <div className="w-glass-flat fe-card">
               <div className="top">
                 <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="12" y1="4" x2="12" y2="20" /></svg></div>
@@ -88,7 +88,7 @@ export function FeaturesPage() {
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}><span className="w-btn w-btn-light sm">Allow once</span><span className="w-btn w-btn-glass sm">Allow for this session</span><span className="w-btn w-btn-ghost sm">Deny</span></div>
               <p className="w-meta">Approval cards show a Bash command as real multi-line text with its folder, an edit as a small diff, and an MCP call as its server and arguments.</p>
             </div>
-            <div className="w-g2">
+            <div data-stagger="" className="w-g2">
               <div className="w-glass-flat fe-card">
                 <div className="top">
                   <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10" /><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10" /></svg></div>
@@ -132,7 +132,7 @@ export function FeaturesPage() {
             <h2 id="g3" className="w-h3">Work comes in. Agents pick it up.</h2>
             <p className="w-small">Tickets become cards, cards become sessions, and automations run while you sleep.</p>
           </div>
-          <div className="w-g2">
+          <div data-stagger="" className="w-g2">
             <div className="w-glass-flat fe-card">
               <div className="top">
                 <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 7v7M12 7v4M16 7v9" /></svg></div>
@@ -173,7 +173,7 @@ export function FeaturesPage() {
             <p className="w-small">Share MCP servers once, let agents browse, and let them drive the app.</p>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <div className="w-g2">
+            <div data-stagger="" className="w-g2">
               <div className="w-glass-flat fe-card">
                 <div className="top">
                   <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" /></svg></div>
@@ -210,7 +210,7 @@ export function FeaturesPage() {
             <h2 id="g5" className="w-h3">Keep going when the laptop closes.</h2>
             <p className="w-small">These are newer and still experimental. They work today and are changing fast.</p>
           </div>
-          <div className="w-g3">
+          <div data-stagger="" className="w-g3">
             <Link className="w-glass-flat fe-card" to="/pilots">
               <div className="top">
                 <h3 className="w-h4">Pilots</h3>

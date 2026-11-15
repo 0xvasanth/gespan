@@ -120,7 +120,7 @@ export function DocsPage() {
       <section className="w-sec-tight" aria-labelledby="gd-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
           <h2 id="gd-h" className="w-h3">Guides</h2>
-          <div id="gd-list" className="w-g3">
+          <div id="gd-list" data-stagger="" className="w-g3">
             {shown.map((guide) => (
               <a key={guide.href} className="w-glass-flat dc-guide" href={guide.href}>
                 <div className="hd">
