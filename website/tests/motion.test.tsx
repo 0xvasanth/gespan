@@ -165,7 +165,9 @@ describe("hero rotating agent name", () => {
     vi.useRealTimers();
   });
 
-  test("the slot always holds every name, so the line keeps its width", () => {
+  test("every name is laid out for measuring, so the slot can fit the one showing", () => {
+    // The slot's width is animated to the shown name (checked in Chrome: an
+    // even gap on both sides of every name); jsdom has no layout to measure.
     const { container } = render(<HeroAgents />);
     const sizes = [...container.querySelectorAll(".fx-rotor-size")].map((el) => el.textContent);
     expect(sizes).toEqual(HERO_AGENTS);
