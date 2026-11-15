@@ -442,14 +442,61 @@ test("the recovery CLI checks the native feed copy against the shared release", 
 const greenRuns = [{ workflowName: "CI", conclusion: "success" }];
 const commit = "a".repeat(40);
 const otherCommit = "b".repeat(40);
+const newestOnMain = { status: "identical", version: "0.0.4" };
 const decide = (changes) =>
-  releaseDecision({ version: "0.0.4", sha: commit, tagSha: "", release: null, runs: greenRuns, ...changes });
+  releaseDecision({ version: "0.0.4", sha: commit, tagSha: "", release: null, runs: greenRuns, main: newestOnMain, ...changes });
 
 test("a new version on a green commit is released", () => {
   assert.deepEqual(
     { ...decide({}), reason: undefined },
     { release: true, tag: "v0.0.4", reason: undefined },
   );
+});
+
+test("a green commit still releases when newer commits with the same version landed on main during CI", () => {
+  // The 0.3.0 release merge passed CI after website commits had reached main.
+  const behindTip = decide({ main: { status: "ahead", version: "0.0.4" } });
+  assert.equal(behindTip.release, true);
+  assert.equal(behindTip.tag, "v0.0.4");
+});
+
+test("once main carries a newer version, an older commit's late CI run releases nothing", () => {
+  // The commit before a version bump finishing CI after the bump merged.
+  const stale = decide({ main: { status: "ahead", version: "0.0.5" } });
+  assert.equal(stale.release, false);
+  assert.match(stale.reason, /main is at 0\.0\.5 now/);
+  // Even with no tag for its version yet, so nothing old is ever published.
+  assert.equal(decide({ version: "0.0.4", main: { status: "ahead", version: "0.1.0" } }).release, false);
+});
+
+test("a commit that is not on main is never released", () => {
+  for (const status of ["behind", "diverged"]) {
+    const off = decide({ main: { status, version: "0.0.4" } });
+    assert.equal(off.release, false, status);
+    assert.match(off.reason, /is not on main/);
+  }
+});
+
+test("after an older commit is tagged, main's newer commit with the same version does not move the tag", () => {
+  const tip = decide({ sha: otherCommit, tagSha: commit, release: { isDraft: true } });
+  assert.equal(tip.release, false);
+  assert.equal(decide({ sha: otherCommit, tagSha: commit, release: { isDraft: false } }).release, false);
+});
+
+test("a failed compare with main or version read stops the run instead of skipping the release", () => {
+  assert.throws(() => decide({ main: { status: "", version: "0.0.4" } }), /Could not compare/);
+  assert.throws(() => decide({ main: { status: "Not Found", version: "0.0.4" } }), /Could not compare/);
+  assert.throws(() => decide({ main: undefined }), /Could not compare/);
+  assert.throws(() => decide({ main: { status: "identical", version: "" } }), /Could not read the version on main/);
+});
+
+test("the Release workflow compares the commit with main and reads main's version", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/release.yml"), "utf8");
+  assert.ok(workflow.includes('compare/$SHA...$MAIN_SHA'));
+  assert.ok(workflow.includes("contents/package.json?ref=$MAIN_SHA"));
+  assert.ok(workflow.includes("export VERSION TAG_SHA RELEASE_JSON RUNS_JSON MAIN_STATUS MAIN_VERSION"));
+  // The old newest-commit-only guard is gone.
+  assert.ok(!workflow.includes("is no longer the newest commit on main"));
 });
 
 test("a version is not released until CI has passed on that commit", () => {
@@ -506,7 +553,7 @@ test("the Release workflow looks the tag up with git, which prints nothing for a
 test("the release-decision CLI writes the workflow's outputs", () => {
   const output = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "release-decision-")), "output");
   execFileSync(process.execPath, [path.join(__dirname, "release-channel.cjs"), "release-decision"], {
-    env: { ...process.env, VERSION: "0.0.4", SHA: commit, TAG_SHA: "", RELEASE_JSON: "", RUNS_JSON: JSON.stringify(greenRuns), GITHUB_OUTPUT: output },
+    env: { ...process.env, VERSION: "0.0.4", SHA: commit, TAG_SHA: "", RELEASE_JSON: "", RUNS_JSON: JSON.stringify(greenRuns), MAIN_STATUS: "ahead", MAIN_VERSION: "0.0.4", GITHUB_OUTPUT: output },
     stdio: "pipe",
   });
   assert.equal(fs.readFileSync(output, "utf8"), "release=true\ntag=v0.0.4\n");

@@ -205,17 +205,35 @@ const nativePublishPlan = releasePlan;
 // Must pass on a main commit before it can be released.
 const RELEASE_CHECKS = ["CI"];
 
+// How `sha` relates to main's newest commit, from GitHub's compare of
+// sha...main: main is "ahead" of an older main commit and "identical" to its
+// newest one; "behind" and "diverged" mean sha is not on main.
+const MAIN_STATUSES = ["identical", "ahead", "behind", "diverged"];
+
 // What the Release workflow does for the version on main at `sha`. One release
 // per version: a published release ends it, and a draft or a tag on the same
 // commit is a run to finish, so a rerun picks up where the last one failed.
+// Any commit on main may release its version while main still carries that
+// version, so commits landing on main while CI runs do not hold a release
+// back; once main has a newer version, an older commit's late run does nothing.
 //   tagSha: the commit vVERSION points at, or "" when there is no tag.
 //   release: null (absent) or { isDraft } from `gh release view`.
 //   runs: this commit's push runs, newest first, from `gh run list`.
-function releaseDecision({ version, sha, tagSha, release, runs }) {
+//   main: { status, version }: how sha compares with main, and main's version.
+function releaseDecision({ version, sha, tagSha, release, runs, main }) {
   const tag = `v${version}`;
   if (!RELEASE_TAG.test(tag)) throw new Error(`${version} is not a release version`);
   // A failed lookup must stop the run, not read as a tag on another commit.
   if (tagSha && !/^[0-9a-f]{40}$/.test(tagSha)) throw new Error(`Could not read the commit of ${tag}: ${tagSha}`);
+  // Likewise a failed compare or version read must stop it, not skip it.
+  if (!main || !MAIN_STATUSES.includes(main.status)) throw new Error(`Could not compare ${sha} with main: ${main && main.status}`);
+  if (!main.version) throw new Error("Could not read the version on main");
+  if (main.status === "behind" || main.status === "diverged") {
+    return { release: false, tag, reason: `${sha} is not on main` };
+  }
+  if (main.version !== version) {
+    return { release: false, tag, reason: `main is at ${main.version} now, so ${sha} does not release ${tag}` };
+  }
   if (release && !release.isDraft) return { release: false, tag, reason: `${tag} is already published` };
   if (tagSha && tagSha !== sha) {
     return { release: false, tag, reason: `${tag} is on ${tagSha}, not ${sha}. Bump the version to release this commit.` };
@@ -304,12 +322,14 @@ if (require.main === module && process.argv[2] === "native-ref") {
   const plan = releasePlan({ release: raw ? JSON.parse(raw) : null, expected });
   console.log(`${plan.createRelease} ${plan.uploadPackages}`);
 } else if (require.main === module && process.argv[2] === "release-decision") {
-  // usage: release-decision; reads VERSION, SHA, TAG_SHA, RELEASE_JSON and RUNS_JSON.
-  const { VERSION, SHA, TAG_SHA, RELEASE_JSON, RUNS_JSON } = process.env;
+  // usage: release-decision; reads VERSION, SHA, TAG_SHA, RELEASE_JSON, RUNS_JSON,
+  // MAIN_STATUS and MAIN_VERSION.
+  const { VERSION, SHA, TAG_SHA, RELEASE_JSON, RUNS_JSON, MAIN_STATUS, MAIN_VERSION } = process.env;
   const raw = (RELEASE_JSON || "").trim();
   const decision = releaseDecision({
     version: VERSION, sha: SHA, tagSha: (TAG_SHA || "").trim(),
     release: raw ? JSON.parse(raw) : null, runs: JSON.parse(RUNS_JSON || "[]"),
+    main: { status: (MAIN_STATUS || "").trim(), version: (MAIN_VERSION || "").trim() },
   });
   console.log(`::notice::${decision.reason}`);
   if (!process.env.GITHUB_OUTPUT) throw new Error("GITHUB_OUTPUT is required");
