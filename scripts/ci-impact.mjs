@@ -43,16 +43,30 @@ export function impact(files) {
   return affected;
 }
 
-function changedFiles() {
-  // The pull request's merge commit: its first parent is the base.
-  const result = spawnSync("git", ["diff", "--no-renames", "--name-only", "HEAD^1", "HEAD"], { encoding: "utf8" });
+/**
+ * What to diff the checked-out commit against, or null to run every piece.
+ * A pull request's merge commit has the base as its first parent. A push to
+ * main is diffed against the commit main pointed at before it, so a push of
+ * several commits covers all of them. A new branch or a deleted one has no
+ * usable "before", and runs everything.
+ */
+export function diffBase(env) {
+  if (env.GITHUB_EVENT_NAME === "pull_request") return "HEAD^1";
+  if (env.GITHUB_EVENT_NAME === "push" && /^[0-9a-f]{40}$/.test(env.BEFORE ?? "") && !/^0+$/.test(env.BEFORE)) return env.BEFORE;
+  return null;
+}
+
+function changedFiles(base) {
+  if (!base) return [];
+  // The checkout is shallow; a push's "before" commit may not be in it yet.
+  if (base !== "HEAD^1") spawnSync("git", ["fetch", "--no-tags", "--depth=1", "origin", base], { encoding: "utf8" });
+  const result = spawnSync("git", ["diff", "--no-renames", "--name-only", base, "HEAD"], { encoding: "utf8" });
   if (result.status !== 0) return [];
   return result.stdout.split("\n").filter(Boolean);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const pullRequest = process.env.GITHUB_EVENT_NAME === "pull_request";
-  const files = pullRequest ? changedFiles() : [];
+  const files = changedFiles(diffBase(process.env));
   const affected = impact(files);
   const lines = pieces.map((piece) => `${piece}=${affected.has(piece)}`);
   console.log(`${files.length} changed files\n${lines.join("\n")}`);

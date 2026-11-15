@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { impact, pieces } from "./ci-impact.mjs";
+import { diffBase, impact, pieces } from "./ci-impact.mjs";
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
@@ -79,6 +79,41 @@ test("every host file a Core contract test reads runs Core, the rest of the host
   assert.ok(hostFiles.includes("host/windows-acl.ps1"));
   for (const file of hostFiles) assert.deepEqual(affected(file), ["core", "host"], file);
   assert.deepEqual(affected("host/core/index.ts"), ["host"]);
+});
+
+test("a website-only change runs the Website job and nothing else", () => {
+  assert.deepEqual(affected("website/src/pages/HomePage.tsx", "website/src/styles/site.css", "website/package.json", "website/bun.lock"), ["website"]);
+  // The site reads README.md and CHANGELOG.md, so those still reach it.
+  assert.ok(affected("README.md").includes("website"));
+  assert.ok(affected("CHANGELOG.md").includes("website"));
+});
+
+test("pull requests diff against their base, pushes against the commit before them", () => {
+  const sha = "a".repeat(40);
+  assert.equal(diffBase({ GITHUB_EVENT_NAME: "pull_request" }), "HEAD^1");
+  assert.equal(diffBase({ GITHUB_EVENT_NAME: "push", BEFORE: sha }), sha);
+  // A new branch or a push without a usable "before" runs every piece.
+  assert.equal(diffBase({ GITHUB_EVENT_NAME: "push", BEFORE: "0".repeat(40) }), null);
+  assert.equal(diffBase({ GITHUB_EVENT_NAME: "push", BEFORE: "" }), null);
+  assert.equal(diffBase({ GITHUB_EVENT_NAME: "push", BEFORE: "HEAD; rm -rf /" }), null);
+  assert.equal(diffBase({ GITHUB_EVENT_NAME: "workflow_dispatch" }), null);
+});
+
+test("the impact job hands pushes their before commit", async () => {
+  const ci = await read(".github/workflows/ci.yml");
+  assert.match(ci, /run: node scripts\/ci-impact\.mjs\n\s+env:\n(\s+#.*\n)*\s+BEFORE: \$\{\{ github\.event\.before \}\}/);
+});
+
+test("a matrix job with nothing to do reports from Ubuntu, not macOS or Windows", async () => {
+  // Their names are required checks, so they always run, but an idle one
+  // shouldn't hold a macOS or Windows machine. Every step is gated on RUN.
+  const ci = await read(".github/workflows/ci.yml");
+  for (const piece of ["host", "core", "desktop"]) {
+    assert.ok(ci.includes(`runs-on: \${{ needs.impact.outputs.${piece} != 'false' && matrix.os || 'ubuntu-latest' }}`), piece);
+    const job = ci.split(new RegExp(`\n  ${piece}:\n`))[1].split(/\n  [a-z-]+:\n/)[0];
+    const steps = job.split("    steps:\n")[1].split(/\n      - /).filter((step) => step.trim());
+    for (const step of steps) assert.match(step, /if: env\.RUN == 'true'/, `${piece}: ${step.split("\n")[0]}`);
+  }
 });
 
 test("website changes stay with the website job", async () => {
