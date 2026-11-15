@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Beam } from "./fx";
 
 /** The app screens are drawn at the desktop window size and scaled to fit. */
 export const SHOT_WIDTH = 1440;
@@ -22,7 +23,7 @@ export function shotScale(width: number): number {
  * A real Gespan screen, rendered in a shadow root so its styles stay apart
  * from the site's, and scaled to the frame's width at every screen size.
  */
-export function Shot({ name, className }: { name: ShotName; className?: string }) {
+export function Shot({ name, className, beam = false }: { name: ShotName; className?: string; beam?: boolean }) {
   const frame = useRef<HTMLDivElement>(null);
   const screen = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0);
@@ -57,6 +58,7 @@ export function Shot({ name, className }: { name: ShotName; className?: string }
     // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
     <div ref={frame} className={className ? `w-shot ${className}` : "w-shot"} role="img" aria-label={SHOTS[name].label} data-shot={name}>
       <div ref={screen} className="w-shot-in" inert style={{ transform: `scale(${scale})`, visibility: scale ? "visible" : "hidden" }} />
+      {beam && <Beam duration={9} size={220} />}
     </div>
   );
 }

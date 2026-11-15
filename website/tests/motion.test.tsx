@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act, cleanup, render } from "@testing-library/react";
+import { compile } from "tailwindcss";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { heroPose, risePose } from "../src/components/ScrollShot";
 import { useReveal } from "../src/reveal";
@@ -104,7 +105,8 @@ describe("useReveal", () => {
 });
 
 describe("motion.css", () => {
-  const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../src/styles/motion.css"), "utf8");
+  const site = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const css = readFileSync(join(site, "src/styles/motion.css"), "utf8");
 
   test("content is only hidden for a reveal when motion is welcome", () => {
     const guard = css.indexOf("@media (prefers-reduced-motion: no-preference)");
@@ -116,9 +118,36 @@ describe("motion.css", () => {
     expect(css.match(/:not\(\[data-shown\]\)/g)).toHaveLength(2);
   });
 
-  test("Tailwind can't restyle the site: prefixed, no preflight reset, all in layers", () => {
-    expect(css).toMatch(/@import "tailwindcss\/theme\.css" layer\(theme\) prefix\(tw\);/);
-    expect(css).toMatch(/@import "tailwindcss\/utilities\.css" layer\(utilities\) prefix\(tw\);/);
+  test("Tailwind can't restyle the site: no preflight reset, and everything in layers", () => {
+    expect(css).toMatch(/@import "tailwindcss\/theme\.css" layer\(theme\);/);
+    expect(css).toMatch(/@import "tailwindcss\/utilities\.css" layer\(utilities\);/);
     expect(css).not.toMatch(/@import "tailwindcss(\/preflight\.css)?"/);
+  });
+
+  test("no class the site defines is also a Tailwind utility", async () => {
+    // Tailwind emits a utility for any class name it recognises in the source.
+    // A site class with a utility's name (w-xl once was: Tailwind's width)
+    // would get Tailwind's styles on top of its own.
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (path.endsWith(".css") && !path.endsWith("motion.css")) files.push(path);
+      }
+    };
+    walk(join(site, "src"));
+    const own = new Set<string>();
+    for (const file of files) for (const match of readFileSync(file, "utf8").matchAll(/\.([a-zA-Z][\w-]*)/g)) own.add(match[1]);
+    expect(own.size).toBeGreaterThan(100);
+    const tw = await compile('@import "tailwindcss";', {
+      base: site,
+      loadStylesheet: async (id: string, base: string) => {
+        const file = join(site, "node_modules", id === "tailwindcss" ? "tailwindcss/index.css" : id);
+        return { path: file, base, content: readFileSync(file, "utf8") };
+      },
+    });
+    const generated = [...tw.build([...own]).matchAll(/^\s*\.([\w-]+)\s*\{/gm)].map((m) => m[1]);
+    expect(generated.filter((name) => own.has(name))).toEqual([]);
   });
 });

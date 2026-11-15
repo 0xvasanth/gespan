@@ -1,12 +1,20 @@
-/* Animation layer. Tailwind is loaded with a `tw:` prefix and without its
-   preflight reset, and everything here sits in cascade layers, so the site's
-   own (unlayered) styles always win: nothing here can restyle the design. */
+/* Animation layer. Tailwind is loaded without its preflight reset, and
+   everything here sits in cascade layers, so the site's own (unlayered) styles
+   always win: nothing here can restyle the design. Tailwind only emits the
+   utilities a source file uses, and the site's own classes are prefixed
+   (w-, lp-, nv- …), so the two never share a name. */
 @layer theme, motion, utilities;
-@import "tailwindcss/theme.css" layer(theme) prefix(tw);
-@import "tailwindcss/utilities.css" layer(utilities) prefix(tw);
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
 @source "../";
 
 @theme {
+  /* shadcn tokens the Magic UI components read, mapped to the glass palette. */
+  --color-background: #131313;
+  --color-border: rgba(255, 255, 255, 0.08);
   --animate-rise: rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
   --animate-drift: drift 22s ease-in-out infinite alternate;
 
@@ -59,5 +67,49 @@
     .reveal-ready [data-stagger] > :nth-child(8) { transition-delay: 490ms; }
     .reveal-ready [data-stagger] > :nth-child(9) { transition-delay: 560ms; }
     .reveal-ready [data-stagger] > :nth-child(n + 10) { transition-delay: 630ms; }
+  }
+}
+
+@theme inline {
+  --animate-marquee: marquee var(--duration) infinite linear;
+  --animate-marquee-vertical: marquee-vertical var(--duration) linear infinite;
+  --animate-shiny-text: shiny-text 8s infinite;
+  @keyframes marquee {
+  from {
+    transform: translateX(0);
+    }
+  to {
+    transform: translateX(calc(-100% - var(--gap)));
+    }
+  }
+  @keyframes marquee-vertical {
+  from {
+    transform: translateY(0);
+    }
+  to {
+    transform: translateY(calc(-100% - var(--gap)));
+    }
+  }
+  @keyframes shiny-text {
+  0%, 90%, 100% {
+    background-position: calc(-100% - var(--shiny-width)) 0;
+    }
+  30%, 60% {
+    background-position: calc(100% + var(--shiny-width)) 0;
+    }
+  }
+}
+
+/* The registry components animate with CSS too (marquee, shimmer); stop them
+   for visitors who prefer reduced motion. */
+@layer motion {
+  @media (prefers-reduced-motion: reduce) {
+    .animate-marquee,
+    .animate-marquee-vertical,
+    .animate-shiny-text,
+    .animate-drift,
+    .animate-rise {
+      animation: none !important;
+    }
   }
 }

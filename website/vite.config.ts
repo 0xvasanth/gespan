@@ -21,9 +21,11 @@ export default defineConfig({
     __GESPAN_RELEASE__: JSON.stringify(release),
     __GESPAN_CHANGELOG__: JSON.stringify(releases),
   },
+  resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: { target: "es2022" },
   test: {
     environment: "jsdom",
     include: ["tests/**/*.test.{ts,tsx}"],
+    setupFiles: ["tests/setup.ts"],
   },
 });

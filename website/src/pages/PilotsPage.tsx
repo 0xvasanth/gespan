@@ -2,6 +2,7 @@ import { Link } from "../router";
 import { SiteNav } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
 import { ScrollShot } from "../components/ScrollShot";
+import { Beam } from "../components/fx";
 import "./pilots.css";
 
 export function PilotsPage() {
@@ -15,7 +16,7 @@ export function PilotsPage() {
               <p className="w-eyebrow">Pilots</p>
               <span className="w-tag">Experimental</span>
             </div>
-            <h1 className="w-xl" style={{ maxWidth: "980px" }}>A Pilot keeps the work moving.</h1>
+            <h1 className="w-hero-title" style={{ maxWidth: "980px" }}>A Pilot keeps the work moving.</h1>
             <p className="w-lead" style={{ maxWidth: "660px" }}>A Pilot is a long-running agent with a soul, a memory and a schedule. It works across your projects, starts sessions with any agent, gets a report back from each one and asks you when a decision is yours.</p>
             <div className="w-stack-m w-full-m" style={{ display: "flex", gap: "10px" }}><Link className="w-btn w-btn-light" to="/download">Download Gespan</Link> <a className="w-btn w-btn-glass" href="#anatomy">What a Pilot is made of</a></div>
           </div>
@@ -91,7 +92,7 @@ export function PilotsPage() {
                 <p className="w-meta" style={{ paddingLeft: "4px" }}>A failed branch is fixed and retried, up to twice.</p>
               </div>
               <div className="pl-arrow" />
-              <div className="pl-step wait"><span className="w-dot" style={{ background: "#e8c547", boxShadow: "0 0 0 3px rgba(232,197,71,.2)" }} />Cut branch<span className="w-tag wait" style={{ marginLeft: "auto" }}>You</span></div>
+              <div className="pl-step wait" style={{ position: "relative" }}><span className="w-dot" style={{ background: "#e8c547", boxShadow: "0 0 0 3px rgba(232,197,71,.2)" }} />Cut branch<span className="w-tag wait" style={{ marginLeft: "auto" }}>You</span><Beam duration={3.5} size={70} /></div>
               <div className="pl-arrow" />
               <div className="pl-step dim">Release notes</div>
               <div className="pl-arrow" />

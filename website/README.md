@@ -34,10 +34,19 @@ bun run lint     # oxlint
   screenshot starts tilted back and straightens as you scroll, and the other
   shots rise into place. The poses are plain functions (`heroPose`,
   `risePose`) with tests.
-- **Tailwind v4** is loaded in `src/styles/motion.css` with a `tw:` prefix,
-  without its preflight reset, and inside cascade layers, so it can't restyle
-  the site. It supplies the hero's entrance keyframes (`tw:animate-rise`) and
+- **Tailwind v4** (with `tw-animate-css`) is loaded in `src/styles/motion.css`
+  without its preflight reset and inside cascade layers, so it can't restyle
+  the site. A test checks that no class the site defines is also a Tailwind
+  utility. It supplies the hero's entrance keyframes (`animate-rise`) and
   the drifting glow.
+- **shadcn and Magic UI.** `components.json` sets up the shadcn CLI, and
+  `src/components/ui/` holds Magic UI components added with it (marquee,
+  animated beam, border beam, shiny text, word rotate, magic card, number
+  ticker, animated list, particles, scroll progress). They're ours to edit;
+  edits are marked "Gespan:". `src/components/fx.tsx` composes them into the
+  site's pieces: the flow diagram, agent marquee, task feed, stat band,
+  spotlight cards, rotating hero word and beams. Add more with
+  `bunx shadcn add https://magicui.design/r/<name>.json`.
 - **Scroll reveals:** add `data-reveal` to an element, or `data-stagger` to a
   grid whose children should follow one another. `useReveal` marks each one as
   it enters the viewport.
