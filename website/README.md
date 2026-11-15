@@ -41,11 +41,11 @@ bun run lint     # oxlint
   the drifting glow.
 - **shadcn and Magic UI.** `components.json` sets up the shadcn CLI, and
   `src/components/ui/` holds Magic UI components added with it (marquee,
-  animated beam, border beam, shiny text, word rotate, magic card, number
+  animated beam, border beam, shiny text, magic card, number
   ticker, animated list, particles, scroll progress). They're ours to edit;
   edits are marked "Gespan:". `src/components/fx.tsx` composes them into the
   site's pieces: the flow diagram, agent marquee, task feed, stat band,
-  spotlight cards, rotating hero word and beams. Add more with
+  spotlight cards, rotating hero word (a cross-fading rotor) and beams. Add more with
   `bunx shadcn add https://magicui.design/r/<name>.json`.
 - **Scroll reveals:** add `data-reveal` to an element, or `data-stagger` to a
   grid whose children should follow one another. `useReveal` marks each one as

@@ -1,4 +1,7 @@
 /* Gespan's animated compositions (fx.tsx), in the glass palette. */
+.fx-rotor{display:inline-grid;justify-items:center;vertical-align:bottom}
+.fx-rotor > *{grid-area:1/1}
+.fx-rotor-size{visibility:hidden}
 .fx-word{background:linear-gradient(90deg,#ede9fe,#af97fa 45%,#7e47ea);-webkit-background-clip:text;background-clip:text;color:transparent;padding-bottom:.08em}
 
 .fx-marquee{position:relative;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}

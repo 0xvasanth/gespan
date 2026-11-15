@@ -4,13 +4,20 @@ import { fileURLToPath } from "node:url";
 import { act, cleanup, render } from "@testing-library/react";
 import { compile } from "tailwindcss";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { HERO_AGENTS, HeroAgents } from "../src/components/fx";
 import { heroPose, risePose } from "../src/components/ScrollShot";
 import { useReveal } from "../src/reveal";
 
 describe("scroll poses", () => {
-  test("the hero shot starts tilted back and ends upright at full size", () => {
-    expect(heroPose(0)).toEqual({ rotateX: 26, scale: 0.86, y: 70, opacity: 0.55 });
+  test("the hero shot starts tilted far back, low and small, and pops up upright at full size", () => {
+    expect(heroPose(0)).toEqual({ rotateX: 38, scale: 0.78, y: 140, opacity: 0.7 });
     expect(heroPose(1)).toEqual({ rotateX: 0, scale: 1, y: 0, opacity: 1 });
+  });
+
+  test("a shot on screen is never faint enough to read as an empty box", () => {
+    // Section shots used to start at opacity 0 and read as blank blocks while scrolling.
+    for (const pose of [heroPose, risePose])
+      for (let p = 0; p <= 1.0001; p += 0.05) expect(pose(p).opacity).toBeGreaterThanOrEqual(0.7);
   });
 
   test("each step of scrolling only ever straightens and grows the shot", () => {
@@ -149,5 +156,27 @@ describe("motion.css", () => {
     });
     const generated = [...tw.build([...own]).matchAll(/^\s*\.([\w-]+)\s*\{/gm)].map((m) => m[1]);
     expect(generated.filter((name) => own.has(name))).toEqual([]);
+  });
+});
+
+describe("hero rotating agent name", () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  test("the slot always holds every name, so the line keeps its width", () => {
+    const { container } = render(<HeroAgents />);
+    const sizes = [...container.querySelectorAll(".fx-rotor-size")].map((el) => el.textContent);
+    expect(sizes).toEqual(HERO_AGENTS);
+  });
+
+  // The cross-fade itself (two names overlapping mid-swap) needs real
+  // animation frames, which jsdom doesn't run; it is checked in the browser.
+
+  test("screen readers get the plain sentence, not the rotating names", () => {
+    const { container } = render(<HeroAgents />);
+    expect(container.querySelector(".sr-only")!.textContent).toBe("Let the agents pull.");
+    expect(container.querySelector(".fx-rotor")!.closest('[aria-hidden="true"]')).not.toBeNull();
   });
 });

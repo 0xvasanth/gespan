@@ -21,7 +21,7 @@ export function PilotsPage() {
             <div className="w-stack-m w-full-m" style={{ display: "flex", gap: "10px" }}><Link className="w-btn w-btn-light" to="/download">Download Gespan</Link> <a className="w-btn w-btn-glass" href="#anatomy">What a Pilot is made of</a></div>
           </div>
           <div className="w-wrap pl-bleed" style={{ marginTop: "56px" }}>
-            <ScrollShot name="pilot" />
+            <ScrollShot name="pilot" variant="hero" />
           </div>
         </section>
       </div>

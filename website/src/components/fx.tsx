@@ -1,5 +1,5 @@
-import { useInView, useReducedMotion } from "motion/react";
-import { createRef, useMemo, useRef, type ReactNode } from "react";
+import { AnimatePresence, motion, useInView, useReducedMotion } from "motion/react";
+import { createRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import logoUrl from "../assets/logo.svg";
 import { AnimatedBeam } from "@/components/ui/animated-beam";
 import { AnimatedList } from "@/components/ui/animated-list";
@@ -9,7 +9,6 @@ import { MagicCard } from "@/components/ui/magic-card";
 import { Marquee } from "@/components/ui/marquee";
 import { NumberTicker } from "@/components/ui/number-ticker";
 import { Particles } from "@/components/ui/particles";
-import { WordRotate } from "@/components/ui/word-rotate";
 import { cn } from "@/lib/utils";
 import { AGENTS } from "./AgentWall";
 import "./fx.css";
@@ -25,22 +24,37 @@ export function ShinyText({ children }: { children: ReactNode }) {
 }
 
 /**
- * "Let ___ pull.": the headline cycles through the agents Gespan runs. Screen
- * readers get the plain sentence; reduced motion keeps "the agents".
+ * "Let ___ pull.": the headline cycles through the agents Gespan runs. Every
+ * name sits in the same grid cell, so the slot keeps the longest name's width
+ * and the old and new names cross-fade: the line never jumps or goes blank.
+ * Screen readers get the plain sentence; reduced motion keeps "the agents".
  */
-export function HeroAgents() {
+export const HERO_AGENTS = ["the agents", "Claude Code", "Codex", "Cursor CLI", "OpenCode", "Kiro CLI"];
+
+export function HeroAgents({ interval = 2400 }: { interval?: number }) {
   const reduced = useReducedMotion();
-  const words = ["the agents", "Claude Code", "Codex", "Cursor CLI", "OpenCode", "Kiro CLI"];
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    if (reduced) return;
+    const timer = setInterval(() => setIndex((i) => (i + 1) % HERO_AGENTS.length), interval);
+    return () => clearInterval(timer);
+  }, [reduced, interval]);
+  const word = HERO_AGENTS[reduced ? 0 : index];
   return (
     <>
       <span className="sr-only">Let the agents pull.</span>
       <span aria-hidden="true">
         Let{" "}
-        {reduced ? (
-          <span className="fx-word">the agents</span>
-        ) : (
-          <WordRotate words={words} duration={2400} className="fx-word" motionProps={{ initial: { opacity: 0, y: "70%" }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: "-70%" }, transition: { duration: 0.45, ease: [0.2, 0.7, 0.2, 1] } }} />
-        )}{" "}
+        <span className="fx-rotor" data-word={word}>
+          {HERO_AGENTS.map((w) => (
+            <span key={w} className="fx-rotor-size">{w}</span>
+          ))}
+          <AnimatePresence initial={false}>
+            <motion.span key={word} className="fx-word fx-rotor-word" initial={{ opacity: 0, y: "40%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "-40%" }} transition={{ duration: 0.55, ease: [0.2, 0.7, 0.2, 1] }}>
+              {word}
+            </motion.span>
+          </AnimatePresence>
+        </span>{" "}
         pull.
       </span>
     </>
@@ -196,5 +210,7 @@ export function StatBand() {
 export function GlowParticles() {
   const reduced = useReducedMotion();
   if (reduced) return null;
-  return <Particles className="pointer-events-none absolute inset-0" quantity={90} ease={70} size={0.6} color="#c0affc" vy={-0.08} />;
+  // Inline position: the hero card's own rule (.w-hero > *) would otherwise make
+  // this layer a full-height block and push the content down.
+  return <Particles className="pointer-events-none" style={{ position: "absolute", inset: 0 }} quantity={90} ease={70} size={0.6} color="#c0affc" vy={-0.08} />;
 }
