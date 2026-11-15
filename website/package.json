@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "oxlint --react-plugin --jsx-a11y-plugin --deny-warnings src tests scripts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sync-release": "node scripts/sync-release.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

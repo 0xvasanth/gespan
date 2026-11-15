@@ -39,10 +39,10 @@ test("files only people read run nothing", () => {
 });
 
 test("the README runs the release checks that keep its downloads current", async () => {
-  assert.deepEqual(affected("README.md"), ["release", "website"]);
+  assert.deepEqual(affected("README.md"), ["release"]);
   assert.match(await read("scripts/readme-release.test.mjs"), /README\.md/);
-  // The website build takes its download links from the README's release block.
-  assert.match(await read("website/vite.config.ts"), /README\.md/);
+  // The website takes its downloads from website/src/release.json, not the README.
+  assert.doesNotMatch(await read("website/vite.config.ts"), /README\.md/);
 });
 
 test("files Native compiles in are not documentation", async () => {
@@ -83,8 +83,7 @@ test("every host file a Core contract test reads runs Core, the rest of the host
 
 test("a website-only change runs the Website job and nothing else", () => {
   assert.deepEqual(affected("website/src/pages/HomePage.tsx", "website/src/styles/site.css", "website/package.json", "website/bun.lock"), ["website"]);
-  // The site reads README.md and CHANGELOG.md, so those still reach it.
-  assert.ok(affected("README.md").includes("website"));
+  // The site reads CHANGELOG.md, so that still reaches it.
   assert.ok(affected("CHANGELOG.md").includes("website"));
 });
 

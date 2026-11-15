@@ -15,11 +15,23 @@ bun run lint     # oxlint
 
 ## Where the content comes from
 
-- **Downloads and the version** come from the release block in the root
-  `README.md`, which `set-version` rewrites on every release. The build fails
-  when a download is missing or still points at an older version.
+- **Downloads and the version** come from `src/release.json`, the latest
+  *published* GitHub release. After a release is published, update the site
+  with:
+
+  ```bash
+  bun run sync-release            # latest published release
+  bun run sync-release -- v0.3.0  # a specific one
+  bun run sync-release -- --check # fails if release.json is behind
+  ```
+
+  It checks the release has every desktop download and refuses a draft (a
+  release still in the pipeline), whose files aren't public yet. Commit the
+  updated `src/release.json`. Set `GH_TOKEN` to avoid GitHub's anonymous
+  rate limit. `README.md` isn't used: the pipeline bumps it before the
+  release is published.
 - **The Changelog page** is the newest releases in the root `CHANGELOG.md`,
-  read at build time.
+  read at build time, up to the published version.
 - **Product shots** (`src/shots/`) are the app's glass screens from the Gespan
   design canvas, drawn in a shadow root and scaled to their frame, so they are
   never cropped. The demo project in them is `acme-web`.

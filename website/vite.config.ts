@@ -3,15 +3,15 @@ import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
-import { parseChangelog, readRelease } from "./scripts/release.mjs";
+import { parseChangelog, type Release } from "./scripts/release.mjs";
 
-// The site's release data comes from the repository's own README.md and
-// CHANGELOG.md, read once at build time.
-const repo = (path: string) => readFileSync(fileURLToPath(new URL(`../${path}`, import.meta.url)), "utf8");
-const readme = repo("README.md");
-const changelog = repo("CHANGELOG.md");
-const release = readRelease(readme, changelog);
-const releases = parseChangelog(changelog).slice(0, 6);
+// The release the site offers is src/release.json, written by
+// `bun run sync-release` from GitHub's latest published release. The
+// Changelog page is CHANGELOG.md, up to that release: a version still in the
+// release pipeline isn't shown until it's published.
+const release: Release = JSON.parse(readFileSync(fileURLToPath(new URL("./src/release.json", import.meta.url)), "utf8"));
+const changelog = readFileSync(fileURLToPath(new URL("../CHANGELOG.md", import.meta.url)), "utf8");
+const releases = parseChangelog(changelog, release.version).slice(0, 6);
 
 export default defineConfig({
   // Vite 8 bundles with Rolldown and transforms with Oxc; `compiler` turns on

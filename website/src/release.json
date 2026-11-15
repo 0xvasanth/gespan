@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "date": "2026-11-14",
+  "url": "https://github.com/0xvasanth/gespan/releases/tag/v0.2.0",
+  "files": {
+    "macArm": "https://github.com/0xvasanth/gespan/releases/download/v0.2.0/Gespan_0.2.0_aarch64.dmg",
+    "macIntel": "https://github.com/0xvasanth/gespan/releases/download/v0.2.0/Gespan_0.2.0_x64.dmg",
+    "windows": "https://github.com/0xvasanth/gespan/releases/download/v0.2.0/Gespan_0.2.0_x64-setup.exe",
+    "appImage": "https://github.com/0xvasanth/gespan/releases/download/v0.2.0/Gespan_0.2.0_amd64.AppImage",
+    "deb": "https://github.com/0xvasanth/gespan/releases/download/v0.2.0/gespan_0.2.0_amd64.deb",
+    "rpm": "https://github.com/0xvasanth/gespan/releases/download/v0.2.0/gespan-0.2.0-1.el10.x86_64.rpm"
+  }
+}
