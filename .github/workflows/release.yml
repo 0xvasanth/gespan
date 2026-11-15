@@ -47,18 +47,19 @@ jobs:
       - id: decide
         run: |
           set -euo pipefail
-          # Only main's newest commit releases; older runs finishing late do nothing.
-          if [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" != "$SHA" ]; then
-            echo "$SHA is no longer the newest commit on main."
-            { echo release=false; echo tag=; } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           VERSION="$(node -p 'require("./package.json").version')"
+          # Any commit on main releases its version while main still carries it,
+          # so commits landing during CI don't hold the release back. The
+          # decision skips a commit that is off main or whose version main has
+          # moved past.
+          MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          MAIN_STATUS="$(gh api "repos/$GITHUB_REPOSITORY/compare/$SHA...$MAIN_SHA" --jq .status)"
+          MAIN_VERSION="$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$MAIN_SHA" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
           # Not gh api: on a 404 it writes the error body to stdout.
           TAG_SHA="$(git ls-remote origin "refs/tags/v$VERSION" | cut -f1)"
           RELEASE_JSON="$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null || true)"
           RUNS_JSON="$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$SHA" --event push --limit 50 --json workflowName,conclusion)"
-          export VERSION TAG_SHA RELEASE_JSON RUNS_JSON
+          export VERSION TAG_SHA RELEASE_JSON RUNS_JSON MAIN_STATUS MAIN_VERSION
           node scripts/release-channel.cjs release-decision
 
   release:
