@@ -1,0 +1,187 @@
+website/src/styles/base.css
+  s_ed5fc16e195ddf::t_4b4804a6e71cad 1-12
+website/src/pages/ChangelogPage.tsx
+  s_ed5fc16e195ddf::t_7fdc06f286406c 2,8,15,53-64,68-72,79-84
+  s_ed5fc16e195ddf::t_ba5441d0bf3e59 1,3-7,9-14,16-52,65-67,73-78
+website/scripts/copy-routes.mjs
+  s_ed5fc16e195ddf::t_2f650dea9f91ee 1-5,8,11-31
+  s_ed5fc16e195ddf::t_95cf3ec14f864f 6-7,9-10
+website/src/assets/agents/cursor.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-7
+website/src/components/site-nav.css
+  s_ed5fc16e195ddf::t_b16243ce9ca8b6 1-13
+website/src/pages/changelog.css
+  s_ed5fc16e195ddf::t_7fdc06f286406c 1-12,15
+  s_ed5fc16e195ddf::t_66a942014bee38 13-14
+website/src/assets/agents/hermes.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-7
+website/src/App.tsx
+  s_ed5fc16e195ddf::t_e4538f60429c60 1-32
+scripts/ci-impact.mjs
+  s_ed5fc16e195ddf::t_4351637aa6b5db 10,18-19,33
+website/src/assets/agents/fx.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-7
+website/vite.config.ts
+  s_ed5fc16e195ddf::t_5cb57271876043 1-28
+scripts/ci-impact.test.mjs
+  s_ed5fc16e195ddf::t_4351637aa6b5db 42,44-45,84-87
+  s_ed5fc16e195ddf::t_2305376fca211c 88-89
+website/src/pages/home.css
+  s_ed5fc16e195ddf::t_66a942014bee38 1-3,13-14
+  s_ed5fc16e195ddf::t_7fdc06f286406c 4-12
+website/tests/router.test.tsx
+  s_ed5fc16e195ddf::t_c59efa072302ec 1-89
+website/package.json
+  s_ed5fc16e195ddf::t_32ac280204d2dc 1-25,27-32
+  s_ed5fc16e195ddf::t_685cf233500785 26
+website/src/shots/tasks.html
+  s_ed5fc16e195ddf::t_ddc5e24f4f86f1 1-3,5-398
+  s_ed5fc16e195ddf::t_47021ba92d71ec 4
+website/src/vite-env.d.ts
+  s_ed5fc16e195ddf::t_4b4804a6e71cad 1
+website/src/pages/pilots.css
+  s_ed5fc16e195ddf::t_7fdc06f286406c 3-21
+  s_ed5fc16e195ddf::t_66a942014bee38 1-2,22-23
+website/src/pages/PilotsPage.tsx
+  s_ed5fc16e195ddf::t_7fdc06f286406c 1-221
+website/tests/content.test.tsx
+  s_ed5fc16e195ddf::t_abc2593d3ff114 41
+  s_ed5fc16e195ddf::t_95cf3ec14f864f 2,11-12
+  s_ed5fc16e195ddf::t_9de010430d7c95 63-64
+  s_ed5fc16e195ddf::t_be56057e929309 1,3-10,13-40,42-62,65-68
+website/src/assets/agents/devin.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-7
+website/scripts/copy-routes.d.mts
+  s_ed5fc16e195ddf::t_09051f398a929a 1
+website/index.html
+  s_ed5fc16e195ddf::t_9f50f0d1154bbb 1-21
+website/src/components/SiteFooter.tsx
+  s_ed5fc16e195ddf::t_988ae779f073b0 1-55
+website/scripts/release.mjs
+  s_ed5fc16e195ddf::t_8e7626f754e77e 1-83
+website/src/routes.json
+  s_ed5fc16e195ddf::t_d41bd97a73a024 1-8
+website/src/pages/NotFoundPage.tsx
+  s_ed5fc16e195ddf::t_1b8d645bb1da23 1-22
+website/src/pages/DocsPage.tsx
+  s_ed5fc16e195ddf::t_07d567a32862fc 106
+  s_ed5fc16e195ddf::t_74b04d7be195f6 1,3-4,6-18,20-28,30-42,54,123-135,137,139
+  s_ed5fc16e195ddf::t_7fdc06f286406c 2,5,19,29,43-53,55-105,107-122,140-156
+  s_ed5fc16e195ddf::t_93296653cbbcdc 136,138
+website/src/assets/agents/antigravity.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-74
+website/tests/release.test.ts
+  s_ed5fc16e195ddf::t_e5193773b0e332 1,4-6,9-106
+  s_ed5fc16e195ddf::t_95cf3ec14f864f 2-3,7-8
+website/README.md
+  s_ed5fc16e195ddf::t_3fbed30b524223 1-35
+README.md
+  s_ed5fc16e195ddf::t_73eb07c85dde67 304
+website/src/assets/agents/kiro.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-7
+website/src/assets/agents/omp.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-14
+website/src/pages/HomePage.tsx
+  s_ed5fc16e195ddf::t_2814d95af97e09 6-8,16,39-40,274
+  s_ed5fc16e195ddf::t_7fdc06f286406c 1-5,9-15,17-38,41-273,275-281
+website/src/assets/agents/pi.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-8
+website/src/assets/agents/opencode.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-7
+website/src/assets/agents/claude.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-14
+website/src/shots/pilot.html
+  s_ed5fc16e195ddf::t_47021ba92d71ec 4
+  s_ed5fc16e195ddf::t_ddc5e24f4f86f1 1-3,5-358
+website/tsconfig.json
+  s_ed5fc16e195ddf::t_19fa1af091bf06 1-19
+website/src/main.tsx
+  s_ed5fc16e195ddf::t_661ab4dc442c7d 1-11
+website/src/shots/home.html
+  s_ed5fc16e195ddf::t_47021ba92d71ec 4
+  s_ed5fc16e195ddf::t_ddc5e24f4f86f1 1-3,5-397
+website/src/components/AgentWall.tsx
+  s_ed5fc16e195ddf::t_4dc9f8507ed1ed 1-34,36-41
+  s_ed5fc16e195ddf::t_9145c9769d321c 35
+website/tests/copy-routes.test.ts
+  s_ed5fc16e195ddf::t_4379ec8fe85929 1-20
+.github/workflows/ci.yml
+  s_ed5fc16e195ddf::t_4351637aa6b5db 33,95-117
+  s_ed5fc16e195ddf::t_cd45e92e0c44f8 118
+website/src/pages/docs.css
+  s_ed5fc16e195ddf::t_7fdc06f286406c 2-10
+  s_ed5fc16e195ddf::t_4bcc06da2a0de1 1
+website/src/release.ts
+  s_ed5fc16e195ddf::t_097376a302cc60 11-17
+  s_ed5fc16e195ddf::t_7dc0407547679b 1-10,18-24
+website/src/pages/features.css
+  s_ed5fc16e195ddf::t_7fdc06f286406c 1-6
+website/src/assets/logo.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-17
+website/public/favicon.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-17
+website/src/pages/DownloadPage.tsx
+  s_ed5fc16e195ddf::t_7fdc06f286406c 1-3,8-44,47-55,57-70,72-82,84-94,96-97,99-114,116-121,123-129
+  s_ed5fc16e195ddf::t_fbd60dff245cce 4-5,45,56,71,83,95,98,115,122
+  s_ed5fc16e195ddf::t_fe9ff29fb267a1 6-7,46
+website/src/components/SiteNav.tsx
+  s_ed5fc16e195ddf::t_be1121c3a3088d 1-67
+website/src/pages/download.css
+  s_ed5fc16e195ddf::t_7fdc06f286406c 1-6
+website/src/router.tsx
+  s_ed5fc16e195ddf::t_93296653cbbcdc 42,49-53
+  s_ed5fc16e195ddf::t_c1ebea08ef7fa8 1-41,43-48,54
+website/src/assets/agents/grok.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-8
+website/src/components/Shot.tsx
+  s_ed5fc16e195ddf::t_d19653ae0ff9a0 1-6,8,12-41,53-55,58-62
+  s_ed5fc16e195ddf::t_5fe57634990f2b 7,9-11,42-52
+  s_ed5fc16e195ddf::t_93296653cbbcdc 56-57
+website/src/platform.ts
+  s_ed5fc16e195ddf::t_92ea4c7008a2cd 6-7
+  s_ed5fc16e195ddf::t_57eb37756348c4 1-5,8-23
+website/tests/shot.test.tsx
+  s_ed5fc16e195ddf::t_c795d1396e287c 1-72
+website/src/docs.ts
+  s_ed5fc16e195ddf::t_51ad213d64bc1d 1-17
+website/src/components/Inline.tsx
+  s_ed5fc16e195ddf::t_9214aa9fc070fd 1-28
+website/src/assets/agents/codex.svg
+  s_ed5fc16e195ddf::t_0e0d1ad9c40da7 1-15
+website/src/pages/FeaturesPage.tsx
+  s_ed5fc16e195ddf::t_7fdc06f286406c 1-254
+website/scripts/release.d.mts
+  s_ed5fc16e195ddf::t_012f3c5287ae1e 1-28
+website/src/components/icons.tsx
+  s_ed5fc16e195ddf::t_1fb8c4b7fbefc9 1-15
+website/src/components/site-footer.css
+  s_ed5fc16e195ddf::t_4b4804a6e71cad 1-6
+website/src/styles/site.css
+  s_ed5fc16e195ddf::t_f5530355497c92 2-3,127-130,163
+  s_ed5fc16e195ddf::t_feaf4cfd1752d7 1,4,7-9,11-65,67-98,100-126,131-137,139-162,165-175
+  s_ed5fc16e195ddf::t_34e5e2b7f92a00 10
+  s_ed5fc16e195ddf::t_ddfe833a61ebc1 99
+  s_ed5fc16e195ddf::t_0b804b354d08be 5-6,66
+  s_ed5fc16e195ddf::t_9145c9769d321c 138
+  s_ed5fc16e195ddf::t_7e471922840f9d 164
+website/tests/platform.test.ts
+  s_ed5fc16e195ddf::t_9b471594eecc24 1-37
+website/bun.lock
+  s_ed5fc16e195ddf::t_4627e8a40bd452 1-387
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d74df162c06ae255b47d1d8e22cf6f0e9d8e26fc",
+  "prompts": {},
+  "sessions": {
+    "s_ed5fc16e195ddf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01a3f41-b72e-4aef-a6a8-323f91dfd6a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
