@@ -15,8 +15,7 @@ const rules = [
   [/^docs\/(?!desktop\/examples\/)/, []],
   [/^(CODE_OF_CONDUCT|CONTRIBUTING|SECURITY)\.md$/, []],
   // set-version rewrites its Install section, and a release test checks it.
-  // The website reads its release block for the download links.
-  [/^README\.md$/, ["release", "website"]],
+  [/^README\.md$/, ["release"]],
   [/^(LICENSE|NOTICE)$/, []],
   [/^\.github\/(ISSUE_TEMPLATE\/|pull_request_template\.md$|CODEOWNERS$)/, []],
   // Core's shared_contracts test scans crates/gespan-gpui/src.

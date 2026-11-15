@@ -21,8 +21,19 @@ export interface ReleaseFiles {
 }
 export interface Release {
   version: string;
+  tag: string;
   date: string | null;
+  url: string;
   files: ReleaseFiles;
 }
-export function readRelease(readme: string, changelog: string): Release;
-export function parseChangelog(text: string): ChangelogRelease[];
+export interface GitHubRelease {
+  tag_name: string;
+  draft?: boolean;
+  prerelease?: boolean;
+  published_at?: string | null;
+  html_url: string;
+  assets?: { name: string; browser_download_url: string }[];
+}
+export function releaseFromGitHub(release: GitHubRelease): Release;
+export function compareVersions(a: string, b: string): number;
+export function parseChangelog(text: string, published?: string): ChangelogRelease[];
