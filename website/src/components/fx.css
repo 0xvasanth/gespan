@@ -1,7 +1,12 @@
 /* Gespan's animated compositions (fx.tsx), in the glass palette. */
-.fx-rotor{display:inline-grid;justify-items:center;vertical-align:bottom}
-.fx-rotor > *{grid-area:1/1}
-.fx-rotor-size{visibility:hidden}
+/* The rotor: names sit absolutely; the slot width is animated to the shown name. */
+/* "Let ___ pull." as a centred row; where it can wrap, it always keeps two
+   lines of room, so changing names never moves the page below. */
+.fx-line{display:flex;flex-wrap:wrap;justify-content:center;align-content:center;align-items:baseline;column-gap:.2em}
+@container (max-width:960px){.fx-line{min-height:2lh}}
+.fx-rotor{display:inline-block;position:relative;vertical-align:bottom;white-space:nowrap}
+.fx-rotor-size{position:absolute;left:0;top:0;visibility:hidden;white-space:nowrap}
+.fx-rotor-word{position:absolute;left:0;right:0;top:0;text-align:center;white-space:nowrap}
 .fx-word{background:linear-gradient(90deg,#ede9fe,#af97fa 45%,#7e47ea);-webkit-background-clip:text;background-clip:text;color:transparent;padding-bottom:.08em}
 
 .fx-marquee{position:relative;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}

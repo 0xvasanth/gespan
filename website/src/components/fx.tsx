@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useInView, useReducedMotion } from "motion/react";
-import { createRef, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createRef, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import logoUrl from "../assets/logo.svg";
 import { AnimatedBeam } from "@/components/ui/animated-beam";
 import { AnimatedList } from "@/components/ui/animated-list";
@@ -24,38 +24,61 @@ export function ShinyText({ children }: { children: ReactNode }) {
 }
 
 /**
- * "Let ___ pull.": the headline cycles through the agents Gespan runs. Every
- * name sits in the same grid cell, so the slot keeps the longest name's width
- * and the old and new names cross-fade: the line never jumps or goes blank.
- * Screen readers get the plain sentence; reduced motion keeps "the agents".
+ * "Let ___ pull.": the headline cycles through the agents Gespan runs. The
+ * slot measures every name and animates to the width of the one showing, so
+ * "Let" and "pull." sit snug against a short name and a long one alike. Old
+ * and new names cross-fade, so the slot is never blank. Screen readers get
+ * the plain sentence; reduced motion keeps "the agents".
  */
 export const HERO_AGENTS = ["the agents", "Claude Code", "Codex", "Cursor CLI", "OpenCode", "Kiro CLI"];
+
+const ROTOR_EASE = [0.2, 0.7, 0.2, 1] as const;
 
 export function HeroAgents({ interval = 2400 }: { interval?: number }) {
   const reduced = useReducedMotion();
   const [index, setIndex] = useState(0);
+  const sizers = useRef<(HTMLSpanElement | null)[]>([]);
+  const [widths, setWidths] = useState<number[]>([]);
+
   useEffect(() => {
     if (reduced) return;
     const timer = setInterval(() => setIndex((i) => (i + 1) % HERO_AGENTS.length), interval);
     return () => clearInterval(timer);
   }, [reduced, interval]);
-  const word = HERO_AGENTS[reduced ? 0 : index];
+
+  // Measure before paint, and again when the display font loads or the
+  // headline's size changes with the window.
+  useLayoutEffect(() => {
+    const measure = () => setWidths(sizers.current.map((el) => el?.getBoundingClientRect().width ?? 0));
+    measure();
+    window.addEventListener("resize", measure);
+    document.fonts?.ready.then(measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  const shown = reduced ? 0 : index;
+  const word = HERO_AGENTS[shown];
+  const width = widths[shown];
   return (
     <>
       <span className="sr-only">Let the agents pull.</span>
-      <span aria-hidden="true">
-        Let{" "}
-        <span className="fx-rotor" data-word={word}>
-          {HERO_AGENTS.map((w) => (
-            <span key={w} className="fx-rotor-size">{w}</span>
+      <span aria-hidden="true" className="fx-line">
+        <span>Let</span>
+        <motion.span className="fx-rotor" data-word={word} initial={false} animate={width ? { width } : undefined} transition={{ duration: 0.55, ease: ROTOR_EASE }}>
+          {/* A zero-width character holds the line's height. */}
+          {"\u200b"}
+          {HERO_AGENTS.map((w, i) => (
+            <span key={w} ref={(el) => { sizers.current[i] = el; }} className="fx-rotor-size">
+              {w}
+            </span>
           ))}
           <AnimatePresence initial={false}>
-            <motion.span key={word} className="fx-word fx-rotor-word" initial={{ opacity: 0, y: "40%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "-40%" }} transition={{ duration: 0.55, ease: [0.2, 0.7, 0.2, 1] }}>
+            <motion.span key={word} className="fx-word fx-rotor-word" initial={{ opacity: 0, y: "40%" }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: "-40%" }} transition={{ duration: 0.55, ease: ROTOR_EASE }}>
               {word}
             </motion.span>
           </AnimatePresence>
-        </span>{" "}
-        pull.
+        </motion.span>
+        <span>pull.</span>
       </span>
     </>
   );
