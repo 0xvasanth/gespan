@@ -1,0 +1,24 @@
+.github/workflows/ci.yml
+  s_ed5fc16e195ddf::t_2b90cf9dc9edb6 41-43,134-136,166-167,313-314
+scripts/ci-impact.mjs
+  s_ed5fc16e195ddf::t_2b90cf9dc9edb6 46-63,69
+scripts/ci-impact.test.mjs
+  s_ed5fc16e195ddf::t_2b99c5b9e10381 4,84-117
+  s_ed5fc16e195ddf::t_ac33acc6d90256 118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0a48e44d362b3c2c7a6154f50755b3756c208dee",
+  "prompts": {},
+  "sessions": {
+    "s_ed5fc16e195ddf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01a3f41-b72e-4aef-a6a8-323f91dfd6a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
