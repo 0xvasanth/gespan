@@ -1,0 +1,45 @@
+/* Gespan's animated compositions (fx.tsx), in the glass palette. */
+.fx-word{background:linear-gradient(90deg,#ede9fe,#af97fa 45%,#7e47ea);-webkit-background-clip:text;background-clip:text;color:transparent;padding-bottom:.08em}
+
+.fx-marquee{position:relative;mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.fx-agent{display:flex;align-items:center;gap:12px;height:60px;padding:0 20px 0 12px;border-radius:16px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);white-space:nowrap}
+.fx-agent img{border-radius:9px}
+.fx-agent span{font-size:14px;color:#d6d6d6}
+
+.fx-flow{margin:0;display:flex;flex-direction:column;gap:20px}
+.fx-flow-box{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr) minmax(0,1fr);align-items:center;padding:28px;border-radius:24px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);box-shadow:inset 0 1px 0 rgba(255,255,255,.06);overflow:hidden}
+.fx-col{position:relative;z-index:1;display:flex;flex-direction:column;gap:14px;align-items:flex-start}
+.fx-col:last-of-type{align-items:flex-end}
+.fx-center{align-items:center}
+.fx-node{display:inline-flex;align-items:center;gap:9px;height:40px;padding:0 14px;border-radius:999px;font-size:13px;color:#d6d6d6;background:#161618;border:1px solid rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.08);white-space:nowrap}
+.fx-dot{width:7px;height:7px;border-radius:50%;background:#c0affc;box-shadow:0 0 0 3px rgba(192,175,252,.18)}
+.fx-agent-node img{border-radius:6px}
+.fx-hub{width:96px;height:96px;border-radius:28px;display:flex;align-items:center;justify-content:center;background:#171519;border:1px solid rgba(192,175,252,.35);box-shadow:0 0 0 8px rgba(143,100,246,.08),0 0 60px rgba(143,100,246,.45)}
+.fx-flow-caption{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.8fr) minmax(0,1fr);gap:16px;font-size:13px;line-height:19px;color:#a3a3a3}
+.fx-flow-caption span:nth-child(2){text-align:center}
+.fx-flow-caption span:nth-child(3){text-align:right}
+.fx-flow-caption b{display:block;color:#ebebeb;font-weight:600}
+
+.fx-feed{min-height:360px}
+.fx-feed-list{align-items:stretch !important;gap:10px !important}
+.fx-task{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.09);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 10px 30px rgba(0,0,0,.3)}
+.fx-task-title{font-size:13.5px;font-weight:600;color:#ebebeb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.fx-stats{margin:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.fx-stat{padding:22px 24px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column-reverse;gap:6px}
+.fx-stat dd{margin:0}
+.fx-num{font-family:var(--display);font-size:52px;line-height:1;font-weight:500;letter-spacing:-.04em;color:#ebebeb}
+
+@container (max-width:960px){.fx-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:760px){
+  .fx-flow-box{padding:18px 12px;grid-template-columns:minmax(0,1fr) 64px minmax(0,1fr)}
+  .fx-node{height:32px;padding:0 10px;font-size:11.5px;gap:6px}
+  .fx-agent-node img{width:16px;height:16px}
+  .fx-hub{width:56px;height:56px;border-radius:18px}
+  .fx-hub img{width:28px;height:28px}
+  .fx-flow-caption{grid-template-columns:minmax(0,1fr);gap:10px}
+  .fx-flow-caption span:nth-child(n){text-align:left}
+  .fx-num{font-size:40px}
+  .fx-stat{padding:18px}
+  .fx-agent{height:52px}
+}

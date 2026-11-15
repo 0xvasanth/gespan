@@ -1,4 +1,5 @@
-import { LazyMotion, MotionConfig, domAnimation } from "motion/react";
+import { MotionConfig } from "motion/react";
+import { ScrollProgress } from "@/components/ui/scroll-progress";
 import { useEffect, type ComponentType } from "react";
 import { ChangelogPage } from "./pages/ChangelogPage";
 import { DocsPage } from "./pages/DocsPage";
@@ -29,12 +30,11 @@ export function App() {
   }, [title]);
   const Page = route ? PAGES[route.page] : NotFoundPage;
   return (
-    <LazyMotion features={domAnimation} strict>
-      <MotionConfig reducedMotion="user">
-        <main>
-          <Page />
-        </main>
-      </MotionConfig>
-    </LazyMotion>
+    <MotionConfig reducedMotion="user">
+      <ScrollProgress className="h-0.5 from-[#c0affc] via-[#9f7ef8] to-[#7e47ea]" />
+      <main>
+        <Page />
+      </main>
+    </MotionConfig>
   );
 }

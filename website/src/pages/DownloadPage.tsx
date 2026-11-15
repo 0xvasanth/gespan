@@ -5,6 +5,7 @@ import { GUIDES } from "../docs";
 import { formatDate, release } from "../release";
 import { AppleIcon } from "../components/icons";
 import { recommendDownload } from "../platform";
+import { Beam } from "../components/fx";
 import "./download.css";
 
 const EXT: Record<string, string> = { mac: ".dmg", windows: ".exe", linux: ".AppImage" };
@@ -19,7 +20,8 @@ function Recommended() {
       </p>
     );
   return (
-    <div className="w-glass w-stack-m w-full-m" style={{ marginTop: "12px", padding: "10px 10px 10px 20px", borderRadius: "18px", display: "flex", alignItems: "center", gap: "16px", textAlign: "left" }}>
+    <div className="w-glass w-stack-m w-full-m" style={{ marginTop: "12px", padding: "10px 10px 10px 20px", borderRadius: "18px", display: "flex", alignItems: "center", gap: "16px", textAlign: "left", position: "relative" }}>
+      <Beam duration={6} size={120} />
       <div style={{ display: "flex", flexDirection: "column" }}>
         <span style={{ fontSize: "14px", fontWeight: "600" }}>{pick.label}</span>
         <span className="w-meta">{pick.detail}</span>

@@ -1,4 +1,4 @@
-import { m, useReducedMotion, useScroll, useTransform } from "motion/react";
+import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
 import { useRef } from "react";
 import { Shot, type ShotName } from "./Shot";
 
@@ -30,7 +30,7 @@ const UPRIGHT: Pose = { rotateX: 0, scale: 1, y: 0, opacity: 1 };
  * straightens and grows into place. Visitors who prefer reduced motion get the
  * shot at rest.
  */
-export function ScrollShot({ name, className, variant = "rise" }: { name: ShotName; className?: string; variant?: "hero" | "rise" }) {
+export function ScrollShot({ name, className, variant = "rise", beam = false }: { name: ShotName; className?: string; variant?: "hero" | "rise"; beam?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const { scrollYProgress } = useScroll({
@@ -45,9 +45,9 @@ export function ScrollShot({ name, className, variant = "rise" }: { name: ShotNa
   const opacity = useTransform(scrollYProgress, (p) => (reduced ? 1 : pose(p).opacity));
   return (
     <div ref={ref} style={{ perspective: "1600px" }} data-scroll-shot={variant}>
-      <m.div style={reduced ? UPRIGHT : { rotateX, scale, y, opacity, transformOrigin: "50% 0%" }}>
-        <Shot name={name} className={className} />
-      </m.div>
+      <motion.div style={reduced ? UPRIGHT : { rotateX, scale, y, opacity, transformOrigin: "50% 0%" }}>
+        <Shot name={name} className={className} beam={beam} />
+      </motion.div>
     </div>
   );
 }
