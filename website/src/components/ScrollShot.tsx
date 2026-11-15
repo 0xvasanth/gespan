@@ -9,18 +9,25 @@ export interface Pose {
   opacity: number;
 }
 
-/** The hero screenshot's pose for scroll progress 0…1: tilted back and low, then upright and full size. */
+const clamp = (progress: number) => Math.min(1, Math.max(0, Number.isFinite(progress) ? progress : 1));
+const easeOut = (p: number) => 1 - (1 - p) ** 3;
+
+/**
+ * The hero screenshot's pose for scroll progress 0…1: it lies tilted far back,
+ * low and small, then pops up, straightening and growing to full size.
+ */
 export function heroPose(progress: number): Pose {
-  const p = Math.min(1, Math.max(0, Number.isFinite(progress) ? progress : 1));
-  const ease = 1 - (1 - p) ** 3;
-  return { rotateX: 26 * (1 - ease), scale: 0.86 + 0.14 * ease, y: 70 * (1 - ease), opacity: 0.55 + 0.45 * ease };
+  const ease = easeOut(clamp(progress));
+  return { rotateX: 38 * (1 - ease), scale: 0.78 + 0.22 * ease, y: 140 * (1 - ease), opacity: 0.7 + 0.3 * ease };
 }
 
-/** A section screenshot's pose: rises and settles as it comes into view. */
+/**
+ * A section screenshot's pose: tilted and lower as it enters, settling as it
+ * comes up the screen. It is never faint, so it never reads as an empty box.
+ */
 export function risePose(progress: number): Pose {
-  const p = Math.min(1, Math.max(0, Number.isFinite(progress) ? progress : 1));
-  const ease = 1 - (1 - p) ** 3;
-  return { rotateX: 12 * (1 - ease), scale: 0.92 + 0.08 * ease, y: 90 * (1 - ease), opacity: ease };
+  const ease = easeOut(clamp(progress));
+  return { rotateX: 18 * (1 - ease), scale: 0.88 + 0.12 * ease, y: 70 * (1 - ease), opacity: 0.75 + 0.25 * ease };
 }
 
 const UPRIGHT: Pose = { rotateX: 0, scale: 1, y: 0, opacity: 1 };
@@ -35,8 +42,9 @@ export function ScrollShot({ name, className, variant = "rise", beam = false }: 
   const reduced = useReducedMotion();
   const { scrollYProgress } = useScroll({
     target: ref,
-    // The hero is already on screen: it settles over the first stretch of scrolling.
-    offset: variant === "hero" ? ["start 105%", "start 30%"] : ["start 100%", "start 45%"],
+    // The hero starts low on the first screen and pops up over the first
+    // stretch of scrolling; a section shot settles as it climbs the screen.
+    offset: variant === "hero" ? ["start 90%", "start 20%"] : ["start end", "start 40%"],
   });
   const pose = variant === "hero" ? heroPose : risePose;
   const rotateX = useTransform(scrollYProgress, (p) => (reduced ? 0 : pose(p).rotateX));
