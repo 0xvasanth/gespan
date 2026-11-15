@@ -39,8 +39,10 @@ test("files only people read run nothing", () => {
 });
 
 test("the README runs the release checks that keep its downloads current", async () => {
-  assert.deepEqual(affected("README.md"), ["release"]);
+  assert.deepEqual(affected("README.md"), ["release", "website"]);
   assert.match(await read("scripts/readme-release.test.mjs"), /README\.md/);
+  // The website build takes its download links from the README's release block.
+  assert.match(await read("website/vite.config.ts"), /README\.md/);
 });
 
 test("files Native compiles in are not documentation", async () => {
@@ -77,6 +79,12 @@ test("every host file a Core contract test reads runs Core, the rest of the host
   assert.ok(hostFiles.includes("host/windows-acl.ps1"));
   for (const file of hostFiles) assert.deepEqual(affected(file), ["core", "host"], file);
   assert.deepEqual(affected("host/core/index.ts"), ["host"]);
+});
+
+test("website changes stay with the website job", async () => {
+  assert.deepEqual(affected("website/src/App.tsx", "website/bun.lock"), ["website"]);
+  const ci = await read(".github/workflows/ci.yml");
+  assert.match(ci, /^  website:\n    name: Website\n    needs: impact\n/m);
 });
 
 test("mobile changes stay with mobile", () => {

@@ -1,0 +1,175 @@
+/* Gespan website. Values from the Gespan design system (website glass extension).
+   Every page root is .w-site, a size container, so layouts respond to the page's
+   own width through container queries. */
+.w-site {
+  /* clip, not hidden: a hidden box can still be scrolled sideways by focus. */
+  container-type: inline-size; position: relative; overflow: clip;
+  background: #111111; color: #ebebeb; font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+:where(.w-site) a { color: inherit; }
+.w-wrap { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 48px; box-sizing: border-box; }
+.w-narrow { max-width: 880px; }
+.w-frame { padding: 12px 12px 0; }
+
+/* Type */
+.w-eyebrow { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #c0affc; margin: 0; }
+.w-xl { font-family: var(--display); font-size: 88px; line-height: 1; font-weight: 500; letter-spacing: -0.045em; margin: 0; text-wrap: balance; }
+.w-h1 { font-family: var(--display); font-size: 64px; line-height: 1.02; font-weight: 500; letter-spacing: -0.04em; margin: 0; text-wrap: balance; }
+.w-h2 { font-family: var(--display); font-size: 44px; line-height: 1.06; font-weight: 500; letter-spacing: -0.035em; margin: 0; text-wrap: balance; }
+.w-h3 { font-family: var(--display); font-size: 28px; line-height: 1.15; font-weight: 500; letter-spacing: -0.025em; margin: 0; }
+.w-h4 { font-size: 17px; line-height: 24px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+.w-lead { font-size: 18px; line-height: 28px; color: #a3a3a3; margin: 0; text-wrap: pretty; }
+.w-p { font-size: 15px; line-height: 24px; color: #a3a3a3; margin: 0; text-wrap: pretty; }
+.w-small { font-size: 13px; line-height: 20px; color: #a3a3a3; margin: 0; }
+.w-meta { font-size: 12px; line-height: 18px; color: #8a8a8a; margin: 0; }
+.w-hi { color: #af97fa; }
+.w-mono { font-family: var(--mono); }
+.w-code-inline { font-family: var(--mono); font-size: 0.88em; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); color: #ebebeb; }
+.w-link { color: #ebebeb; text-decoration: underline; text-decoration-color: rgba(235, 235, 235, 0.3); text-underline-offset: 3px; }
+.w-link:hover { text-decoration-color: #ebebeb; }
+
+/* Sections */
+.w-sec { padding: 96px 0; position: relative; }
+.w-sec-tight { padding: 64px 0; }
+.w-head { display: flex; flex-direction: column; gap: 16px; max-width: 760px; }
+.w-head.center { margin: 0 auto; align-items: center; text-align: center; }
+.w-rule { height: 1px; background: rgba(235, 235, 235, 0.07); border: 0; margin: 0; }
+
+/* Buttons: 44px tall so they meet touch targets */
+.w-btn {
+  height: 44px; padding: 0 18px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap; box-sizing: border-box; border: 1px solid transparent;
+}
+.w-btn.sm { height: 36px; padding: 0 14px; border-radius: 10px; font-size: 13px; }
+.w-btn-light { background: #ebebeb; color: #111111 !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 8px 24px rgba(0, 0, 0, 0.35); }
+.w-btn-light:hover { background: #ffffff; }
+.w-btn-brand { background: #7e47ea; color: #ffffff !important; box-shadow: 0 0 0 1px rgba(175, 151, 250, 0.35), 0 8px 32px rgba(143, 100, 246, 0.45); }
+.w-btn-brand:hover { background: #6e2ada; }
+.w-btn-glass { background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.09); color: #ebebeb !important; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12); }
+.w-btn-glass:hover { background: rgba(255, 255, 255, 0.10); }
+.w-btn-ghost { color: #a3a3a3 !important; }
+.w-btn-ghost:hover { color: #ebebeb !important; }
+
+/* Glass surfaces: one level only */
+.w-glass {
+  background: rgba(255, 255, 255, 0.035); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 24px 64px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(24px) saturate(1.6); -webkit-backdrop-filter: blur(24px) saturate(1.6);
+}
+.w-glass-flat { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+a.w-glass-flat { text-decoration: none; }
+a.w-glass-flat:hover, a.w-glass:hover { background: rgba(255, 255, 255, 0.06); }
+
+/* The framed hero card with its mesh */
+.w-hero {
+  position: relative; overflow: clip; border-radius: 32px; background: #0b0b0d;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+.w-hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(640px 420px at 86% 4%, rgba(175, 151, 250, 0.48), transparent 70%),
+    radial-gradient(560px 380px at 8% 62%, rgba(242, 166, 186, 0.30), transparent 70%),
+    radial-gradient(620px 360px at 48% 100%, rgba(240, 214, 150, 0.20), transparent 72%);
+}
+.w-hero.soft::before {
+  background:
+    radial-gradient(560px 320px at 84% 0%, rgba(175, 151, 250, 0.40), transparent 70%),
+    radial-gradient(520px 300px at 6% 100%, rgba(242, 166, 186, 0.22), transparent 70%);
+}
+.w-hero > * { position: relative; }
+.w-glow { position: absolute; pointer-events: none; border-radius: 50%; filter: blur(10px); }
+.w-glow.violet { background: radial-gradient(closest-side, rgba(143, 100, 246, 0.30), transparent); }
+.w-glow.blue { background: radial-gradient(closest-side, rgba(69, 155, 247, 0.16), transparent); }
+
+/* Announcement bar */
+.w-announce {
+  display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 40px; padding: 8px 16px; box-sizing: border-box;
+  border-radius: 999px; background: linear-gradient(90deg, #f3c9d2, #f6ead0 50%, #c9d2f7); color: #26262b; font-size: 13px; line-height: 18px; text-align: center; text-decoration: none;
+}
+.w-announce b { font-weight: 600; }
+.w-announce .go { font-weight: 600; white-space: nowrap; }
+
+/* Chips, tags, tiles */
+.w-chip {
+  display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 14px 0 6px; border-radius: 999px; font-size: 13px; color: #d6d6d6;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.09); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08); text-decoration: none; white-space: nowrap;
+}
+.w-chip .new { flex-shrink: 0; white-space: nowrap; height: 22px; padding: 0 8px; border-radius: 999px; display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; color: #111; background: #c0affc; }
+.w-tag { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; color: #c0affc; background: rgba(192, 175, 252, 0.12); border: 1px solid rgba(192, 175, 252, 0.25); white-space: nowrap; }
+.w-tag.mute { color: #a3a3a3; background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.09); }
+.w-tag.ok { color: #6ee7b7; background: rgba(110, 231, 183, 0.10); border-color: rgba(110, 231, 183, 0.22); }
+.w-tag.wait { color: #f5dc84; background: rgba(232, 197, 71, 0.10); border-color: rgba(232, 197, 71, 0.24); }
+.w-tag.run { color: #8cc3ff; background: rgba(69, 155, 247, 0.14); border-color: rgba(69, 155, 247, 0.28); }
+.w-tile { width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: rgba(235, 235, 235, 0.08); border: 1px solid rgba(255, 255, 255, 0.07); color: #c0affc; }
+.w-num { font-family: var(--mono); font-size: 12px; color: #c0affc; }
+.w-kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.12); color: #a3a3a3; }
+.w-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+/* Code block */
+.w-code {
+  font-family: var(--mono); font-size: 12.5px; line-height: 20px; color: #d6d6d6; white-space: pre; overflow-x: auto;
+  background: rgba(0, 0, 0, 0.38); border: 1px solid rgba(255, 255, 255, 0.09); border-radius: 12px; padding: 14px 16px; margin: 0;
+}
+.w-code .c { color: #8a8a8a; }
+.w-code .p { color: #af97fa; }
+
+/* Grids: columns live in classes so phone widths can stack them */
+.w-g2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.w-g3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.w-g4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.w-g6 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.w-split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 56px; align-items: center; }
+.w-split.rev { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+.w-aside { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 56px; align-items: start; }
+
+/* Product shots: the app's real 1440 × 900 glass screens. The Shot component
+   scales the screen to the frame's width, so a shot is never cropped. */
+.w-shot { position: relative; overflow: hidden; border-radius: 22px; border: 1px solid rgba(255, 255, 255, 0.10); box-shadow: 0 40px 120px rgba(0, 0, 0, 0.6), 0 0 0 8px rgba(255, 255, 255, 0.025); width: 100%; max-width: 1104px; aspect-ratio: 1440 / 900; margin: 0 auto; box-sizing: border-box; }
+.w-shot-in { position: absolute; left: 0; top: 0; width: 1440px; height: 900px; transform-origin: 0 0; }
+
+/* Phone (mobile companion) */
+.w-phone { width: 280px; height: 572px; border-radius: 44px; padding: 10px; box-sizing: border-box; background: #1b1b1f; border: 1px solid rgba(255, 255, 255, 0.14); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 40px 100px rgba(0, 0, 0, 0.6); flex-shrink: 0; }
+.w-phone-screen { width: 100%; height: 100%; border-radius: 34px; overflow: hidden; background: #0b0b0d; display: flex; flex-direction: column; position: relative; }
+
+/* Logo wall */
+.w-agent { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 8px; border-radius: 14px; }
+.w-agent img { width: 40px; height: 40px; border-radius: 10px; }
+.w-agent span { font-size: 12.5px; color: #a3a3a3; text-align: center; }
+
+/* Responsive: container widths, so phone artboards get the same page */
+@container (max-width: 1180px) {
+  .w-xl { font-size: 72px; }
+}
+@container (max-width: 960px) {
+  .w-g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .w-g6 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .w-split, .w-split.rev, .w-aside { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+}
+@container (max-width: 760px) {
+  .w-wrap { padding: 0 16px; }
+  .w-frame { padding: 8px 8px 0; }
+  .w-hero { border-radius: 24px; }
+  .w-xl { font-size: 46px; letter-spacing: -0.04em; }
+  .w-h1 { font-size: 38px; }
+  .w-h2 { font-size: 32px; }
+  .w-h3 { font-size: 24px; }
+  .w-lead { font-size: 16px; line-height: 25px; }
+  .w-sec { padding: 56px 0; }
+  .w-sec-tight { padding: 40px 0; }
+  .w-g2, .w-g3, .w-g4 { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .w-g6 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  .w-shot { border-radius: 10px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), 0 0 0 4px rgba(255, 255, 255, 0.025); }
+  .w-chip { white-space: normal; height: auto; min-height: 32px; padding: 5px 14px 5px 6px; max-width: 100%; text-align: left; line-height: 18px; }
+  .w-hide-m { display: none !important; }
+  .w-stack-m { flex-direction: column !important; align-items: stretch !important; }
+  .w-full-m { width: 100% !important; }
+  .w-center-m { text-align: center; align-items: center !important; justify-content: center !important; }
+}
+@container (min-width: 761px) {
+  .w-only-m { display: none !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .w-site * { transition: none !important; }
+}

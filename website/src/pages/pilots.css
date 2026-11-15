@@ -1,0 +1,23 @@
+.pl-bleed{padding-top:8px}
+.pl-bleed .w-shot{margin-bottom:-8%}
+.pl-part{padding:24px;display:flex;flex-direction:column;gap:14px}
+.pl-part .hd{display:flex;align-items:center;gap:12px}
+.pl-inset{padding:14px 16px;border-radius:12px;background:rgba(0,0,0,.32);border:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;gap:8px}
+.pl-file{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;font-size:12.5px;color:#d6d6d6}
+.pl-file.on{background:rgba(255,255,255,.08);color:#fff}
+.pl-step{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);font-size:12.5px;color:#d6d6d6}
+.pl-step.wait{background:rgba(232,197,71,.08);border-color:rgba(232,197,71,.28)}
+.pl-step.dim{opacity:.6}
+.pl-ck{width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:rgba(110,231,183,.14);color:#6ee7b7}
+.pl-flow{display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1.4fr) 24px minmax(0,1fr) 24px minmax(0,1fr) 24px minmax(0,1fr);align-items:center;gap:0}
+.pl-arrow{height:1px;background:rgba(235,235,235,.18)}
+.pl-sched{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid rgba(235,235,235,.07)}
+.pl-sched:first-child{border-top:0}
+.pl-tl{display:flex;flex-direction:column;gap:0}
+.pl-tl li{display:grid;grid-template-columns:36px minmax(0,1fr);gap:14px;padding-bottom:28px;position:relative}
+.pl-tl li::before{content:"";position:absolute;left:17px;top:36px;bottom:4px;width:1px;background:rgba(235,235,235,.10)}
+.pl-tl li:last-child::before{display:none}
+.pl-tl .n{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;color:#c0affc;background:rgba(192,175,252,.10);border:1px solid rgba(192,175,252,.25)}
+.pl-bub{padding:10px 14px;border-radius:14px;font-size:13px;line-height:20px}
+@container (max-width:960px){.pl-bleed{padding-bottom:24px}.pl-bleed .w-shot{margin-bottom:0}.pl-flow{grid-template-columns:minmax(0,1fr);gap:8px}.pl-arrow{display:none}}
+@container (max-width:760px){.pl-bleed{padding-bottom:16px}}

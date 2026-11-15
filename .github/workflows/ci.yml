@@ -30,6 +30,7 @@ jobs:
       host: ${{ steps.impact.outputs.host }}
       mobile: ${{ steps.impact.outputs.mobile }}
       release: ${{ steps.impact.outputs.release }}
+      website: ${{ steps.impact.outputs.website }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -90,6 +91,30 @@ jobs:
           export AR_aarch64_linux_android="$bin/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
           cargo check --locked -p gespan-mobile-link --target aarch64-linux-android
+
+  website:
+    name: Website
+    needs: impact
+    if: ${{ !cancelled() && needs.impact.outputs.website != 'false' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run test
+      # tsc, the Vite build (Rolldown + Oxc, React Compiler) and the per-page copies.
+      - run: bun run build
 
   host:
     needs: impact
