@@ -1,0 +1,89 @@
+website/src/App.tsx
+  s_ed5fc16e195ddf::t_837357b02b2a1a 1-2,33-38
+website/src/pages/DownloadPage.tsx
+  s_ed5fc16e195ddf::t_7da7126adbaa3f 8,23-24
+website/src/styles/motion.css
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 10-11,72-100
+  s_ed5fc16e195ddf::t_be6869159fe2d3 1-5,7-9
+  s_ed5fc16e195ddf::t_837357b02b2a1a 15-17,101-115
+website/tsconfig.json
+  s_ed5fc16e195ddf::t_be6869159fe2d3 4-8,20-28,30-35
+website/src/components/fx.css
+  s_ed5fc16e195ddf::t_24056df16d0f18 1-45
+website/src/components/ui/marquee.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-74
+website/src/pages/FeaturesPage.tsx
+  s_ed5fc16e195ddf::t_0731e11def83b5 4,30-31,38-40,48-50,57-59,66-68,75-77,84,105-106,113-115,123-125,133-135,143,157-158,165-167,174-176,183-185,192,206-207,214-216,223,255-256,263-265,272
+website/src/components/ui/animated-shiny-text.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-42
+website/src/components/ui/animated-beam.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-187
+website/src/pages/PilotsPage.tsx
+  s_ed5fc16e195ddf::t_7da7126adbaa3f 5,95
+  s_ed5fc16e195ddf::t_654ec7d687b7ad 19
+website/src/styles/site.css
+  s_ed5fc16e195ddf::t_654ec7d687b7ad 17,143,154
+website/src/components/Shot.tsx
+  s_ed5fc16e195ddf::t_0731e11def83b5 2,26,61
+website/README.md
+  s_ed5fc16e195ddf::t_2a9a650c71d27d 37-40,42-49
+website/src/components/ScrollShot.tsx
+  s_ed5fc16e195ddf::t_837357b02b2a1a 1,48,50
+  s_ed5fc16e195ddf::t_0731e11def83b5 33,49
+website/src/components/fx.tsx
+  s_ed5fc16e195ddf::t_370654c3f2d2eb 42
+  s_ed5fc16e195ddf::t_26c238766b7063 1-41,43-200
+website/tests/motion.test.tsx
+  s_ed5fc16e195ddf::t_a99a7b47d2b378 1,5,108-109,121-123,126-151
+  s_ed5fc16e195ddf::t_2359db2ab70d3d 152
+website/src/components/ui/animated-list.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-79
+website/src/components/ui/number-ticker.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-72
+website/src/components/ui/magic-card.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-209
+website/src/lib/utils.ts
+  s_ed5fc16e195ddf::t_be6869159fe2d3 1-7
+website/components.json
+  s_ed5fc16e195ddf::t_be6869159fe2d3 1-21
+website/src/components/ui/particles.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-2,4-15,18-95,97-306,313-324
+  s_ed5fc16e195ddf::t_bbb56bed2b2421 3,307-312
+  s_ed5fc16e195ddf::t_aaadfcefd0b484 16-17,96
+website/src/components/ui/word-rotate.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-34,36,38,40,42-44,46,48-49
+  s_ed5fc16e195ddf::t_837357b02b2a1a 35,37,39,41,45,47
+website/src/pages/HomePage.tsx
+  s_ed5fc16e195ddf::t_0731e11def83b5 6,22,25,32,44,48-60,126,143-144,149-151,156-158,163-165,170-172,177-179,184,217-218,222-224,228-230,234-236,240,307
+  s_ed5fc16e195ddf::t_be6869159fe2d3 19,24,27-29
+  s_ed5fc16e195ddf::t_654ec7d687b7ad 23
+website/vite.config.ts
+  s_ed5fc16e195ddf::t_be6869159fe2d3 24
+  s_ed5fc16e195ddf::t_a99a7b47d2b378 29
+website/src/components/ui/scroll-progress.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-34
+website/package.json
+  s_ed5fc16e195ddf::t_be6869159fe2d3 16,19-20,33
+website/tests/setup.ts
+  s_ed5fc16e195ddf::t_a819e4859e9b08 1-12
+website/src/components/ui/border-beam.tsx
+  s_ed5fc16e195ddf::t_c75b0ffb2bd224 1-107
+website/bun.lock
+  s_ed5fc16e195ddf::t_20be1c1b8aa885 8,12,25,281-282,403-404,425-426
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f7c3c773685ae54aaf7faeb94c5b2ecb723b849",
+  "prompts": {},
+  "sessions": {
+    "s_ed5fc16e195ddf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01a3f41-b72e-4aef-a6a8-323f91dfd6a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
