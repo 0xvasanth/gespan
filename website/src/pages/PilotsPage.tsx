@@ -1,7 +1,7 @@
 import { Link } from "../router";
 import { SiteNav } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
-import { Shot } from "../components/Shot";
+import { ScrollShot } from "../components/ScrollShot";
 import "./pilots.css";
 
 export function PilotsPage() {
@@ -20,7 +20,7 @@ export function PilotsPage() {
             <div className="w-stack-m w-full-m" style={{ display: "flex", gap: "10px" }}><Link className="w-btn w-btn-light" to="/download">Download Gespan</Link> <a className="w-btn w-btn-glass" href="#anatomy">What a Pilot is made of</a></div>
           </div>
           <div className="w-wrap pl-bleed" style={{ marginTop: "56px" }}>
-            <Shot name="pilot" />
+            <ScrollShot name="pilot" />
           </div>
         </section>
       </div>
@@ -28,11 +28,11 @@ export function PilotsPage() {
       <section id="anatomy" className="w-sec" aria-labelledby="an-h">
         <div className="w-glow violet" style={{ width: "900px", height: "600px", left: "-300px", top: "120px" }} />
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
-          <div className="w-head">
+          <div data-reveal="" className="w-head">
             <p className="w-eyebrow">What a Pilot is made of</p>
             <h2 id="an-h" className="w-h2">Five parts, all plain files you can read and edit.</h2>
           </div>
-          <div className="w-g2">
+          <div data-stagger="" className="w-g2">
             <div className="w-glass pl-part">
               <div className="hd">
                 <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z" /></svg></div>
@@ -98,7 +98,7 @@ export function PilotsPage() {
               <div className="pl-step dim">Publish</div>
             </div>
           </div>
-          <div className="w-g2">
+          <div data-stagger="" className="w-g2">
             <div className="w-glass pl-part">
               <div className="hd">
                 <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" /><polyline points="14 2 14 8 20 8" /></svg></div>
@@ -136,7 +136,7 @@ export function PilotsPage() {
       <section className="w-sec" aria-labelledby="hw-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap w-split">
           <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
-            <div className="w-head">
+            <div data-reveal="" className="w-head">
               <p className="w-eyebrow">Working with a Pilot</p>
               <h2 id="hw-h" className="w-h2">Give it the goal. Keep the decisions.</h2>
             </div>
@@ -183,11 +183,11 @@ export function PilotsPage() {
       {/* Wake */}
       <section className="w-sec" aria-labelledby="wk-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
-          <div className="w-head">
+          <div data-reveal="" className="w-head">
             <p className="w-eyebrow">Always there</p>
             <h2 id="wk-h" className="w-h3">Reach it from wherever the work starts.</h2>
           </div>
-          <div className="w-g3">
+          <div data-stagger="" className="w-g3">
             <div className="w-glass-flat pl-part">
               <h3 className="w-h4">Automations wake it</h3>
               <p className="w-small">An automation can deliver its run to a Pilot instead of starting a session. The prompt waits while the Pilot is busy, then wakes it.</p>

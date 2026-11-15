@@ -1,5 +1,5 @@
 import { Inline } from "../components/Inline";
-import { Shot } from "../components/Shot";
+import { ScrollShot } from "../components/ScrollShot";
 import { SiteFooter } from "../components/SiteFooter";
 import { SiteNav } from "../components/SiteNav";
 import { REPO } from "../docs";
@@ -28,7 +28,7 @@ function Release({ entry, latest }: { entry: ChangelogRelease; latest: boolean }
         {latest && (
           <>
             <h3 className="w-h2" style={{ fontSize: "36px" }}>{highlights(entry)}.</h3>
-            <Shot name="tasks" className="cl-shot" />
+            <ScrollShot name="tasks" className="cl-shot" />
           </>
         )}
         <ul className="cl-list">
@@ -57,7 +57,7 @@ export function ChangelogPage() {
         <section className="w-hero soft" aria-label="Changelog">
           <SiteNav active="changelog" onHero />
           <div className="w-wrap w-stack-m" style={{ paddingTop: "48px", paddingBottom: "56px", display: "flex", alignItems: "flex-end", gap: "32px" }}>
-            <div className="w-head" style={{ flex: "1" }}>
+            <div data-reveal="" className="w-head" style={{ flex: "1" }}>
               <p className="w-eyebrow">Changelog</p>
               <h1 className="w-h1">What's new in Gespan.</h1>
               <p className="w-lead">Every release, newest first. Gespan ships often while it is early, so the list moves fast.</p>

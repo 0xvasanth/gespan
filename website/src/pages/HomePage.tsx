@@ -1,7 +1,7 @@
 import { Link } from "../router";
 import { SiteNav } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
-import { Shot } from "../components/Shot";
+import { ScrollShot } from "../components/ScrollShot";
 import logoUrl from "../assets/logo.svg";
 import { AgentWall } from "../components/AgentWall";
 import { GUIDES } from "../docs";
@@ -15,23 +15,28 @@ export function HomePage() {
       <div className="w-frame">
         <Link className="w-announce" to="/changelog" style={{ maxWidth: "760px", margin: "0 auto 12px" }}><span><b>Gespan {release.version}</b> is out: {highlights(changelog[0])}.</span> <span className="go">Read the changelog →</span></Link>
         <section className="w-hero" aria-label="Introduction">
+          {/* A slow drifting glow behind the hero copy. */}
+          <div aria-hidden="true" className="w-glow violet tw:animate-drift tw:motion-reduce:animate-none" style={{ width: "900px", height: "620px", right: "-260px", top: "-180px" }} />
           <SiteNav active="home" onHero />
           <div className="w-wrap lp-hero-copy" style={{ paddingTop: "64px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "24px" }}>
-            <a className="w-chip" href="#agents"><span className="new">12 agents</span>Claude Code, Codex, Cursor CLI and nine more</a>
-            <h1 className="w-xl">Hold the reins.<br /><span style={{ color: "#a3a3a3" }}>Let the agents pull.</span></h1>
-            <p className="w-lead" style={{ maxWidth: "620px" }}>One desktop app to drive all of your coding agents. Run them side by side, plan their work on a board, and let a Pilot keep it moving. It uses the subscriptions you already pay for.</p>
-            <div className="lp-cta w-stack-m w-full-m" style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "center" }}><Link className="w-btn w-btn-light" to="/download"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.8zM14.1 5.8c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z" /></svg> Download for macOS</Link> <a className="w-btn w-btn-glass" href="https://github.com/0xvasanth/gespan"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z" /></svg> View on GitHub</a></div>
-            <p className="w-meta">Free and open source · macOS, Windows and Linux · No telemetry</p>
+            <a className="w-chip tw:animate-rise tw:motion-reduce:animate-none" href="#agents"><span className="new">12 agents</span>Claude Code, Codex, Cursor CLI and nine more</a>
+            <h1 className="w-xl">
+              <span className="tw:animate-rise tw:motion-reduce:animate-none tw:block tw:[animation-delay:90ms]">Hold the reins.</span>
+              <span className="tw:animate-rise tw:motion-reduce:animate-none tw:block tw:[animation-delay:220ms]" style={{ color: "#a3a3a3" }}>Let the agents pull.</span>
+            </h1>
+            <p className="w-lead tw:animate-rise tw:motion-reduce:animate-none tw:[animation-delay:360ms]" style={{ maxWidth: "620px" }}>One desktop app to drive all of your coding agents. Run them side by side, plan their work on a board, and let a Pilot keep it moving. It uses the subscriptions you already pay for.</p>
+            <div className="lp-cta w-stack-m w-full-m tw:animate-rise tw:motion-reduce:animate-none tw:[animation-delay:480ms]" style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "center" }}><Link className="w-btn w-btn-light" to="/download"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.8zM14.1 5.8c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z" /></svg> Download for macOS</Link> <a className="w-btn w-btn-glass" href="https://github.com/0xvasanth/gespan"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z" /></svg> View on GitHub</a></div>
+            <p className="w-meta tw:animate-rise tw:motion-reduce:animate-none tw:[animation-delay:580ms]">Free and open source · macOS, Windows and Linux · No telemetry</p>
           </div>
           <div className="w-wrap lp-bleed" style={{ marginTop: "56px" }}>
-            <Shot name="home" />
+            <ScrollShot name="home" variant="hero" />
           </div>
         </section>
       </div>
       {/* Agents */}
       <section id="agents" className="w-sec" aria-labelledby="agents-h">
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
-          <div className="w-head center">
+          <div data-reveal="" className="w-head center">
             <p className="w-eyebrow">Supported agents</p>
             <h2 id="agents-h" className="w-h2">Runs the agents you already have.</h2>
             <p className="w-lead">If an agent is installed and signed in, Gespan can run it. Your plans, logins, skills and MCP setup carry over. No API keys, no new accounts and no token resale.</p>
@@ -44,11 +49,11 @@ export function HomePage() {
       <section className="w-sec" aria-labelledby="loop-h" style={{ paddingTop: "0" }}>
         <div className="w-glow violet" style={{ width: "900px", height: "500px", left: "-200px", top: "80px" }} />
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
-          <div className="w-head">
+          <div data-reveal="" className="w-head">
             <p className="w-eyebrow">How it works</p>
             <h2 id="loop-h" className="w-h2">From ticket to merged, with you holding the reins.</h2>
           </div>
-          <ol className="w-g4" style={{ listStyle: "none", margin: "0", padding: "0" }}>
+          <ol data-stagger="" className="w-g4" style={{ listStyle: "none", margin: "0", padding: "0" }}>
             <li className="w-glass lp-step">
               <span className="w-num">01</span>
               <h3 className="w-h4">Board</h3>
@@ -99,7 +104,7 @@ export function HomePage() {
       <section className="w-sec" aria-labelledby="tasks-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
           <div className="w-split">
-            <div className="w-head">
+            <div data-reveal="" className="w-head">
               <p className="w-eyebrow">My tasks</p>
               <h2 id="tasks-h" className="w-h2">Everything waiting on you, in one place.</h2>
             </div>
@@ -108,20 +113,20 @@ export function HomePage() {
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}><span className="w-tag wait">Approvals</span><span className="w-tag mute">Questions</span><span className="w-tag mute">Draft reviews</span><span className="w-tag mute">Decision log</span></div>
             </div>
           </div>
-          <Shot name="tasks" />
+          <ScrollShot name="tasks" />
         </div>
       </section>
       {/* Features */}
       <section className="w-sec" aria-labelledby="feat-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
           <div className="w-stack-m" style={{ display: "flex", alignItems: "flex-end", gap: "24px" }}>
-            <div className="w-head">
+            <div data-reveal="" className="w-head">
               <p className="w-eyebrow">Features</p>
               <h2 id="feat-h" className="w-h2">One home for every agent.</h2>
             </div>
             <Link className="w-btn w-btn-glass" to="/features" style={{ marginLeft: "auto" }}>See every feature</Link>
           </div>
-          <div className="w-g3">
+          <div data-stagger="" className="w-g3">
             <div className="w-glass-flat lp-feat">
               <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="12" y1="4" x2="12" y2="20" /></svg></div>
               <h3 className="w-h4">Multi-agent workspace</h3>
@@ -161,7 +166,7 @@ export function HomePage() {
         <div className="w-glow blue" style={{ width: "700px", height: "500px", left: "-200px", bottom: "0" }} />
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
           <div className="w-split">
-            <div className="w-head">
+            <div data-reveal="" className="w-head">
               <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                 <p className="w-eyebrow">Pilots</p>
                 <span className="w-tag">Experimental</span>
@@ -173,17 +178,17 @@ export function HomePage() {
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}><span className="w-tag mute">Soul</span><span className="w-tag mute">Memory</span><span className="w-tag mute">Docs</span><span className="w-tag mute">Pipelines</span><span className="w-tag mute">Schedule</span> <Link className="w-btn w-btn-glass sm" to="/pilots" style={{ marginLeft: "8px" }}>Meet Pilots</Link></div>
             </div>
           </div>
-          <Shot name="pilot" />
+          <ScrollShot name="pilot" />
         </div>
       </section>
       {/* Principles */}
       <section className="w-sec" aria-labelledby="why-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
-          <div className="w-head">
+          <div data-reveal="" className="w-head">
             <p className="w-eyebrow">Why Gespan</p>
             <h2 id="why-h" className="w-h2">A GUI over agents you already have. Nothing in between.</h2>
           </div>
-          <div className="w-g4">
+          <div data-stagger="" className="w-g4">
             <div className="w-glass-flat lp-feat">
               <h3 className="w-h4">Bring your own agents</h3>
               <p className="w-small">Gespan runs the CLIs you have installed and signed in to, with the same login and plan as your terminal.</p>
@@ -239,11 +244,11 @@ export function HomePage() {
       {/* FAQ */}
       <section className="w-sec" aria-labelledby="faq-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
-          <div className="w-head">
+          <div data-reveal="" className="w-head">
             <p className="w-eyebrow">Questions</p>
             <h2 id="faq-h" className="w-h2">The short answers.</h2>
           </div>
-          <div className="w-g2">
+          <div data-stagger="" className="w-g2">
             <div className="w-glass-flat lp-q">
               <h3 className="w-h4">Is Gespan free?</h3>
               <p className="w-small">Yes. Gespan is open source under the MIT License. You pay only for the agent plans you already have, directly to their providers.</p>
