@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-export const pieces = ["core", "desktop", "host", "mobile", "release"];
+export const pieces = ["core", "desktop", "host", "mobile", "release", "website"];
 
 const rules = [
   // Nothing reads these. docs/desktop/examples is compiled into Native, and
@@ -15,7 +15,8 @@ const rules = [
   [/^docs\/(?!desktop\/examples\/)/, []],
   [/^(CODE_OF_CONDUCT|CONTRIBUTING|SECURITY)\.md$/, []],
   // set-version rewrites its Install section, and a release test checks it.
-  [/^README\.md$/, ["release"]],
+  // The website reads its release block for the download links.
+  [/^README\.md$/, ["release", "website"]],
   [/^(LICENSE|NOTICE)$/, []],
   [/^\.github\/(ISSUE_TEMPLATE\/|pull_request_template\.md$|CODEOWNERS$)/, []],
   // Core's shared_contracts test scans crates/gespan-gpui/src.
@@ -29,6 +30,7 @@ const rules = [
   [/^host\/(package\.mjs|windows-acl\.ps1)$/, ["core", "host"]],
   [/^host\//, ["host"]],
   [/^(mobile|tests\/mobile)\//, ["mobile"]],
+  [/^website\//, ["website"]],
 ];
 
 export function impact(files) {

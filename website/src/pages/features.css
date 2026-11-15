@@ -1,0 +1,6 @@
+.fe-card{padding:22px;display:flex;flex-direction:column;gap:10px}
+.fe-card .top{display:flex;align-items:center;gap:12px}
+.fe-group{display:flex;flex-direction:column;gap:14px;position:sticky;top:24px}
+.fe-jump{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.fe-jump a{height:36px;padding:0 14px;border-radius:999px;display:inline-flex;align-items:center;font-size:13px;color:#d6d6d6;text-decoration:none;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09)}
+.fe-jump a:hover{background:rgba(255,255,255,.09)}

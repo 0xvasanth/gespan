@@ -1,0 +1,6 @@
+.ft-col{display:flex;flex-direction:column;gap:10px}
+.ft-col h3{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8a8a8a;margin:0 0 4px}
+.ft-col a{font-size:14px;color:#a3a3a3;text-decoration:none;line-height:20px}
+.ft-col a:hover{color:#ebebeb}
+.ft-grid{display:grid;grid-template-columns:minmax(0,1.6fr) repeat(4,minmax(0,1fr));gap:32px}
+@container (max-width:760px){.ft-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:32px 16px}.ft-brand{grid-column:1 / -1}}

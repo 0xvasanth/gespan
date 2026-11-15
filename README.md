@@ -301,6 +301,7 @@ Run it with `cd mobile && bun install && bun run start`.
 | `crates/` | Other shared Rust crates: board store, trackers, MCP hub, mobile link and more |
 | `host/` | The remote host that runs sessions on another machine |
 | `mobile/` | The Expo iPhone companion |
+| `website/` | The gespan.dev website (React and Vite) |
 
 </details>
 

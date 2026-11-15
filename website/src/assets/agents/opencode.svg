@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>OpenCode</title>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="#ffffff" stroke="#d4d4d8" stroke-width="1.5"/>
+  <svg x="14" y="14" width="36" height="36" viewBox="-4 -4 37 37" fill="none" color="#18181b">
+<path fill-rule="evenodd" d="M20.4 5.8H8.8V23.2H20.4V5.8ZM26.2 29H3V0H26.2V29Z" fill="currentColor"/>
+  </svg>
+</svg>
