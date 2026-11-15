@@ -1,0 +1,23 @@
+scripts/release-channel.cjs
+  s_017e87d2e70fe1::t_eafa5eea1d8ece 208-212,216-218,222-223,228-236,325-327,332
+scripts/release-channel.test.cjs
+  s_017e87d2e70fe1::t_eafa5eea1d8ece 445,447,456-501,556
+.github/workflows/release.yml
+  s_017e87d2e70fe1::t_eafa5eea1d8ece 51-57,62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c4a3e0d3677802bdeb7ac0dcc5261fc0dd39b73",
+  "prompts": {},
+  "sessions": {
+    "s_017e87d2e70fe1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "946dca12-f300-441b-8a8a-a334a98a91df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
