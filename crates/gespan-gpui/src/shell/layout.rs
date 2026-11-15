@@ -953,8 +953,10 @@ mod tests {
         for ms in [35, 70, 110] {
             window
                 .update(cx, |shell, w, cx| {
+                    // Frozen, not started `ms` ago: on a slow runner the real
+                    // clock let the slide finish before the frame was drawn.
                     let slide = shell.right_slide.as_ref().unwrap();
-                    slide.elapsed(Duration::from_millis(ms));
+                    slide.freeze_elapsed(Duration::from_millis(ms));
                     let now = Instant::now();
                     let before = slide.at(now);
                     if shell.pilot_active(cx) {
