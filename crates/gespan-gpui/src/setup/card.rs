@@ -1,6 +1,6 @@
 //! The setup card's state and the events the shell acts on. Each step draws
 //! itself in its own file from the pieces in `ui`.
-use super::{SetupStep, agents, look, project, welcome};
+use super::{SetupStep, agents, look, project, tools, welcome};
 use crate::settings::Preferences;
 use gespan_core::provider::Kind;
 use gpui::{Context, EventEmitter, FocusHandle, Focusable, Window, prelude::*};
@@ -120,7 +120,7 @@ impl SetupCard {
 
     /// Skip setup: straight to Project; cards not yet passed keep defaults.
     pub(super) fn skip_setup(&mut self, cx: &mut Context<Self>) {
-        for step in [SetupStep::Agents, SetupStep::Look] {
+        for step in [SetupStep::Agents, SetupStep::Tools, SetupStep::Look] {
             if step as u8 >= self.step as u8 && !self.skipped.contains(&step) {
                 self.skipped.push(step);
             }
@@ -240,6 +240,7 @@ impl Render for SetupCard {
         match self.step {
             SetupStep::Welcome => welcome::render(self, window, cx),
             SetupStep::Agents => agents::render(self, window, cx),
+            SetupStep::Tools => tools::render(self, window, cx),
             SetupStep::Look => look::render(self, window, cx),
             SetupStep::Project => project::render(self, window, cx),
         }

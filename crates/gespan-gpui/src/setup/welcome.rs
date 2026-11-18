@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn welcome_skip_setup_goes_to_project_and_marks_both_cards_skipped(cx: &mut TestAppContext) {
+    fn welcome_skip_setup_goes_to_project_and_marks_every_card_skipped(cx: &mut TestAppContext) {
         let opened = open(SetupStep::Welcome, "/Users/a/code/app", cx);
         click(&opened, "setup-skip-setup", cx);
         assert_eq!(
@@ -117,6 +117,7 @@ mod tests {
         );
         opened.card.read_with(cx, |card, _| {
             assert!(card.skipped.contains(&SetupStep::Agents));
+            assert!(card.skipped.contains(&SetupStep::Tools));
             assert!(card.skipped.contains(&SetupStep::Look));
             assert!(!card.skipped.contains(&SetupStep::Welcome));
         });

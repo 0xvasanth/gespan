@@ -25,7 +25,7 @@ pub(super) fn render(
         .filter(|folder| Some(folder) != suggestion.as_ref());
 
     let mut body = ui::card()
-        .child(ui::header(ui::steps(3), None))
+        .child(ui::header(ui::steps(4), None))
         .child(ui::intro(
             "Pick a project to start in.",
             "Any folder works, a git repository works best. Gespan opens here from now on. \
@@ -156,6 +156,9 @@ fn defaults_line(card: &SetupCard) -> Option<String> {
             card.default_agent
                 .map_or("no agent yet", |kind| kind.label()),
         );
+    }
+    if card.skipped.contains(&SetupStep::Tools) {
+        parts.push("agents keep their own tools");
     }
     if card.skipped.contains(&SetupStep::Look) {
         parts.push(match card.prefs.theme.as_str() {
@@ -484,6 +487,12 @@ mod tests {
             assert_eq!(
                 defaults_line(card).as_deref(),
                 Some("Using defaults: no agent yet")
+            );
+
+            card.skipped = vec![SetupStep::Tools];
+            assert_eq!(
+                defaults_line(card).as_deref(),
+                Some("Using defaults: agents keep their own tools")
             );
 
             card.skipped = vec![SetupStep::Look];

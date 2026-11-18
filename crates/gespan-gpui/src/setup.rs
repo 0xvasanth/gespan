@@ -7,6 +7,7 @@ mod project;
 pub(crate) mod rules;
 #[cfg(test)]
 pub(crate) mod test_support;
+mod tools;
 pub(crate) mod ui;
 mod welcome;
 
@@ -16,6 +17,31 @@ mod welcome;
 pub(crate) enum SetupStep {
     Welcome,
     Agents,
+    /// Shared tools: the MCP hub. Saved resume steps from before it load by
+    /// name, so adding it moved no one's place.
+    Tools,
     Look,
     Project,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SetupStep;
+
+    #[test]
+    fn a_saved_step_from_before_tools_still_loads() {
+        for (json, step) in [
+            ("\"Agents\"", SetupStep::Agents),
+            ("\"Look\"", SetupStep::Look),
+            ("\"Project\"", SetupStep::Project),
+        ] {
+            assert_eq!(serde_json::from_str::<SetupStep>(json).unwrap(), step);
+        }
+    }
+
+    #[test]
+    fn the_header_counts_four_steps() {
+        assert_eq!(super::ui::step_label(1), "Step 1 of 4");
+        assert_eq!(super::ui::step_label(3), "Step 3 of 4");
+    }
 }
