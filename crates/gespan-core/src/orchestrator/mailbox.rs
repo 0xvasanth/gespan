@@ -69,6 +69,9 @@ pub struct Mail {
     pub held: Option<Hold>,
     /// The user let it through, past the limits.
     pub released: bool,
+    /// The mode the sender's turn ran in, checked again at delivery. `None`
+    /// for reports, which are never held for access.
+    pub sender_access: Option<crate::agent::AccessMode>,
 }
 
 /// Whether a message `hops` away from a user's turn may be queued.
@@ -77,6 +80,17 @@ pub fn admit(hops: u8) -> Result<(), Hold> {
         Err(Hold::Hops)
     } else {
         Ok(())
+    }
+}
+
+/// [`admit_access`] when either mode may be unknown: unknown is held.
+pub fn admit_known_access(
+    sender: Option<crate::agent::AccessMode>,
+    receiver: Option<crate::agent::AccessMode>,
+) -> Result<(), Hold> {
+    match (sender, receiver) {
+        (Some(sender), Some(receiver)) => admit_access(sender, receiver),
+        _ => Err(Hold::Access),
     }
 }
 
@@ -169,21 +183,37 @@ pub fn words_of(turn: &str) -> &str {
 }
 
 /// How the transcript shows a delivered turn: each sender by name, then its
-/// words, without the label and fences the agent reads. `None` for any
-/// other message.
+/// words, without the label and fences the agent reads. It reads the turn
+/// the way it was built, label, fence, words, the same fence, so nothing
+/// inside a message's words can pass for another sender. `None` for any
+/// other message, or for text that isn't exactly that shape.
 pub fn shown_as(turn: &str) -> Option<String> {
-    if !turn.starts_with("[From session \"") {
-        return None;
+    const SEPARATOR: &str = "\n\n---\n\n";
+    let mut pieces = Vec::new();
+    let mut rest = turn;
+    loop {
+        let (header, after) = rest.split_once('\n')?;
+        let title = header
+            .strip_prefix("[From session \"")?
+            .split_once('"')
+            .map(|(title, _)| title)?;
+        let (fence, body) = after.split_once('\n')?;
+        if fence.len() < 3 || !fence.chars().all(|c| c == '~') {
+            return None;
+        }
+        let close = format!("\n{fence}");
+        let end = body.find(&close)?;
+        let words = &body[..end];
+        // The closing fence ends the line it is on.
+        let after_fence = &body[end + close.len()..];
+        if !(after_fence.is_empty() || after_fence.starts_with('\n')) {
+            return None;
+        }
+        pieces.push(format!("From “{title}”: {}", words.trim()));
+        if after_fence.is_empty() {
+            break;
+        }
+        rest = after_fence.strip_prefix(SEPARATOR)?;
     }
-    let pieces: Vec<String> = turn
-        .split("\n\n---\n\n")
-        .map(|piece| {
-            let title = piece
-                .strip_prefix("[From session \"")
-                .and_then(|rest| rest.split_once('"'))
-                .map_or("another session", |(title, _)| title);
-            format!("From “{title}”: {}", words_of(piece).trim())
-        })
-        .collect();
     Some(pieces.join("\n\n"))
 }

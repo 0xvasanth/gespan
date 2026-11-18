@@ -193,10 +193,7 @@ impl Protocol {
                 }
                 if self.request.settings.plan {
                     params["sandboxPolicy"] = json!({"type":"readOnly"});
-                    if self.request.settings.operator
-                        || self.request.settings.operator_enabled
-                        || self.request.settings.orchestrator
-                    {
+                    if self.request.settings.orchestrator {
                         params["sandboxPolicy"]["networkAccess"] = true.into();
                     }
                     if self.request.settings.review.is_some() {

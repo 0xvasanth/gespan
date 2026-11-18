@@ -165,9 +165,6 @@ pub struct Settings {
     /// Provider-advertised controls beyond the common effort/speed switches.
     pub model_settings: std::collections::HashMap<String, String>,
     pub plan: bool,
-    pub operator: bool,
-    /// A submitted /operator grants this thread access independently of its next draft.
-    pub operator_enabled: bool,
     pub orchestrator: bool,
     /// This session was started by an orchestration lead to do one task. It
     /// stays set across turns, unlike `orchestrator`.

@@ -86,6 +86,7 @@ pub(crate) struct MailboxMessage {
     state: String,
     held_reason: Option<String>,
     released: bool,
+    sender_access: Option<String>,
 }
 
 /// Run on every open (see `Kind::constraints`): the foreign keys and cascades
@@ -180,6 +181,7 @@ impl Store {
                     .state(mail.state.id())
                     .held_reason(mail.held.map(|hold| hold.id().to_owned()))
                     .released(mail.released)
+                    .sender_access(mail.sender_access.map(|mode| mode.id().to_owned()))
                     .exec(&mut *tx)
                     .await?;
                 Ok(true)
@@ -219,6 +221,10 @@ impl Store {
             from_title: row.sender_title,
             text: row.text,
             released: row.released,
+            sender_access: row
+                .sender_access
+                .as_deref()
+                .and_then(crate::orchestrator::start::access_mode),
         })
     }
 

@@ -4,7 +4,6 @@ mod actions;
 mod agents_panel;
 #[cfg(test)]
 mod agents_panel_tests;
-mod app_commands;
 mod app_views;
 mod automation_runs;
 #[cfg(test)]
@@ -32,6 +31,7 @@ mod import_sessions;
 mod in_flight;
 mod inbox_ask;
 mod inbox_automations;
+mod launch_placement;
 mod layout;
 mod menu_bar;
 mod mobile_host;
@@ -738,7 +738,6 @@ pub(crate) struct Shell {
     quick_open: Option<quick_open::Open>,
     report: report::ReportState,
     image_lightbox: Option<(Entity<crate::image_lightbox::ImageLightbox>, Subscription)>,
-    app_bridge: Option<gespan_core::pilot::bridge::Server>,
     /// Where agents' `sessions` tools reach this window.
     orchestrator_bridge: Option<gespan_core::orchestrator::bridge::Server>,
     /// What git and the transcripts say about each session, for rosters.
@@ -766,15 +765,13 @@ pub(crate) struct Shell {
     /// `sessions_wait` calls still waiting.
     mail_waiters: Vec<orchestrator_mail::Waiter>,
     mobile: mobile_host::Mobile,
-    app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
-    app_pending: HashSet<(i64, String)>,
     orchestrations: HashMap<i64, orchestration::Live>,
     control_bridge: Option<gespan_core::pilot::bridge::Server>,
     /// Each lead's last orchestration, whose agents hang under it in the sidebar.
     orchestration_summaries: HashMap<i64, gespan_core::orchestration::Summary>,
-    /// Sessions an /operator thread started, by the session that started them.
+    /// Sessions another session started (`sessions_start`, or a desktop
+    /// app launch), by the session that started them.
     started_by: HashMap<i64, i64>,
-    /// The sidebar rails under orchestrators and /operator threads.
     usage_footer: Entity<UsageFooter>,
     /// The footer's high-usage chip and its running-work dialog.
     resources: Entity<ResourceMonitor>,
@@ -1000,7 +997,6 @@ pub(crate) struct Shell {
     new_tab_task: Option<gpui::Task<()>>,
     worktree_focus: HashMap<String, crate::worktree_switcher::WorktreeFocus>,
     session_worktrees: HashMap<i64, Option<String>>,
-    session_details: HashMap<i64, gespan_core::store::MobileSessionMetadata>,
     sidebar_hidden_sessions: HashSet<i64>,
     worktree_returns: HashMap<(String, String), i64>,
     tab_drag: Option<TabDrag>,
@@ -1269,7 +1265,6 @@ impl Shell {
             quick_open: None,
             report: Default::default(),
             image_lightbox: None,
-            app_bridge: None,
             orchestrator_bridge: None,
             session_facts: HashMap::new(),
             facts_pending: HashSet::new(),
@@ -1284,8 +1279,6 @@ impl Shell {
             held_mail: HashMap::new(),
             mail_waiters: Vec::new(),
             mobile: mobile_host::Mobile::default(),
-            app_results: HashMap::new(),
-            app_pending: HashSet::new(),
             orchestrations: HashMap::new(),
             control_bridge: None,
             orchestration_summaries: sidebar_metadata.orchestrations,
@@ -1449,7 +1442,6 @@ impl Shell {
             new_tab_task: None,
             worktree_focus,
             session_worktrees,
-            session_details: sidebar_metadata.details,
             sidebar_hidden_sessions: sidebar_metadata.sidebar_hidden,
             worktree_returns: HashMap::new(),
             tab_drag: None,
@@ -1623,7 +1615,6 @@ impl Shell {
             // Its roster loaded with it: Pilot Flow events can be delivered.
             this.flush_pilot_flow_events(cx);
             this.bind_notices(cx);
-            this.init_app_bridge(cx);
         }
         // Every window hosts its own runs, so each has its own control bridge.
         this.init_control_bridge(cx);
@@ -1826,9 +1817,6 @@ impl Shell {
             // the indexed working directory so those events cannot erase it.
             view.restore_worktree(worktree, None, cx);
             view.draft_hint = self.draft_sessions.contains(&id);
-            if let Some(bridge) = &self.app_bridge {
-                view.set_app_environment(bridge.environment(id));
-            }
             view.set_project_appearance(appearance, cx);
             view.transcript.update(cx, |transcript, cx| {
                 transcript.apply_preferences(&self.workspace.preferences, cx)

@@ -283,12 +283,10 @@ fn run_turn_using(
             sync_held = synced.held;
         }
         turn_start = replay.map_or(transcript.rows.len(), |replay| replay.prompt);
-        settings.operator_enabled |= settings.operator;
         let mut persisted = settings.clone();
         persisted.handoff = None;
         // These modes belong to this turn, not the next composer draft.
         persisted.plan = false;
-        persisted.operator = false;
         persisted.orchestrator = false;
         let start = if let Some(replay) = replay {
             // The prompt is already saved; only its reply is written again.
@@ -709,28 +707,6 @@ fn run_turn_using(
                 gespan_core::orchestration::lead_prompt(&access)
             );
         }
-        if !raw_native_command && settings.operator_enabled {
-            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-            let (how, scope_note) = match gespan_core::pilot::AppAccess::for_provider(
-                kind,
-                provider_id.as_deref(),
-                &executable,
-            ) {
-                gespan_core::pilot::AppAccess::Tools => {
-                    ("Use the app_call tool with {action,input}.".to_owned(), "")
-                }
-                gespan_core::pilot::AppAccess::Cli(executable) => (
-                    format!(
-                        "Use the CLI: {} app ACTION --json JSON.",
-                        shlex_quote(&executable.to_string_lossy())
-                    ),
-                    " App credentials are in the environment; never print them.",
-                ),
-            };
-            prompt = format!(
-                "You have Gespan app access for this project. {how} Supported actions: models.list {{}}, sessions.list {{}}, sessions.read {{sessionId}}, sessions.start {{prompt,harness?,model?,title?,draft?,reveal?}}, sessions.send/draft {{sessionId,prompt}}, sessions.stop {{sessionId}}, folders.list {{}}, folders.move {{sessionId,folderId?,newFolderName?}}, notes.list {{}}, notes.read {{id}}, notes.write {{id?,title,body}}, worktrees.list {{}}. Scope is this thread's project.{scope_note} Respect the user’s request and selected access policy.\n\n{prompt}"
-            );
-        }
         // The decision log: its toolkit, and for a harness that reads no
         // decision file, its block once per provider conversation and again
         // after the log changes. A fresh conversation has not seen it.
@@ -888,7 +864,7 @@ fn run_turn_using(
             (ticket_tools.is_some(), gespan_core::tool_servers::TICKET),
             // Every session holds the marker; only these are told about it.
             (
-                (settings.pilot.is_some() || settings.operator_enabled)
+                settings.pilot.is_some()
                     && settings
                         .environment
                         .contains_key(gespan_core::pilot::bridge::APP_MARKER),

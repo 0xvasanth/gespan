@@ -235,9 +235,13 @@ fn only_a_provider_without_tool_servers_is_pointed_at_the_cli() {
 #[test]
 fn app_and_control_tools_follow_their_markers_and_who_may_use_them() {
     use gespan_core::pilot::bridge::{APP_MARKER, CONTROL_MARKER};
-    let tools = |marker: Option<&str>, operator: bool| {
+    let tools = |marker: Option<&str>, pilot: bool| {
         let mut settings = Settings {
-            operator_enabled: operator,
+            pilot: pilot.then(|| gespan_core::agent::PilotContext {
+                pilot: Default::default(),
+                root: std::env::temp_dir(),
+                executable: "gespan".into(),
+            }),
             ..Default::default()
         };
         if let Some(marker) = marker {
@@ -253,7 +257,7 @@ fn app_and_control_tools_follow_their_markers_and_who_may_use_them() {
     assert_eq!(
         tools(Some(APP_MARKER), false),
         (false, false),
-        "every session holds this marker; only some may use it"
+        "every session holds this marker; only Pilot chats may use it"
     );
     assert_eq!(tools(Some(APP_MARKER), true), (true, false));
     assert_eq!(tools(Some(CONTROL_MARKER), false), (false, true));

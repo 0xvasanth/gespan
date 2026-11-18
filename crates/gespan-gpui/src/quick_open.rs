@@ -21,7 +21,6 @@ pub(crate) enum Command {
     Terminal,
     WorkspaceStyle,
     Plan,
-    Operator,
     Orchestrator,
     LinkTicket,
     NewSessionFromTicket,
@@ -58,7 +57,6 @@ const COMMANDS: &[(Command, &str, &str)] = &[
         "⌘⌥L",
     ),
     (Command::Plan, "Toggle Plan mode", ""),
-    (Command::Operator, "Toggle Operator", ""),
     (Command::Orchestrator, "Toggle Orchestrator", ""),
     (Command::LinkTicket, "Link ticket…", ""),
     (

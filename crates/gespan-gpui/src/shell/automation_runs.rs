@@ -986,7 +986,6 @@ pub(super) fn managed_settings(
         .unwrap_or_default();
     settings.model = gespan_core::store::native_model(model, kind.id());
     settings.plan = false;
-    settings.operator = false;
     settings.orchestrator = false;
     settings.prepared_prompt = None;
     settings

@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too many in an hour, or sent to a session with broader permissions wait for
   you. `sessions_wait` waits for other sessions to finish.
 
+### Removed
+
+- **`/operator`:** every chat now has its session powers through the
+  `sessions` tools, without a command. Archiving or deleting other sessions,
+  notes and folders stay with you in the UI, and with Pilots.
+
 ## [0.3.0] - 2026-11-15
 
 ### Added

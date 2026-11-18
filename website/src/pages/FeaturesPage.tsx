@@ -226,11 +226,11 @@ export function FeaturesPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                 <div className="top">
                   <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" /></svg></div>
-                  <h3 className="w-h4">Agents that drive Gespan</h3>
+                  <h3 className="w-h4">Agents that work together</h3>
                 </div>
-                <p className="w-small">Start a message with <span className="w-code-inline">/operator</span> to let an agent open sessions, split panes, create worktrees and read your notes.</p>
+                <p className="w-small">Ask any chat to do something in a new worktree and it starts a session of its own, shown under the chat, that reports back when it’s done.</p>
               </div>
-              <pre className="w-code"><span className="p">{"/operator"}</span>{" start two Codex sessions:\n  one to inspect the API\n  and one to review the UI\n"}<span className="c">{"# the agent opens and arranges both for you"}</span></pre>
+              <pre className="w-code">{"start two sessions in new worktrees:\n  one to inspect the API\n  and one to review the UI\n"}<span className="c">{"# each reports back to this chat"}</span></pre>
             </div>
           </div>
         </div>

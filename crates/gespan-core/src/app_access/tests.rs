@@ -23,12 +23,10 @@ fn model() -> Model {
 }
 
 #[test]
-fn operator_launch_applies_validated_overrides_without_transferring_app_access() {
+fn a_launch_applies_validated_overrides_without_inheriting_modes_or_credentials() {
     let mut inherited = Settings {
         model: Some("test-model".into()),
         effort: Some("low".into()),
-        operator: true,
-        operator_enabled: true,
         orchestrator: true,
         plan: true,
         worktree_cwd: Some("/existing".into()),
@@ -45,8 +43,7 @@ fn operator_launch_applies_validated_overrides_without_transferring_app_access()
     assert_eq!(settings.service_tier.as_deref(), Some("fast"));
     assert_eq!(settings.model_settings["custom"], "b");
     assert_eq!(settings.worktree_cwd.as_deref(), Some("/existing"));
-    assert!(!settings.operator && !settings.orchestrator && !settings.plan);
-    assert!(!settings.operator_enabled);
+    assert!(!settings.orchestrator && !settings.plan);
     assert!(settings.environment.is_empty());
     for bad in [
         json!({"model":"unknown"}),
@@ -65,78 +62,6 @@ fn operator_launch_applies_validated_overrides_without_transferring_app_access()
         .unwrap()
         .iter()
         .any(|s| s["id"] == "reasoningEffort"));
-}
-
-#[test]
-fn operator_thread_access_survives_reopen_without_enabling_other_sessions() {
-    let dir = tempfile::tempdir().unwrap();
-    for shared in [false, true] {
-        let path = dir
-            .path()
-            .join(if shared { "shared.db" } else { "native.db" });
-        let open = || {
-            if shared {
-                Store::open_gespan(&path).unwrap()
-            } else {
-                Store::open(&path).unwrap()
-            }
-        };
-        let store = open();
-        let caller = store.create("codex", "/project").unwrap();
-        let other = store.create("codex", "/project").unwrap();
-        store
-            .save_agent_settings(
-                caller.id,
-                &Settings {
-                    operator_enabled: true,
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        drop(store);
-        let store = open();
-        let restored = store.agent_settings(caller.id).unwrap().unwrap();
-        assert!(restored.operator_enabled);
-        assert!(!restored.operator);
-        assert!(
-            !store
-                .agent_settings(other.id)
-                .unwrap()
-                .unwrap_or_default()
-                .operator_enabled
-        );
-    }
-}
-
-#[test]
-fn operator_rejects_unknown_fields_and_pilot_only_capabilities() {
-    for (action, input) in [
-        ("sessions.start", json!({"prompt":"x","sidebarHidden":true})),
-        ("sessions.start", json!({"prompt":"x","reveal":"false"})),
-        (
-            "sessions.start",
-            json!({"prompt":"x","runtimeMode":"unsafe"}),
-        ),
-        ("sessions.start", json!({"prompt":"x","placement":"left"})),
-        ("sessions.start", json!({"prompt":"x","besideSessionId":1})),
-        (
-            "sessions.send",
-            json!({"sessionId":1,"prompt":"x","notifyOnComplete":true}),
-        ),
-        ("artifacts.write", json!({"body":"x"})),
-    ] {
-        assert!(
-            validate_operator(action, &input).is_err(),
-            "{action}: {input}"
-        );
-    }
-    assert!(prompt(&json!({"prompt":"/operator do something"})).is_err());
-    assert!(validate_operator("sessions.archive", &json!({"sessionId":"desktop-uuid"})).is_ok());
-    assert!(validate_operator(
-        "sessions.start",
-        &json!({"prompt":"x","placement":"down","besideSessionId":"uuid","effort":"high"})
-    )
-    .is_ok());
 }
 
 #[test]
@@ -175,7 +100,7 @@ fn conversation_pages_keep_source_cursors_prose_boundaries_and_character_caps() 
 }
 
 #[test]
-fn operator_notes_support_desktop_ids_partial_updates_empty_bodies_and_pagination() {
+fn pilot_notes_support_desktop_ids_partial_updates_empty_bodies_and_pagination() {
     let store = Store::open_gespan(Path::new(":memory:")).unwrap();
     let caller = store.create("codex", "/project").unwrap();
     let original = store

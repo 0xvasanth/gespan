@@ -21,12 +21,6 @@ impl Conversation {
                 .update(cx, |input, cx| input.set_text(format!("{text} "), cx));
         }
     }
-    pub(crate) fn set_app_environment(
-        &mut self,
-        environment: std::collections::HashMap<String, String>,
-    ) {
-        self.app_environment = environment;
-    }
     pub(crate) fn set_roster(&mut self, roster: Option<String>) {
         self.roster = roster;
     }
@@ -95,7 +89,6 @@ impl Conversation {
         let enabled = match id {
             "draft" => self.follow_ups.draft_selected,
             "plan" => self.settings.plan,
-            "operator" => self.settings.operator,
             "orchestrator" => self.settings.orchestrator,
             _ => true,
         };
@@ -107,7 +100,6 @@ impl Conversation {
         let enabled = match id {
             "draft" => &mut self.follow_ups.draft_selected,
             "plan" => &mut self.settings.plan,
-            "operator" => &mut self.settings.operator,
             "orchestrator" => &mut self.settings.orchestrator,
             _ => return,
         };
@@ -123,7 +115,6 @@ impl Conversation {
         // The accepted turn or queue item already owns its mode. The empty
         // composer starts a fresh draft.
         self.settings.plan = false;
-        self.settings.operator = false;
         self.settings.orchestrator = false;
         self.input
             .update(cx, |input, cx| input.selected_command(None, cx));
@@ -131,7 +122,7 @@ impl Conversation {
         cx.notify();
     }
     pub(crate) fn toggle_mode(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.is_remote() && matches!(id, "operator" | "orchestrator") {
+        if self.is_remote() && id == "orchestrator" {
             self.status = "This mode is not available on remote projects.".into();
             cx.notify();
             return;
@@ -143,23 +134,15 @@ impl Conversation {
             "draft" => {
                 self.follow_ups.draft_selected = !self.follow_ups.draft_selected;
                 self.settings.plan = false;
-                self.settings.operator = false;
                 self.settings.orchestrator = false;
             }
             "plan" => {
                 self.settings.plan = !self.settings.plan;
                 self.settings.orchestrator = false;
-                self.settings.operator = false;
-            }
-            "operator" => {
-                self.settings.operator = !self.settings.operator;
-                self.settings.plan = false;
-                self.settings.orchestrator = false;
             }
             "orchestrator" => {
                 self.settings.orchestrator = !self.settings.orchestrator;
                 self.settings.plan = false;
-                self.settings.operator = false;
             }
             _ => return,
         }
@@ -169,8 +152,6 @@ impl Conversation {
             Some("orchestrator")
         } else if self.settings.plan {
             Some("plan")
-        } else if self.settings.operator {
-            Some("operator")
         } else {
             None
         };
@@ -193,32 +174,21 @@ impl Conversation {
         mut text: String,
         cx: &mut Context<Self>,
     ) -> String {
-        for mode in ["plan", "operator", "orchestrator"] {
+        for mode in ["plan", "orchestrator"] {
             if let Some(rest) = gespan_core::composer::consume_command(&text, mode) {
                 let rest = rest.to_owned();
                 match mode {
                     "plan" => {
                         self.settings.plan = true;
                         self.settings.orchestrator = false;
-                        self.settings.operator = false;
-                    }
-                    "operator" => {
-                        self.settings.operator = true;
-                        self.settings.plan = false;
-                        self.settings.orchestrator = false;
                     }
                     _ => {
                         self.settings.orchestrator = true;
                         self.settings.plan = false;
-                        self.settings.operator = false;
                     }
                 }
                 self.save_settings(cx);
-                text = if rest.is_empty() && mode == "operator" {
-                    "Explain what you can do in Gespan with your app access.".into()
-                } else {
-                    rest
-                };
+                text = rest;
                 break;
             }
         }
