@@ -27,6 +27,8 @@ mod decision_log;
 #[cfg(debug_assertions)]
 mod dev_reload;
 mod diff_view;
+#[cfg(test)]
+mod e2e;
 mod editor_analysis;
 mod editor_scrollbar;
 mod editor_syntax;

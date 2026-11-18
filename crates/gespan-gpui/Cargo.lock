@@ -2903,6 +2903,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gespan-fake-agent"
+version = "0.3.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "gespan-first-launch"
 version = "0.3.0"
 dependencies = [
