@@ -21,7 +21,7 @@ const rules = [
   [/^\.github\/(ISSUE_TEMPLATE\/|pull_request_template\.md$|CODEOWNERS$)/, []],
   // Core's shared_contracts test scans crates/gespan-gpui/src.
   [/^crates\/gespan-gpui\/src\//, ["core", "desktop"]],
-  [/^crates\/(gespan-gpui\/(tests|assets)|gespan-first-launch)\//, ["desktop"]],
+  [/^crates\/(gespan-gpui\/(tests|assets)|gespan-first-launch|gespan-fake-agent)\//, ["desktop"]],
   [/^crates\/(board-store|gespan-mcp-config|gespan-models|gespan-redact|gespan-speech|herdr-link|keep-awake|mcp-hub|tracker-client|tracker-secrets)\//, ["core", "desktop"]],
   // Only the root workspace builds it; once gespan-core depends on it (#386/#132) it joins the rule above.
   [/^crates\/gespan-graph\//, ["core"]],
