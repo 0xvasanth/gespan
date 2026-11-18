@@ -3217,6 +3217,12 @@ fn a_pilot_runs_step_sessions_are_visible_and_in_the_pilots_folder(cx: &mut Test
         format!("pilot-{}", s.id)
     );
     assert_eq!(launches(&s, cx), before, "reported by Flow events instead");
+    // The visit's session sits under the Pilot's chat in the session tree.
+    cx.run_until_parked();
+    let link = link_of(&s, session, cx).expect("linked under the Pilot's chat");
+    assert_eq!(link.parent, s.session);
+    assert_eq!(link.origin, gespan_core::orchestrator::tree::Origin::Flow);
+    assert_eq!(link.wake, gespan_core::orchestrator::tree::Wake::Never);
 }
 #[gpui::test]
 fn user_flow_step_sessions_are_not_filed(cx: &mut TestAppContext) {
@@ -3224,6 +3230,12 @@ fn user_flow_step_sessions_are_not_filed(cx: &mut TestAppContext) {
     let created = run_and_cancel(&s, blueprint("user", None, &s), false, cx);
     assert_eq!(created.len(), 1, "the visit's session");
     assert!(groups_of(&s, cx).folder_of(created[0]).is_none());
+    cx.run_until_parked();
+    assert_eq!(
+        link_of(&s, created[0], cx),
+        None,
+        "a user's run has no parent chat"
+    );
 }
 // Flow step events: side reviews, alerts and goal roll-ups.
 use crate::shell::pilot_flows::PilotFlowEvent;

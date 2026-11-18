@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same limits. Their reports to the Pilot fence what each session said.
 - **One session tree:** an orchestration lead's workers are linked under it
   too, and workers from older versions are moved into the tree when Gespan
-  updates. The three old orchestration tables are gone.
+  updates. The three old orchestration tables are gone. A Pilot's Flow
+  steps sit under the Pilot's chat as well.
 
 ### Removed
 
