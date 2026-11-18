@@ -7231,3 +7231,105 @@ fn an_open_question_answers_from_above_the_composer(cx: &mut TestAppContext) {
     post("user", "Cut from release/0.2".into(), visual);
     assert_eq!(cards(visual), 1);
 }
+
+/// What a Pilot's start answered: the session id, or the error.
+fn start_with(
+    s: &Setup,
+    request: &str,
+    input: Value,
+    cx: &mut TestAppContext,
+) -> Result<i64, String> {
+    let mut input = input;
+    input["project"] = json!(s.project);
+    input["prompt"] = json!("Do the work");
+    input["draft"] = json!(true);
+    let answer = call(s, request, "sessions.start", input, cx);
+    cx.run_until_parked();
+    answer
+        .try_recv()
+        .unwrap()
+        .map(|value| value["sessionId"].as_i64().unwrap())
+}
+
+fn link_of(
+    s: &Setup,
+    child: i64,
+    cx: &mut TestAppContext,
+) -> Option<gespan_core::orchestrator::tree::Link> {
+    cx.update(|cx| {
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
+        owner.read(cx).e2e_link(child)
+    })
+}
+
+#[gpui::test]
+fn a_pilot_started_session_joins_the_session_tree(cx: &mut TestAppContext) {
+    use gespan_core::orchestrator::tree::{Origin, Wake};
+    let s = setup(cx);
+    let child = start_child(&s, "tree", cx);
+    cx.run_until_parked();
+    let link = link_of(&s, child, cx).expect("linked to the Pilot's chat");
+    assert_eq!(
+        (link.parent, link.root, link.depth),
+        (s.session, s.session, 1)
+    );
+    assert_eq!(link.origin, Origin::Pilot);
+    assert_eq!(
+        link.wake,
+        Wake::Never,
+        "the Pilot reports through its own outbox"
+    );
+    let stored = locked(&s.store).unwrap().session_links().unwrap();
+    assert_eq!(stored.link(child), Some(&link), "and it survives a restart");
+}
+
+#[gpui::test]
+fn a_pilot_cant_start_a_session_with_more_power_than_its_chat(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let chat_access = cx.update(|cx| {
+        s.manager
+            .read(cx)
+            .chats
+            .values()
+            .find(|v| v.read(cx).summary.id == s.session)
+            .map(|v| v.read(cx).settings.access)
+            .unwrap()
+    });
+    assert_eq!(
+        chat_access,
+        gespan_core::agent::AccessMode::Auto,
+        "the fixture's Pilot chat runs auto, so full access is broader"
+    );
+    let refused = start_with(&s, "wide", json!({"runtimeMode": "full-access"}), cx).unwrap_err();
+    assert!(refused.starts_with("permission_escalation: "), "{refused}");
+    let narrow = start_with(&s, "narrow", json!({"runtimeMode": "read-only"}), cx).unwrap();
+    let saved = locked(&s.store)
+        .unwrap()
+        .agent_settings(narrow)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.access, gespan_core::agent::AccessMode::ReadOnly);
+    let inherit = start_with(&s, "inherit", json!({}), cx).unwrap();
+    let saved = locked(&s.store)
+        .unwrap()
+        .agent_settings(inherit)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.access, chat_access, "the chat's own mode by default");
+}
+
+#[gpui::test]
+fn a_pilot_report_fences_what_the_session_said(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let (a, b) = delegated_pair(&s, cx);
+    set_child(&s, a, false, cx);
+    set_child(&s, b, true, cx);
+    cx.update(|cx| s.manager.update(cx, |m, cx| m.check_completions(cx)));
+    cx.run_until_parked();
+    let reports = delegated_reports(&s, cx);
+    assert!(
+        reports[0].contains("not instructions from the user.\n~~~"),
+        "{}",
+        reports[0]
+    );
+}

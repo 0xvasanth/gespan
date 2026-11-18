@@ -49,7 +49,7 @@ enum Created {
 /// The mode a session's turns run in: a plan, orchestrator or read-only
 /// turn is read-only whatever its composer says, and so is what it starts
 /// or asks of others.
-pub(super) fn effective_access(view: &crate::conversation::Conversation) -> AccessMode {
+pub(crate) fn effective_access(view: &crate::conversation::Conversation) -> AccessMode {
     if view.app_read_only || view.settings.plan {
         AccessMode::ReadOnly
     } else {
@@ -413,6 +413,70 @@ impl Shell {
                 view.update(cx, |view, cx| view.stop_app_session(cx));
             }
         }
+    }
+
+    /// A Pilot's `sessions.start` goes through the same limits as
+    /// `sessions_start`: depth, running children and permission ordering.
+    /// Returns the mode the child runs in.
+    pub(crate) fn pilot_start_policy(
+        &self,
+        caller: i64,
+        caller_access: AccessMode,
+        requested: Option<AccessMode>,
+        cx: &gpui::App,
+    ) -> Result<AccessMode, String> {
+        let live = self.live_sessions(cx);
+        let input = StartInput {
+            prompt: "pilot".into(),
+            harness: None,
+            model: None,
+            workspace: WorkspaceChoice::Main,
+            base: None,
+            wake: gespan_core::orchestrator::tree::Wake::Never,
+            access: requested,
+            title: None,
+            request_id: None,
+        };
+        let effects = decide(
+            &State {
+                tree: &self.session_tree,
+                live: &live,
+            },
+            Command::Start {
+                caller,
+                caller_access,
+                starting: 0,
+                input,
+            },
+        )?;
+        match effects.into_iter().next() {
+            Some(Effect::Launch(launch)) => Ok(launch.access),
+            _ => Ok(caller_access),
+        }
+    }
+
+    /// Records that a Pilot's chat or habit run started `child`. The Pilot
+    /// delivers its own reports (to its chat's outbox or the habit's
+    /// mailbox), so the link never wakes the parent itself.
+    pub(crate) fn pilot_link(&mut self, caller: i64, child: i64, cx: &mut Context<Self>) {
+        let link = Link {
+            child,
+            parent: caller,
+            root: self.session_tree.root(caller),
+            depth: self.session_tree.depth(caller) + 1,
+            origin: Origin::Pilot,
+            wake: gespan_core::orchestrator::tree::Wake::Never,
+        };
+        self.session_tree.insert(link);
+        self.started_by.insert(child, caller);
+        let store = self.store.clone();
+        cx.background_executor()
+            .spawn(async move {
+                if let Ok(store) = locked(&store) {
+                    let _ = store.save_session_link(&link);
+                }
+            })
+            .detach();
     }
 
     pub(super) fn answer_cancel(

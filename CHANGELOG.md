@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too many in an hour, or sent to a session with broader permissions wait for
   you. `sessions_wait` waits for other sessions to finish.
 
+- **Pilots on the same rules:** a Pilot's started sessions join the session
+  tree, never run with more power than the Pilot's chat, and count toward the
+  same limits. Their reports to the Pilot fence what each session said.
+
 ### Removed
 
 - **`/operator`:** every chat now has its session powers through the
