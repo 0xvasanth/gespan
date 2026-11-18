@@ -419,12 +419,13 @@ impl Shell {
     /// `sessions_start`: depth, running children and permission ordering.
     /// Returns the mode the child runs in.
     pub(crate) fn pilot_start_policy(
-        &self,
+        &mut self,
         caller: i64,
         caller_access: AccessMode,
         requested: Option<AccessMode>,
         cx: &gpui::App,
     ) -> Result<AccessMode, String> {
+        let starting = self.starting.get(&caller).copied().unwrap_or(0);
         let live = self.live_sessions(cx);
         let input = StartInput {
             prompt: "pilot".into(),
@@ -445,10 +446,13 @@ impl Shell {
             Command::Start {
                 caller,
                 caller_access,
-                starting: 0,
+                starting,
                 input,
             },
         )?;
+        // Counted as live until it is made or fails, so parallel calls
+        // can't start more than the limit.
+        *self.starting.entry(caller).or_default() += 1;
         match effects.into_iter().next() {
             Some(Effect::Launch(launch)) => Ok(launch.access),
             _ => Ok(caller_access),
@@ -459,16 +463,38 @@ impl Shell {
     /// delivers its own reports (to its chat's outbox or the habit's
     /// mailbox), so the link never wakes the parent itself.
     pub(crate) fn pilot_link(&mut self, caller: i64, child: i64, cx: &mut Context<Self>) {
+        if let Some(count) = self.starting.get_mut(&caller) {
+            *count = count.saturating_sub(1);
+        }
+        self.child_link(caller, child, Origin::Pilot, cx);
+    }
+
+    /// A Pilot's start that failed before it made a session.
+    pub(crate) fn pilot_start_failed(&mut self, caller: i64) {
+        if let Some(count) = self.starting.get_mut(&caller) {
+            *count = count.saturating_sub(1);
+        }
+    }
+
+    /// Links `child` under `parent` for a caller that reports by itself (a
+    /// Pilot, an orchestration lead), and saves the link.
+    pub(super) fn child_link(
+        &mut self,
+        parent: i64,
+        child: i64,
+        origin: Origin,
+        cx: &mut Context<Self>,
+    ) {
         let link = Link {
             child,
-            parent: caller,
-            root: self.session_tree.root(caller),
-            depth: self.session_tree.depth(caller) + 1,
-            origin: Origin::Pilot,
+            parent,
+            root: self.session_tree.root(parent),
+            depth: self.session_tree.depth(parent) + 1,
+            origin,
             wake: gespan_core::orchestrator::tree::Wake::Never,
         };
         self.session_tree.insert(link);
-        self.started_by.insert(child, caller);
+        self.started_by.insert(child, parent);
         let store = self.store.clone();
         cx.background_executor()
             .spawn(async move {

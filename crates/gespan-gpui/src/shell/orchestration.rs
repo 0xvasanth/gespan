@@ -1005,6 +1005,14 @@ impl Shell {
                     Ok((summary, settings, workspace)) => {
                         let id = summary.id;
                         this.add(summary, cx);
+                        // A worker joins the session tree under its lead; the
+                        // lead's run supervises it, so it never wakes the lead.
+                        this.child_link(
+                            lead,
+                            id,
+                            gespan_core::orchestrator::tree::Origin::Orchestration,
+                            cx,
+                        );
                         let start = this.orchestrations.get(&lead).is_some_and(|live| {
                             live.run.status == RunStatus::Active
                                 && live
@@ -1536,6 +1544,62 @@ mod tests {
             })
             .unwrap();
         cx.run_until_parked();
+    }
+    #[gpui::test]
+    fn a_leads_workers_join_the_session_tree_under_it(cx: &mut TestAppContext) {
+        use gespan_core::orchestrator::tree::{Origin, Wake};
+        let (window, _, lead) = crate::shell::tests::window(cx);
+        let (_dir, root) = repository();
+        window
+            .update(cx, |shell, _, cx| {
+                shell.sessions[&lead].update(cx, |v, cx| {
+                    v.summary.cwd = root.clone();
+                    v.install_transfer(Settings::default(), None, cx)
+                });
+                shell.start_orchestration(
+                    lead,
+                    Plan {
+                        title: "One".into(),
+                        summary: String::new(),
+                        tasks: vec![Task {
+                            id: "only".into(),
+                            title: "Only".into(),
+                            prompt: "Work".into(),
+                            files: vec!["src".into()],
+                            depends_on: Vec::new(),
+                            harness: None,
+                            model: None,
+                            model_settings: Default::default(),
+                        }],
+                        max_workers: 1,
+                    },
+                    cx,
+                );
+                // Stopped before the worker exists: it is made and linked,
+                // but never starts an agent.
+                shell.stop_orchestration(lead, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, _| {
+                let worker = shell.orchestrations[&lead].run.tasks[0]
+                    .session
+                    .expect("the worker was made");
+                let link = shell.session_tree.link(worker).copied().expect("linked");
+                assert_eq!((link.parent, link.depth), (lead, 1));
+                assert_eq!(
+                    (link.origin, link.wake),
+                    (Origin::Orchestration, Wake::Never)
+                );
+                let stored = locked(&shell.store).unwrap().session_links().unwrap();
+                assert_eq!(stored.link(worker), Some(&link));
+                assert!(
+                    shell.orchestration_worker(worker),
+                    "still a worker in the UI"
+                );
+            })
+            .unwrap();
     }
     #[gpui::test]
     fn reviewed_dispatch_caps_workers_serializes_scopes_and_stops_before_launch(

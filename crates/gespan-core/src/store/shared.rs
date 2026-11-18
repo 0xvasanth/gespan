@@ -14,8 +14,8 @@ pub use window::{HistoryPage, PAGE_TURNS};
 
 use super::db::{args, Sql, SqlRow};
 use super::schema::{
-    InFlightSession, OrchestrationRun, OrchestrationSidebar, OrchestrationWorker, PilotBlock,
-    PilotTranscript, PilotTurn, SessionRecord, SessionReminder, WorkspaceSnapshot,
+    InFlightSession, PilotBlock, PilotTranscript, PilotTurn, SessionRecord, SessionReminder,
+    WorkspaceSnapshot,
 };
 use super::{Reminder, Session, Store};
 use crate::{
@@ -619,6 +619,9 @@ impl Store {
         Ok(result)
     }
     pub(super) fn shared_sessions(&self) -> Result<Vec<Session>, String> {
+        // Workers adopted from the retired orchestration_workers table (their
+        // links carry created_at 0) stay off the list, as they were; a
+        // native lead's workers are listed and hidden by the sidebar.
         // Raw: the sidebar list must read only the covering index
         // (`INDEXED BY`), never a row with its blocks_json, and Toasty 0.11
         // cannot name an index.
@@ -626,7 +629,8 @@ impl Store {
             &format!(
                 "SELECT {SESSION_COLUMNS} FROM sessions INDEXED BY sessions_cwd_cover_idx
                  WHERE id NOT IN (SELECT id FROM sessions WHERE inbox_ask IS NOT NULL)
-                 AND id NOT IN (SELECT session_id FROM orchestration_workers)
+                 AND id NOT IN (SELECT child_session_id FROM session_links
+                                WHERE origin = 'orchestration' AND created_at = 0)
                  ORDER BY updated_at DESC,id"
             ),
             args![],
@@ -1699,7 +1703,7 @@ impl Store {
         self.unlink_session(id)?;
         // The cascade triggers (`store::schema::CONSTRAINTS`) would remove
         // most of these; deleting each explicitly keeps tables with no
-        // foreign key (in-flight, orchestration) clean too.
+        // foreign key (in-flight) clean too.
         self.orm()?.run(|mut db| async move {
             let id = &original;
             SessionReminder::filter(SessionReminder::fields().session_id().eq(id))
@@ -1719,18 +1723,6 @@ impl Store {
                 .exec(&mut db)
                 .await?;
             InFlightSession::filter(InFlightSession::fields().session_id().eq(id))
-                .delete()
-                .exec(&mut db)
-                .await?;
-            OrchestrationWorker::filter(OrchestrationWorker::fields().session_id().eq(id))
-                .delete()
-                .exec(&mut db)
-                .await?;
-            OrchestrationSidebar::filter(OrchestrationSidebar::fields().lead_id().eq(id))
-                .delete()
-                .exec(&mut db)
-                .await?;
-            OrchestrationRun::filter(OrchestrationRun::fields().lead_id().eq(id))
                 .delete()
                 .exec(&mut db)
                 .await?;

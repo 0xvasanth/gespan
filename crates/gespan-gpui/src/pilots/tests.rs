@@ -7333,3 +7333,35 @@ fn a_pilot_report_fences_what_the_session_said(cx: &mut TestAppContext) {
         reports[0]
     );
 }
+
+#[gpui::test]
+fn pilot_starts_still_being_made_hold_their_slots(cx: &mut TestAppContext) {
+    use gespan_core::agent::AccessMode;
+    let s = setup(cx);
+    cx.update(|cx| {
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
+        owner.update(cx, |shell, cx| {
+            // Five starts accepted and not made yet: each holds a slot.
+            for n in 0..5 {
+                assert!(
+                    shell
+                        .pilot_start_policy(s.session, AccessMode::Auto, None, cx)
+                        .is_ok(),
+                    "start {n}"
+                );
+            }
+            let refused = shell
+                .pilot_start_policy(s.session, AccessMode::Auto, None, cx)
+                .unwrap_err();
+            assert!(refused.starts_with("fanout_limit: "), "{refused}");
+            // One fails before it made a session: its slot is free again.
+            shell.pilot_start_failed(s.session);
+            assert!(
+                shell
+                    .pilot_start_policy(s.session, AccessMode::Auto, None, cx)
+                    .is_ok()
+            );
+            assert_eq!(shell.e2e_starting(s.session), 5);
+        });
+    });
+}

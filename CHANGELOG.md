@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pilots on the same rules:** a Pilot's started sessions join the session
   tree, never run with more power than the Pilot's chat, and count toward the
   same limits. Their reports to the Pilot fence what each session said.
+- **One session tree:** an orchestration lead's workers are linked under it
+  too, and workers from older versions are moved into the tree when Gespan
+  updates. The three old orchestration tables are gone.
 
 ### Removed
 

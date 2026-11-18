@@ -373,6 +373,21 @@ impl Store {
             .run(|mut db| async move { upsert.exec(&mut db).await.map(drop) })
     }
 
+    /// A link as the retired `orchestration_workers` adoption writes it
+    /// (`created_at` 0), for tests of what that adoption leaves.
+    #[cfg(test)]
+    pub(crate) fn save_adopted_link(&self, link: &Link) -> Result<(), String> {
+        self.save_session_link(link)?;
+        let child = self.persisted_session_id(link.child)?;
+        self.orm()?.run(|mut db| async move {
+            SessionLink::filter_by_child_session_id(child)
+                .update()
+                .created_at(0)
+                .exec(&mut db)
+                .await
+        })
+    }
+
     /// Before `id` is deleted: its link goes, and its children become roots
     /// with everything below them re-rooted.
     pub(super) fn unlink_session(&self, id: i64) -> Result<(), String> {
