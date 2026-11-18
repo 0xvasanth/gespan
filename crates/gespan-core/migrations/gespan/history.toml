@@ -34,3 +34,8 @@ snapshot_name = "0005_snapshot.toml"
 id = 6474940588847902644
 name = "0006_mail_sender_access.sql"
 snapshot_name = "0006_snapshot.toml"
+
+[[migrations]]
+id = 1277350127787500289
+name = "0007_orchestration_tables_retired.sql"
+snapshot_name = "0007_snapshot.toml"

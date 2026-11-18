@@ -258,6 +258,12 @@ impl Pilots {
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update_in(cx, |this, window, cx| {
+                if call.action == "sessions.start" && result.is_err() {
+                    let caller = call.session;
+                    let _ = this
+                        .owner
+                        .update(cx, |owner, _| owner.pilot_start_failed(caller));
+                }
                 let result = result.map(|(value, effect)| {
                     match effect {
                         Effect::None => (),
@@ -522,7 +528,7 @@ impl Pilots {
                     };
                     let access = self
                         .owner
-                        .read(cx, |owner, cx| {
+                        .update(cx, |owner, cx| {
                             owner.pilot_start_policy(call.session, caller_access, requested, cx)
                         })
                         .ok_or_else(|| "Gespan is closing".to_string())??;

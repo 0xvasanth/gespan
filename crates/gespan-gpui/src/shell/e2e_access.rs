@@ -54,4 +54,8 @@ impl Shell {
     ) {
         self.run_session_menu(id, action, window, cx);
     }
+    /// The caller's starts still being made.
+    pub(crate) fn e2e_starting(&self, caller: i64) -> usize {
+        self.starting.get(&caller).copied().unwrap_or(0)
+    }
 }

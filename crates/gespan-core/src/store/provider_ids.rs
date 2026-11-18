@@ -119,13 +119,17 @@ mod tests {
             .unwrap();
         let worker = store.create("codex", "/project").unwrap();
         store.provider_id(worker.id, "worker-thread").unwrap();
-        let original = store.persisted_session_id(worker.id).unwrap();
+        // Adopted from the desktop app's orchestration_workers, under the
+        // hidden Pilot chat as its lead.
         store
-            .conn()
-            .execute(
-                "INSERT INTO orchestration_workers VALUES(?1,'lead')",
-                [&original],
-            )
+            .save_adopted_link(&crate::orchestrator::tree::Link {
+                child: worker.id,
+                parent: pilot.id,
+                root: pilot.id,
+                depth: 1,
+                origin: crate::orchestrator::tree::Origin::Orchestration,
+                wake: crate::orchestrator::tree::Wake::Never,
+            })
             .unwrap();
         assert!(store.sessions().unwrap().is_empty());
         assert!(has(&store, "claude", "pilot-thread"));
