@@ -8,7 +8,7 @@ import "./docs.css";
 export const DOC_GUIDES = [
   { title: "Board", href: GUIDES.board, summary: "Cards, columns and tracker tickets, and starting sessions from them." },
   { title: "Project scripts", href: GUIDES.actions, summary: "Test, build and dev-server commands for the footer, the palette and agents." },
-  { title: "Agent access with /operator", href: GUIDES.agentAccess, summary: "Let agents open sessions and manage worktrees and notes." },
+  { title: "Agent access", href: GUIDES.agentAccess, summary: "Sessions that see each other, start sessions and message each other." },
   { title: "Remote sessions", href: GUIDES.remote, summary: "Run agents on another machine over SSH.", experimental: true },
   { title: "Jira inbox", href: GUIDES.jira, summary: "Connect Jira Cloud to the Inbox." },
   { title: "Linux installation", href: GUIDES.install, summary: "System dependencies and the .deb, .rpm and AppImage packages." },
@@ -112,7 +112,7 @@ export function DocsPage() {
               <div className="hd">
                 <p className="w-eyebrow">Tip</p>
               </div>
-              <p className="w-small">Try <span className="w-code-inline">/operator start two Codex sessions: one to inspect the API and one to review the UI</span>. The agent will open and arrange both sessions for you.</p>
+              <p className="w-small">Try <span className="w-code-inline">start two sessions in new worktrees: one to inspect the API and one to review the UI</span>. The agent starts both under this chat, and each reports back when it’s done.</p>
             </div>
           </div>
         </div>

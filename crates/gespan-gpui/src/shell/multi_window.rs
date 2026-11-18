@@ -294,11 +294,6 @@ impl Shell {
         if !self.order.contains(&id) {
             self.order.push(id);
         }
-        if let Some(bridge) = &self.app_bridge {
-            view.update(cx, |view, _| {
-                view.set_app_environment(bridge.environment(id))
-            });
-        }
         self.attach_session(id, view, cx);
         self.serve_sessions(id, cx);
         // A lead's capability named the closing window's bridge.
@@ -591,7 +586,6 @@ mod tests {
             .update(cx, |shell, _, _| {
                 assert!(shell.secondary);
                 assert!(shell.pilots.is_none(), "Pilots stay with the first window");
-                assert!(shell.app_bridge.is_none());
                 assert!(shell.session_summaries.contains_key(&id));
                 assert!(!shell.sessions.contains_key(&id));
                 assert_eq!(shell.workspace.project, CWD);

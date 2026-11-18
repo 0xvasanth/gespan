@@ -274,6 +274,7 @@ mod mailbox {
             state: State::Queued,
             held: None,
             released: false,
+            sender_access: None,
         }
     }
 

@@ -1796,12 +1796,11 @@ cat >/dev/null"#,
         assert_eq!(protocol.tools["odd"].edit_preview(), None);
     }
     #[test]
-    fn operator_thread_access_keeps_the_codex_app_bridge_reachable_on_later_turns() {
+    fn an_orchestration_lead_keeps_the_codex_control_bridge_reachable_on_later_turns() {
         for plan in [false, true] {
             let mut p = protocol(Kind::Codex);
-            p.request.settings.operator_enabled = true;
+            p.request.settings.orchestrator = true;
             p.request.settings.plan = plan;
-            assert!(!p.request.settings.operator);
             assert_eq!(p.codex_access().2["networkAccess"], true);
             let mut out = Vec::new();
             p.frame(json!({"id":1,"result":{}}), &mut out).unwrap();

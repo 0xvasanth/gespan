@@ -106,6 +106,7 @@ impl Shell {
             state: State::Queued,
             held: None,
             released: false,
+            sender_access: None,
         };
         self.enqueue(mail, None, cx);
     }
@@ -218,6 +219,30 @@ impl Shell {
                 let Some(view) = this.sessions.get(&target).cloned() else {
                     return;
                 };
+                // The receiver's mode may have widened since a message was
+                // queued: check again, and hold what may no longer pass.
+                let receiver = Some(view.read(cx).settings.access);
+                let (now, held): (Vec<Mail>, Vec<Mail>) = now.into_iter().partition(|mail| {
+                    mail.kind == Kind::Report
+                        || mail.released
+                        || mailbox::admit_known_access(mail.sender_access, receiver).is_ok()
+                });
+                if !held.is_empty() {
+                    let ids: Vec<String> = held.iter().map(|mail| mail.id.clone()).collect();
+                    *this.held_mail.entry(target).or_default() += ids.len();
+                    this.notice_held(target, Hold::Access, cx);
+                    let store = this.store.clone();
+                    cx.background_executor()
+                        .spawn(async move {
+                            if let Ok(store) = locked(&store) {
+                                let _ = store.hold_mail(&ids, Hold::Access);
+                            }
+                        })
+                        .detach();
+                }
+                if now.is_empty() {
+                    return;
+                }
                 let refs: Vec<&Mail> = now.iter().collect();
                 let text = mailbox::turn_text(&refs);
                 let hops = now.iter().map(|mail| mail.hops).max().unwrap_or(0);
@@ -337,10 +362,7 @@ impl Shell {
         let receiver = self
             .ensure_session(target, cx)
             .map(|view| view.read(cx).settings.access);
-        let held = match (sender, receiver) {
-            (Some(sender), Some(receiver)) => mailbox::admit_access(sender, receiver).err(),
-            _ => None,
-        };
+        let held = mailbox::admit_known_access(sender, receiver).err();
         let mail = Mail {
             id: format!("msg:{caller}:{}", request.unwrap_or_else(fresh_id)),
             to: target,
@@ -357,6 +379,7 @@ impl Shell {
             },
             held,
             released: false,
+            sender_access: sender,
         };
         self.enqueue(mail, Some(reply), cx);
     }

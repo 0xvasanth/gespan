@@ -183,8 +183,8 @@ See your Claude Code, Codex and Kiro plan usage in the chat footer, updated duri
 <tr>
 <td width="33%" valign="top">
 <img src="docs/assets/features/operator.svg" width="40" height="40" alt="" />
-<h4>Agents that drive Gespan</h4>
-Start a message with <code>/operator</code> to let an agent open sessions, split panes, create worktrees and read your notes. See <a href="docs/agent-access.md">agent access</a>.
+<h4>Agents that work together</h4>
+Ask any chat to do something in a new worktree and it starts a session of its own that reports back. Sessions know what their siblings are changing and can message each other. See <a href="docs/agent-access.md">agent access</a>.
 </td>
 <td width="33%" valign="top">
 <img src="docs/assets/features/pilots.svg" width="40" height="40" alt="" />
@@ -242,8 +242,8 @@ Every release is listed on the
 5. **Review.** Look through the diff, then keep or undo each turn's changes.
 
 > [!TIP]
-> Try `/operator start two Codex sessions: one to inspect the API and one to review the UI`.
-> The agent will open and arrange both sessions for you.
+> Try `start two sessions in new worktrees: one to inspect the API and one to review the UI`.
+> The agent starts both, under this chat, and each reports back when it's done.
 
 Gespan is still early. If something breaks, please [open an issue](https://github.com/0xvasanth/gespan/issues).
 
@@ -255,7 +255,7 @@ Gespan is still early. If something breaks, please [open an issue](https://githu
 | [Board](docs/board.md) | Cards, columns and tracker tickets, and starting sessions from them |
 | [Project scripts](docs/actions.md) | Test, build and dev-server commands for the footer, the palette and agents |
 | [Linux installation](docs/install.md) | System dependencies and `.deb` / `.rpm` / AppImage packages |
-| [Agent access with `/operator`](docs/agent-access.md) | Let agents open sessions and manage worktrees and notes |
+| [Agent access](docs/agent-access.md) | Sessions that see each other, start sessions and message each other |
 | [Remote sessions](docs/remote-access.md) | Run agents on another machine over SSH *(experimental)* |
 | [Jira inbox](docs/jira.md) | Connect Jira Cloud to the Inbox |
 | [Building from source](docs/building.md) | Platform prerequisites and packaging |

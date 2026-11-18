@@ -651,7 +651,7 @@ pub(crate) struct TranscriptView {
     viewport: Bounds<Pixels>,
     anchor_turn: Option<usize>,
     prompt_rise: Option<(usize, Instant)>,
-    /// The /operator, Plan or Orchestrator burst inside a just-sent prompt.
+    /// The Plan or Orchestrator burst inside a just-sent prompt.
     burst: Option<burst::Burst>,
     prompt_rise_pending: bool,
     introduced_prompt: Option<usize>,

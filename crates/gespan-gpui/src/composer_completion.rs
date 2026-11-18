@@ -108,7 +108,6 @@ impl Completion {
             disabled_paths: Vec::new(),
             known: [
                 "/plan",
-                "/operator",
                 "/orchestrator",
                 "/compact",
                 "/mcp",
@@ -175,7 +174,6 @@ impl Completion {
         self.notes.clear();
         self.known = [
             "/plan",
-            "/operator",
             "/orchestrator",
             "/compact",
             "/mcp",
@@ -456,7 +454,6 @@ impl Completion {
                 }
                 this.known = [
                     "/plan",
-                    "/operator",
                     "/orchestrator",
                     "/compact",
                     "/mcp",
@@ -588,7 +585,6 @@ impl Completion {
                     "Orchestrator",
                     "Plan and coordinate agent work",
                 ),
-                ("operator", "Operator", "Give this thread access to Gespan"),
                 ("plan", "Plan mode", "Review a plan before building"),
                 (
                     "btw",
@@ -688,7 +684,6 @@ impl Completion {
                     "plan"
                         | "compact"
                         | "mcp"
-                        | "operator"
                         | "orchestrator"
                         | "add-to-folder"
                         | "draft"
@@ -1124,7 +1119,6 @@ mod tests {
                     [
                         "/draft",
                         "/orchestrator",
-                        "/operator",
                         "/plan",
                         "/btw",
                         "/compact",
@@ -1156,8 +1150,11 @@ mod tests {
         cx.run_until_parked();
         window
             .update(cx, |view, _, _| {
-                assert_eq!(view.choices[0].insertion, "/operator");
-                assert_eq!(view.choices[1].insertion, "/orchestrator");
+                assert_eq!(view.choices[0].insertion, "/orchestrator");
+                assert!(
+                    !view.choices.iter().any(|c| c.insertion == "/operator"),
+                    "/operator is gone: sessions use the sessions tools without it"
+                );
             })
             .unwrap();
     }

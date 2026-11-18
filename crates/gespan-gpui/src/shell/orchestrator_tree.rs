@@ -67,8 +67,8 @@ fn fresh_request() -> String {
     )
 }
 
-/// The `/operator` start's input for the same request, so both share one
-/// launch path until `/operator` is retired.
+/// The app launch input for this request, in the shape the shared launch
+/// helpers (`app_access::launch_settings`, `launch_checkout`) read.
 fn launch_input(input: &StartInput, access: AccessMode) -> Value {
     let mut fields = json!({
         "prompt": input.prompt,

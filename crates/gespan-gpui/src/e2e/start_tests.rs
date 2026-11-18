@@ -534,6 +534,7 @@ fn a_report_saved_before_a_restart_is_delivered_once(cx: &mut TestAppContext) {
                     state: State::Queued,
                     held: None,
                     released: false,
+                    sender_access: None,
                 })
                 .unwrap()
         );

@@ -217,6 +217,7 @@ fn messages_wait_once_agents_started_ten_turns_this_hour(cx: &mut TestAppContext
                     state: State::Queued,
                     held: None,
                     released: false,
+                    sender_access: None,
                 })
                 .unwrap();
             store.mark_mail_delivered(&[id], now - 50_000 + n).unwrap();
@@ -263,6 +264,7 @@ fn mail_queued_before_a_crash_is_delivered_once(cx: &mut TestAppContext) {
                 state: State::Queued,
                 held: None,
                 released: false,
+                sender_access: Some(gespan_core::agent::AccessMode::Supervised),
             })
             .unwrap();
     }
@@ -384,4 +386,72 @@ fn a_message_to_a_session_that_may_do_more_waits_for_the_user(cx: &mut TestAppCo
         .unwrap();
     idle_after(&e2e, b, 1, cx);
     assert!(e2e.prompts(b)[0].contains("Delete the build folder"));
+}
+
+#[gpui::test]
+fn access_is_checked_again_when_the_message_is_delivered(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::Fake);
+    let a = e2e.start_session(Kind::Claude, cx);
+    let b = e2e.start_session(Kind::Claude, cx);
+    e2e.script_frames(b, json!({"text": "working", "wait": true}));
+    type_and_send(&e2e, b, "Long job", cx);
+    e2e.until(cx, "B to work", |e2e, cx| e2e.busy(b, cx));
+    e2e.script_frames(a, turn("ok", vec![message(b, "Run the migration")]));
+    e2e.send(a, "Ask B", cx);
+    assert_eq!(
+        call(&e2e, a, 0)["result"]["state"],
+        "queued",
+        "equal modes pass"
+    );
+    // While the message waits, B is given full access.
+    e2e.session(b, cx).update(cx, |view, _| {
+        view.settings.access = gespan_core::agent::AccessMode::FullAccess;
+    });
+    e2e.release(b);
+    idle_after(&e2e, b, 1, cx);
+    settle(cx);
+    assert_eq!(
+        e2e.prompts(b).len(),
+        1,
+        "held at delivery: {:?}",
+        e2e.prompts(b)
+    );
+    let store = e2e.store(cx);
+    let held = locked(&store).unwrap().mail_for(b, State::Held).unwrap();
+    assert_eq!(
+        held[0].held,
+        Some(gespan_core::orchestrator::mailbox::Hold::Access)
+    );
+}
+
+#[gpui::test]
+fn mail_from_an_unknown_sender_mode_is_held(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::Fake);
+    let a = e2e.start_session(Kind::Claude, cx);
+    let b = e2e.start_session(Kind::Claude, cx);
+    {
+        let store = e2e.store(cx);
+        let store = locked(&store).unwrap();
+        store
+            .enqueue_mail(&Mail {
+                id: "msg:a:no-mode".into(),
+                to: b,
+                from: Some(a),
+                from_title: "Sender".into(),
+                kind: MailKind::Message,
+                text: "From a build that didn't record the mode".into(),
+                hops: 1,
+                created_ms: 1,
+                state: State::Queued,
+                held: None,
+                released: false,
+                sender_access: None,
+            })
+            .unwrap();
+    }
+    e2e.window()
+        .update(cx, |shell, _, cx| shell.e2e_resume_wake_reports(cx))
+        .unwrap();
+    settle(cx);
+    assert!(e2e.prompts(b).is_empty(), "unknown is held, not delivered");
 }

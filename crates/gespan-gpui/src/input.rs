@@ -2138,11 +2138,7 @@ mod native_input_tests {
         window
             .update(cx, |i, _, cx| i.enable_inline_commands(cx))
             .unwrap();
-        for (name, icon) in [
-            ("plan", "ai-idea"),
-            ("operator", "cursor-magic"),
-            ("orchestrator", "share"),
-        ] {
+        for (name, icon) in [("plan", "ai-idea"), ("orchestrator", "share")] {
             let text = format!(
                 "/{name} café 🙂\nA long prompt that wraps across several visual lines and keeps the full input width."
             );
