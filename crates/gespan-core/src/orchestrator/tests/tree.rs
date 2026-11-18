@@ -38,6 +38,8 @@ fn input() -> StartInput {
         access: None,
         title: None,
         request_id: None,
+        machine: None,
+        cwd: None,
     }
 }
 
@@ -48,7 +50,7 @@ fn start(tree: &Tree, live: &HashSet<i64>, caller: i64) -> Result<Vec<Effect>, C
             caller,
             caller_access: AccessMode::Auto,
             starting: 0,
-            input: input(),
+            input: Box::new(input()),
         },
     )
     .map_err(|refusal| refusal.code)
@@ -145,7 +147,7 @@ fn a_broader_mode_is_refused_and_a_narrower_one_kept() {
             caller: 1,
             caller_access: AccessMode::Supervised,
             starting: 0,
-            input: wider,
+            input: Box::new(wider),
         },
     )
     .unwrap_err();
@@ -161,7 +163,7 @@ fn a_broader_mode_is_refused_and_a_narrower_one_kept() {
             caller: 1,
             caller_access: AccessMode::Supervised,
             starting: 0,
-            input: narrower,
+            input: Box::new(narrower),
         },
     )
     .unwrap();
@@ -295,7 +297,7 @@ fn starts_still_in_flight_count_toward_the_limit() {
                 caller: 50,
                 caller_access: AccessMode::Auto,
                 starting,
-                input: input(),
+                input: Box::new(input()),
             },
         )
         .map_err(|refusal| refusal.code)

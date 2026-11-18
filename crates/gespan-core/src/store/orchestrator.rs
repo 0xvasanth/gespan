@@ -279,6 +279,23 @@ impl Store {
         })
     }
 
+    /// Puts mail claimed for a turn that never went out back in the queue.
+    pub fn requeue_mail(&self, ids: &[String]) -> Result<(), String> {
+        self.shared_writable()?;
+        let ids = ids.to_vec();
+        self.orm()?.run(|mut db| async move {
+            for id in ids {
+                MailboxMessage::filter_by_id(id)
+                    .update()
+                    .state(MailState::Queued.id())
+                    .delivered_at(None::<i64>)
+                    .exec(&mut db)
+                    .await?;
+            }
+            Ok(())
+        })
+    }
+
     /// Holds mail until the user lets it through.
     pub fn hold_mail(&self, ids: &[String], why: Hold) -> Result<(), String> {
         self.shared_writable()?;

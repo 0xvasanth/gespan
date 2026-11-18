@@ -332,3 +332,82 @@ fn connection_sees_a_finished_turn() {
     assert_eq!(connection.snapshot().online, Online::Online);
     connection.stop();
 }
+
+/// A git repository with one commit in `dir`.
+fn repository(dir: &Path) {
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.email", "t@example.invalid"],
+        &["config", "user.name", "T"],
+        &["commit", "-q", "--allow-empty", "-m", "first"],
+    ] {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+}
+
+#[test]
+fn a_pane_splits_off_an_existing_one() {
+    let Some(binary) = herdr_binary() else { return };
+    let server = Server::start(&binary);
+    let made = server.create_workspace();
+    let root = made["root_pane"]["pane_id"]
+        .as_str()
+        .expect("root pane")
+        .to_owned();
+    let cwd = server.cwd.path().to_string_lossy().into_owned();
+    let pane = server.client().split_pane(Some(&root), &cwd).unwrap();
+    assert!(!pane.is_empty() && pane != root, "{pane}");
+}
+
+#[test]
+fn a_worktree_is_created_with_its_own_pane() {
+    let Some(binary) = herdr_binary() else { return };
+    let server = Server::start(&binary);
+    repository(server.cwd.path());
+    let cwd = server.cwd.path().to_string_lossy().into_owned();
+    let client = server.client();
+    let made = match client.create_worktree(&cwd, Some("main")) {
+        Ok(made) => made,
+        // Some servers ask for repository trust first; that is still a typed
+        // answer to correctly named parameters.
+        Err(herdr_link::Error::Api { code, .. }) if code.contains("trust") => {
+            eprintln!("worktree.create asked for trust: {code}");
+            return;
+        }
+        Err(other) => panic!("{other}"),
+    };
+    assert!(Path::new(&made.path).is_dir(), "{made:?}");
+    assert!(!made.pane_id.is_empty());
+}
+
+#[test]
+fn prompting_a_pane_with_no_agent_is_refused_with_a_code() {
+    let Some(binary) = herdr_binary() else { return };
+    let server = Server::start(&binary);
+    let made = server.create_workspace();
+    let root = made["root_pane"]["pane_id"].as_str().unwrap().to_owned();
+    for err in [
+        server
+            .client()
+            .prompt_agent(&root, "hello", None)
+            .unwrap_err(),
+        server.client().read_agent(&root, Some(10)).unwrap_err(),
+        server
+            .client()
+            .wait_agent(&root, &[AgentStatus::Idle], Some(500))
+            .unwrap_err(),
+    ] {
+        match err {
+            herdr_link::Error::Api { code, .. } => {
+                eprintln!("refused: {code}");
+                assert!(!code.is_empty() && code != "invalid_params", "{code}")
+            }
+            other => panic!("expected a typed refusal, got {other}"),
+        }
+    }
+}

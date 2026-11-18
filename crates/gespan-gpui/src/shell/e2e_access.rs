@@ -58,4 +58,8 @@ impl Shell {
     pub(crate) fn e2e_starting(&self, caller: i64) -> usize {
         self.starting.get(&caller).copied().unwrap_or(0)
     }
+    /// Reaches herdr machines through `remote` instead of ssh.
+    pub(crate) fn e2e_set_remote(&mut self, remote: super::orchestrator_remote::RemoteFor) {
+        self.remote_for = remote;
+    }
 }

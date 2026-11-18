@@ -120,3 +120,43 @@ fn a_null_optional_field_counts_as_absent() {
     assert_eq!(input.model, None);
     assert_eq!(input.wake, Wake::Settled);
 }
+
+#[test]
+fn a_start_on_a_machine_names_it_and_the_checkout_there() {
+    let input = parse(json!({
+        "prompt": "Fix the build", "workspace": "worktree",
+        "machine": "devbox", "cwd": "~/src/app", "base": "main",
+    }))
+    .unwrap();
+    assert_eq!(input.machine.as_deref(), Some("devbox"));
+    assert_eq!(input.cwd.as_deref(), Some("~/src/app"));
+    let plain = parse(json!({"prompt": "p", "workspace": "main"})).unwrap();
+    assert_eq!((plain.machine, plain.cwd), (None, None));
+}
+
+#[test]
+fn a_machine_start_needs_its_checkout_and_no_local_path() {
+    let cases = [
+        (
+            json!({"prompt": "p", "workspace": "main", "machine": "devbox"}),
+            "cwd",
+        ),
+        (
+            json!({"prompt": "p", "workspace": "main", "machine": "devbox", "cwd": "src/app"}),
+            "cwd",
+        ),
+        (
+            json!({"prompt": "p", "workspace": "main", "cwd": "/srv/app"}),
+            "machine",
+        ),
+        (
+            json!({"prompt": "p", "workspace": "existing:/srv/app", "machine": "devbox", "cwd": "/srv/app"}),
+            "workspace",
+        ),
+    ];
+    for (value, named) in cases {
+        let refusal = parse(value.clone()).unwrap_err();
+        assert_eq!(refusal.code, Code::InvalidInput, "{value}");
+        assert!(refusal.message.contains(named), "{value}: {refusal}");
+    }
+}

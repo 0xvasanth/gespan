@@ -22,6 +22,35 @@ pub enum AgentStatus {
     Unknown,
 }
 
+impl AgentStatus {
+    /// The id herdr's API uses.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Working => "working",
+            Self::Blocked => "blocked",
+            Self::Done => "done",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// What `agent.read` returned.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PaneRead {
+    pub text: String,
+    pub truncated: bool,
+    pub revision: u64,
+}
+
+/// A worktree `worktree.create` made, and the pane its workspace opened with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewWorktree {
+    pub path: String,
+    pub branch: Option<String>,
+    pub pane_id: String,
+}
+
 /// One entry of `agent.list`. Fields herdr adds later are ignored.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Agent {

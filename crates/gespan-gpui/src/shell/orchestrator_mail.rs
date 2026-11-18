@@ -47,6 +47,10 @@ fn fresh_id() -> String {
     format!("auto-{}-{}", now_ms(), NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
+fn this_view(shell: &Shell, id: i64) -> Option<gpui::Entity<crate::conversation::Conversation>> {
+    shell.sessions.get(&id).cloned()
+}
+
 impl Shell {
     fn hops_of(&self, id: i64) -> u8 {
         self.turn_hops.get(&id).copied().unwrap_or(0)
@@ -60,6 +64,8 @@ impl Shell {
         let typed = view.read(cx).typed_turns;
         if self.seen_typed.insert(id, typed).unwrap_or(0) != typed {
             self.turn_hops.remove(&id);
+            // The user picked it up again: its mail flows once more.
+            self.cancelled.remove(&id);
         }
     }
 
@@ -90,9 +96,11 @@ impl Shell {
             text.push_str("\n\n");
             text.push_str(&reply);
         }
+        // Unique across runs of the app: turn counts start again at each
+        // start, and mail an earlier run delivered keeps its id.
         let id = match outcome {
-            Outcome::WaitingOnUser => format!("report:{child}:{turn}:waiting"),
-            _ => format!("report:{child}:{turn}"),
+            Outcome::WaitingOnUser => format!("report:{child}:{turn}:waiting:{}", fresh_id()),
+            _ => format!("report:{child}:{turn}:{}", fresh_id()),
         };
         let mail = Mail {
             id,
@@ -172,6 +180,7 @@ impl Shell {
     /// Delivers `target`'s queued mail as one turn, if `target` is idle.
     pub(super) fn deliver_mail(&mut self, target: i64, cx: &mut Context<Self>) {
         if self.mail_flushing.contains(&target)
+            || self.cancelled.contains(&target)
             || self
                 .session_summaries
                 .get(&target)
@@ -195,6 +204,10 @@ impl Shell {
                 store.hold_mail(&wait, Hold::Rate)?;
             }
             let now: Vec<Mail> = now.into_iter().cloned().collect();
+            // Claimed for this turn now, so no other pass can send it too;
+            // whatever doesn't go out is put back below.
+            let ids: Vec<String> = now.iter().map(|mail| mail.id.clone()).collect();
+            store.mark_mail_delivered(&ids, now_ms())?;
             Ok::<_, String>((now, wait.len()))
         });
         cx.spawn(async move |this, cx| {
@@ -211,56 +224,65 @@ impl Shell {
                 if now.is_empty() {
                     return;
                 }
-                // The receiver may have started a turn meanwhile; the mail
-                // stays queued for its next idle point.
-                if !this.mail_idle(target, cx) {
-                    return;
-                }
-                let Some(view) = this.sessions.get(&target).cloned() else {
-                    return;
-                };
-                // The receiver's mode may have widened since a message was
-                // queued: check again, and hold what may no longer pass.
-                let receiver = Some(view.read(cx).settings.access);
-                let (now, held): (Vec<Mail>, Vec<Mail>) = now.into_iter().partition(|mail| {
-                    mail.kind == Kind::Report
-                        || mail.released
-                        || mailbox::admit_known_access(mail.sender_access, receiver).is_ok()
-                });
-                if !held.is_empty() {
-                    let ids: Vec<String> = held.iter().map(|mail| mail.id.clone()).collect();
-                    *this.held_mail.entry(target).or_default() += ids.len();
-                    this.notice_held(target, Hold::Access, cx);
-                    let store = this.store.clone();
-                    cx.background_executor()
-                        .spawn(async move {
-                            if let Ok(store) = locked(&store) {
-                                let _ = store.hold_mail(&ids, Hold::Access);
-                            }
-                        })
-                        .detach();
-                }
-                if now.is_empty() {
-                    return;
-                }
-                let refs: Vec<&Mail> = now.iter().collect();
-                let text = mailbox::turn_text(&refs);
-                let hops = now.iter().map(|mail| mail.hops).max().unwrap_or(0);
-                this.turn_hops.insert(target, hops);
-                view.update(cx, |view, cx| view.send_worker_turn(text, cx));
-                let ids: Vec<String> = now.into_iter().map(|mail| mail.id).collect();
-                let at = now_ms();
-                let store = this.store.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        if let Ok(store) = locked(&store) {
-                            let _ = store.mark_mail_delivered(&ids, at);
-                        }
-                    })
-                    .detach();
+                this.send_claimed(target, now, cx);
             });
         })
         .detach();
+    }
+
+    /// Sends claimed mail as `target`'s turn if it can still take one and
+    /// each piece may still pass; puts the rest back in the queue (or holds
+    /// what may no longer pass).
+    fn send_claimed(&mut self, target: i64, claimed: Vec<Mail>, cx: &mut Context<Self>) {
+        let requeue = |this: &Self, mails: &[Mail], cx: &mut Context<Self>| {
+            let ids: Vec<String> = mails.iter().map(|mail| mail.id.clone()).collect();
+            let store = this.store.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Ok(store) = locked(&store) {
+                        let _ = store.requeue_mail(&ids);
+                    }
+                })
+                .detach();
+        };
+        // The receiver may have started a turn meanwhile, or not have read
+        // its settings yet: the mail waits for its next idle point.
+        let view = match this_view(self, target) {
+            Some(view) if self.mail_idle(target, cx) && view.read(cx).settings_known() => view,
+            _ => {
+                requeue(self, &claimed, cx);
+                return;
+            }
+        };
+        // The receiver's mode may have widened since a message was queued:
+        // check again, and hold what may no longer pass.
+        let receiver = Some(view.read(cx).settings.access);
+        let (now, held): (Vec<Mail>, Vec<Mail>) = claimed.into_iter().partition(|mail| {
+            mail.kind == Kind::Report
+                || mail.released
+                || mailbox::admit_known_access(mail.sender_access, receiver).is_ok()
+        });
+        if !held.is_empty() {
+            let ids: Vec<String> = held.iter().map(|mail| mail.id.clone()).collect();
+            *self.held_mail.entry(target).or_default() += ids.len();
+            self.notice_held(target, Hold::Access, cx);
+            let store = self.store.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Ok(store) = locked(&store) {
+                        let _ = store.hold_mail(&ids, Hold::Access);
+                    }
+                })
+                .detach();
+        }
+        if now.is_empty() {
+            return;
+        }
+        let refs: Vec<&Mail> = now.iter().collect();
+        let text = mailbox::turn_text(&refs);
+        let hops = now.iter().map(|mail| mail.hops).max().unwrap_or(0);
+        self.turn_hops.insert(target, hops);
+        view.update(cx, |view, cx| view.send_worker_turn(text, cx));
     }
 
     /// Whether `id` can take a delivered turn now. Loads a closed chat
@@ -270,7 +292,8 @@ impl Shell {
             return false;
         };
         let live = view.read(cx);
-        !live.summary.archived
+        live.settings_known()
+            && !live.summary.archived
             && !live.needs_approval()
             && !self.session_held(id, Some(live), cx)
             && live.available_for_managed_run(cx)
@@ -349,6 +372,15 @@ impl Shell {
         reply: Reply,
         cx: &mut Context<Self>,
     ) {
+        if target < 0 {
+            match self.remote_peer_for(caller, target, cx) {
+                Ok(peer) => self.answer_remote_message(caller, peer, text, reply, cx),
+                Err(refusal) => {
+                    let _ = reply.send(Err(refusal.into()));
+                }
+            }
+            return;
+        }
         if let Err(refusal) = self.mail_scope(caller, target, cx) {
             let _ = reply.send(Err(refusal.into()));
             return;
@@ -359,10 +391,17 @@ impl Shell {
             .sessions
             .get(&caller)
             .map(|view| effective_access(view.read(cx)));
-        let receiver = self
-            .ensure_session(target, cx)
-            .map(|view| view.read(cx).settings.access);
-        let held = mailbox::admit_known_access(sender, receiver).err();
+        // Until the receiver's settings are read its mode is a default; the
+        // check then waits for delivery, which waits for the real mode.
+        let receiver = self.ensure_session(target, cx).map(|view| {
+            let view = view.read(cx);
+            (view.settings_known(), view.settings.access)
+        });
+        let held = match receiver {
+            Some((false, _)) => None,
+            Some((true, mode)) => mailbox::admit_known_access(sender, Some(mode)).err(),
+            None => mailbox::admit_known_access(sender, None).err(),
+        };
         let mail = Mail {
             id: format!("msg:{caller}:{}", request.unwrap_or_else(fresh_id)),
             to: target,
@@ -392,6 +431,24 @@ impl Shell {
         reply: Reply,
         cx: &mut Context<Self>,
     ) {
+        if let [id] = ids[..]
+            && id < 0
+        {
+            match self.remote_peer_for(caller, id, cx) {
+                Ok(peer) => self.answer_remote_wait(peer, id, timeout, reply),
+                Err(refusal) => {
+                    let _ = reply.send(Err(refusal.into()));
+                }
+            }
+            return;
+        }
+        if ids.iter().any(|id| *id < 0) {
+            let _ = reply.send(Err(Refusal::invalid(
+                "wait on a remote agent on its own, not with other sessions",
+            )
+            .into()));
+            return;
+        }
         if let Some(refusal) = ids
             .iter()
             .find_map(|id| self.mail_scope(caller, *id, cx).err())

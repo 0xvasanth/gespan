@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too, and workers from older versions are moved into the tree when Gespan
   updates. The three old orchestration tables are gone. A Pilot's Flow
   steps sit under the Pilot's chat as well.
+- **Agents on herdr machines as peers:** an agent on a saved machine working
+  in a checkout of the same repository shows in the roster, and a chat can
+  start one there (in its checkout or a new herdr worktree), message it once
+  it has settled, read it and wait on it.
 
 ### Removed
 

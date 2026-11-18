@@ -213,7 +213,8 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
     store
         .conn()
         .execute(
-            "INSERT INTO orchestration_workers VALUES('worker','listed-caller')",
+            // A worker adopted from the desktop app's orchestration_workers.
+            "INSERT INTO session_links VALUES('worker','listed-caller','listed-caller',1,'orchestration','never',0)",
             [],
         )
         .unwrap();

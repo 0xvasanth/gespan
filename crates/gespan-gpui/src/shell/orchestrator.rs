@@ -136,6 +136,12 @@ impl Shell {
                 reply,
                 cx,
             ),
+            Action::Read { id, .. } if id < 0 => match self.remote_peer_for(session, id, cx) {
+                Ok(peer) => self.answer_remote_read(peer, reply, cx),
+                Err(refusal) => {
+                    let _ = reply.send(Err(refusal.into()));
+                }
+            },
             Action::Read { id, before } => {
                 let readable =
                     self.session_summaries.contains_key(&id) || self.sessions.contains_key(&id);
@@ -249,12 +255,13 @@ impl Shell {
     /// `id`'s siblings from what is already known, for the start of a turn.
     fn roster_for(&self, id: i64, cx: &App) -> Option<Roster> {
         let caller = self.roster_member(id, cx)?;
-        let others: Vec<Member> = self
+        let mut others: Vec<Member> = self
             .order
             .iter()
             .filter(|other| !self.untouched(**other, cx))
             .filter_map(|other| self.roster_member(*other, cx))
             .collect();
+        others.extend(self.remote_siblings(&caller, cx));
         Some(roster::build(&caller, &others))
     }
 
@@ -279,12 +286,13 @@ impl Shell {
         let caller = self
             .roster_member(session, cx)
             .ok_or(gespan_core::orchestrator::bridge::UNAVAILABLE)?;
-        let members: Vec<Member> = self
+        let mut members: Vec<Member> = self
             .order
             .iter()
             .filter(|id| !self.untouched(**id, cx))
             .filter_map(|id| self.roster_member(*id, cx))
             .collect();
+        members.extend(self.remote_siblings(&caller, cx));
         let roster = roster::build(&caller, &members);
         let mut answer = json!({ "sessions": roster.entries, "omitted": roster.omitted });
         if scope == Scope::All {
@@ -360,7 +368,7 @@ impl Shell {
         })
     }
 
-    fn roster_member(&self, id: i64, cx: &App) -> Option<Member> {
+    pub(super) fn roster_member(&self, id: i64, cx: &App) -> Option<Member> {
         if !self.session_summaries.contains_key(&id) && !self.sessions.contains_key(&id) {
             return None;
         }
