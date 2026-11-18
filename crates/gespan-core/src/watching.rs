@@ -1,8 +1,8 @@
 //! What will wake a chat without the user: work it left running in the
 //! background and delegated sessions it asked to hear back from. The
 //! composer's watch chip lists these, so a quiet chat never hides a pending wake.
-use crate::pilot::{completions::launched_from, Launch};
 use crate::provider::BackgroundTask;
+use crate::{orchestrator::reports::launched_from, pilot::Launch};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {

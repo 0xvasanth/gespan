@@ -1,6 +1,6 @@
 use super::*;
 use gespan_core::flow::{FlowRun, RunStatus, RunTag};
-use gespan_core::pilot::completions;
+use gespan_core::orchestrator::reports;
 use gespan_core::pilot::habits::{Run, Target, Tell};
 use gespan_core::time::now_ms;
 
@@ -124,9 +124,7 @@ impl Pilots {
                 .iter()
                 .flat_map(|m| m.launches.iter())
                 .filter(|l| {
-                    completions::launched_from(l.origin_turn, session)
-                        && !l.completed
-                        && !l.dismissed
+                    reports::launched_from(l.origin_turn, session) && !l.completed && !l.dismissed
                 })
             {
                 if let Some(view) = self
@@ -334,7 +332,7 @@ impl Pilots {
                 .iter_mut()
                 .flat_map(|m| m.launches.iter_mut())
                 .filter(|l| {
-                    completions::launched_from(l.origin_turn, id) && !l.completed && !l.dismissed
+                    reports::launched_from(l.origin_turn, id) && !l.completed && !l.dismissed
                 })
                 .map(|l| {
                     l.dismissed = true;
@@ -752,7 +750,7 @@ impl Pilots {
             .iter()
             .flat_map(|m| m.launches.iter())
             .any(|l| {
-                completions::launched_from(l.origin_turn, session)
+                reports::launched_from(l.origin_turn, session)
                     && l.notify_on_complete
                     && !l.completed
                     && !l.dismissed

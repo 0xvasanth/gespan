@@ -49,6 +49,7 @@ mod orchestrator_mail;
 #[cfg(test)]
 mod orchestrator_tests;
 mod orchestrator_tree;
+pub(crate) use orchestrator_tree::effective_access;
 mod picker_preferences;
 pub(crate) mod pilot_flows;
 mod pilot_panes;

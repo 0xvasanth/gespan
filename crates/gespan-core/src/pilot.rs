@@ -4,7 +4,6 @@ pub mod actions;
 pub mod api;
 pub mod bridge;
 pub mod cards;
-pub mod completions;
 mod desktop;
 pub mod files;
 pub mod flow_notes;
@@ -212,7 +211,7 @@ pub struct Message {
     pub attachments: Vec<String>,
     /// The sessions a delegated-work report names; `text` is rendered from them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub report: Vec<completions::Entry>,
+    pub report: Vec<crate::orchestrator::reports::Entry>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
