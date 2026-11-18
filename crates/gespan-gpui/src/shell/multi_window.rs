@@ -299,8 +299,8 @@ impl Shell {
                 view.set_app_environment(bridge.environment(id))
             });
         }
-        self.serve_sessions(id);
         self.attach_session(id, view, cx);
+        self.serve_sessions(id, cx);
         // A lead's capability named the closing window's bridge.
         self.orchestration_view_added(id, cx);
         self.refresh_session_mark(id, cx);

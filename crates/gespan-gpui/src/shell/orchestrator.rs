@@ -10,7 +10,7 @@ use crate::runtime::locked;
 use gespan_core::orchestrator::{
     bridge::{Action, Request, Scope, Server},
     repo,
-    roster::{self, Member, Status, Workspace},
+    roster::{self, Member, Roster, Status, Workspace},
 };
 use gpui::{App, Context};
 use serde_json::{Value, json};
@@ -71,11 +71,13 @@ impl Shell {
         .detach();
     }
 
-    /// Lets `id`'s agent reach this window through its `sessions` tools.
-    pub(super) fn serve_sessions(&self, id: i64) {
+    /// Lets `id`'s agent reach this window through its `sessions` tools,
+    /// and learns what its roster needs.
+    pub(super) fn serve_sessions(&mut self, id: i64, cx: &mut Context<Self>) {
         if let Some(bridge) = &self.orchestrator_bridge {
             bridge.serve(id);
         }
+        self.refresh_session_facts(id, cx);
     }
 
     /// Answers one `sessions_list` or `sessions_read` call. The reply is
@@ -102,6 +104,7 @@ impl Shell {
                     let found = work.await;
                     let answer = this.update(cx, |this, cx| {
                         this.session_facts.extend(found);
+                        this.push_rosters(cx);
                         this.list_answer(session, scope, cx)
                     });
                     let _ = reply.send(answer.unwrap_or_else(|_| {
@@ -160,15 +163,57 @@ impl Shell {
         let Some(source) = self.facts_source(id, cx) else {
             return;
         };
+        if !self.facts_pending.insert(id) {
+            return;
+        }
         let store = self.store.clone();
         let work = cx
             .background_executor()
             .spawn(async move { collect_facts(&store, vec![source]) });
         cx.spawn(async move |this, cx| {
             let found = work.await;
-            let _ = this.update(cx, |this, _| this.session_facts.extend(found));
+            let _ = this.update(cx, |this, cx| {
+                this.facts_pending.remove(&id);
+                this.session_facts.extend(found);
+                this.push_rosters(cx);
+            });
         })
         .detach();
+    }
+
+    /// `id`'s siblings from what is already known, for the start of a turn.
+    /// Sessions whose facts aren't known yet are left out, and learned.
+    fn roster_for(&mut self, id: i64, cx: &mut Context<Self>) -> Option<Roster> {
+        let missing: Vec<i64> = self
+            .roster_candidates(cx)
+            .into_iter()
+            .filter(|id| !self.session_facts.contains_key(id))
+            .collect();
+        for session in missing {
+            if !self.facts_pending.contains(&session) {
+                self.refresh_session_facts(session, cx);
+            }
+        }
+        let caller = self.roster_member(id, cx)?;
+        let others: Vec<Member> = self
+            .order
+            .iter()
+            .filter(|other| !self.untouched(**other, cx))
+            .filter_map(|other| self.roster_member(*other, cx))
+            .collect();
+        Some(roster::build(&caller, &others))
+    }
+
+    /// Hands each open chat the roster its next turn would carry, so the
+    /// send path reads it without touching git or the store.
+    pub(super) fn push_rosters(&mut self, cx: &mut Context<Self>) {
+        let ids: Vec<i64> = self.sessions.keys().copied().collect();
+        for id in ids {
+            let text = self.roster_for(id, cx).and_then(|r| roster::render(&r));
+            if let Some(view) = self.sessions.get(&id) {
+                view.update(cx, |view, _| view.set_roster(text));
+            }
+        }
     }
 
     fn list_answer(&self, session: i64, scope: Scope, cx: &App) -> Result<Value, String> {
@@ -178,6 +223,7 @@ impl Shell {
         let members: Vec<Member> = self
             .order
             .iter()
+            .filter(|id| !self.untouched(**id, cx))
             .filter_map(|id| self.roster_member(*id, cx))
             .collect();
         let roster = roster::build(&caller, &members);
@@ -204,6 +250,15 @@ impl Shell {
             answer["elsewhere"] = json!(elsewhere);
         }
         Ok(answer)
+    }
+
+    /// A new chat nothing was ever sent from: no one's sibling yet.
+    fn untouched(&self, id: i64, cx: &App) -> bool {
+        if !self.session_summaries.contains_key(&id) && !self.sessions.contains_key(&id) {
+            return true;
+        }
+        let metadata = self.session_metadata(id, cx);
+        !metadata.summary.has_messages && !metadata.busy
     }
 
     /// Every local, unarchived session a roster could name.

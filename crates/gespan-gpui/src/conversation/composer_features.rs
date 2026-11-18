@@ -27,6 +27,27 @@ impl Conversation {
     ) {
         self.app_environment = environment;
     }
+    pub(crate) fn set_roster(&mut self, roster: Option<String>) {
+        self.roster = roster;
+    }
+    /// The roster to add to this turn: only when it differs from what the
+    /// agent was last told, and never for a remote chat.
+    pub(crate) fn take_roster_block(&mut self) -> Option<String> {
+        if self.is_remote() {
+            return None;
+        }
+        let Some(roster) = self.roster.clone() else {
+            // Siblings that come back are news again.
+            self.last_roster = None;
+            return None;
+        };
+        let fingerprint = gespan_core::orchestrator::roster::fingerprint(&roster);
+        if self.last_roster == Some(fingerprint) {
+            return None;
+        }
+        self.last_roster = Some(fingerprint);
+        Some(roster)
+    }
     /// A lead's control capability, for as long as its run is live. Worker
     /// sessions never get it: only a lead's turns carry these variables.
     pub(crate) fn set_control_environment(
