@@ -152,7 +152,15 @@ pub(crate) fn header(lead: impl IntoElement, skip: Option<Stateful<Div>>) -> Div
         .children(skip)
 }
 
-/// "Step N of 3" and three 26×3 bars, the first `step` in the accent.
+/// How many numbered cards setup has; Welcome is not one.
+const STEPS: usize = 4;
+
+/// "Step N of 4".
+pub(crate) fn step_label(step: usize) -> String {
+    format!("Step {step} of {STEPS}")
+}
+
+/// "Step N of 4" and four 26×3 bars, the first `step` in the accent.
 pub(crate) fn steps(step: usize) -> Div {
     div()
         .debug_selector(|| "setup-step-header".into())
@@ -161,8 +169,8 @@ pub(crate) fn steps(step: usize) -> Div {
         .gap(px(10.))
         .text_size(px(12.))
         .text_color(faint())
-        .child(SharedString::from(format!("Step {step} of 3")))
-        .children((1..=3).map(|n| {
+        .child(SharedString::from(step_label(step)))
+        .children((1..=STEPS).map(|n| {
             div().w(px(26.)).h(px(3.)).rounded(px(2.)).bg(if n <= step {
                 accent(1.)
             } else {

@@ -24,7 +24,7 @@ pub(super) fn render(
         .on_click(cx.listener(|card, _, _, cx| card.skip_setup(cx)));
     let back = ui::ghost("setup-back", "Back", 32.)
         .debug_selector(|| "setup-back".into())
-        .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Agents, cx)));
+        .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Tools, cx)));
     let skip = ui::ghost("setup-skip", "Skip", 34.)
         .debug_selector(|| "setup-skip".into())
         .on_click(cx.listener(|card, _, _, cx| card.skip(SetupStep::Project, cx)));
@@ -32,7 +32,7 @@ pub(super) fn render(
         .debug_selector(|| "setup-continue".into())
         .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Project, cx)));
     ui::card()
-        .child(ui::header(ui::steps(2), Some(skip_setup)))
+        .child(ui::header(ui::steps(3), Some(skip_setup)))
         .child(ui::intro(
             "Make it yours.",
             "Changes show behind this card as you pick.",
@@ -294,6 +294,6 @@ mod tests {
 
         let opened = open(SetupStep::Look, "/Users/a/code", cx);
         click(&opened, "setup-back", cx);
-        assert_eq!(last(&opened), Some(SetupEvent::Step(SetupStep::Agents)));
+        assert_eq!(last(&opened), Some(SetupEvent::Step(SetupStep::Tools)));
     }
 }

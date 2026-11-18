@@ -51,10 +51,10 @@ pub(super) fn render(
         .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Welcome, cx)));
     let skip = ui::ghost("setup-skip", "Skip", 34.)
         .debug_selector(|| "setup-skip".into())
-        .on_click(cx.listener(|card, _, _, cx| card.skip(SetupStep::Look, cx)));
+        .on_click(cx.listener(|card, _, _, cx| card.skip(SetupStep::Tools, cx)));
     let next = ui::primary("setup-continue", "Continue", true)
         .debug_selector(|| "setup-continue".into())
-        .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Look, cx)));
+        .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Tools, cx)));
 
     ui::card()
         .child(ui::header(ui::steps(1), Some(skip_setup)))
@@ -354,7 +354,7 @@ mod tests {
         click(&opened, "setup-continue", cx);
         assert_eq!(
             opened.events.borrow().last(),
-            Some(&SetupEvent::Step(SetupStep::Look))
+            Some(&SetupEvent::Step(SetupStep::Tools))
         );
     }
 
@@ -364,7 +364,7 @@ mod tests {
         click(&opened, "setup-skip", cx);
         assert_eq!(
             opened.events.borrow().last(),
-            Some(&SetupEvent::Step(SetupStep::Look))
+            Some(&SetupEvent::Step(SetupStep::Tools))
         );
         assert!(
             opened
