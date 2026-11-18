@@ -25,6 +25,8 @@ pub const BROWSER: &str = "browser";
 pub const DECISIONS: &str = "decisions";
 /// The decision log for orchestration workers: read, search and flag.
 pub const DECISIONS_READ: &str = "decisions_read";
+/// The caller's sibling sessions: list them and read one.
+pub const SESSIONS: &str = "sessions";
 
 /// The name agents know the hub by. Tools appear to Claude as
 /// `mcp__gespan__<tool>`.
@@ -326,6 +328,7 @@ fn hub() -> Result<&'static Hub, String> {
         hub.register(Arc::new(crate::decisions::toolkit::Toolkit {
             may_propose: false,
         }));
+        hub.register(Arc::new(crate::orchestrator::toolkit::Toolkit));
         Ok(hub)
     })
     .as_ref()
