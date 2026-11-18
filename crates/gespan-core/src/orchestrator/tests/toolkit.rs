@@ -14,14 +14,32 @@ fn grant(session: i64) -> mcp_hub::Grant {
 }
 
 #[test]
-fn the_toolkit_lists_two_read_only_tools() {
+fn the_toolkit_lists_reading_and_starting_tools() {
     assert_eq!(Toolkit.name(), crate::tool_servers::SESSIONS);
     let tools = Toolkit.tools(&grant(9_001));
     let names: Vec<_> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["sessions_list", "sessions_read"]);
+    assert_eq!(
+        names,
+        [
+            "sessions_list",
+            "sessions_read",
+            "sessions_start",
+            "sessions_cancel"
+        ]
+    );
     for tool in &tools {
-        assert_eq!(tool["annotations"]["readOnlyHint"], true, "{tool}");
+        let reads = tool["name"] == "sessions_list" || tool["name"] == "sessions_read";
+        assert_eq!(tool["annotations"]["readOnlyHint"], reads, "{tool}");
         assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{tool}");
+    }
+    let start = &tools[2]["inputSchema"];
+    assert_eq!(start["required"], json!(["prompt", "workspace"]));
+    let properties: Vec<&String> = start["properties"].as_object().unwrap().keys().collect();
+    for field in crate::orchestrator::start::FIELDS {
+        assert!(
+            properties.iter().any(|p| p == field),
+            "{field} is described"
+        );
     }
 }
 
@@ -155,4 +173,61 @@ fn a_closed_receiver_says_unavailable() {
             .unwrap_err(),
         UNAVAILABLE
     );
+}
+
+#[test]
+fn a_start_reaches_the_app_parsed() {
+    let (server, rx) = Server::start();
+    server.serve(46);
+    let worker = std::thread::spawn(|| {
+        Toolkit.call(
+            &grant(46),
+            "sessions_start",
+            json!({"prompt":"Write notes","workspace":"worktree","requestId":"r1"}),
+        )
+    });
+    let request = rx.recv_blocking().unwrap();
+    assert_eq!(request.session, 46);
+    let Action::Start { input } = &request.action else {
+        panic!("{:?}", request.action)
+    };
+    assert_eq!(input.prompt, "Write notes");
+    assert_eq!(input.request_id.as_deref(), Some("r1"));
+    request.reply.send(Ok(json!({"id": 7}))).unwrap();
+    assert_eq!(worker.join().unwrap().unwrap(), json!({"id": 7}));
+}
+
+#[test]
+fn a_bad_start_is_refused_before_the_app_sees_it() {
+    // No route: a call that reached dispatch would say unavailable instead.
+    let error = Toolkit
+        .call(
+            &grant(9_007),
+            "sessions_start",
+            json!({"prompt":"p","workspace":"main","x":1}),
+        )
+        .unwrap_err();
+    assert!(error.starts_with("invalid_input: "), "{error}");
+    let error = Toolkit
+        .call(&grant(9_007), "sessions_start", json!({"workspace":"main"}))
+        .unwrap_err();
+    assert!(error.starts_with("invalid_input: "), "{error}");
+}
+
+#[test]
+fn a_cancel_carries_its_target() {
+    let (server, rx) = Server::start();
+    server.serve(47);
+    let worker =
+        std::thread::spawn(|| Toolkit.call(&grant(47), "sessions_cancel", json!({"id": 9})));
+    let request = rx.recv_blocking().unwrap();
+    assert_eq!(request.action, Action::Cancel { id: 9 });
+    request.reply.send(Ok(json!({"stopped":[9]}))).unwrap();
+    worker.join().unwrap().unwrap();
+    for input in [json!({}), json!({"id":"9"}), json!({"id":9,"all":true})] {
+        let error = Toolkit
+            .call(&grant(9_008), "sessions_cancel", input.clone())
+            .unwrap_err();
+        assert!(error.starts_with("invalid_input: "), "{input}: {error}");
+    }
 }

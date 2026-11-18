@@ -28,21 +28,63 @@ use std::{
 
 mod hello_tests;
 mod roster_tests;
+mod start_tests;
 
 /// The store setting that points a session's turns at a test agent.
 fn binary_key(session: i64) -> String {
     format!("e2e:agent-binary:{session}")
 }
 
+/// The store setting naming the folder that holds every session's agent.
+const ROOT_KEY: &str = "e2e:agents";
+
 /// The agent an end-to-end test chose for this session, if any. The runtime
-/// asks this before resolving the provider's CLI the normal way.
+/// asks this before resolving the provider's CLI the normal way. A session
+/// the test didn't start itself, such as one an agent started through
+/// `sessions_start`, gets an agent of its own here, scripted with the next
+/// entry of [`E2e::script_next_child`].
 pub(crate) fn agent_binary(store: &Database, session: i64) -> Option<PathBuf> {
-    locked(store)
-        .ok()?
-        .setting(&binary_key(session))
+    let db = locked(store).ok()?;
+    if let Some(binary) = db.setting(&binary_key(session)).ok().flatten() {
+        return Some(PathBuf::from(binary));
+    }
+    let root = PathBuf::from(db.setting(ROOT_KEY).ok().flatten()?);
+    let harness = Kind::from_id(&db.pilot_session(session).ok()??.provider);
+    let binary = provision(&root, session, harness);
+    let children = root.join("children.json");
+    let mut queue: Vec<Value> = std::fs::read_to_string(&children)
         .ok()
-        .flatten()
-        .map(PathBuf::from)
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    if !queue.is_empty() {
+        let script = queue.remove(0);
+        std::fs::write(
+            root.join(session.to_string()).join("replies.json"),
+            serde_json::to_vec(&script).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(&children, serde_json::to_vec(&queue).unwrap()).unwrap();
+    }
+    db.save_setting(&binary_key(session), &binary.to_string_lossy())
+        .ok()?;
+    Some(binary)
+}
+
+/// A folder of its own for `session`'s agent, holding a copy of the fake
+/// agent and, in real mode, the `proxy` file naming the real CLI.
+fn provision(root: &Path, session: i64, harness: Kind) -> PathBuf {
+    let dir = root.join(session.to_string());
+    std::fs::create_dir_all(&dir).unwrap();
+    let binary = dir.join(format!(
+        "{}{}",
+        harness.binary_name(),
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::copy(fake_agent(), &binary).unwrap();
+    if let Ok(real) = std::fs::read(root.join("proxy")) {
+        std::fs::write(dir.join("proxy"), real).unwrap();
+    }
+    binary
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,12 +145,70 @@ impl E2e {
             .unwrap()
         });
         cx.run_until_parked();
+        let agents = tempfile::tempdir().unwrap();
+        let store = window.update(cx, |shell, _, _| shell.e2e_store()).unwrap();
+        locked(&store)
+            .unwrap()
+            .save_setting(ROOT_KEY, &agents.path().to_string_lossy())
+            .unwrap();
         Self {
             mode,
             window,
             repo,
-            agents: tempfile::tempdir().unwrap(),
+            agents,
         }
+    }
+
+    /// Scripts the agent of the next session the app starts without the
+    /// test, as `sessions_start` does: one entry per turn, as in
+    /// [`E2e::script_frames`].
+    pub(crate) fn script_next_child(&self, turns: Value) {
+        let path = self.agents.path().join("children.json");
+        let mut queue: Vec<Value> = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        queue.push(turns);
+        std::fs::write(path, serde_json::to_vec(&queue).unwrap()).unwrap();
+    }
+
+    /// Every call the session's agent made to Gespan's own tools, in order:
+    /// `{"tool","arguments","result"}` or `{..,"error"}`.
+    pub(crate) fn mcp_calls(&self, id: i64) -> Vec<Value> {
+        read_lines(&self.agent_dir(id).join("mcp.jsonl"))
+    }
+
+    /// Lets a turn scripted with `"wait": true` go on.
+    pub(crate) fn release(&self, id: i64) {
+        std::fs::write(self.agent_dir(id).join("release"), b"").unwrap();
+    }
+
+    /// Runs the app until `done` holds, or fails after the turn timeout.
+    pub(crate) fn until(
+        &self,
+        cx: &mut TestAppContext,
+        what: &str,
+        mut done: impl FnMut(&Self, &mut TestAppContext) -> bool,
+    ) {
+        let deadline = Instant::now() + self.mode.turn_timeout();
+        loop {
+            cx.run_until_parked();
+            if done(self, cx) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// The sessions this window has open, in no particular order.
+    pub(crate) fn all_sessions(&self, cx: &mut TestAppContext) -> Vec<i64> {
+        self.sessions(cx)
+    }
+
+    /// Whether `id`'s agent is in a turn.
+    pub(crate) fn busy(&self, id: i64, cx: &mut TestAppContext) -> bool {
+        self.session(id, cx).read_with(cx, |view, _| view.busy)
     }
 
     pub(crate) fn mode(&self) -> Mode {
@@ -133,14 +233,6 @@ impl E2e {
             .into_iter()
             .find(|id| !before.contains(id))
             .expect("New chat made a session");
-        let dir = self.agent_dir(id);
-        std::fs::create_dir_all(&dir).unwrap();
-        let binary = dir.join(format!(
-            "{}{}",
-            harness.binary_name(),
-            std::env::consts::EXE_SUFFIX
-        ));
-        std::fs::copy(fake_agent(), &binary).unwrap();
         if self.mode == Mode::Real {
             let real = gespan_core::provider::resolve(harness).unwrap_or_else(|| {
                 panic!(
@@ -149,7 +241,11 @@ impl E2e {
                     harness.id().to_uppercase()
                 )
             });
-            std::fs::write(dir.join("proxy"), real.to_string_lossy().as_bytes()).unwrap();
+            std::fs::write(
+                self.agents.path().join("proxy"),
+                real.to_string_lossy().as_bytes(),
+            )
+            .unwrap();
         } else {
             assert_eq!(
                 harness,
@@ -157,6 +253,7 @@ impl E2e {
                 "the fake agent speaks only Claude's stream-json"
             );
         }
+        let binary = provision(self.agents.path(), id, harness);
         locked(&self.store(cx))
             .unwrap()
             .save_setting(&binary_key(id), &binary.to_string_lossy())

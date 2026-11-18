@@ -241,6 +241,10 @@ pub(crate) struct Conversation {
     last_roster: Option<u64>,
     /// The roster the running turn carries, until the agent finishes it.
     roster_in_flight: Option<u64>,
+    /// How many turns have ended, and how the last one did, for the
+    /// session that started this one.
+    pub(crate) turn_ends: u64,
+    pub(crate) last_turn: Option<gespan_core::orchestrator::tree::Outcome>,
     /// The running turn's policy, independent of the next composer's mode.
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
@@ -879,6 +883,8 @@ impl Conversation {
             roster: None,
             last_roster: None,
             roster_in_flight: None,
+            turn_ends: 0,
+            last_turn: None,
             app_read_only: false,
             planning_orchestration: false,
             orchestration_plan_checked: false,
@@ -1685,6 +1691,7 @@ impl Conversation {
                         let stopping = this.stopping;
                         if finished {
                             this.roster_turn_ended(update.succeeded && !stopping);
+                            this.record_turn_end(update.succeeded, stopping);
                         }
                         // The final update settles accepted rows and storage.
                         // Ignore streaming notifications after the user stops.

@@ -607,6 +607,27 @@ impl Shell {
                 .into(),
             );
         }
+        // Stopping or archiving a chat leaves what it started running; this
+        // stops those too, leaves first.
+        let running = if multiple {
+            Vec::new()
+        } else {
+            self.running_descendants(id, cx)
+        };
+        if !running.is_empty() {
+            items.extend([
+                MenuItem::Separator,
+                MenuAction::new(
+                    "stop-started",
+                    match running.len() {
+                        1 => "Stop the session it started".to_owned(),
+                        n => format!("Stop the {n} sessions it started"),
+                    },
+                )
+                .danger()
+                .into(),
+            ]);
+        }
         items.extend([
             MenuItem::Separator,
             MenuAction::new(
@@ -662,6 +683,7 @@ impl Shell {
                 self.invalidate_chrome(cx);
             }
             "rename" => self.start_rename(RenameTarget::Session(id), window, cx),
+            "stop-started" => self.stop_started(id, cx),
             "link-work-item" => self.open_link_dialog(id, window, cx),
             "ticket-open" => {
                 if let Some(WorkItem::Ticket(ticket)) =
@@ -973,6 +995,8 @@ impl Shell {
                 this.deleting.remove(&id);
                 match result {
                     Ok(()) => {
+                        // The store re-rooted its children; so does the window.
+                        this.session_tree.remove(id);
                         this.forget_session(id, cx);
                         this.session_removed(id, true, cx);
                     }

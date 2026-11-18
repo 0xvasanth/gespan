@@ -54,6 +54,8 @@ pub struct Member {
     pub last_active_ms: u64,
     pub archived: bool,
     pub remote: bool,
+    /// The title of the session that started this one, if one did.
+    pub parent: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -151,6 +153,9 @@ fn entry_lines(entry: &Entry) -> Vec<String> {
         flatten(&m.harness, 40),
         m.status.words()
     );
+    if let Some(parent) = &m.parent {
+        line.push_str(&format!(", started by \"{}\"", flatten(parent, MAX_TITLE)));
+    }
     let goal = flatten(&m.goal, MAX_GOAL);
     if !goal.is_empty() {
         line.push_str(&format!(": {goal}."));

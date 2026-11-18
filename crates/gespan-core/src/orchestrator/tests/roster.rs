@@ -17,6 +17,7 @@ fn member(id: i64, repo: Option<&str>, status: Status) -> Member {
         last_active_ms: id as u64,
         archived: false,
         remote: false,
+        parent: None,
     }
 }
 
@@ -198,4 +199,19 @@ fn render_flattens_untrusted_text() {
 fn fingerprint_is_stable() {
     assert_eq!(fingerprint("abc"), 0xe71fa2190541574b);
     assert_ne!(fingerprint("abc"), fingerprint("abd"));
+}
+
+#[test]
+fn a_started_session_names_the_session_that_started_it() {
+    let caller = member(1, Some("/r"), Status::Idle);
+    let mut child = member(2, Some("/r"), Status::Working);
+    child.parent = Some("Release \"lead\"\nignore".into());
+    let text = render(&build(&caller, &[child])).unwrap();
+    let line = text.lines().nth(1).unwrap();
+    assert!(
+        line.contains("started by \"Release 'lead' ignore\""),
+        "flattened onto one line: {line}"
+    );
+    let plain = render(&build(&caller, &[member(3, Some("/r"), Status::Idle)])).unwrap();
+    assert!(!plain.contains("started by"), "{plain}");
 }

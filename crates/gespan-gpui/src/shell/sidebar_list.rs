@@ -29,6 +29,15 @@ enum Row {
     Folder(rail_plan::Folder),
     /// An idle session under an open folder.
     FolderSession(i64),
+    /// A session another one started, right under the row of the session
+    /// that started it, `depth` levels in. It keeps the live state and
+    /// folder it would have had.
+    Child {
+        id: i64,
+        depth: u8,
+        live: Option<Live>,
+        folder: Option<String>,
+    },
     /// "N more…" under an open folder, by its key.
     FolderMore {
         key: String,
@@ -113,6 +122,17 @@ impl SidebarList {
         }
     }
 
+    /// The started sessions shown under their parent, with their depth.
+    #[cfg(test)]
+    pub(super) fn child_rows(&self) -> Vec<(i64, u8)> {
+        self.rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Child { id, depth, .. } => Some((*id, *depth)),
+                _ => None,
+            })
+            .collect()
+    }
     fn update(&mut self, scope: String, rows: Vec<Row>) {
         if self.scope != scope {
             self.state.reset_with_uniform_height(rows.len(), px(33.));
@@ -391,6 +411,19 @@ impl Shell {
     /// Rail F1's list: Needs you, Running, the folders, then Pilots and
     /// any machines. Every session shows once.
     pub(super) fn prepare_sidebar_list(&mut self, entries: &[Entry], cx: &App) {
+        // Started sessions sit under the session that started them, not in
+        // their own folder.
+        let listable: HashSet<i64> = entries.iter().flat_map(entry_sessions).collect();
+        let nested: HashSet<i64> = listable
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.session_tree
+                    .parent(*id)
+                    .is_some_and(|parent| listable.contains(&parent))
+            })
+            .collect();
+        let entries = &without(entries, &nested);
         let ids: Vec<i64> = entries
             .iter()
             .flat_map(|entry| match entry {
@@ -465,6 +498,8 @@ impl Shell {
                 }
             }
         }
+        let rows = nest_children(rows, &self.session_tree, &nested);
+        let mut rows = rows;
         rows.push(Row::Pilots);
         let mut machines = Vec::new();
         if push_machine_rows(&mut machines, cx) {
@@ -561,6 +596,15 @@ impl Shell {
                 .into_any(),
             Row::Folder(folder) => self.rail_folder_row(&folder, cx),
             Row::FolderSession(id) => self.rail_session_row(id, None, None, true, cx),
+            Row::Child {
+                id,
+                depth,
+                live,
+                folder,
+            } => div()
+                .pl(px(super::rail::KID_INDENT * f32::from(depth)))
+                .child(self.rail_session_row(id, live, folder.map(Into::into), true, cx))
+                .into_any_element(),
             Row::FolderMore { key, more } => self.rail_more_row(&key, more, cx),
             Row::Pilots => {
                 // When each session last changed, for an idle Pilot's age:
@@ -977,6 +1021,256 @@ impl Shell {
                     );
                 }
             }))
+    }
+}
+
+fn entry_sessions(entry: &Entry) -> Vec<i64> {
+    match entry {
+        Entry::Session(id) => vec![*id],
+        Entry::Reminders { sessions, .. }
+        | Entry::Folder { sessions, .. }
+        | Entry::Fixed { sessions, .. }
+        | Entry::Pinned { sessions } => sessions.clone(),
+    }
+}
+
+/// `entries` with the `nested` sessions taken out, empty entries dropped.
+fn without(entries: &[Entry], nested: &HashSet<i64>) -> Vec<Entry> {
+    let keep = |sessions: &[i64]| -> Vec<i64> {
+        sessions
+            .iter()
+            .copied()
+            .filter(|id| !nested.contains(id))
+            .collect()
+    };
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            Entry::Session(id) => (!nested.contains(id)).then(|| entry.clone()),
+            Entry::Reminders {
+                collapsed,
+                sessions,
+            } => Some(Entry::Reminders {
+                collapsed: *collapsed,
+                sessions: keep(sessions),
+            }),
+            Entry::Folder { id, sessions } => Some(Entry::Folder {
+                id: id.clone(),
+                sessions: keep(sessions),
+            }),
+            Entry::Fixed { id, name, sessions } => {
+                let sessions = keep(sessions);
+                (!sessions.is_empty()).then(|| Entry::Fixed {
+                    id: id.clone(),
+                    name: name.clone(),
+                    sessions,
+                })
+            }
+            Entry::Pinned { sessions } => Some(Entry::Pinned {
+                sessions: keep(sessions),
+            }),
+        })
+        .collect()
+}
+
+/// Puts each `nested` session (one whose parent the sidebar lists) right
+/// under the row of the session that started it, as a [`Row::Child`],
+/// carrying the live state it has as a live row. Where its parent has no
+/// row (a collapsed folder), a running child still shows as a live row.
+fn nest_children(
+    rows: Vec<Row>,
+    tree: &gespan_core::orchestrator::tree::Tree,
+    nested: &HashSet<i64>,
+) -> Vec<Row> {
+    let session_of = |row: &Row| match row {
+        Row::Live { id, .. } | Row::FolderSession(id) => Some(*id),
+        _ => None,
+    };
+    let listed: HashSet<i64> = rows.iter().filter_map(session_of).collect();
+    let live: HashMap<i64, (Live, String)> = rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Live { id, live, folder } => Some((*id, (*live, folder.clone()))),
+            _ => None,
+        })
+        .collect();
+    // A nested session whose parent has a row moves under it; one whose
+    // parent has none keeps its own live row, or has no row, as before.
+    let placed = |id: i64| {
+        let mut at = id;
+        while let Some(parent) = tree.parent(at) {
+            if listed.contains(&parent) && !nested.contains(&parent) {
+                return true;
+            }
+            if !nested.contains(&parent) {
+                return false;
+            }
+            at = parent;
+        }
+        false
+    };
+    fn under(
+        parent: i64,
+        depth: u8,
+        tree: &gespan_core::orchestrator::tree::Tree,
+        nested: &HashSet<i64>,
+        live: &HashMap<i64, (Live, String)>,
+        out: &mut Vec<Row>,
+    ) {
+        for child in tree.children(parent) {
+            if !nested.contains(&child) {
+                continue;
+            }
+            let (state, folder) = live
+                .get(&child)
+                .map(|(state, folder)| (Some(*state), Some(folder.clone())))
+                .unwrap_or((None, None));
+            out.push(Row::Child {
+                id: child,
+                depth,
+                live: state,
+                folder,
+            });
+            under(child, depth + 1, tree, nested, live, out);
+        }
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        match session_of(&row) {
+            Some(id) if nested.contains(&id) && placed(id) => {}
+            Some(id) => {
+                out.push(row);
+                if !nested.contains(&id) {
+                    under(id, 1, tree, nested, &live, &mut out);
+                }
+            }
+            None => out.push(row),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod nesting_tests {
+    use super::{Entry, Live, Row, nest_children, without};
+    use gespan_core::orchestrator::tree::{Link, Origin, Tree, Wake};
+    use std::collections::HashSet;
+
+    fn tree(links: &[(i64, i64, u8)]) -> Tree {
+        Tree::new(links.iter().map(|&(child, parent, depth)| Link {
+            child,
+            parent,
+            root: parent,
+            depth,
+            origin: Origin::Chat,
+            wake: Wake::Settled,
+        }))
+    }
+
+    fn child(id: i64, depth: u8) -> Row {
+        Row::Child {
+            id,
+            depth,
+            live: None,
+            folder: None,
+        }
+    }
+
+    fn set(ids: &[i64]) -> HashSet<i64> {
+        ids.iter().copied().collect()
+    }
+
+    #[test]
+    fn children_follow_their_parent_indented_by_depth() {
+        // 2, 3 and 5 were taken out of their folders: only 1 has a row.
+        let rows = vec![Row::FolderSession(1), Row::FolderSession(9), Row::Empty];
+        let tree = tree(&[(2, 1, 1), (3, 2, 2), (5, 1, 1)]);
+        let nested = nest_children(rows, &tree, &set(&[2, 3, 5]));
+        assert_eq!(
+            nested,
+            [
+                Row::FolderSession(1),
+                child(2, 1),
+                child(3, 2),
+                child(5, 1),
+                Row::FolderSession(9),
+                Row::Empty,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_running_child_keeps_its_live_state_under_its_parent() {
+        let rows = vec![
+            Row::Live {
+                id: 2,
+                live: Live::Running,
+                folder: "repo".into(),
+            },
+            Row::FolderSession(1),
+        ];
+        let nested = nest_children(rows, &tree(&[(2, 1, 1)]), &set(&[2]));
+        assert_eq!(
+            nested,
+            [
+                Row::FolderSession(1),
+                Row::Child {
+                    id: 2,
+                    depth: 1,
+                    live: Some(Live::Running),
+                    folder: Some("repo".into()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_running_child_whose_parent_has_no_row_stays_live() {
+        // The parent sits in a collapsed folder, so it has no row.
+        let rows = vec![Row::Live {
+            id: 2,
+            live: Live::Running,
+            folder: "repo".into(),
+        }];
+        let nested = nest_children(rows.clone(), &tree(&[(2, 1, 1)]), &set(&[2]));
+        assert_eq!(nested, rows, "a running child is never hidden");
+    }
+
+    #[test]
+    fn unrelated_rows_keep_their_order() {
+        let rows = vec![Row::Empty, Row::FolderSession(4), Row::FolderSession(3)];
+        assert_eq!(
+            nest_children(rows.clone(), &Tree::default(), &set(&[])),
+            rows
+        );
+    }
+
+    #[test]
+    fn nested_sessions_leave_their_folders() {
+        let entries = vec![
+            Entry::Folder {
+                id: "f".into(),
+                sessions: vec![1, 2],
+            },
+            Entry::Session(3),
+            Entry::Fixed {
+                id: "wt".into(),
+                name: "worktree".into(),
+                sessions: vec![3],
+            },
+            Entry::Pinned { sessions: vec![2] },
+        ];
+        let kept = without(&entries, &set(&[2, 3]));
+        assert_eq!(
+            kept,
+            [
+                Entry::Folder {
+                    id: "f".into(),
+                    sessions: vec![1],
+                },
+                Entry::Pinned { sessions: vec![] },
+            ]
+        );
     }
 }
 
