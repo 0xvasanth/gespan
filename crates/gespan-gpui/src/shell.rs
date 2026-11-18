@@ -44,6 +44,9 @@ mod new_worktree_chat_tests;
 mod notifications;
 mod open_in_editor;
 mod orchestration;
+mod orchestrator;
+#[cfg(test)]
+mod orchestrator_tests;
 mod picker_preferences;
 pub(crate) mod pilot_flows;
 mod pilot_panes;
@@ -732,6 +735,10 @@ pub(crate) struct Shell {
     report: report::ReportState,
     image_lightbox: Option<(Entity<crate::image_lightbox::ImageLightbox>, Subscription)>,
     app_bridge: Option<gespan_core::pilot::bridge::Server>,
+    /// Where agents' `sessions` tools reach this window.
+    orchestrator_bridge: Option<gespan_core::orchestrator::bridge::Server>,
+    /// What git and the transcripts say about each session, for rosters.
+    session_facts: HashMap<i64, orchestrator::Facts>,
     mobile: mobile_host::Mobile,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
@@ -1237,6 +1244,8 @@ impl Shell {
             report: Default::default(),
             image_lightbox: None,
             app_bridge: None,
+            orchestrator_bridge: None,
+            session_facts: HashMap::new(),
             mobile: mobile_host::Mobile::default(),
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
@@ -1581,6 +1590,7 @@ impl Shell {
         }
         // Every window hosts its own runs, so each has its own control bridge.
         this.init_control_bridge(cx);
+        this.init_orchestrator_bridge(cx);
         for summary in summaries {
             if this
                 .pilots
@@ -1781,6 +1791,7 @@ impl Shell {
             if let Some(bridge) = &self.app_bridge {
                 view.set_app_environment(bridge.environment(id));
             }
+            self.serve_sessions(id);
             view.set_project_appearance(appearance, cx);
             view.transcript.update(cx, |transcript, cx| {
                 transcript.apply_preferences(&self.workspace.preferences, cx)
@@ -2098,6 +2109,7 @@ impl Shell {
         let session = view.read(cx);
         let busy = session.responding();
         let focused = !self.app_view_open() && self.workspace.active == Some(id);
+        let mut finished = false;
         if busy {
             self.busy_sessions.insert(id);
             self.unseen_finished.remove(&id);
@@ -2106,8 +2118,11 @@ impl Shell {
             // only finishing its save, so it must not announce a completed turn.
             self.busy_sessions.remove(&id);
             self.unseen_finished.remove(&id);
-        } else if self.busy_sessions.remove(&id) && !focused && !session.summary.archived {
-            self.unseen_finished.insert(id);
+        } else if self.busy_sessions.remove(&id) {
+            if !focused && !session.summary.archived {
+                self.unseen_finished.insert(id);
+            }
+            finished = true;
         }
         if focused || session.summary.archived {
             self.unseen_finished.remove(&id);
@@ -2132,6 +2147,10 @@ impl Shell {
         let provider = session.summary.provider.clone();
         self.session_marks[&id].update(cx, |mark, cx| mark.set(&provider, state, cx));
         self.tab_marks[&id].update(cx, |mark, cx| mark.set(&provider, tab_state, cx));
+        if finished {
+            // The turn may have changed which files the session holds.
+            self.refresh_session_facts(id, cx);
+        }
     }
     fn toggle_archive(&mut self, id: i64, cx: &mut Context<Self>) {
         if !self.archiving.insert(id) {

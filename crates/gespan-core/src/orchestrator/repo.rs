@@ -22,6 +22,13 @@ pub fn checkout_root(cwd: &Path) -> Option<PathBuf> {
     (!top.is_empty()).then(|| PathBuf::from(top))
 }
 
+/// The branch checked out in `cwd`; `None` when detached or not a repository.
+pub fn current_branch(cwd: &Path) -> Option<String> {
+    let out = crate::git::git_probe(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
+    let branch = out.trim();
+    (!branch.is_empty()).then(|| branch.to_owned())
+}
+
 /// The files a session changed: the paths its own edits touched that are
 /// still uncommitted in `checkout`, relative to it with `/` separators,
 /// sorted. Another session's edits in the same checkout are not counted,
