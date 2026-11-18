@@ -9,6 +9,7 @@ mod inbox_ask;
 mod managed_sessions;
 pub(crate) mod my_tasks;
 mod notes;
+pub(crate) mod orchestrator;
 mod pilots;
 mod provider_ids;
 mod remote;
