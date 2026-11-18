@@ -478,7 +478,7 @@ impl Shell {
 
     /// Links `child` under `parent` for a caller that reports by itself (a
     /// Pilot, an orchestration lead), and saves the link.
-    pub(super) fn child_link(
+    pub(crate) fn child_link(
         &mut self,
         parent: i64,
         child: i64,

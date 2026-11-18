@@ -1149,8 +1149,9 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         let project = launch.cwd.clone();
         self.file_session(id, project, session, cx);
     }
-    /// Files a session a Pilot's Flow run started in the Pilot's folder. It is not a launch
-    /// (the Flow's events report it), so it never joins `launches`.
+    /// Files a session a Pilot's Flow run started in the Pilot's folder, and links it under
+    /// the Pilot's chat in the session tree. It is not a launch (the Flow's events report it),
+    /// so it never joins `launches`, and its link never wakes the chat.
     pub(crate) fn file_flow_session(
         &mut self,
         id: &str,
@@ -1159,6 +1160,16 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         cx: &mut Context<Self>,
     ) {
         self.file_session(id, project, session, cx);
+        if let Some(chat) = self.chats.get(id).map(|view| view.read(cx).summary.id) {
+            let _ = self.owner.update(cx, |owner, cx| {
+                owner.child_link(
+                    chat,
+                    session,
+                    gespan_core::orchestrator::tree::Origin::Flow,
+                    cx,
+                )
+            });
+        }
     }
     /// Puts `session` in Pilot `id`'s folder of `project`.
     fn file_session(&mut self, id: &str, project: String, session: i64, cx: &mut Context<Self>) {
