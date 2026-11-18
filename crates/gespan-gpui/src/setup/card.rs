@@ -2,8 +2,10 @@
 //! itself in its own file from the pieces in `ui`.
 use super::{SetupStep, agents, look, project, tools, welcome};
 use crate::settings::Preferences;
+use gespan_core::mcp::Importable;
 use gespan_core::provider::Kind;
 use gpui::{Context, EventEmitter, FocusHandle, Focusable, Window, prelude::*};
+use std::path::PathBuf;
 
 /// What the card asks the shell to do. The card keeps its own copy of what
 /// was picked so it can draw it; the shell applies and saves it.
@@ -28,6 +30,28 @@ pub(crate) struct Agent {
     pub signed_in: Option<bool>,
 }
 
+/// The shared tools card's state.
+pub(crate) struct Tools {
+    /// The servers found in the agents' configs; `None` while still looking.
+    pub(super) found: Option<Vec<Importable>>,
+    /// Agents use only the hub's servers. On by default.
+    pub(super) on: bool,
+    /// The servers are being moved; Continue waits.
+    pub(super) busy: bool,
+    pub(super) error: Option<String>,
+}
+
+impl Default for Tools {
+    fn default() -> Self {
+        Self {
+            found: None,
+            on: true,
+            busy: false,
+            error: None,
+        }
+    }
+}
+
 pub(crate) struct SetupCard {
     pub(super) step: SetupStep,
     pub(super) prefs: Preferences,
@@ -44,6 +68,10 @@ pub(crate) struct SetupCard {
     pub(super) default_agent: Option<Kind>,
     /// The agent whose sign-in is running; Rescan starts no second one.
     pub(super) signing_in: Option<Kind>,
+    pub(super) tools: Tools,
+    /// Test seam: the catalogue folder, in place of Gespan's data folder.
+    #[cfg(test)]
+    tools_dir: Option<PathBuf>,
     focus: FocusHandle,
 }
 
@@ -75,9 +103,15 @@ impl SetupCard {
             missing: Vec::new(),
             default_agent,
             signing_in: None,
+            tools: Tools::default(),
+            #[cfg(test)]
+            tools_dir: None,
             focus: cx.focus_handle(),
         };
         card.refresh_agents(cx);
+        if step == SetupStep::Tools {
+            card.find_tools(cx);
+        }
         card
     }
 
@@ -106,6 +140,9 @@ impl SetupCard {
     /// Moves to `step` and tells the shell, so a relaunch resumes there.
     pub(super) fn go(&mut self, step: SetupStep, cx: &mut Context<Self>) {
         self.step = step;
+        if step == SetupStep::Tools && self.tools.found.is_none() {
+            self.find_tools(cx);
+        }
         cx.emit(SetupEvent::Step(step));
         cx.notify();
     }
@@ -126,6 +163,103 @@ impl SetupCard {
             }
         }
         self.go(SetupStep::Project, cx);
+    }
+
+    /// Looks through the agents' configs for MCP servers, off the UI thread.
+    pub(super) fn find_tools(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) {
+            return;
+        }
+        let home = self.home.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { gespan_core::mcp::mcp_importable(home) });
+        cx.spawn(async move |this, cx| {
+            let found = work.await.unwrap_or_else(|error| {
+                tracing::warn!(%error, "could not look for the agents' MCP servers");
+                Vec::new()
+            });
+            let _ = this.update(cx, |card, cx| {
+                card.tools.found = Some(found);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn toggle_tools(&mut self, cx: &mut Context<Self>) {
+        self.tools.on = !self.tools.on;
+        self.tools.error = None;
+        cx.notify();
+    }
+
+    fn tools_dir(&self) -> Option<PathBuf> {
+        #[cfg(test)]
+        if self.tools_dir.is_some() {
+            return self.tools_dir.clone();
+        }
+        gespan_core::tool_servers::data_dir()
+    }
+
+    /// Continue on the shared tools card. With the switch on, the servers
+    /// shown are moved into the catalogue and approved, and agents load only
+    /// the hub's, all in one edit; the card moves on once that is saved.
+    pub(super) fn tools_next(&mut self, cx: &mut Context<Self>) {
+        if self.tools.busy {
+            return;
+        }
+        let Some(found) = self.tools.found.clone() else {
+            return;
+        };
+        if !self.tools.on {
+            self.go(SetupStep::Look, cx);
+            return;
+        }
+        let Some(dir) = self.tools_dir() else {
+            self.tools.error = Some("Gespan's data folder isn't available.".into());
+            cx.notify();
+            return;
+        };
+        self.tools.busy = true;
+        self.tools.error = None;
+        cx.notify();
+        let work = cx.background_executor().spawn(async move {
+            let edited = gespan_core::mcp_catalog::update(&dir, |catalog| {
+                catalog.adopt(&dir, found).map(|_| ())
+            })?;
+            if edited.changed {
+                gespan_core::tool_servers::sync_servers();
+            }
+            Ok::<(), String>(())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |card, cx| {
+                card.tools.busy = false;
+                match result {
+                    Ok(()) => card.go(SetupStep::Look, cx),
+                    Err(error) => {
+                        tracing::warn!(%error, "could not move the agents' MCP servers");
+                        card.tools.error = Some(error);
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Test seam: the catalogue folder the shared tools card writes.
+    #[cfg(test)]
+    pub(crate) fn set_tools_dir(&mut self, dir: PathBuf) {
+        self.tools_dir = Some(dir);
+    }
+
+    /// Test seam: what discovery found.
+    #[cfg(test)]
+    pub(crate) fn set_found(&mut self, found: Vec<Importable>, cx: &mut Context<Self>) {
+        self.tools.found = Some(found);
+        cx.notify();
     }
 
     pub(super) fn set_prefs(

@@ -141,40 +141,11 @@ fn accents(current: Option<&str>, cx: &mut Context<SetupCard>) -> impl IntoEleme
         }))
 }
 
-/// The glass switch: 30×18 with a 14pt knob, the accent when on.
+/// The glass switch.
 fn glass_switch(on: bool, cx: &mut Context<SetupCard>) -> impl IntoElement {
-    div()
-        .id("setup-glass")
-        .debug_selector(|| "setup-glass".into())
-        .role(Role::Switch)
-        .aria_label("Glass")
-        .aria_toggled(if on {
-            gpui::Toggled::True
-        } else {
-            gpui::Toggled::False
-        })
-        .cursor_pointer()
-        .relative()
-        .flex_shrink_0()
-        .w(px(30.))
-        .h(px(18.))
-        .rounded_full()
-        .bg(if on { accent_color() } else { content(0.14) })
-        .child(
-            div()
-                .absolute()
-                .top(px(2.))
-                .left(px(if on { 14. } else { 2. }))
-                .size(px(14.))
-                .rounded_full()
-                .bg(rgb(0xffffff))
-                .shadow(vec![
-                    gpui::BoxShadow::new(px(0.), px(1.), black(0.4)).blur_radius(px(3.)),
-                ]),
-        )
-        .on_click(
-            cx.listener(|card, _, _, cx| card.set_prefs(|p| p.inset_glass = !p.inset_glass, cx)),
-        )
+    ui::switch("setup-glass", "Glass", on).on_click(
+        cx.listener(|card, _, _, cx| card.set_prefs(|p| p.inset_glass = !p.inset_glass, cx)),
+    )
 }
 
 #[cfg(test)]

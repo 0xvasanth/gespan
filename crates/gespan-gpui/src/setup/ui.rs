@@ -179,6 +179,40 @@ pub(crate) fn steps(step: usize) -> Div {
         }))
 }
 
+/// A 30×18 switch with a 14pt knob, the accent when on. Callers add the
+/// click.
+pub(crate) fn switch(id: &'static str, label: &'static str, on: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .role(Role::Switch)
+        .aria_label(label)
+        .aria_toggled(if on {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .cursor_pointer()
+        .relative()
+        .flex_shrink_0()
+        .w(px(30.))
+        .h(px(18.))
+        .rounded_full()
+        .bg(if on { accent_color() } else { content(0.14) })
+        .child(
+            div()
+                .absolute()
+                .top(px(2.))
+                .left(px(if on { 14. } else { 2. }))
+                .size(px(14.))
+                .rounded_full()
+                .bg(rgb(0xffffff))
+                .shadow(vec![
+                    BoxShadow::new(px(0.), px(1.), black(0.4)).blur_radius(px(3.)),
+                ]),
+        )
+}
+
 /// The quiet "Skip setup" link in the header.
 pub(crate) fn skip_link(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
