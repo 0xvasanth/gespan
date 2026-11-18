@@ -30,9 +30,11 @@ impl Conversation {
     pub(crate) fn set_roster(&mut self, roster: Option<String>) {
         self.roster = roster;
     }
-    /// The roster to add to this turn: only when it differs from what the
-    /// agent was last told, and never for a remote chat.
-    pub(crate) fn take_roster_block(&mut self) -> Option<String> {
+    /// The roster this turn should carry: only when it differs from what
+    /// the agent was last told, never for a remote chat or a raw slash
+    /// command. It counts as told once the turn succeeds.
+    pub(crate) fn pending_roster(&mut self, prompt: &str) -> Option<String> {
+        self.roster_in_flight = None;
         if self.is_remote() {
             return None;
         }
@@ -41,12 +43,26 @@ impl Conversation {
             self.last_roster = None;
             return None;
         };
+        let raw = gespan_core::provider::Kind::parse(&self.summary.provider)
+            .is_some_and(|kind| gespan_core::provider::is_raw_command(kind, prompt));
         let fingerprint = gespan_core::orchestrator::roster::fingerprint(&roster);
-        if self.last_roster == Some(fingerprint) {
+        if raw || self.last_roster == Some(fingerprint) {
             return None;
         }
-        self.last_roster = Some(fingerprint);
+        self.roster_in_flight = Some(fingerprint);
         Some(roster)
+    }
+    /// A turn that failed or was stopped may never have reached the agent:
+    /// its roster is sent again next time.
+    pub(crate) fn roster_turn_ended(&mut self, succeeded: bool) {
+        if let Some(fingerprint) = self.roster_in_flight.take()
+            && succeeded
+        {
+            self.last_roster = Some(fingerprint);
+        }
+    }
+    pub(crate) fn forget_roster_sent(&mut self) {
+        self.last_roster = None;
     }
     /// A lead's control capability, for as long as its run is live. Worker
     /// sessions never get it: only a lead's turns carry these variables.

@@ -586,6 +586,7 @@ fn run_turn_using(
         // What the user wrote, before any context is wrapped around it: the
         // decision log looks up what is related to it.
         let user_message = prompt.clone();
+        let prompt = with_roster(settings.roster_block.take(), prompt, raw_native_command);
         let prompt = if raw_native_command {
             prompt
         } else if let Some(pilot) = &settings.pilot {
@@ -1988,6 +1989,15 @@ fn browser_facts(summary: &Session, settings: &Settings) -> gespan_core::browser
     }
 }
 
+/// The sibling roster ahead of the prompt. A raw slash command is left alone:
+/// its provider parses it, and text before it would make it a message.
+pub(crate) fn with_roster(roster: Option<String>, prompt: String, raw: bool) -> String {
+    match roster {
+        Some(roster) if !raw => format!("{roster}\n\n{prompt}"),
+        _ => prompt,
+    }
+}
+
 /// Every local session may see its siblings. Remote turns run on their own
 /// machine and mount nothing here.
 pub(crate) fn sessions_toolkit(remote: bool) -> Option<&'static str> {
@@ -2134,6 +2144,27 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Vec<String>>(&typed).unwrap().len(),
             2
+        );
+    }
+
+    #[test]
+    fn the_roster_goes_before_the_message() {
+        use super::with_roster;
+        assert_eq!(
+            with_roster(Some("Other sessions…".into()), "Fix it".into(), false),
+            "Other sessions…\n\nFix it"
+        );
+        assert_eq!(with_roster(None, "Fix it".into(), false), "Fix it");
+    }
+
+    #[test]
+    fn a_raw_slash_command_never_carries_the_roster() {
+        use super::with_roster;
+        // OMP and Devin parse the command themselves; text before it would
+        // turn it into an ordinary message.
+        assert_eq!(
+            with_roster(Some("Other sessions…".into()), "/compact".into(), true),
+            "/compact"
         );
     }
 

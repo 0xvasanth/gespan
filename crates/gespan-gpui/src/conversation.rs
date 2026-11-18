@@ -239,6 +239,8 @@ pub(crate) struct Conversation {
     roster: Option<String>,
     /// The fingerprint of the roster this chat's agent was last told.
     last_roster: Option<u64>,
+    /// The roster the running turn carries, until the agent finishes it.
+    roster_in_flight: Option<u64>,
     /// The running turn's policy, independent of the next composer's mode.
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
@@ -876,6 +878,7 @@ impl Conversation {
             app_environment: Default::default(),
             roster: None,
             last_roster: None,
+            roster_in_flight: None,
             app_read_only: false,
             planning_orchestration: false,
             orchestration_plan_checked: false,
@@ -1579,14 +1582,7 @@ impl Conversation {
                     settings.prepared_prompt = Some(prepared);
                 }
             }
-            if let Some(roster) = self.take_roster_block() {
-                // The agent learns its siblings; the chat shows only what was typed.
-                let prepared = settings
-                    .prepared_prompt
-                    .take()
-                    .unwrap_or_else(|| prompt.clone());
-                settings.prepared_prompt = Some(format!("{roster}\n\n{prepared}"));
-            }
+            settings.roster_block = self.pending_roster(&prompt);
             if self.inbox_ask.is_some() {
                 let prepared = settings.prepared_prompt.take();
                 settings.prepared_prompt =
@@ -1687,6 +1683,9 @@ impl Conversation {
                             return;
                         }
                         let stopping = this.stopping;
+                        if finished {
+                            this.roster_turn_ended(update.succeeded && !stopping);
+                        }
                         // The final update settles accepted rows and storage.
                         // Ignore streaming notifications after the user stops.
                         if stopping && !finished {
@@ -2829,6 +2828,8 @@ impl Conversation {
                     .map(|center| center.read(cx).selected(picked.0, &self.summary.cwd))
                     .unwrap_or_default();
                 self.summary.provider_id = None;
+                // A fresh agent conversation hasn't been told its siblings.
+                self.forget_roster_sent();
                 if let Some(pending) = &self.settings.pending_provider_switch {
                     self.settings.handoff = Some(gespan_core::agent::Handoff {
                         from: pending.from.clone(),

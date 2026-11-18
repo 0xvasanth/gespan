@@ -12,7 +12,8 @@
 //! - `replies.json` (read): a JSON array, one entry per turn. An entry is a
 //!   string (the assistant's text) or `{"text": "...", "frames": [...]}`,
 //!   whose raw frames are written before the reply. A turn past the end of
-//!   the script answers `fake reply <n>`.
+//!   the script answers `fake reply <n>`. `"error": true` ends that turn
+//!   with a failed result.
 //! - `proxy` (read): when present, its first line is the real CLI. The agent
 //!   then starts it with the same argv and only records stdin on the way
 //!   through, so a real-model run still shows what Gespan sent.
@@ -201,8 +202,12 @@ fn reply(
                 },
             }));
     }
+    // `{"error": true}` ends the turn as failed, as an API error would.
+    let failed = entry.is_some_and(|entry| entry["error"] == true);
     ok && send(json!({
-        "type": "result", "subtype": "success", "is_error": false, "num_turns": 1,
+        "type": "result",
+        "subtype": if failed { "error_during_execution" } else { "success" },
+        "is_error": failed, "num_turns": 1,
         "result": text, "session_id": session, "usage": usage, "total_cost_usd": 0.0,
     }))
 }

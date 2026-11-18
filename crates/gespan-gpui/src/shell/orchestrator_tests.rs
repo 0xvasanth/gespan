@@ -76,6 +76,8 @@ struct Fixture {
     remote: i64,
     /// A new chat nothing was ever sent from.
     blank: i64,
+    /// Open, but its worktree was removed.
+    gone: i64,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -98,6 +100,24 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
     let c = store.create("claude", &other_project).unwrap();
     let archived = store.create("claude", &project).unwrap();
     let blank = store.create("claude", &project).unwrap();
+    let gone = store.create("claude", &project).unwrap();
+    store
+        .save_agent_settings(
+            gone.id,
+            &gespan_core::agent::Settings {
+                worktree_cwd: Some(repo.path().join("removed-tree").to_string_lossy().into()),
+                worktree_removed: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    store
+        .write_rows(
+            gone.id,
+            0,
+            &rows(&[("user", "Old work"), ("assistant", "Done.")]),
+        )
+        .unwrap();
     store
         .write_rows(
             a.id,
@@ -146,12 +166,13 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
     state.open(a.id);
     let saved = serde_json::to_string(&state).unwrap();
     let store = Arc::new(Mutex::new(store));
-    let ids = (a.id, b.id, c.id, archived.id, remote.id, blank.id);
+    let ids = (a.id, b.id, c.id, archived.id, remote.id, blank.id, gone.id);
     let window = cx.update(|cx| {
         cx.open_window(Default::default(), |_, cx| {
             cx.new(|cx| {
                 let mut shell = Shell::new(store, sessions, project.clone(), Some(saved), cx);
                 shell.ensure_session(ids.0, cx);
+                shell.ensure_session(ids.6, cx);
                 shell
             })
         })
@@ -168,6 +189,7 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
         archived: ids.3,
         remote: ids.4,
         blank: ids.5,
+        gone: ids.6,
     }
 }
 
@@ -373,4 +395,41 @@ fn a_blank_chat_is_not_a_sibling(cx: &mut TestAppContext) {
         ids(&f.list(f.blank, Scope::Repo, cx), "sessions"),
         [f.b, f.a]
     );
+}
+
+#[gpui::test]
+fn a_session_whose_worktree_was_removed_is_no_sibling(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let all = f.list(f.a, Scope::All, cx);
+    for key in ["sessions", "elsewhere"] {
+        assert!(!ids(&all, key).contains(&f.gone), "{key}: {all:#}");
+    }
+    let error = f
+        .ask(
+            f.a,
+            Action::Read {
+                id: f.gone,
+                before: None,
+            },
+            cx,
+        )
+        .unwrap_err();
+    assert_eq!(error, "That session isn't readable here.");
+}
+
+#[gpui::test]
+fn sessions_in_other_repositories_are_never_read_in_full(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let all = f.list(f.a, Scope::All, cx);
+    // C is still listed elsewhere, by title and status...
+    assert_eq!(ids(&all, "elsewhere"), [f.c], "{all:#}");
+    // ...but no transcript or git status was read for it: only its repository.
+    let facts = f
+        .window
+        .update(cx, |shell, _, _| shell.session_facts.get(&f.c).cloned())
+        .unwrap()
+        .expect("C's repository is known");
+    assert!(facts.repo.is_some());
+    assert_eq!(facts.goal, "");
+    assert!(facts.files.is_empty());
 }

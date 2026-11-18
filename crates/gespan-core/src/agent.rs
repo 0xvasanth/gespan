@@ -100,6 +100,10 @@ pub struct Settings {
     /// message remains the transcript and queue label.
     #[serde(skip)]
     pub prepared_prompt: Option<String>,
+    /// The sibling roster this turn tells the agent, placed before the prompt
+    /// after the user's own words are recorded. Transport-only.
+    #[serde(skip)]
+    pub roster_block: Option<String>,
     /// The note chip of this turn, saved beside its prompt.
     #[serde(skip)]
     pub note_card: Option<serde_json::Value>,

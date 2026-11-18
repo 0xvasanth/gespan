@@ -166,3 +166,20 @@ fn a_session_alone_gets_no_roster(cx: &mut TestAppContext) {
 
     assert_eq!(e2e.prompts(a), ["hi", "again"]);
 }
+
+/// A turn that fails before the agent took it in doesn't count as having
+/// told it: the next turn carries the roster again.
+#[gpui::test]
+fn a_failed_turn_leaves_the_roster_to_the_next(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::Fake);
+    with_b_in_a_worktree(&e2e, cx);
+    let a = e2e.start_session(Kind::Claude, cx);
+    e2e.script_frames(a, json!({"text": "", "error": true}));
+
+    e2e.send(a, "one", cx);
+    e2e.send(a, "two", cx);
+
+    let prompts = e2e.prompts(a);
+    assert!(prompts[0].starts_with(HEADER), "{prompts:?}");
+    assert!(prompts[1].starts_with(HEADER), "{prompts:?}");
+}
