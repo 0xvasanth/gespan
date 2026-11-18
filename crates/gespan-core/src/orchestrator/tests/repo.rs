@@ -1,4 +1,4 @@
-use crate::orchestrator::repo::{checkout_root, repo_key, session_files};
+use crate::orchestrator::repo::{checkout_root, current_branch, repo_key, session_files};
 use std::{fs, path::Path, process::Command};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -141,4 +141,30 @@ fn a_folder_that_is_not_a_repository_has_no_files() {
     let plain = tempfile::tempdir().unwrap();
     fs::write(plain.path().join("a.rs"), "a\n").unwrap();
     assert!(session_files(&edits(&["a.rs"]), plain.path()).is_empty());
+}
+
+#[test]
+fn a_worktree_names_its_branch() {
+    let main = repo();
+    let holder = tempfile::tempdir().unwrap();
+    let worktree = holder.path().join("feature");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            worktree.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(current_branch(&worktree).as_deref(), Some("feature"));
+}
+
+#[test]
+fn a_detached_checkout_has_no_branch() {
+    let main = repo();
+    git(main.path(), &["checkout", "-q", "--detach"]);
+    assert_eq!(current_branch(main.path()), None);
 }

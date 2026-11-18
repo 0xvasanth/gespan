@@ -890,6 +890,11 @@ fn run_turn_using(
         if let Some(toolkit) = decision_toolkit {
             toolkits.insert(toolkit.to_owned());
         }
+        if tool_servers
+            && let Some(toolkit) = sessions_toolkit(summary.cwd.starts_with("remote://"))
+        {
+            toolkits.insert(toolkit.to_owned());
+        }
         // Exactly one of the two: both would list `actions_list` twice.
         if tool_servers
             && let Some(toolkit) = actions_toolkit(
@@ -1964,6 +1969,12 @@ fn browser_facts(summary: &Session, settings: &Settings) -> gespan_core::browser
         remote: summary.cwd.starts_with("remote://"),
         full_access: settings.access == gespan_core::agent::AccessMode::FullAccess,
     }
+}
+
+/// Every local session may see its siblings. Remote turns run on their own
+/// machine and mount nothing here.
+pub(crate) fn sessions_toolkit(remote: bool) -> Option<&'static str> {
+    (!remote).then_some(gespan_core::tool_servers::SESSIONS)
 }
 
 /// The one actions toolkit a turn mounts: list-only when it may not change
