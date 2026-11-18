@@ -49,6 +49,7 @@ impl Kind {
         use crate::diagnostics::metrics::DiagnosticCounter;
         use crate::flow::store::{FlowRow, FlowRunRow, FlowVersionRow, FlowVisitRow};
         use crate::store::my_tasks::{MyTask, TaskDecision};
+        use crate::store::orchestrator::{OrchCommand, OrchEffect, OrchEvent, SessionLink};
         use crate::store::schema::*;
         match self {
             Kind::Gespan => {
@@ -76,7 +77,11 @@ impl Kind {
                     FlowRow,
                     FlowRunRow,
                     FlowVisitRow,
-                    FlowVersionRow
+                    FlowVersionRow,
+                    SessionLink,
+                    OrchCommand,
+                    OrchEvent,
+                    OrchEffect
                 );
                 gespan_board_store::register_models(&mut models);
                 models
@@ -118,6 +123,7 @@ impl Kind {
                         crate::flow::store::CONSTRAINTS,
                         crate::decisions::store::CONSTRAINTS,
                         crate::decisions::vector::CONSTRAINTS,
+                        crate::store::orchestrator::CONSTRAINTS,
                     ]
                     .concat()
                 });

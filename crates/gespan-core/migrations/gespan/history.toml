@@ -19,3 +19,8 @@ snapshot_name = "0002_snapshot.toml"
 id = 8363121330793224020
 name = "0003_flow_versions.sql"
 snapshot_name = "0003_snapshot.toml"
+
+[[migrations]]
+id = 5915738051664952662
+name = "0004_orchestrator_core.sql"
+snapshot_name = "0004_snapshot.toml"

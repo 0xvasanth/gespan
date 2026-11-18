@@ -1709,6 +1709,7 @@ impl Store {
         self.shared_writable()?;
         let original = self.persisted_session_id(id)?;
         let tx = self.begin()?;
+        self.unlink_session(id)?;
         // The cascade triggers (`store::schema::CONSTRAINTS`) would remove
         // most of these; deleting each explicitly keeps tables with no
         // foreign key (in-flight, orchestration) clean too.
