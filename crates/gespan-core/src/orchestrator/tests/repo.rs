@@ -2,7 +2,11 @@ use crate::orchestrator::repo::{checkout_root, repo_key, session_files};
 use std::{fs, path::Path, process::Command};
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").current_dir(dir).args(args).output().unwrap();
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .unwrap();
     assert!(
         out.status.success(),
         "git {args:?}: {}",
@@ -37,7 +41,14 @@ fn main_and_worktree_share_a_repo_key() {
     let worktree = holder.path().join("feature");
     git(
         main.path(),
-        &["worktree", "add", "-q", "-b", "feature", worktree.to_str().unwrap()],
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature",
+            worktree.to_str().unwrap(),
+        ],
     );
     let key = repo_key(main.path());
     assert!(key.is_some());

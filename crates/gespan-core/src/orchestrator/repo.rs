@@ -63,8 +63,7 @@ fn relative(path: &str, root: &Path) -> Option<String> {
         .components()
         .map(|part| part.as_os_str().to_string_lossy().into_owned())
         .collect();
-    (!parts.is_empty() && parts.iter().all(|p| p != ".."))
-        .then(|| parts.join("/"))
+    (!parts.is_empty() && parts.iter().all(|p| p != "..")).then(|| parts.join("/"))
 }
 
 /// Every path `git status` reports as changed or untracked in `root`.
