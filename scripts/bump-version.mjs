@@ -52,6 +52,7 @@ const lockfiles = {
   "crates/gespan-gpui/Cargo.lock": [
     "gespan-browser",
     "gespan-core",
+    "gespan-fake-agent",
     "gespan-first-launch",
     "gespan-gpui",
     "gespan-models",
