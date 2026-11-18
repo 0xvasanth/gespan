@@ -288,7 +288,7 @@ fn login_shell_path() -> Option<String> {
     login_shell_var("PATH")
 }
 
-fn login_shell_var(key: &str) -> Option<String> {
+pub(crate) fn login_shell_var(key: &str) -> Option<String> {
     let mut cache = LOGIN_SHELL_ENV.lock().ok()?;
     if cache.is_none() {
         *cache = Some(load_login_shell_env());

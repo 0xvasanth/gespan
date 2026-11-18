@@ -55,6 +55,7 @@ impl Listing {
             args,
             env: BTreeMap::new(),
             url,
+            enabled: true,
         }
     }
 }

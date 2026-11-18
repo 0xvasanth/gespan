@@ -370,6 +370,24 @@ pub struct Importable {
     pub args: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub url: Option<String>,
+    /// Whether the agent had it on. One it had off is imported off.
+    pub enabled: bool,
+}
+
+/// What setup's shared tools card can offer: the servers it can move into
+/// Gespan, and the ones it can't (a variable that isn't set, an address the
+/// hub won't reach), which stop loading once agents use only Gespan's.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Survey {
+    pub movable: Vec<Importable>,
+    pub left_behind: Vec<LeftBehind>,
+}
+
+/// A server found in an agent's config that can't be moved as written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeftBehind {
+    pub provider: String,
+    pub name: String,
 }
 
 /// A list of strings, or nothing if any element isn't one: a command with a
@@ -414,7 +432,33 @@ fn resolved(value: &str, lookup: &impl Fn(&str) -> Option<String>) -> Option<Str
 /// `env`; OpenCode puts the whole command in an array, and `environment`.
 /// An entry that couldn't run as written is left out.
 fn importable(connection: McpConnection) -> Option<Importable> {
-    importable_with(connection, &|name| std::env::var(name).ok())
+    importable_with(connection, &shell_variable)
+}
+
+/// A variable as the user's shell has it. An app opened from the Dock has
+/// none of their shell profile's exports in its own environment.
+fn shell_variable(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .or_else(|| crate::scm::shell::login_shell_var(name))
+}
+
+fn survey(connections: Vec<McpConnection>, lookup: &impl Fn(&str) -> Option<String>) -> Survey {
+    let mut survey = Survey::default();
+    for connection in connections {
+        let (provider, name) = (connection.provider.clone(), connection.name.clone());
+        match importable_with(connection, lookup) {
+            Some(server) => survey.movable.push(server),
+            None => survey.left_behind.push(LeftBehind { provider, name }),
+        }
+    }
+    survey
+}
+
+/// Every server in the agents' configs, sorted into what can move into
+/// Gespan and what can't.
+pub fn mcp_survey(cwd: String) -> Result<Survey, String> {
+    Ok(survey(mcp_discover(cwd)?, &shell_variable))
 }
 
 fn importable_with(
@@ -462,6 +506,7 @@ fn importable_with(
         return None;
     }
     Some(Importable {
+        enabled: connection.enabled,
         provider: connection.provider,
         scope: connection.scope,
         name: connection.name,
@@ -829,6 +874,65 @@ mod tests {
         super::importable_with(connection(config), &|name| {
             (name == "SET").then(|| "the-value".to_owned())
         })
+    }
+
+    fn named(name: &str, config: serde_json::Value) -> super::McpConnection {
+        super::McpConnection {
+            name: name.into(),
+            ..connection(config)
+        }
+    }
+
+    #[test]
+    fn a_survey_names_the_servers_it_cannot_move() {
+        let survey = super::survey(
+            vec![
+                named(
+                    "docs",
+                    serde_json::json!({"command":"npx","env":{"TOKEN":"${SET}"}}),
+                ),
+                named(
+                    "github",
+                    serde_json::json!({"command":"npx","env":{"TOKEN":"${UNSET}"}}),
+                ),
+                named(
+                    "remote",
+                    serde_json::json!({"url":"http://docs.example/mcp","headers":{"Authorization":"secret"}}),
+                ),
+            ],
+            &|name| (name == "SET").then(|| "the-value".to_owned()),
+        );
+        assert_eq!(
+            survey
+                .movable
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>(),
+            ["docs"]
+        );
+        assert_eq!(
+            survey
+                .left_behind
+                .iter()
+                .map(|s| (s.provider.as_str(), s.name.as_str()))
+                .collect::<Vec<_>>(),
+            [("claude", "github"), ("claude", "remote")]
+        );
+    }
+
+    #[test]
+    fn an_import_keeps_whether_its_agent_had_it_on() {
+        let on = import(serde_json::json!({"command":"npx"})).unwrap();
+        assert!(on.enabled);
+        let off = super::importable_with(
+            super::McpConnection {
+                enabled: false,
+                ..connection(serde_json::json!({"command":"npx","disabled":true}))
+            },
+            &|_| None,
+        )
+        .unwrap();
+        assert!(!off.enabled);
     }
 
     #[test]
