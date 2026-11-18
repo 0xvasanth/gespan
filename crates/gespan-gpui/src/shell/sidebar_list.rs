@@ -1098,7 +1098,13 @@ fn nest_children(
     // parent has none keeps its own live row, or has no row, as before.
     let placed = |id: i64| {
         let mut at = id;
+        // A corrupt store can loop; a walk longer than every link is one.
+        let mut steps = tree.links().count();
         while let Some(parent) = tree.parent(at) {
+            if steps == 0 {
+                return false;
+            }
+            steps -= 1;
             if listed.contains(&parent) && !nested.contains(&parent) {
                 return true;
             }
@@ -1117,6 +1123,10 @@ fn nest_children(
         live: &HashMap<i64, (Live, String)>,
         out: &mut Vec<Row>,
     ) {
+        // Deeper than the tree allows: a loop in a corrupt store.
+        if usize::from(depth) > tree.links().count() {
+            return;
+        }
         for child in tree.children(parent) {
             if !nested.contains(&child) {
                 continue;
@@ -1243,6 +1253,28 @@ mod nesting_tests {
             nest_children(rows.clone(), &Tree::default(), &set(&[])),
             rows
         );
+    }
+
+    #[test]
+    fn a_cycle_in_the_links_never_hangs_the_sidebar() {
+        // A corrupt store: 2 under 3 and 3 under 2, both under a listed 1's
+        // reach only through each other.
+        let rows = vec![
+            Row::FolderSession(1),
+            Row::Live {
+                id: 2,
+                live: Live::Running,
+                folder: "repo".into(),
+            },
+            Row::Live {
+                id: 4,
+                live: Live::Running,
+                folder: "repo".into(),
+            },
+        ];
+        let looped = tree(&[(2, 3, 1), (3, 2, 1), (4, 4, 1)]);
+        let nested = nest_children(rows.clone(), &looped, &set(&[2, 3, 4]));
+        assert_eq!(nested, rows, "a session in a loop keeps its own row");
     }
 
     #[test]

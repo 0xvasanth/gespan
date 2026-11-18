@@ -4,6 +4,7 @@
 pub mod bridge;
 pub mod mailbox;
 pub mod policy;
+pub mod remote;
 pub mod repo;
 pub mod reports;
 pub mod roster;

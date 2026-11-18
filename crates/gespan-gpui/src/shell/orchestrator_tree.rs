@@ -201,7 +201,7 @@ fn create_child(
 impl Shell {
     /// Sessions whose agent is working, waiting on the user, or about to
     /// start: what counts toward a parent's live children.
-    fn live_sessions(&self, cx: &gpui::App) -> HashSet<i64> {
+    pub(super) fn live_sessions(&self, cx: &gpui::App) -> HashSet<i64> {
         self.session_tree
             .links()
             .map(|link| link.child)
@@ -215,6 +215,8 @@ impl Shell {
             .collect()
     }
 
+    /// A start that names a `requestId` answered before gets that answer,
+    /// whatever the limits say now; otherwise it is decided afresh.
     pub(super) fn answer_start(
         &mut self,
         caller: i64,
@@ -222,6 +224,45 @@ impl Shell {
         reply: Reply,
         cx: &mut Context<Self>,
     ) {
+        let Some(request) = input.request_id.clone() else {
+            self.start_afresh(caller, input, reply, cx);
+            return;
+        };
+        let key = if input.machine.is_some() {
+            format!("remote-start:{caller}:{request}")
+        } else {
+            format!("start:{caller}:{request}")
+        };
+        let store = self.store.clone();
+        let earlier = cx
+            .background_executor()
+            .spawn(async move { locked(&store)?.command_receipt(&key) });
+        cx.spawn(async move |this, cx| {
+            let earlier = earlier.await;
+            let _ = this.update(cx, |this, cx| match earlier {
+                Ok(Some(value)) => {
+                    let _ = reply.send(Ok(value));
+                }
+                Ok(None) => this.start_afresh(caller, input, reply, cx),
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn start_afresh(
+        &mut self,
+        caller: i64,
+        input: StartInput,
+        reply: Reply,
+        cx: &mut Context<Self>,
+    ) {
+        if input.machine.is_some() {
+            self.answer_remote_start(caller, input, reply, cx);
+            return;
+        }
         let Some(view) = self.sessions.get(&caller) else {
             let _ = reply.send(Err(UNAVAILABLE.into()));
             return;
@@ -250,7 +291,7 @@ impl Shell {
                 caller,
                 caller_access,
                 starting,
-                input,
+                input: Box::new(input),
             },
         );
         let launch = match decided {
@@ -408,6 +449,7 @@ impl Shell {
     /// `sessions_cancel` makes, on every running descendant.
     pub(super) fn stop_started(&mut self, id: i64, cx: &mut Context<Self>) {
         for child in self.running_descendants(id, cx) {
+            self.cancelled.insert(child);
             self.launching.remove(&child);
             if let Some(view) = self.sessions.get(&child).cloned() {
                 view.update(cx, |view, cx| view.stop_app_session(cx));
@@ -437,6 +479,8 @@ impl Shell {
             access: requested,
             title: None,
             request_id: None,
+            machine: None,
+            cwd: None,
         };
         let effects = decide(
             &State {
@@ -447,7 +491,7 @@ impl Shell {
                 caller,
                 caller_access,
                 starting,
-                input,
+                input: Box::new(input),
             },
         )?;
         // Counted as live until it is made or fails, so parallel calls
@@ -534,6 +578,7 @@ impl Shell {
             }
         };
         for id in &order {
+            self.cancelled.insert(*id);
             self.launching.remove(id);
             if let Some(view) = self.ensure_session(*id, cx) {
                 view.update(cx, |view, cx| view.stop_app_session(cx));

@@ -46,6 +46,7 @@ mod open_in_editor;
 mod orchestration;
 mod orchestrator;
 mod orchestrator_mail;
+pub(crate) mod orchestrator_remote;
 #[cfg(test)]
 mod orchestrator_tests;
 mod orchestrator_tree;
@@ -757,6 +758,9 @@ pub(crate) struct Shell {
     waiting_reported: HashSet<i64>,
     /// Sessions whose mail is being delivered.
     mail_flushing: HashSet<i64>,
+    /// Sessions stopped by `sessions_cancel` or the sidebar: they take no
+    /// mail until the user sends them something.
+    cancelled: HashSet<i64>,
     /// How many hops from a user's own turn each session's current turn is.
     turn_hops: HashMap<i64, u8>,
     /// The typed turns each session had when last looked at.
@@ -765,6 +769,10 @@ pub(crate) struct Shell {
     held_mail: HashMap<i64, usize>,
     /// `sessions_wait` calls still waiting.
     mail_waiters: Vec<orchestrator_mail::Waiter>,
+    /// How a herdr machine is reached for `sessions_*` calls.
+    remote_for: orchestrator_remote::RemoteFor,
+    /// Remote agents started from here, by their id.
+    remote_started: HashMap<i64, orchestrator_remote::Peer>,
     mobile: mobile_host::Mobile,
     orchestrations: HashMap<i64, orchestration::Live>,
     control_bridge: Option<gespan_core::pilot::bridge::Server>,
@@ -1275,10 +1283,13 @@ impl Shell {
             seen_turn_ends: HashMap::new(),
             waiting_reported: HashSet::new(),
             mail_flushing: HashSet::new(),
+            cancelled: HashSet::new(),
             turn_hops: HashMap::new(),
             seen_typed: HashMap::new(),
             held_mail: HashMap::new(),
             mail_waiters: Vec::new(),
+            remote_for: orchestrator_remote::default_remote(),
+            remote_started: HashMap::new(),
             mobile: mobile_host::Mobile::default(),
             orchestrations: HashMap::new(),
             control_bridge: None,

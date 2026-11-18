@@ -455,3 +455,46 @@ fn mail_from_an_unknown_sender_mode_is_held(cx: &mut TestAppContext) {
     settle(cx);
     assert!(e2e.prompts(b).is_empty(), "unknown is held, not delivered");
 }
+
+#[gpui::test]
+fn a_chats_mode_is_checked_once_its_settings_are_read(cx: &mut TestAppContext) {
+    use gespan_core::agent::AccessMode;
+    let e2e = E2e::new(cx, Mode::Fake);
+    let a = e2e.start_session(Kind::Claude, cx);
+    let b = e2e.start_session(Kind::Claude, cx);
+    // B runs with full access, but its chat hasn't read its settings yet:
+    // they still show the default.
+    {
+        let store = e2e.store(cx);
+        let store = locked(&store).unwrap();
+        let mut saved = store.agent_settings(b).unwrap().unwrap_or_default();
+        saved.access = AccessMode::FullAccess;
+        store.save_agent_settings(b, &saved).unwrap();
+    }
+    e2e.session(b, cx).update(cx, |view, _| {
+        view.settings.access = AccessMode::Supervised;
+        view.e2e_set_loaded(false);
+    });
+    e2e.script_frames(a, turn("ok", vec![message(b, "Run the migration")]));
+    e2e.send(a, "Ask B", cx);
+    settle(cx);
+    assert!(
+        e2e.prompts(b).is_empty(),
+        "not delivered before B's mode is known"
+    );
+    // B's settings arrive.
+    e2e.session(b, cx).update(cx, |view, cx| {
+        view.settings.access = AccessMode::FullAccess;
+        view.e2e_set_loaded(true);
+        cx.emit(crate::conversation::SessionChanged);
+    });
+    settle(cx);
+    assert!(e2e.prompts(b).is_empty(), "B may do more than A: held");
+    let store = e2e.store(cx);
+    let held = locked(&store).unwrap().mail_for(b, State::Held).unwrap();
+    assert_eq!(held.len(), 1);
+    assert_eq!(
+        held[0].held,
+        Some(gespan_core::orchestrator::mailbox::Hold::Access)
+    );
+}

@@ -222,7 +222,7 @@ pub enum Command {
         caller_access: AccessMode,
         /// The caller's starts not yet answered, which will be live.
         starting: usize,
-        input: StartInput,
+        input: Box<StartInput>,
     },
     Cancel {
         caller: i64,
@@ -296,7 +296,7 @@ pub fn decide(state: &State, command: Command) -> Result<Vec<Effect>, Refusal> {
                 depth,
                 access,
                 wake: input.wake,
-                input,
+                input: *input,
             }))])
         }
         Command::Cancel { caller, target } => {

@@ -58,6 +58,17 @@ A [Pilot](pilots.md)'s chat also has the `app` actions below for its assigned pr
 Retry an uncertain mutation with the same request ID and identical input.
 Unknown fields and invalid options produce errors instead of being ignored.
 
+## Agents on herdr machines
+
+Agents on a herdr machine saved in Settings → Devices → herdr machines are peers too, when the machine is online:
+
+- **In the roster.** An agent working in a folder named like this repository (or a folder inside it) is listed as a sibling, with its agent and machine (`claude on devbox`), status and task. Its id is negative.
+- **`sessions_start` with `machine`** (a machine's label or id) and `cwd` (the checkout there, absolute or under `~/`) starts the agent on that machine: in a new pane of that checkout with `workspace: "main"`, or in a new herdr worktree with `workspace: "worktree"` (from `base`). `harness` picks the agent kind; Claude when left out.
+- **`sessions_message`** to a remote agent waits until it has settled (idle or done) and only then types the message, labelled and fenced like any other. An agent waiting on its own user's answer gets nothing.
+- **`sessions_read`** returns its recent output; **`sessions_wait`** on its id alone waits until it settles.
+
+A remote agent works interactively on its machine and asks there before it acts, so it counts as `supervised`: a read-only or plan session can't start or message one (`permission_escalation`), remote starts count toward the depth and five-running limits, and `cwd` must be a checkout named like this repository. A session reaches only remote agents it started or that work in this repository (`out_of_scope` otherwise). Remote agents have no session here, so they aren't nested in the sidebar or reported back on their own; wait on them or read them.
+
 ## Project actions
 
 Agents can also list and run a project's commands with the `actions` tools; see [Project scripts](actions.md#agents).

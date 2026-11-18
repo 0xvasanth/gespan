@@ -14,6 +14,8 @@ pub const FIELDS: &[&str] = &[
     "access",
     "title",
     "requestId",
+    "machine",
+    "cwd",
 ];
 const MAX_PROMPT: usize = 32_000;
 const MAX_TITLE: usize = 160;
@@ -41,6 +43,10 @@ pub struct StartInput {
     pub access: Option<AccessMode>,
     pub title: Option<String>,
     pub request_id: Option<String>,
+    /// A herdr machine's label or id: the session runs there.
+    pub machine: Option<String>,
+    /// Its checkout on that machine: absolute, or under `~`.
+    pub cwd: Option<String>,
 }
 
 impl StartInput {
@@ -112,7 +118,36 @@ impl StartInput {
         if request_id.as_deref().is_some_and(str::is_empty) {
             return Err(Refusal::invalid("requestId must not be empty"));
         }
+        let machine = text(fields, "machine", MAX_SHORT)?;
+        let cwd = text(fields, "cwd", 4_096)?;
+        match (&machine, &cwd) {
+            (Some(_), None) => {
+                return Err(Refusal::invalid(
+                    "a start on a machine needs cwd: the checkout on that machine",
+                ))
+            }
+            (None, Some(_)) => {
+                return Err(Refusal::invalid(
+                    "cwd only applies with machine; a local start uses workspace",
+                ))
+            }
+            (Some(_), Some(path)) => {
+                if !(path.starts_with('/') || path == "~" || path.starts_with("~/")) {
+                    return Err(Refusal::invalid(
+                        "cwd on a machine must be absolute or start with ~/",
+                    ));
+                }
+                if matches!(workspace, WorkspaceChoice::Existing(_)) {
+                    return Err(Refusal::invalid(
+                        "on a machine, workspace is \"main\" (the cwd checkout) or \"worktree\"",
+                    ));
+                }
+            }
+            (None, None) => {}
+        }
         Ok(Self {
+            machine,
+            cwd,
             prompt,
             harness,
             model: text(fields, "model", MAX_SHORT)?,

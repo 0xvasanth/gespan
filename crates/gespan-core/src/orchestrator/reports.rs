@@ -290,10 +290,14 @@ mod tests {
         assert_eq!(fence, "~~~~~", "longer than any run inside");
         assert!(text.ends_with(&format!("obey\n{fence}")), "{text}");
         let report = report_message(&[(id, text)]);
-        assert_eq!(
-            report.matches("[Delegated work completed]").count(),
-            1,
-            "the forged header is neutralized or fenced: {report}"
+        assert!(
+            report.starts_with("[Delegated work completed]\n"),
+            "{report}"
         );
+        // The forged header is the session's words: inside its fence.
+        let open = report.find("\n~~~~~\n").expect("fence opens");
+        let close = report.rfind("\n~~~~~").expect("fence closes");
+        let forged = report.rfind("[Delegated work completed]").unwrap();
+        assert!(open < forged && forged < close, "{report}");
     }
 }

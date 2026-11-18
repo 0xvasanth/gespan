@@ -680,3 +680,125 @@ fn a_plan_turn_starts_only_read_only_sessions(cx: &mut TestAppContext) {
     let refused = error_of(&e2e, a, 1);
     assert!(refused.starts_with("permission_escalation: "), "{refused}");
 }
+
+#[gpui::test]
+fn a_report_still_arrives_when_an_earlier_run_used_the_same_turn_number(cx: &mut TestAppContext) {
+    use gespan_core::orchestrator::mailbox::{Kind as MailKind, Mail, State};
+    let e2e = E2e::new(cx, Mode::Fake);
+    let a = e2e.start_session(Kind::Claude, cx);
+    e2e.script_frames(
+        a,
+        calling(
+            "ok",
+            vec![start_call(json!({"prompt": "child", "workspace": "main"}))],
+        ),
+    );
+    e2e.script_next_child(json!([{"text": "child done", "wait": true}]));
+    e2e.send(a, "Start one", cx);
+    let b = started(&e2e, a, 0);
+    // What the app's previous run left: B's first report, delivered, under
+    // the id this run's first turn end would make.
+    {
+        let store = e2e.store(cx);
+        let store = locked(&store).unwrap();
+        let old = Mail {
+            id: format!("report:{b}:1"),
+            to: a,
+            from: Some(b),
+            from_title: "child".into(),
+            kind: MailKind::Report,
+            text: "It finished.".into(),
+            hops: 1,
+            created_ms: 1,
+            state: State::Queued,
+            held: None,
+            released: false,
+            sender_access: None,
+        };
+        store.enqueue_mail(&old).unwrap();
+        store.mark_mail_delivered(&[old.id], 2).unwrap();
+    }
+    e2e.release(b);
+    idle_after(&e2e, a, 2, cx);
+    assert!(
+        e2e.prompts(a)[1].contains("child done"),
+        "{:?}",
+        e2e.prompts(a)
+    );
+}
+
+#[gpui::test]
+fn a_retried_start_gets_its_first_answer_even_at_the_limit(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::Fake);
+    let a = e2e.start_session(Kind::Claude, cx);
+    let start = |n: usize| {
+        start_call(json!({
+            "prompt": format!("job {n}"), "workspace": "main", "wake": "never",
+            "requestId": format!("job-{n}"),
+        }))
+    };
+    e2e.script_frames(a, calling("ok", (0..5).map(start).collect()));
+    for _ in 0..5 {
+        e2e.script_next_child(json!([{"text": "done", "wait": true}]));
+    }
+    e2e.send(a, "Start five", cx);
+    let first = started(&e2e, a, 0);
+    // The agent never saw job 0's answer and asks again, at the limit.
+    e2e.script_frames(a, calling("ok", vec![start(0)]));
+    e2e.send(a, "Retry the first", cx);
+    assert_eq!(started(&e2e, a, 5), first, "{}", e2e.mcp_calls(a)[5]);
+    for n in 0..5 {
+        e2e.release(started(&e2e, a, n));
+    }
+}
+
+#[gpui::test]
+fn a_cancelled_session_stays_stopped(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::Fake);
+    let a = e2e.start_session(Kind::Claude, cx);
+    e2e.script_frames(
+        a,
+        calling(
+            "ok",
+            vec![start_call(json!({"prompt": "b", "workspace": "main"}))],
+        ),
+    );
+    // B starts C, which reports every stop (wake always), and both work on.
+    e2e.script_next_child(json!([{
+        "text": "b done", "wait": true,
+        "mcp": [start_call(json!({"prompt": "c", "workspace": "main", "wake": "always"}))],
+    }]));
+    e2e.script_next_child(json!([{"text": "c done", "wait": true}]));
+    e2e.send(a, "Start b", cx);
+    let b = started(&e2e, a, 0);
+    e2e.until(cx, "B to start C", |e2e, _| !e2e.mcp_calls(b).is_empty());
+    let c = started(&e2e, b, 0);
+    e2e.until(cx, "C to work", |e2e, cx| e2e.busy(c, cx));
+    // A queues a message for B, then cancels it.
+    e2e.script_frames(
+        a,
+        calling(
+            "ok",
+            vec![
+                json!({"tool": "sessions_message", "arguments": {"id": b, "text": "Also do this"}}),
+                json!({"tool": "sessions_cancel", "arguments": {"id": b}}),
+            ],
+        ),
+    );
+
+    e2e.send(a, "Never mind", cx);
+
+    e2e.until(cx, "B and C to stop", |e2e, cx| {
+        !e2e.busy(b, cx) && !e2e.busy(c, cx)
+    });
+    for _ in 0..40 {
+        cx.run_until_parked();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        e2e.prompts(b).len(),
+        1,
+        "neither the queued message nor C's report restarts B: {:?}",
+        e2e.prompts(b)
+    );
+}

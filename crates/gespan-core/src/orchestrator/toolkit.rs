@@ -70,6 +70,8 @@ impl mcp_hub::Toolkit for Toolkit {
                         "wake": {"enum": ["always", "settled", "never"], "description": "When its stop is reported here; \"settled\" by default"},
                         "title": {"type": "string", "description": "Its sidebar title; the start of the prompt when left out"},
                         "requestId": {"type": "string", "description": "A key of your choosing that makes a retry safe"},
+                        "machine": {"type": "string", "description": "A herdr machine's label: start the session there instead of on this computer"},
+                        "cwd": {"type": "string", "description": "With machine: the checkout on that machine, absolute or under ~/"},
                     },
                     "required": ["prompt", "workspace"],
                     "additionalProperties": false,

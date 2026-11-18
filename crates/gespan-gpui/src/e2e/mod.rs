@@ -28,6 +28,7 @@ use std::{
 
 mod hello_tests;
 mod message_tests;
+mod remote_tests;
 mod roster_tests;
 mod start_tests;
 
@@ -81,7 +82,13 @@ fn provision(root: &Path, session: i64, harness: Kind) -> PathBuf {
         harness.binary_name(),
         std::env::consts::EXE_SUFFIX
     ));
-    std::fs::copy(fake_agent(), &binary).unwrap();
+    // Another test process's cargo may be relinking the agent this moment.
+    let mut tries = 0;
+    while let Err(error) = std::fs::copy(fake_agent(), &binary) {
+        tries += 1;
+        assert!(tries < 100, "copying the fake agent: {error}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     if let Ok(real) = std::fs::read(root.join("proxy")) {
         std::fs::write(dir.join("proxy"), real).unwrap();
     }
