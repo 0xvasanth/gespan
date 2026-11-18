@@ -25,6 +25,16 @@ can stay visible in history without switching the user's current conversation.
 Retry an uncertain mutation with the same request ID and identical input.
 Unknown fields and invalid options produce errors instead of being ignored.
 
+## Sibling sessions
+
+Every local session, with or without `/operator`, knows about the other sessions working in the same repository: in its main checkout or any of its worktrees. Nothing needs enabling.
+
+- **At the start of a turn** the agent is told about its siblings, but only when that has changed since it was last told. Each sibling gets one line: its title, its agent, its status (working, waiting on the user, on hold, idle), where it runs (`main checkout` or `worktree <branch>`), its goal (the first line of its first message) and the files it is changing. A `⚠` line flags a file that a sibling changes and this session changes too. The block is capped at 12 sessions and 2,000 characters. The chat shows only what the user typed.
+- **`sessions_list`** returns the same roster as data. With `scope: "all"` it also lists sessions in other projects, by title, agent, status and project folder name.
+- **`sessions_read`** returns a sibling's recent exchanges, paginated like `sessions.read`. It only reads sessions in the caller's own repository.
+
+A session's files are the paths its own Edit and Write calls touched that are still uncommitted in its checkout. Another session's edits in the same checkout are not counted as its own. Archived sessions, remote sessions and new chats nothing was sent from are left out.
+
 ## Project actions
 
 Agents can also list and run a project's commands with the `actions` tools; see [Project scripts](actions.md#agents).

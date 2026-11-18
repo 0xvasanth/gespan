@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Sessions know about each other:** every session is told what the other
+  sessions in the same repository and its worktrees are doing, where they run
+  and which files they are changing, with a warning when two change the same
+  file. Agents can also list their siblings and read their recent exchanges
+  with the new `sessions_list` and `sessions_read` tools.
+
 ## [0.3.0] - 2026-11-15
 
 ### Added
