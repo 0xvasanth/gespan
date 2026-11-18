@@ -100,7 +100,15 @@ fn server_list(found: Option<&Survey>) -> Div {
                     .gap(px(2.))
                     .min_w_0()
                     .child(title)
-                    .child(ui::t3(command_line(server)).truncate()),
+                    .child(ui::t3(command_line(server)).truncate())
+                    .when(!server.env.is_empty(), |column| {
+                        // What it's given, by name: approving it hands these over.
+                        let names: Vec<&str> = server.env.keys().map(String::as_str).collect();
+                        column.child(
+                            ui::t3(format!("Gets {}", names.join(", ")))
+                                .debug_selector(move || format!("setup-tools-env-{i}")),
+                        )
+                    }),
             )
     });
     let first_left = found.movable.is_empty();
@@ -416,5 +424,21 @@ mod tests {
             opened.card.read_with(cx, |c, _| c.step()),
             SetupStep::Project
         );
+    }
+
+    #[gpui::test]
+    fn a_row_names_the_variables_its_server_gets(cx: &mut TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut with_token = server("github", "npx");
+        with_token
+            .env
+            .insert("GITHUB_TOKEN".into(), "secret".into());
+        let opened = opened(
+            tmp.path(),
+            Some(vec![server("docs", "uvx"), with_token]),
+            cx,
+        );
+        assert!(!has(&opened, "setup-tools-env-0", cx));
+        assert!(has(&opened, "setup-tools-env-1", cx));
     }
 }

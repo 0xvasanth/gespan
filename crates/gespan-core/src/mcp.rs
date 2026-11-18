@@ -432,22 +432,42 @@ fn resolved(value: &str, lookup: &impl Fn(&str) -> Option<String>) -> Option<Str
 /// `env`; OpenCode puts the whole command in an array, and `environment`.
 /// An entry that couldn't run as written is left out.
 fn importable(connection: McpConnection) -> Option<Importable> {
-    importable_with(connection, &shell_variable)
+    importable_from(
+        connection,
+        &process_variable,
+        &crate::scm::shell::login_shell_var,
+    )
 }
 
-/// A variable as the user's shell has it. An app opened from the Dock has
-/// none of their shell profile's exports in its own environment.
-fn shell_variable(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .or_else(|| crate::scm::shell::login_shell_var(name))
+fn process_variable(name: &str) -> Option<String> {
+    std::env::var(name).ok()
 }
 
-fn survey(connections: Vec<McpConnection>, lookup: &impl Fn(&str) -> Option<String>) -> Survey {
+/// Reads one entry, filling its references from Gespan's own environment
+/// and, for the user's own configs only, from their login shell: an app
+/// opened from the Dock has none of their shell profile's exports. A
+/// repository's file never reaches the shell, so a project it clones can't
+/// name a secret there and have it sent wherever its entry points.
+fn importable_from(
+    connection: McpConnection,
+    env: &impl Fn(&str) -> Option<String>,
+    shell: &impl Fn(&str) -> Option<String>,
+) -> Option<Importable> {
+    let users_own = connection.scope != "project";
+    importable_with(connection, &|name| {
+        env(name).or_else(|| if users_own { shell(name) } else { None })
+    })
+}
+
+fn survey(
+    connections: Vec<McpConnection>,
+    env: &impl Fn(&str) -> Option<String>,
+    shell: &impl Fn(&str) -> Option<String>,
+) -> Survey {
     let mut survey = Survey::default();
     for connection in connections {
         let (provider, name) = (connection.provider.clone(), connection.name.clone());
-        match importable_with(connection, lookup) {
+        match importable_from(connection, env, shell) {
             Some(server) => survey.movable.push(server),
             None => survey.left_behind.push(LeftBehind { provider, name }),
         }
@@ -458,7 +478,11 @@ fn survey(connections: Vec<McpConnection>, lookup: &impl Fn(&str) -> Option<Stri
 /// Every server in the agents' configs, sorted into what can move into
 /// Gespan and what can't.
 pub fn mcp_survey(cwd: String) -> Result<Survey, String> {
-    Ok(survey(mcp_discover(cwd)?, &shell_variable))
+    Ok(survey(
+        mcp_discover(cwd)?,
+        &process_variable,
+        &crate::scm::shell::login_shell_var,
+    ))
 }
 
 fn importable_with(
@@ -901,6 +925,7 @@ mod tests {
                 ),
             ],
             &|name| (name == "SET").then(|| "the-value".to_owned()),
+            &|_| None,
         );
         assert_eq!(
             survey
@@ -918,6 +943,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("claude", "github"), ("claude", "remote")]
         );
+    }
+
+    #[test]
+    fn only_the_users_own_configs_read_the_login_shell() {
+        let shell = |name: &str| (name == "TOKEN_IN_ZSHRC").then(|| "from-shell".to_owned());
+        let env = serde_json::json!({"command":"npx","env":{"TOKEN":"${TOKEN_IN_ZSHRC}"}});
+        let user = named("mine", env.clone());
+        let local = super::McpConnection {
+            scope: "local".into(),
+            ..named("here", env.clone())
+        };
+        let project = super::McpConnection {
+            scope: "project".into(),
+            ..named("repo", env)
+        };
+        let survey = super::survey(vec![user, local, project], &|_| None, &shell);
+        assert_eq!(
+            survey
+                .movable
+                .iter()
+                .map(|s| (s.name.as_str(), s.env["TOKEN"].as_str()))
+                .collect::<Vec<_>>(),
+            [("mine", "from-shell"), ("here", "from-shell")]
+        );
+        // A repository's file can't pull a secret out of the user's shell.
+        assert_eq!(survey.left_behind.len(), 1);
+        assert_eq!(survey.left_behind[0].name, "repo");
     }
 
     #[test]
