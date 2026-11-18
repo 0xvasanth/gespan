@@ -121,6 +121,12 @@ impl Shell {
                     let _ = reply.send(Err(UNREADABLE.into()));
                     return;
                 }
+                let (Some((caller_cwd, _)), Some((target_cwd, _))) =
+                    (self.session_cwd(session, cx), self.session_cwd(id, cx))
+                else {
+                    let _ = reply.send(Err(UNREADABLE.into()));
+                    return;
+                };
                 let busy = self.session_metadata(id, cx).busy;
                 let draft = self
                     .sessions
@@ -134,6 +140,12 @@ impl Shell {
                 let store = self.store.clone();
                 cx.background_executor()
                     .spawn(async move {
+                        // Only a sibling's transcript: one in the caller's repository.
+                        let caller = repo::repo_key(Path::new(&caller_cwd));
+                        if caller.is_none() || repo::repo_key(Path::new(&target_cwd)) != caller {
+                            let _ = reply.send(Err(UNREADABLE.into()));
+                            return;
+                        }
                         let page = locked(&store)
                             .and_then(|store| store.app_conversation(id, &input, busy, draft));
                         let _ = reply.send(page);
@@ -182,7 +194,10 @@ impl Shell {
                         "title": m.title,
                         "harness": m.harness,
                         "status": m.status,
-                        "cwd": m.cwd,
+                        // The folder's name only: other projects' paths stay private.
+                        "project": Path::new(&m.cwd)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned()),
                     })
                 })
                 .collect();
