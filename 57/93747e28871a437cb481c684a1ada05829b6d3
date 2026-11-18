@@ -1,0 +1,20 @@
+docs/research/agent-orchestration.md
+  s_16360fefa80903::t_0db39f731d01e0 421
+  s_16360fefa80903::t_ecec6ba0458f27 1-420,422-542
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5793747e28871a437cb481c684a1ada05829b6d3",
+  "prompts": {},
+  "sessions": {
+    "s_16360fefa80903": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d8e2678-b215-44b6-bc28-9aeb88076770",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
