@@ -1,3 +1,4 @@
+mod mailbox;
 mod policy;
 mod repo;
 mod roster;

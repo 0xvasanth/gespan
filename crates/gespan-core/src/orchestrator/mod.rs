@@ -2,6 +2,7 @@
 //! other: the roster of sibling sessions, the tree of sessions that started
 //! one another, and the limits that keep that tree safe.
 pub mod bridge;
+pub mod mailbox;
 pub mod policy;
 pub mod repo;
 pub mod roster;

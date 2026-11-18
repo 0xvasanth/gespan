@@ -2,8 +2,12 @@
 //! a repeated `sessions_start` harmless, the event log, and the outbox of
 //! effects still to apply, all of which survive a restart.
 use super::Store;
-use crate::orchestrator::tree::{Link, Origin, Tree, Wake};
+use crate::orchestrator::{
+    mailbox::{Hold, Kind as MailKind, Mail, State as MailState},
+    tree::{Link, Origin, Tree, Wake},
+};
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// One child and the session that started it.
 #[derive(Debug, toasty::Model)]
@@ -64,6 +68,26 @@ pub(crate) struct OrchEffect {
     created_at: i64,
 }
 
+/// A message from one session to another, until and after it is delivered.
+#[derive(Debug, toasty::Model)]
+#[table = "mailbox_messages"]
+#[index(name = "mailbox_messages_to_idx", to_session_id, state)]
+pub(crate) struct MailboxMessage {
+    #[key]
+    id: String,
+    to_session_id: String,
+    sender_session_id: Option<String>,
+    sender_title: String,
+    kind: String,
+    text: String,
+    hops: i64,
+    created_at: i64,
+    delivered_at: Option<i64>,
+    state: String,
+    held_reason: Option<String>,
+    released: bool,
+}
+
 /// Run on every open (see `Kind::constraints`): the foreign keys and cascades
 /// Toasty's DDL cannot express.
 pub(crate) const CONSTRAINTS: &[&str] = &[
@@ -88,6 +112,16 @@ pub(crate) const CONSTRAINTS: &[&str] = &[
     "CREATE TRIGGER IF NOT EXISTS orch_effects_session_insert BEFORE INSERT ON orch_effects
        WHEN NOT EXISTS (SELECT 1 FROM sessions WHERE id = NEW.session_id)
        BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END",
+    // mailbox_messages.to_session_id REFERENCES sessions(id) ON DELETE CASCADE,
+    // sender_session_id ON DELETE SET NULL.
+    "CREATE TRIGGER IF NOT EXISTS mailbox_messages_to_insert BEFORE INSERT ON mailbox_messages
+       WHEN NOT EXISTS (SELECT 1 FROM sessions WHERE id = NEW.to_session_id)
+       BEGIN SELECT RAISE(ABORT, 'FOREIGN KEY constraint failed'); END",
+    "CREATE TRIGGER IF NOT EXISTS mailbox_sessions_delete AFTER DELETE ON sessions
+       BEGIN
+         DELETE FROM mailbox_messages WHERE to_session_id = OLD.id;
+         UPDATE mailbox_messages SET sender_session_id = NULL WHERE sender_session_id = OLD.id;
+       END",
     // ON DELETE CASCADE. `Store::delete` re-roots a deleted parent's
     // children first; this only catches what deletes a session another way.
     "CREATE TRIGGER IF NOT EXISTS orchestrator_sessions_delete_cascade AFTER DELETE ON sessions
@@ -113,6 +147,194 @@ fn now() -> i64 {
 }
 
 impl Store {
+    /// Adds a message to its receiver's mailbox. `false` when one with this
+    /// id is already there, so a retried send is queued once.
+    pub fn enqueue_mail(&self, mail: &Mail) -> Result<bool, String> {
+        self.shared_writable()?;
+        let to = self.persisted_session_id(mail.to)?;
+        let from = mail
+            .from
+            .map(|from| self.persisted_session_id(from))
+            .transpose()?;
+        let mail = mail.clone();
+        self.orm()?.transaction(move |tx| {
+            Box::pin(async move {
+                if MailboxMessage::filter_by_id(&mail.id)
+                    .first()
+                    .exec(&mut *tx)
+                    .await?
+                    .is_some()
+                {
+                    return Ok(false);
+                }
+                MailboxMessage::create()
+                    .id(&mail.id)
+                    .to_session_id(&to)
+                    .sender_session_id(from)
+                    .sender_title(&mail.from_title)
+                    .kind(mail.kind.id())
+                    .text(&mail.text)
+                    .hops(i64::from(mail.hops))
+                    .created_at(mail.created_ms.min(i64::MAX as u64) as i64)
+                    .delivered_at(None::<i64>)
+                    .state(mail.state.id())
+                    .held_reason(mail.held.map(|hold| hold.id().to_owned()))
+                    .released(mail.released)
+                    .exec(&mut *tx)
+                    .await?;
+                Ok(true)
+            })
+        })
+    }
+
+    /// `to`'s mail in `state`, oldest first.
+    pub fn mail_for(&self, to: i64, state: MailState) -> Result<Vec<Mail>, String> {
+        let id = self.persisted_session_id(to)?;
+        let rows = self.orm()?.run(|mut db| async move {
+            let row = MailboxMessage::fields();
+            MailboxMessage::filter(row.to_session_id().eq(id).and(row.state().eq(state.id())))
+                .order_by((row.created_at().asc(), row.id().asc()))
+                .exec(&mut db)
+                .await
+        })?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| self.mail_of(row, to))
+            .collect())
+    }
+
+    fn mail_of(&self, row: MailboxMessage, to: i64) -> Option<Mail> {
+        Some(Mail {
+            from: row
+                .sender_session_id
+                .as_deref()
+                .and_then(|from| self.resolve_existing_session_id(from)),
+            kind: MailKind::from_id(&row.kind)?,
+            state: MailState::from_id(&row.state)?,
+            held: row.held_reason.as_deref().and_then(Hold::from_id),
+            hops: u8::try_from(row.hops).unwrap_or(u8::MAX),
+            created_ms: u64::try_from(row.created_at).unwrap_or_default(),
+            id: row.id,
+            to,
+            from_title: row.sender_title,
+            text: row.text,
+            released: row.released,
+        })
+    }
+
+    /// Every session with mail still queued for it.
+    pub fn queued_targets(&self) -> Result<HashSet<i64>, String> {
+        let rows = self.orm()?.run(|mut db| async move {
+            let row = MailboxMessage::fields();
+            MailboxMessage::filter(row.state().eq(MailState::Queued.id()))
+                .select(row.to_session_id())
+                .exec(&mut db)
+                .await
+        })?;
+        Ok(rows
+            .iter()
+            .filter_map(|id| self.resolve_existing_session_id(id))
+            .collect())
+    }
+
+    /// How much mail is held for each session.
+    pub fn held_counts(&self) -> Result<std::collections::HashMap<i64, usize>, String> {
+        let rows = self.orm()?.run(|mut db| async move {
+            let row = MailboxMessage::fields();
+            MailboxMessage::filter(row.state().eq(MailState::Held.id()))
+                .select(row.to_session_id())
+                .exec(&mut db)
+                .await
+        })?;
+        let mut counts = std::collections::HashMap::new();
+        for id in rows
+            .iter()
+            .filter_map(|id| self.resolve_existing_session_id(id))
+        {
+            *counts.entry(id).or_default() += 1;
+        }
+        Ok(counts)
+    }
+
+    /// Marks mail delivered in the turn sent `at`.
+    pub fn mark_mail_delivered(&self, ids: &[String], at: u64) -> Result<(), String> {
+        self.shared_writable()?;
+        let (ids, at) = (ids.to_vec(), at.min(i64::MAX as u64) as i64);
+        self.orm()?.run(|mut db| async move {
+            for id in ids {
+                MailboxMessage::filter_by_id(id)
+                    .update()
+                    .state(MailState::Delivered.id())
+                    .delivered_at(Some(at))
+                    .exec(&mut db)
+                    .await?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Holds mail until the user lets it through.
+    pub fn hold_mail(&self, ids: &[String], why: Hold) -> Result<(), String> {
+        self.shared_writable()?;
+        let ids = ids.to_vec();
+        self.orm()?.run(|mut db| async move {
+            for id in ids {
+                MailboxMessage::filter_by_id(id)
+                    .update()
+                    .state(MailState::Held.id())
+                    .held_reason(Some(why.id().to_owned()))
+                    .exec(&mut db)
+                    .await?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Lets `to`'s held mail through, past the limits. How many.
+    pub fn release_mail(&self, to: i64) -> Result<usize, String> {
+        let held: Vec<String> = self
+            .mail_for(to, MailState::Held)?
+            .into_iter()
+            .map(|mail| mail.id)
+            .collect();
+        let count = held.len();
+        self.orm()?.run(|mut db| async move {
+            for id in held {
+                MailboxMessage::filter_by_id(id)
+                    .update()
+                    .state(MailState::Queued.id())
+                    .held_reason(None::<String>)
+                    .released(true)
+                    .exec(&mut db)
+                    .await?;
+            }
+            Ok(())
+        })?;
+        Ok(count)
+    }
+
+    /// How many turns other sessions' messages started in `to` since
+    /// `since_ms`: each delivery of one or more messages is one turn.
+    pub fn agent_turns_since(&self, to: i64, since_ms: u64) -> Result<usize, String> {
+        let since = since_ms.min(i64::MAX as u64) as i64;
+        let turns: HashSet<i64> = self
+            .mail_for(to, MailState::Delivered)?
+            .into_iter()
+            .filter(|mail| mail.kind == MailKind::Message)
+            .filter_map(|mail| self.delivered_at(&mail.id).ok().flatten())
+            .filter(|at| *at >= since)
+            .collect();
+        Ok(turns.len())
+    }
+
+    fn delivered_at(&self, id: &str) -> Result<Option<i64>, String> {
+        let id = id.to_owned();
+        let row = self.orm()?.run(|mut db| async move {
+            MailboxMessage::filter_by_id(id).first().exec(&mut db).await
+        })?;
+        Ok(row.and_then(|row| row.delivered_at))
+    }
+
     /// Every link whose sessions still exist here.
     pub fn session_links(&self) -> Result<Tree, String> {
         let rows = self

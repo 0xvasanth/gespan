@@ -880,6 +880,17 @@ impl TranscriptView {
     }
     /// The rows of the store's window, numbered as the store numbers them.
     /// Older pages above it are read-only and never part of a save.
+    /// The plain text the transcript shows, line by line, as drawn.
+    #[cfg(test)]
+    pub(crate) fn shown_plain(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter_map(|row| match &row.body {
+                Body::Plain(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
     pub(crate) fn source_rows(&self) -> &[Row] {
         &self.source[self.base..]
     }
@@ -3419,7 +3430,10 @@ impl TranscriptView {
                 // A Build sends the whole approved plan; the message names it.
                 let build = gespan_core::plan::approved_plan(&text)
                     .map(|_| gespan_core::plan::BUILD_LABEL.to_owned());
-                (build.or(display), attachments)
+                // Another session's message names its sender, not the label
+                // and fences its agent reads.
+                let mail = gespan_core::orchestrator::mailbox::shown_as(&text);
+                (build.or(mail).or(display), attachments)
             } else if signed_out.is_some() {
                 (Some(text.clone()), Arc::default())
             } else {

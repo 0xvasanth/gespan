@@ -26,7 +26,7 @@ impl Shell {
     }
     /// Delivers wake reports saved in the store, as a starting app does.
     pub(crate) fn e2e_resume_wake_reports(&mut self, cx: &mut Context<Self>) {
-        self.resume_wake_reports(cx);
+        self.resume_mail(cx);
     }
     /// The sidebar's Delete.
     pub(crate) fn e2e_delete(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {

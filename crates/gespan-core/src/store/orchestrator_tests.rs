@@ -254,3 +254,139 @@ fn an_effect_that_keeps_failing_is_given_up() {
     store.finish_orch_effect("e2", Some("no")).unwrap();
     assert!(store.pending_orch_effects(None).unwrap().is_empty());
 }
+
+mod mailbox {
+    use super::{memory, session};
+    use crate::orchestrator::mailbox::{Hold, Kind, Mail, State};
+    use crate::store::Store;
+    use std::path::Path;
+
+    fn mail(id: &str, to: i64, from: Option<i64>, kind: Kind, at: u64) -> Mail {
+        Mail {
+            id: id.into(),
+            to,
+            from,
+            from_title: "Sender".into(),
+            kind,
+            text: format!("text {id}"),
+            hops: 1,
+            created_ms: at,
+            state: State::Queued,
+            held: None,
+            released: false,
+        }
+    }
+
+    #[test]
+    fn queued_mail_survives_a_restart_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gespan.sqlite3");
+        let (a, b) = {
+            let store = Store::open(&path).unwrap();
+            let (a, b) = (session(&store), session(&store));
+            assert!(store
+                .enqueue_mail(&mail("m1", b, Some(a), Kind::Message, 5))
+                .unwrap());
+            assert!(
+                !store
+                    .enqueue_mail(&mail("m1", b, Some(a), Kind::Message, 6))
+                    .unwrap(),
+                "once"
+            );
+            store
+                .enqueue_mail(&mail("m2", b, Some(a), Kind::Report, 7))
+                .unwrap();
+            (a, b)
+        };
+        let store = Store::open(&path).unwrap();
+        let queued = store.mail_for(b, State::Queued).unwrap();
+        assert_eq!(
+            queued.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["m1", "m2"]
+        );
+        assert_eq!(
+            queued[0],
+            mail("m1", b, Some(a), Kind::Message, 5),
+            "everything round-trips"
+        );
+        assert_eq!(store.queued_targets().unwrap(), [b].into());
+        store
+            .mark_mail_delivered(&["m1".into(), "m2".into()], 100)
+            .unwrap();
+        assert!(store.mail_for(b, State::Queued).unwrap().is_empty());
+        assert!(store.queued_targets().unwrap().is_empty());
+        let delivered = store.mail_for(b, State::Delivered).unwrap();
+        assert_eq!(delivered.len(), 2);
+    }
+
+    #[test]
+    fn agent_turns_count_deliveries_of_messages_not_reports() {
+        let store = memory();
+        let (a, b) = (session(&store), session(&store));
+        for (n, at) in [(1, 10), (2, 10), (3, 20), (4, 30)] {
+            store
+                .enqueue_mail(&mail(&format!("m{n}"), b, Some(a), Kind::Message, at))
+                .unwrap();
+        }
+        store
+            .enqueue_mail(&mail("r", b, Some(a), Kind::Report, 1))
+            .unwrap();
+        // m1 and m2 arrived in one turn; m3 in another; r in a third.
+        store
+            .mark_mail_delivered(&["m1".into(), "m2".into()], 1_000)
+            .unwrap();
+        store.mark_mail_delivered(&["m3".into()], 2_000).unwrap();
+        store.mark_mail_delivered(&["r".into()], 3_000).unwrap();
+        assert_eq!(store.agent_turns_since(b, 0).unwrap(), 2);
+        assert_eq!(store.agent_turns_since(b, 1_500).unwrap(), 1);
+        assert_eq!(store.agent_turns_since(a, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn held_mail_waits_until_the_user_releases_it() {
+        let store = memory();
+        let (a, b) = (session(&store), session(&store));
+        store
+            .enqueue_mail(&mail("m1", b, Some(a), Kind::Message, 1))
+            .unwrap();
+        store.hold_mail(&["m1".into()], Hold::Rate).unwrap();
+        assert_eq!(store.held_counts().unwrap(), [(b, 1)].into());
+        assert!(store.mail_for(b, State::Queued).unwrap().is_empty());
+        let held = store.mail_for(b, State::Held).unwrap();
+        assert_eq!(held[0].held, Some(Hold::Rate));
+        assert_eq!(store.release_mail(b).unwrap(), 1);
+        let queued = store.mail_for(b, State::Queued).unwrap();
+        assert!(queued[0].released, "past the limits from now on");
+        assert_eq!(queued[0].held, None);
+        assert_eq!(store.release_mail(b).unwrap(), 0);
+        assert!(store.held_counts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_deleted_receiver_takes_its_mail_and_a_deleted_sender_is_forgotten() {
+        let mut store = memory();
+        let (a, b, c) = (session(&store), session(&store), session(&store));
+        store
+            .enqueue_mail(&mail("to-b", b, Some(a), Kind::Message, 1))
+            .unwrap();
+        store
+            .enqueue_mail(&mail("to-c", c, Some(a), Kind::Message, 1))
+            .unwrap();
+        store.delete(b).unwrap();
+        assert!(store.queued_targets().unwrap().contains(&c));
+        assert!(!store.queued_targets().unwrap().contains(&b));
+        store.delete(a).unwrap();
+        let left = store.mail_for(c, State::Queued).unwrap();
+        assert_eq!(left[0].from, None, "the sender is gone");
+        assert_eq!(left[0].from_title, "Sender", "but still named");
+    }
+
+    #[test]
+    fn mail_must_go_to_a_session_that_exists() {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let a = session(&store);
+        let mut bad = mail("x", a, Some(a), Kind::Message, 1);
+        bad.to = 123_456;
+        assert!(store.enqueue_mail(&bad).is_err());
+    }
+}

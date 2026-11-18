@@ -121,6 +121,21 @@ impl Shell {
             }
             Action::Start { input } => self.answer_start(session, *input, reply, cx),
             Action::Cancel { id } => self.answer_cancel(session, id, reply, cx),
+            Action::Message {
+                id,
+                text,
+                request_id,
+            } => self.answer_message(session, id, text, request_id, reply, cx),
+            Action::Wait {
+                ids,
+                timeout_seconds,
+            } => self.answer_wait(
+                session,
+                ids,
+                std::time::Duration::from_secs(timeout_seconds),
+                reply,
+                cx,
+            ),
             Action::Read { id, before } => {
                 let readable =
                     self.session_summaries.contains_key(&id) || self.sessions.contains_key(&id);

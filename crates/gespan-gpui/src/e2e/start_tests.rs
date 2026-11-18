@@ -269,7 +269,10 @@ fn bad_input_starts_nothing(cx: &mut TestAppContext) {
             vec![
                 start_call(json!({"prompt": "p", "workspace": "main", "colour": "red"})),
                 start_call(json!({"prompt": "p", "workspace": "nowhere"})),
-                start_call(json!({"prompt": "p", "workspace": "existing:/definitely/not/here"})),
+                start_call(json!({"prompt": "p", "workspace": format!(
+                    "existing:{}",
+                    std::env::temp_dir().join("definitely-not-a-worktree").display()
+                )})),
             ],
         ),
     );
@@ -512,16 +515,26 @@ fn a_report_saved_before_a_restart_is_delivered_once(cx: &mut TestAppContext) {
     let a = e2e.start_session(Kind::Claude, cx);
     e2e.send(a, "hello", cx);
     // What a window that closed with a report still undelivered left behind.
-    let payload = json!({
-        "child": 77, "title": "Earlier helper", "outcome": "finished",
-        "reply": "Did the earlier thing.",
-    });
+    let helper = e2e.start_session(Kind::Claude, cx);
     {
+        use gespan_core::orchestrator::mailbox::{Kind as MailKind, Mail, State};
         let store = e2e.store(cx);
         let store = locked(&store).unwrap();
         assert!(
             store
-                .queue_orch_effect("report:77:1", "report", a, &payload)
+                .enqueue_mail(&Mail {
+                    id: "report:earlier".into(),
+                    to: a,
+                    from: Some(helper),
+                    from_title: "Earlier helper".into(),
+                    kind: MailKind::Report,
+                    text: "It finished.\n\nDid the earlier thing.".into(),
+                    hops: 1,
+                    created_ms: 1,
+                    state: State::Queued,
+                    held: None,
+                    released: false,
+                })
                 .unwrap()
         );
     }
@@ -533,7 +546,7 @@ fn a_report_saved_before_a_restart_is_delivered_once(cx: &mut TestAppContext) {
     idle_after(&e2e, a, 2, cx);
     let report = &e2e.prompts(a)[1];
     assert!(
-        report.contains("[From session \"Earlier helper\" (id 77)]"),
+        report.contains(&format!("[From session \"Earlier helper\" (id {helper})]")),
         "{report}"
     );
     assert!(report.contains("Did the earlier thing."), "{report}");
@@ -639,4 +652,30 @@ fn the_sidebar_stops_what_a_chat_started(cx: &mut TestAppContext) {
         !e2e.busy(b, cx) && !e2e.busy(c, cx)
     });
     assert!(!menu(&e2e, cx).iter().any(|(id, _)| id == "stop-started"));
+}
+
+#[gpui::test]
+fn a_plan_turn_starts_only_read_only_sessions(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::Fake);
+    let a = e2e.start_session(Kind::Claude, cx);
+    e2e.session(a, cx)
+        .update(cx, |view, _| view.settings.plan = true);
+    e2e.script_frames(
+        a,
+        calling(
+            "ok",
+            vec![
+                start_call(json!({"prompt": "look", "workspace": "main", "wake": "never"})),
+                start_call(json!({"prompt": "edit", "workspace": "main", "access": "supervised"})),
+            ],
+        ),
+    );
+    e2e.send(a, "Plan it", cx);
+    assert_eq!(
+        e2e.mcp_calls(a)[0]["result"]["access"],
+        "read-only",
+        "a plan turn's child is read-only though the composer says supervised"
+    );
+    let refused = error_of(&e2e, a, 1);
+    assert!(refused.starts_with("permission_escalation: "), "{refused}");
 }

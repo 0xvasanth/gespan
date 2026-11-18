@@ -14,6 +14,10 @@ const LIST_DESCRIPTION: &str = "List the other sessions working in this reposito
 const START_DESCRIPTION: &str = "Start a new session that works on its own, shown under this one in the sidebar, and get its id at once. workspace \"worktree\" gives it a new git worktree of this repository, \"main\" the main checkout, \"existing:<path>\" a checkout already on disk. It runs with this session's permissions or narrower (access). When it finishes, a report arrives here as a new message (wake \"settled\", the default; \"always\" also reports when it waits on the user or is stopped; \"never\" sends none). Pass the same requestId to retry safely: a repeated request returns the first answer. At most 5 started sessions run at once, two levels deep.";
 const CANCEL_DESCRIPTION: &str =
     "Stop a session this one started (or one they started), and every session below it.";
+const MESSAGE_DESCRIPTION: &str = "Send another session in this repository a message. It is queued and arrives as a new turn the next time that session is idle, labelled with this session's title; nothing interrupts a running turn. Use the same requestId to retry safely. Messages passed back and forth too often are held for the user.";
+const WAIT_DESCRIPTION: &str = "Wait until one of these sessions stops working (it is idle, waiting on the user, archived or deleted), for at most timeoutSeconds (25, default 20). Returns which stopped, or timedOut.";
+const MAX_MESSAGE: usize = 32_000;
+const MAX_WAIT_IDS: usize = 20;
 const READ_DESCRIPTION: &str = "Read another session's recent exchanges, newest first. Pass the before cursor from a previous read for older ones.";
 
 pub struct Toolkit;
@@ -85,6 +89,35 @@ impl mcp_hub::Toolkit for Toolkit {
                 },
                 "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false},
             }),
+            json!({
+                "name": "sessions_message",
+                "description": MESSAGE_DESCRIPTION,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer", "description": "The session's id, from sessions_list"},
+                        "text": {"type": "string", "description": "The message"},
+                        "requestId": {"type": "string", "description": "A key of your choosing that makes a retry safe"},
+                    },
+                    "required": ["id", "text"],
+                    "additionalProperties": false,
+                },
+                "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
+            }),
+            json!({
+                "name": "sessions_wait",
+                "description": WAIT_DESCRIPTION,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "ids": {"type": "array", "items": {"type": "integer"}, "description": "Session ids, at most 20"},
+                        "timeoutSeconds": {"type": "number", "description": "0 to 25; 20 by default"},
+                    },
+                    "required": ["ids"],
+                    "additionalProperties": false,
+                },
+                "annotations": {"readOnlyHint": true, "openWorldHint": false},
+            }),
         ]
     }
 
@@ -128,6 +161,70 @@ impl mcp_hub::Toolkit for Toolkit {
                     .and_then(Value::as_i64)
                     .ok_or_else(|| Refusal::invalid("id must be a session id, a whole number"))?;
                 Action::Cancel { id }
+            }
+            "sessions_message" => {
+                only(tool, &fields, &["id", "text", "requestId"]).map_err(Refusal::invalid)?;
+                let id = fields
+                    .get("id")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| Refusal::invalid("id must be a session id, a whole number"))?;
+                let text = match fields.get("text") {
+                    Some(Value::String(text))
+                        if !text.trim().is_empty() && text.chars().count() <= MAX_MESSAGE =>
+                    {
+                        text.clone()
+                    }
+                    _ => {
+                        return Err(Refusal::invalid(format!(
+                            "text must be the message, 1 to {MAX_MESSAGE} characters"
+                        ))
+                        .into())
+                    }
+                };
+                let request_id = match fields.get("requestId") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(id)) if !id.is_empty() && id.len() <= 200 => {
+                        Some(id.clone())
+                    }
+                    Some(_) => {
+                        return Err(
+                            Refusal::invalid("requestId must be a short, non-empty string").into(),
+                        )
+                    }
+                };
+                Action::Message {
+                    id,
+                    text,
+                    request_id,
+                }
+            }
+            "sessions_wait" => {
+                only(tool, &fields, &["ids", "timeoutSeconds"]).map_err(Refusal::invalid)?;
+                let ids: Vec<i64> = fields
+                    .get("ids")
+                    .and_then(Value::as_array)
+                    .and_then(|ids| ids.iter().map(Value::as_i64).collect::<Option<Vec<_>>>())
+                    .filter(|ids| !ids.is_empty() && ids.len() <= MAX_WAIT_IDS)
+                    .ok_or_else(|| {
+                        Refusal::invalid(format!(
+                            "ids must be 1 to {MAX_WAIT_IDS} session ids, whole numbers"
+                        ))
+                    })?;
+                let max = crate::orchestration::run::MAX_WAIT_SECONDS;
+                let timeout_seconds = match fields.get("timeoutSeconds") {
+                    None | Some(Value::Null) => 20,
+                    Some(value) => value
+                        .as_f64()
+                        .filter(|seconds| (0.0..=max as f64).contains(seconds))
+                        .map(|seconds| seconds.ceil() as u64)
+                        .ok_or_else(|| {
+                            Refusal::invalid(format!("timeoutSeconds must be 0 to {max}"))
+                        })?,
+                };
+                Action::Wait {
+                    ids,
+                    timeout_seconds,
+                }
             }
             _ => return Err(format!("Unknown sessions tool: {tool}")),
         };
