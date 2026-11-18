@@ -24,3 +24,8 @@ snapshot_name = "0003_snapshot.toml"
 id = 5915738051664952662
 name = "0004_orchestrator_core.sql"
 snapshot_name = "0004_snapshot.toml"
+
+[[migrations]]
+id = 4525009923261987073
+name = "0005_mailbox.sql"
+snapshot_name = "0005_snapshot.toml"

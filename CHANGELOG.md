@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never get broader permissions than their chat, go at most two levels deep
   with five running at once, and can be stopped from the chat's sidebar
   menu or by the agent with `sessions_cancel`.
+- **Sessions message each other:** `sessions_message` queues a message that
+  arrives, labelled with its sender, the next time the other session is idle,
+  never in the middle of a turn. Messages passed back and forth too often,
+  too many in an hour, or sent to a session with broader permissions wait for
+  you. `sessions_wait` waits for other sessions to finish.
 
 ## [0.3.0] - 2026-11-15
 

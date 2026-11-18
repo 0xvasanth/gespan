@@ -26,6 +26,15 @@ pub enum Action {
     Start { input: Box<StartInput> },
     /// Stop a session the caller started, and everything below it.
     Cancel { id: i64 },
+    /// Queue a message for another session.
+    Message {
+        id: i64,
+        text: String,
+        request_id: Option<String>,
+    },
+    /// Wait until one of these sessions stops working, for at most
+    /// `timeout_seconds`.
+    Wait { ids: Vec<i64>, timeout_seconds: u64 },
 }
 
 /// Which sessions a list covers.

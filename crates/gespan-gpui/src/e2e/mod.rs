@@ -27,6 +27,7 @@ use std::{
 };
 
 mod hello_tests;
+mod message_tests;
 mod roster_tests;
 mod start_tests;
 

@@ -8,7 +8,7 @@
 use super::Shell;
 use crate::runtime::{Database, locked};
 use gespan_core::{
-    agent::Settings,
+    agent::{AccessMode, Settings},
     app_access as app,
     orchestrator::{
         bridge::UNAVAILABLE,
@@ -32,10 +32,6 @@ use std::{
 
 type Reply = mpsc::Sender<Result<Value, String>>;
 
-/// How much of a child's last reply its report quotes.
-const REPORT_REPLY: usize = 2_000;
-const REPORT: &str = "report";
-
 /// A child the store now holds, for the window to show and run.
 struct Started {
     summary: Session,
@@ -50,6 +46,17 @@ enum Created {
     New(Box<Started>),
 }
 
+/// The mode a session's turns run in: a plan, orchestrator or read-only
+/// turn is read-only whatever its composer says, and so is what it starts
+/// or asks of others.
+pub(super) fn effective_access(view: &crate::conversation::Conversation) -> AccessMode {
+    if view.app_read_only || view.settings.plan {
+        AccessMode::ReadOnly
+    } else {
+        view.settings.access
+    }
+}
+
 /// A request id for a start that brought none, unique in this process.
 fn fresh_request() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -62,7 +69,7 @@ fn fresh_request() -> String {
 
 /// The `/operator` start's input for the same request, so both share one
 /// launch path until `/operator` is retired.
-fn launch_input(input: &StartInput, access: gespan_core::agent::AccessMode) -> Value {
+fn launch_input(input: &StartInput, access: AccessMode) -> Value {
     let mut fields = json!({
         "prompt": input.prompt,
         "runtimeMode": access.id(),
@@ -231,7 +238,9 @@ impl Shell {
         let project = view.summary.cwd.clone();
         let provider = view.summary.provider.clone();
         let mut settings = view.settings.clone();
+        let caller_access = effective_access(view);
         let live = self.live_sessions(cx);
+        let starting = self.starting.get(&caller).copied().unwrap_or(0);
         let decided = decide(
             &State {
                 tree: &self.session_tree,
@@ -239,7 +248,8 @@ impl Shell {
             },
             Command::Start {
                 caller,
-                caller_access: settings.access,
+                caller_access,
+                starting,
                 input,
             },
         );
@@ -268,6 +278,9 @@ impl Shell {
             .request_id
             .clone()
             .unwrap_or_else(fresh_request);
+        // Counted as live until it is answered, so parallel calls can't
+        // start more than the limit.
+        *self.starting.entry(caller).or_default() += 1;
         let store = self.store.clone();
         let work = cx.background_executor().spawn(async move {
             create_child(
@@ -277,6 +290,9 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let created = work.await;
             let answer = this.update(cx, |this, cx| {
+                if let Some(count) = this.starting.get_mut(&caller) {
+                    *count = count.saturating_sub(1);
+                }
                 let started = match created? {
                     Created::Again(value) => return Ok(value),
                     Created::New(started) => *started,
@@ -306,6 +322,9 @@ impl Shell {
             .insert(id, settings.worktree_cwd.clone());
         self.session_tree.insert(link);
         self.launching.insert(id);
+        // Its first turn is one hop from the turn that started it.
+        let hops = self.turn_hops.get(&link.parent).copied().unwrap_or(0);
+        self.turn_hops.insert(id, hops.saturating_add(1));
         self.add(summary, cx);
         self.started_by.insert(id, link.parent);
         if let Some(view) = self.sessions.get(&id) {
@@ -489,179 +508,8 @@ impl Shell {
         if let Some(parent) = self.session_tree.parent(id) {
             self.refresh_child_watches(parent, cx);
         }
-        if self.session_tree.children(id).is_empty() {
-            return;
-        }
-        self.flush_reports(id, cx);
+        self.orchestrator_typed(id, cx);
+        self.deliver_mail(id, cx);
+        self.resolve_waits(cx);
     }
-
-    /// Saves a report for `parent`, then tries to deliver it.
-    fn queue_report(
-        &mut self,
-        parent: i64,
-        child: i64,
-        outcome: Outcome,
-        turn: u64,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(view) = self.sessions.get(&child) else {
-            return;
-        };
-        let view = view.read(cx);
-        let title = view.summary.title.clone();
-        let reply = match outcome {
-            Outcome::WaitingOnUser => view
-                .pending_input(cx)
-                .map(|input| input.label)
-                .unwrap_or_default(),
-            _ => view.last_reply(cx),
-        };
-        let reply: String = reply.chars().take(REPORT_REPLY).collect();
-        let effect = match outcome {
-            Outcome::WaitingOnUser => format!("report:{child}:{turn}:waiting"),
-            _ => format!("report:{child}:{turn}"),
-        };
-        let payload = json!({
-            "child": child,
-            "title": title,
-            "outcome": outcome,
-            "reply": reply,
-        });
-        let store = self.store.clone();
-        let work = cx.background_executor().spawn(async move {
-            let store = locked(&store)?;
-            store.queue_orch_effect(&effect, REPORT, parent, &payload)?;
-            store.append_orch_event("report-queued", parent, &payload)
-        });
-        cx.spawn(async move |this, cx| {
-            if work.await.is_ok() {
-                let _ = this.update(cx, |this, cx| this.flush_reports(parent, cx));
-            }
-        })
-        .detach();
-    }
-
-    /// Delivers every report waiting for `parent` as one turn, if `parent`
-    /// is idle: not working, not held, not waiting on the user, with nothing
-    /// typed or queued. A parent that isn't open is loaded off-screen; an
-    /// archived one keeps its reports until it is unarchived.
-    fn flush_reports(&mut self, parent: i64, cx: &mut Context<Self>) {
-        if self.reports_flushing.contains(&parent) {
-            return;
-        }
-        if self
-            .session_summaries
-            .get(&parent)
-            .is_some_and(|summary| summary.archived)
-        {
-            return;
-        }
-        let Some(view) = self.ensure_session(parent, cx) else {
-            return;
-        };
-        let idle = {
-            let live = view.read(cx);
-            !live.summary.archived
-                && !live.needs_approval()
-                && !self.session_held(parent, Some(live), cx)
-                && live.available_for_managed_run(cx)
-        };
-        if !idle {
-            return;
-        }
-        self.reports_flushing.insert(parent);
-        let store = self.store.clone();
-        let work = cx.background_executor().spawn(async move {
-            let pending = locked(&store)?.pending_orch_effects(Some(REPORT))?;
-            Ok::<_, String>(
-                pending
-                    .into_iter()
-                    .filter(|effect| effect.session == parent)
-                    .collect::<Vec<_>>(),
-            )
-        });
-        cx.spawn(async move |this, cx| {
-            let pending = work.await.unwrap_or_default();
-            let _ = this.update(cx, |this, cx| {
-                this.reports_flushing.remove(&parent);
-                if pending.is_empty() {
-                    return;
-                }
-                let Some(view) = this.sessions.get(&parent).cloned() else {
-                    return;
-                };
-                // The parent may have started a turn meanwhile.
-                if !view.read(cx).available_for_managed_run(cx) {
-                    return;
-                }
-                let text = report_text(
-                    &pending
-                        .iter()
-                        .map(|effect| &effect.payload)
-                        .collect::<Vec<_>>(),
-                );
-                view.update(cx, |view, cx| view.send_worker_turn(text, cx));
-                let ids: Vec<String> = pending.into_iter().map(|effect| effect.id).collect();
-                let store = this.store.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        if let Ok(store) = locked(&store) {
-                            for id in ids {
-                                let _ = store.finish_orch_effect(&id, None);
-                            }
-                        }
-                    })
-                    .detach();
-            });
-        })
-        .detach();
-    }
-
-    /// At start: reports saved before the app last closed are delivered.
-    pub(super) fn resume_wake_reports(&mut self, cx: &mut Context<Self>) {
-        let store = self.store.clone();
-        let work = cx.background_executor().spawn(async move {
-            let pending = locked(&store)?.pending_orch_effects(Some(REPORT))?;
-            Ok::<_, String>(
-                pending
-                    .into_iter()
-                    .map(|effect| effect.session)
-                    .collect::<HashSet<_>>(),
-            )
-        });
-        cx.spawn(async move |this, cx| {
-            let parents = work.await.unwrap_or_default();
-            let _ = this.update(cx, |this, cx| {
-                for parent in parents {
-                    this.flush_reports(parent, cx);
-                }
-            });
-        })
-        .detach();
-    }
-}
-
-/// One turn's text for every report waiting for a parent, each labelled with
-/// the child that sent it.
-fn report_text(reports: &[&Value]) -> String {
-    reports
-        .iter()
-        .map(|report| {
-            let title = report["title"].as_str().unwrap_or("A session");
-            let outcome: Outcome =
-                serde_json::from_value(report["outcome"].clone()).unwrap_or(Outcome::Finished);
-            let mut text = format!(
-                "[From session \"{}\" (id {})] It {}.",
-                title.replace('"', "'"),
-                report["child"],
-                outcome.describe()
-            );
-            if let Some(reply) = report["reply"].as_str().filter(|r| !r.trim().is_empty()) {
-                text.push_str("\n\n");
-                text.push_str(reply.trim());
-            }
-            text
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n---\n\n")
 }

@@ -45,6 +45,7 @@ mod notifications;
 mod open_in_editor;
 mod orchestration;
 mod orchestrator;
+mod orchestrator_mail;
 #[cfg(test)]
 mod orchestrator_tests;
 mod orchestrator_tree;
@@ -748,12 +749,22 @@ pub(crate) struct Shell {
     session_tree: gespan_core::orchestrator::tree::Tree,
     /// Children started but whose first turn hasn't ended: live already.
     launching: HashSet<i64>,
+    /// Each caller's `sessions_start` calls still being answered.
+    starting: HashMap<i64, usize>,
     /// The turn ends each session's parent was already told about.
     seen_turn_ends: HashMap<i64, u64>,
     /// Children whose wait on the user was already reported.
     waiting_reported: HashSet<i64>,
-    /// Parents whose wake reports are being delivered.
-    reports_flushing: HashSet<i64>,
+    /// Sessions whose mail is being delivered.
+    mail_flushing: HashSet<i64>,
+    /// How many hops from a user's own turn each session's current turn is.
+    turn_hops: HashMap<i64, u8>,
+    /// The typed turns each session had when last looked at.
+    seen_typed: HashMap<i64, u64>,
+    /// Mail held for each session until the user lets it through.
+    held_mail: HashMap<i64, usize>,
+    /// `sessions_wait` calls still waiting.
+    mail_waiters: Vec<orchestrator_mail::Waiter>,
     mobile: mobile_host::Mobile,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
@@ -1264,9 +1275,14 @@ impl Shell {
             facts_pending: HashSet::new(),
             session_tree: sidebar_metadata.links.clone(),
             launching: HashSet::new(),
+            starting: HashMap::new(),
             seen_turn_ends: HashMap::new(),
             waiting_reported: HashSet::new(),
-            reports_flushing: HashSet::new(),
+            mail_flushing: HashSet::new(),
+            turn_hops: HashMap::new(),
+            seen_typed: HashMap::new(),
+            held_mail: HashMap::new(),
+            mail_waiters: Vec::new(),
             mobile: mobile_host::Mobile::default(),
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
@@ -1612,7 +1628,7 @@ impl Shell {
         // Every window hosts its own runs, so each has its own control bridge.
         this.init_control_bridge(cx);
         this.init_orchestrator_bridge(cx);
-        this.resume_wake_reports(cx);
+        this.resume_mail(cx);
         for summary in summaries {
             if this
                 .pilots

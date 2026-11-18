@@ -47,6 +47,7 @@ fn start(tree: &Tree, live: &HashSet<i64>, caller: i64) -> Result<Vec<Effect>, C
         Command::Start {
             caller,
             caller_access: AccessMode::Auto,
+            starting: 0,
             input: input(),
         },
     )
@@ -143,6 +144,7 @@ fn a_broader_mode_is_refused_and_a_narrower_one_kept() {
         Command::Start {
             caller: 1,
             caller_access: AccessMode::Supervised,
+            starting: 0,
             input: wider,
         },
     )
@@ -158,6 +160,7 @@ fn a_broader_mode_is_refused_and_a_narrower_one_kept() {
         Command::Start {
             caller: 1,
             caller_access: AccessMode::Supervised,
+            starting: 0,
             input: narrower,
         },
     )
@@ -275,4 +278,35 @@ fn deleting_a_child_removes_only_its_link_and_reroots_below() {
     assert_eq!(tree.children(1), [3]);
     assert_eq!(changed.removed, [2, 4]);
     assert!(changed.updated.is_empty());
+}
+
+#[test]
+fn starts_still_in_flight_count_toward_the_limit() {
+    let links: Vec<Link> = (0..3).map(|n| link(100 + n, 50, 50, 1)).collect();
+    let tree = Tree::new(links);
+    let live: HashSet<i64> = (100..103).collect();
+    let try_start = |starting| {
+        decide(
+            &State {
+                tree: &tree,
+                live: &live,
+            },
+            Command::Start {
+                caller: 50,
+                caller_access: AccessMode::Auto,
+                starting,
+                input: input(),
+            },
+        )
+        .map_err(|refusal| refusal.code)
+    };
+    assert!(
+        try_start(1).is_ok(),
+        "3 running + 1 starting + this one = 5"
+    );
+    assert_eq!(
+        try_start(2),
+        Err(Code::FanoutLimit),
+        "parallel calls can't overshoot"
+    );
 }

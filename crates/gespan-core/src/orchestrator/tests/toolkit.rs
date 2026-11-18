@@ -24,11 +24,14 @@ fn the_toolkit_lists_reading_and_starting_tools() {
             "sessions_list",
             "sessions_read",
             "sessions_start",
-            "sessions_cancel"
+            "sessions_cancel",
+            "sessions_message",
+            "sessions_wait"
         ]
     );
     for tool in &tools {
-        let reads = tool["name"] == "sessions_list" || tool["name"] == "sessions_read";
+        let reads = ["sessions_list", "sessions_read", "sessions_wait"]
+            .contains(&tool["name"].as_str().unwrap());
         assert_eq!(tool["annotations"]["readOnlyHint"], reads, "{tool}");
         assert_eq!(tool["inputSchema"]["additionalProperties"], false, "{tool}");
     }
@@ -227,6 +230,96 @@ fn a_cancel_carries_its_target() {
     for input in [json!({}), json!({"id":"9"}), json!({"id":9,"all":true})] {
         let error = Toolkit
             .call(&grant(9_008), "sessions_cancel", input.clone())
+            .unwrap_err();
+        assert!(error.starts_with("invalid_input: "), "{input}: {error}");
+    }
+}
+
+#[test]
+fn a_message_carries_its_target_text_and_request() {
+    let (server, rx) = Server::start();
+    server.serve(48);
+    let worker = std::thread::spawn(|| {
+        Toolkit.call(
+            &grant(48),
+            "sessions_message",
+            json!({"id": 5, "text": "Rebase on main", "requestId": "m1"}),
+        )
+    });
+    let request = rx.recv_blocking().unwrap();
+    assert_eq!(
+        request.action,
+        Action::Message {
+            id: 5,
+            text: "Rebase on main".into(),
+            request_id: Some("m1".into())
+        }
+    );
+    request.reply.send(Ok(json!({"state": "queued"}))).unwrap();
+    worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn a_bad_message_is_refused_before_the_app_sees_it() {
+    for input in [
+        json!({"text": "hi"}),
+        json!({"id": 5}),
+        json!({"id": 5, "text": "   "}),
+        json!({"id": 5, "text": "x".repeat(32_001)}),
+        json!({"id": 5, "text": "hi", "cc": [6]}),
+        json!({"id": 5, "text": "hi", "requestId": ""}),
+    ] {
+        let error = Toolkit
+            .call(&grant(9_009), "sessions_message", input.clone())
+            .unwrap_err();
+        assert!(error.starts_with("invalid_input: "), "{input}: {error}");
+    }
+}
+
+#[test]
+fn a_wait_is_bounded() {
+    let (server, rx) = Server::start();
+    server.serve(49);
+    let worker = std::thread::spawn(|| {
+        Toolkit.call(
+            &grant(49),
+            "sessions_wait",
+            json!({"ids": [3, 4], "timeoutSeconds": 2}),
+        )
+    });
+    let request = rx.recv_blocking().unwrap();
+    assert_eq!(
+        request.action,
+        Action::Wait {
+            ids: vec![3, 4],
+            timeout_seconds: 2
+        }
+    );
+    request.reply.send(Ok(json!({"timedOut": true}))).unwrap();
+    worker.join().unwrap().unwrap();
+    let worker =
+        std::thread::spawn(|| Toolkit.call(&grant(49), "sessions_wait", json!({"ids": [3]})));
+    let request = rx.recv_blocking().unwrap();
+    assert_eq!(
+        request.action,
+        Action::Wait {
+            ids: vec![3],
+            timeout_seconds: 20
+        },
+        "20 seconds by default"
+    );
+    request.reply.send(Ok(json!({}))).unwrap();
+    worker.join().unwrap().unwrap();
+    for input in [
+        json!({"ids": []}),
+        json!({"ids": [1], "timeoutSeconds": 26}),
+        json!({"ids": [1], "timeoutSeconds": -1}),
+        json!({"ids": ["1"]}),
+        json!({"ids": (0..21).collect::<Vec<_>>()}),
+        json!({"ids": [1], "forever": true}),
+    ] {
+        let error = Toolkit
+            .call(&grant(9_010), "sessions_wait", input.clone())
             .unwrap_err();
         assert!(error.starts_with("invalid_input: "), "{input}: {error}");
     }

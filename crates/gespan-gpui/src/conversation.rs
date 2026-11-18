@@ -244,6 +244,8 @@ pub(crate) struct Conversation {
     /// How many turns have ended, and how the last one did, for the
     /// session that started this one.
     pub(crate) turn_ends: u64,
+    /// Turns the user typed, which start a fresh hop count for messages.
+    pub(crate) typed_turns: u64,
     pub(crate) last_turn: Option<gespan_core::orchestrator::tree::Outcome>,
     /// The running turn's policy, independent of the next composer's mode.
     pub(crate) app_read_only: bool,
@@ -884,6 +886,7 @@ impl Conversation {
             last_roster: None,
             roster_in_flight: None,
             turn_ends: 0,
+            typed_turns: 0,
             last_turn: None,
             app_read_only: false,
             planning_orchestration: false,
@@ -1559,6 +1562,9 @@ impl Conversation {
         let mut settings = replaying.unwrap_or_else(|| self.settings.clone());
         // This launch's own: never what the thread's settings say.
         settings.user_typed = typed;
+        if typed {
+            self.typed_turns += 1;
+        }
         if let Some(model) = self.model_info().filter(|_| !replay) {
             for control in &model.controls {
                 settings

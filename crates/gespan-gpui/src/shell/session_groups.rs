@@ -614,6 +614,24 @@ impl Shell {
         } else {
             self.running_descendants(id, cx)
         };
+        let held = if multiple {
+            0
+        } else {
+            self.held_mail.get(&id).copied().unwrap_or(0)
+        };
+        if held > 0 {
+            items.extend([
+                MenuItem::Separator,
+                MenuAction::new(
+                    "deliver-held",
+                    match held {
+                        1 => "Deliver the held message".to_owned(),
+                        n => format!("Deliver {n} held messages"),
+                    },
+                )
+                .into(),
+            ]);
+        }
         if !running.is_empty() {
             items.extend([
                 MenuItem::Separator,
@@ -684,6 +702,7 @@ impl Shell {
             }
             "rename" => self.start_rename(RenameTarget::Session(id), window, cx),
             "stop-started" => self.stop_started(id, cx),
+            "deliver-held" => self.release_held_mail(id, cx),
             "link-work-item" => self.open_link_dialog(id, window, cx),
             "ticket-open" => {
                 if let Some(WorkItem::Ticket(ticket)) =

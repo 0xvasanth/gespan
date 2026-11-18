@@ -218,7 +218,10 @@ pub struct State<'a> {
 pub enum Command {
     Start {
         caller: i64,
+        /// The mode the caller's turn runs in.
         caller_access: AccessMode,
+        /// The caller's starts not yet answered, which will be live.
+        starting: usize,
         input: StartInput,
     },
     Cancel {
@@ -261,6 +264,7 @@ pub fn decide(state: &State, command: Command) -> Result<Vec<Effect>, Refusal> {
         Command::Start {
             caller,
             caller_access,
+            starting,
             input,
         } => {
             let depth = state.tree.depth(caller) + 1;
@@ -275,7 +279,8 @@ pub fn decide(state: &State, command: Command) -> Result<Vec<Effect>, Refusal> {
                 .children(caller)
                 .into_iter()
                 .filter(|child| state.live.contains(child))
-                .count();
+                .count()
+                + starting;
             if live >= MAX_LIVE_CHILDREN {
                 return Err(Refusal::new(
                     Code::FanoutLimit,

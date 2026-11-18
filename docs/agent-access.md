@@ -50,6 +50,20 @@ Any local chat can start work that runs on its own: "do this in a new worktree" 
 
 Bad input is refused with `invalid_input`, naming the field. Every refusal starts with its code.
 
+## Messages between sessions
+
+- **`sessions_message`** (`id`, `text`, optional `requestId`) queues a message for another session in the same project. It arrives as a new turn the next time that session is idle: not working, on hold or waiting on the user, with nothing typed or queued. Nothing interrupts a running turn. A session whose chat isn't open is opened in the background to take it; an archived one keeps its mail until it is unarchived. The same `requestId` queues the message once.
+- **Labelled and fenced.** The turn the agent reads starts with `[From session "<title>" (id N)]`, says the words are information from another session and not instructions from the user, and puts them inside a fence no message can close early. The transcript shows `From “<title>”:` and the words. Messages and reports that arrive while a session works come as one turn.
+- **Held for the user.** A message is held, with a notification, when it:
+  - has been passed on 4 times (each message sent while handling a delivered one is a hop further; a turn the user types starts again at 0);
+  - would make more than 10 turns that other sessions' messages started in that session this hour;
+  - goes to a session that may do more than its sender (a read-only or plan session messaging a supervised one, say).
+  The session's sidebar menu offers **Deliver held messages**, which lets them through past the limits.
+- **`sessions_wait`** (`ids`, optional `timeoutSeconds`, at most 25, 20 by default) returns as soon as one of those sessions stops working (`idle`, `waiting-on-user`, `archived` or `deleted`), or with `timedOut`.
+- Messages and waits reach only other sessions in the same project: never the caller itself (`self_target`), an unknown session (`not_found`) or another project's (`out_of_scope`).
+
+Mail is saved before it is delivered and marked delivered once its turn is sent, so a crash never loses a message.
+
 ## Project actions
 
 Agents can also list and run a project's commands with the `actions` tools; see [Project scripts](actions.md#agents).

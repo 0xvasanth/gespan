@@ -32,6 +32,8 @@ impl Conversation {
         }
         self.cancel_title_generation();
         let placeholder = self.summary.title.clone();
+        // A chat another session's message started is named by what it says.
+        let message = gespan_core::orchestrator::mailbox::words_of(message);
         let seed = message
             .split_whitespace()
             .collect::<Vec<_>>()
