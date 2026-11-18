@@ -69,6 +69,7 @@ pub mod watching;
 
 pub mod composer;
 pub mod orchestration;
+pub mod orchestrator;
 pub mod skills;
 
 pub mod search;
