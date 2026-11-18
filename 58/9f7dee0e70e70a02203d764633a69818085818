@@ -1,0 +1,108 @@
+crates/gespan-core/migrations/gespan/migrations/0006_mail_sender_access.sql
+  s_16360fefa80903::t_14f00de28a31e1 1
+crates/gespan-gpui/src/shell/quick_open.rs
+  s_16360fefa80903::t_b1a54a3e7a6420 132
+crates/gespan-core/src/store/shared/edit.rs
+  s_16360fefa80903::t_3aff4a8ae69410 127
+crates/gespan-core/migrations/gespan/history.toml
+  s_16360fefa80903::t_14f00de28a31e1 32-36
+website/src/pages/FeaturesPage.tsx
+  s_16360fefa80903::t_9a2bc693ba1224 229
+  s_16360fefa80903::t_5abd6eb9991dc0 231,233
+crates/gespan-gpui/src/conversation/composer_features.rs
+  s_16360fefa80903::t_d988f2efbd4c4c 125,177,191
+crates/gespan-gpui/src/e2e/start_tests.rs
+  s_16360fefa80903::t_14f00de28a31e1 537
+crates/gespan-gpui/src/quick_composer.rs
+  s_16360fefa80903::t_b1a54a3e7a6420 38,407,411,598-599
+README.md
+  s_16360fefa80903::t_57178d58c51858 186-187,245-246,258
+crates/gespan-gpui/src/runtime/remote.rs
+  s_16360fefa80903::t_7f54f1e70fd89f 558-559
+website/src/pages/DocsPage.tsx
+  s_16360fefa80903::t_5abd6eb9991dc0 11,115
+crates/gespan-gpui/src/runtime.rs
+  s_16360fefa80903::t_7f54f1e70fd89f 867
+crates/gespan-core/src/orchestrator/mailbox.rs
+  s_16360fefa80903::t_38e014e71ada51 86-96,186-189,191-216
+  s_16360fefa80903::t_14f00de28a31e1 72-74
+crates/gespan-core/src/store/orchestrator_tests.rs
+  s_16360fefa80903::t_14f00de28a31e1 277
+docs/actions.md
+  s_16360fefa80903::t_57178d58c51858 151
+crates/gespan-gpui/src/conversation/remote.rs
+  s_16360fefa80903::t_dc5aeb72f02d12 288-289
+crates/gespan-core/src/app_access.rs
+  s_16360fefa80903::t_3aff4a8ae69410 1-3,28,324
+crates/gespan-gpui/src/conversation/follow_up.rs
+  s_16360fefa80903::t_324009e5648b0d 433,447,816
+  s_16360fefa80903::t_40af8cf1bde47a 781
+crates/gespan-gpui/src/transcript/burst.rs
+  s_16360fefa80903::t_d8e864390e9f9f 2,32
+crates/gespan-gpui/src/shell/orchestrator_mail.rs
+  s_16360fefa80903::t_62d9c0d6c7fac9 222-245,365,382
+  s_16360fefa80903::t_20c0a3c4840f76 109
+crates/gespan-gpui/src/conversation.rs
+  s_16360fefa80903::t_05e62ade0d2bbb 2627,5815,5828,5839
+  s_16360fefa80903::t_dc5aeb72f02d12 1472,1552-1553
+  s_16360fefa80903::t_c3577071364959 5788,5796-5797,5805-5806
+crates/gespan-gpui/src/shell/launch_placement.rs
+  s_16360fefa80903::t_a3274ce0fb6209 1-64
+crates/gespan-core/src/provider/lifecycle.rs
+  s_16360fefa80903::t_ba8dd25f220090 385
+crates/gespan-gpui/src/composer_completion.rs
+  s_16360fefa80903::t_1edc7c25c5b781 1153-1157
+crates/gespan-core/migrations/gespan/snapshots/0006_snapshot.toml
+  s_16360fefa80903::t_14f00de28a31e1 1-2630
+crates/gespan-core/src/store/orchestrator.rs
+  s_16360fefa80903::t_14f00de28a31e1 89,184,224-227
+crates/gespan-core/src/provider/codex.rs
+  s_16360fefa80903::t_ba8dd25f220090 196
+docs/agent-access.md
+  s_16360fefa80903::t_57178d58c51858 1,3,7,11,44-60,67
+crates/gespan-gpui/src/e2e/message_tests.rs
+  s_16360fefa80903::t_64f27539bf48e8 267,390-448
+  s_16360fefa80903::t_14f00de28a31e1 220
+  s_16360fefa80903::t_49a109f0db8bbd 449-451
+crates/gespan-gpui/src/runtime/ticket_tests.rs
+  s_16360fefa80903::t_d8e864390e9f9f 240-241,243-244
+  s_16360fefa80903::t_3513dafec83818 242
+  s_16360fefa80903::t_46f403fb7b937a 238,260
+crates/gespan-gpui/src/transcript.rs
+  s_16360fefa80903::t_bd863a184a1ad4 654
+crates/gespan-core/src/provider.rs
+  s_16360fefa80903::t_7a967eeced2869 1799,1802
+crates/gespan-core/src/orchestrator/tests/mailbox.rs
+  s_16360fefa80903::t_cf10be13ea462a 164-190
+  s_16360fefa80903::t_14f00de28a31e1 19
+  s_16360fefa80903::t_3d18c65fe05f6f 191-194
+crates/gespan-core/src/app_access/tests.rs
+  s_16360fefa80903::t_7a967eeced2869 26,46,103
+CHANGELOG.md
+  s_16360fefa80903::t_57178d58c51858 29-34
+crates/gespan-gpui/src/shell.rs
+  s_16360fefa80903::t_a3274ce0fb6209 34
+  s_16360fefa80903::t_bd863a184a1ad4 772-773
+crates/gespan-browser/src/turn.rs
+  s_16360fefa80903::t_3aff4a8ae69410 24-26,30,197,203-206,209-210
+crates/gespan-gpui/src/shell/orchestrator_tree.rs
+  s_16360fefa80903::t_bd863a184a1ad4 70-71
+docs/remote-access.md
+  s_16360fefa80903::t_57178d58c51858 40,103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "589f7dee0e70e70a02203d764633a69818085818",
+  "prompts": {},
+  "sessions": {
+    "s_16360fefa80903": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d8e2678-b215-44b6-bc28-9aeb88076770",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
