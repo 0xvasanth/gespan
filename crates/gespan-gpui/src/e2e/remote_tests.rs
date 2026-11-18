@@ -10,9 +10,19 @@ use gpui::TestAppContext;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
 struct Herdr {
     calls: Mutex<Vec<String>>,
+    /// Who runs in each pane: the listed builder, and what `start_agent` starts.
+    panes: Mutex<std::collections::HashMap<String, String>>,
+}
+
+impl Default for Herdr {
+    fn default() -> Self {
+        Self {
+            calls: Mutex::default(),
+            panes: Mutex::new([("w1:p1".to_owned(), "builder".to_owned())].into()),
+        }
+    }
 }
 
 impl Herdr {
@@ -35,7 +45,11 @@ impl Remote for Herdr {
     }
     fn start_agent(&self, name: &str, kind: &str, pane: &str) -> Result<(), String> {
         self.log(format!("start {kind} {pane} {name}"));
+        self.panes.lock().unwrap().insert(pane.into(), name.into());
         Ok(())
+    }
+    fn agent_in(&self, pane: &str) -> Result<Option<String>, String> {
+        Ok(self.panes.lock().unwrap().get(pane).cloned())
     }
     fn prompt(&self, target: &str, text: &str) -> Result<(), String> {
         self.log(format!("prompt {target} {text}"));
@@ -306,4 +320,73 @@ fn remote_agents_outside_this_repository_are_out_of_reach(cx: &mut TestAppContex
         assert!(error.starts_with("out_of_scope: "), "{error}");
     }
     assert!(herdr.calls().is_empty());
+}
+
+#[gpui::test]
+fn a_remote_pane_that_now_holds_another_agent_gets_nothing(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::Fake);
+    let (herdr, builder) = with_devbox(&e2e, cx);
+    let a = e2e.start_session(Kind::Claude, cx);
+    let checkout = format!("/home/dev/{}", folder(&e2e));
+    e2e.script_frames(
+        a,
+        turn(
+            "ok",
+            vec![json!({"tool": "sessions_start", "arguments": {
+                "prompt": "Profile it", "workspace": "main", "machine": "devbox", "cwd": checkout,
+            }})],
+        ),
+    );
+    e2e.send(a, "Start one on the devbox", cx);
+    let started = e2e.mcp_calls(a)[0]["result"]["id"].as_i64().unwrap();
+    // The started agent exits and someone else's takes its pane; the
+    // builder's pane is emptied.
+    herdr
+        .panes
+        .lock()
+        .unwrap()
+        .insert("w1:p7".into(), "someone-else".into());
+    herdr.panes.lock().unwrap().remove("w1:p1");
+    let before = herdr.calls().len();
+    e2e.script_frames(
+        a,
+        turn(
+            "ok",
+            vec![
+                json!({"tool": "sessions_message", "arguments": {"id": started, "text": "Stop now"}}),
+                json!({"tool": "sessions_read", "arguments": {"id": started}}),
+                json!({"tool": "sessions_message", "arguments": {"id": builder, "text": "Hello"}}),
+            ],
+        ),
+    );
+
+    e2e.send(a, "Tell them", cx);
+
+    let calls = e2e.mcp_calls(a);
+    for call in &calls[1..] {
+        let error = call["error"].as_str().unwrap_or_else(|| panic!("{call}"));
+        assert!(error.starts_with("not_found: "), "{error}");
+    }
+    assert!(
+        calls[1]["error"]
+            .as_str()
+            .unwrap()
+            .contains("another agent"),
+        "{}",
+        calls[1]
+    );
+    assert!(
+        calls[3]["error"]
+            .as_str()
+            .unwrap()
+            .contains("no longer runs"),
+        "{}",
+        calls[3]
+    );
+    assert_eq!(
+        herdr.calls().len(),
+        before,
+        "nothing typed, nothing read: {:?}",
+        herdr.calls()
+    );
 }

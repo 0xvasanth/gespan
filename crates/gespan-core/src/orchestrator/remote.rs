@@ -24,6 +24,9 @@ pub trait Remote: Send + Sync {
     /// Waits for idle, done or blocked; the state reached.
     fn wait_settled(&self, target: &str, timeout_ms: u64) -> Result<String, String>;
     fn read(&self, target: &str) -> Result<String, String>;
+    /// Who runs in `pane` now: `Some(name)` (empty for an unnamed agent),
+    /// or `None` when no agent is there.
+    fn agent_in(&self, pane: &str) -> Result<Option<String>, String>;
 }
 
 impl<T: Transport + Send + Sync> Remote for Client<T> {
@@ -57,6 +60,31 @@ impl<T: Transport + Send + Sync> Remote for Client<T> {
         Client::read_agent(self, target, Some(READ_LINES))
             .map(|read| read.text)
             .map_err(|e| e.to_string())
+    }
+    fn agent_in(&self, pane: &str) -> Result<Option<String>, String> {
+        Client::get_agent(self, pane)
+            .map(|agent| agent.map(|agent| agent.name.unwrap_or_default()))
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// A remote agent as Gespan knows it: the pane it runs in, and the name it
+/// went by, when it had one. A pane can be reused, so every call checks the
+/// pane still holds that agent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Target {
+    pub pane: String,
+    pub name: Option<String>,
+}
+
+/// Fails unless `target`'s pane still holds the agent Gespan means.
+pub fn check(remote: &dyn Remote, target: &Target) -> Result<(), String> {
+    match (remote.agent_in(&target.pane)?, &target.name) {
+        (None, _) => Err("that agent no longer runs on the machine".into()),
+        (Some(now), Some(name)) if now != *name => Err(format!(
+            "another agent (\"{now}\") now runs where \"{name}\" was; nothing was sent"
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -94,22 +122,32 @@ pub fn start_on(
 }
 
 /// Types `text` into a remote agent once it has settled, never while it
-/// works. An agent waiting on its own user's approval gets nothing.
+/// works. An agent waiting on its own user's approval gets nothing, and the
+/// pane is checked again after the wait: its agent may have changed.
 pub fn deliver_when_idle(
     remote: &dyn Remote,
-    target: &str,
+    target: &Target,
     text: &str,
     timeout_ms: u64,
 ) -> Result<(), String> {
-    let status = remote.wait_settled(target, timeout_ms)?;
+    check(remote, target)?;
+    let status = remote.wait_settled(&target.pane, timeout_ms)?;
     if status == AgentStatus::Blocked.as_str() {
         return Err("the agent is waiting on its user's answer; try again later".into());
     }
-    remote.prompt(target, text)
+    check(remote, target)?;
+    remote.prompt(&target.pane, text)
 }
 
-pub fn read_from(remote: &dyn Remote, target: &str) -> Result<String, String> {
-    remote.read(target)
+pub fn read_from(remote: &dyn Remote, target: &Target) -> Result<String, String> {
+    check(remote, target)?;
+    remote.read(&target.pane)
+}
+
+/// Waits for the agent to settle; the state it reached.
+pub fn wait_on(remote: &dyn Remote, target: &Target, timeout_ms: u64) -> Result<String, String> {
+    check(remote, target)?;
+    remote.wait_settled(&target.pane, timeout_ms)
 }
 
 /// A name herdr accepts (`[a-z][a-z0-9_-]{0,31}`) from a title.

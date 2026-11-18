@@ -121,6 +121,23 @@ impl<T: Transport> Client<T> {
         self.typed("agent.start", params, Some("agent"))
     }
 
+    /// The agent `target` (a pane id or agent name) names now, or `None`
+    /// when that pane holds no agent or no longer exists.
+    pub fn get_agent(&self, target: &str) -> Result<Option<Agent>, Error> {
+        match self.typed("agent.get", json!({ "target": target }), Some("agent")) {
+            Ok(agent) => Ok(Some(agent)),
+            Err(Error::Api { code, .. })
+                if matches!(
+                    code.as_str(),
+                    "agent_not_found" | "pane_not_found" | "target_not_found" | "not_found"
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Submits `text` to an agent; with `wait_ms`, also waits for it to
     /// settle (idle, done or blocked) for at most that long.
     pub fn prompt_agent(
@@ -538,5 +555,32 @@ mod tests {
             matches!(&err, Error::Api { code, .. } if code == "agent_blocked"),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn an_agent_is_looked_up_by_its_pane() {
+        let reply =
+            format!("{{\"id\":\"x\",\"result\":{{\"type\":\"agent_info\",\"agent\":{AGENT}}}}}\n");
+        let (c, fake) = client(&[&reply]);
+        let agent = c.get_agent("w1:p2").unwrap().expect("an agent is there");
+        assert_eq!(agent.name.as_deref(), Some("fixer"));
+        assert_eq!(fake.requests()[0]["method"], "agent.get");
+        assert_eq!(fake.requests()[0]["params"], json!({"target": "w1:p2"}));
+    }
+
+    #[test]
+    fn a_pane_with_no_agent_is_none_and_other_errors_stay_errors() {
+        let (c, _) = client(&[
+            "{\"id\":\"x\",\"error\":{\"code\":\"agent_not_found\",\"message\":\"no agent\"}}\n",
+            "{\"id\":\"x\",\"error\":{\"code\":\"pane_not_found\",\"message\":\"gone\"}}\n",
+            "{\"id\":\"x\",\"error\":{\"code\":\"internal\",\"message\":\"boom\"}}\n",
+        ]);
+        assert_eq!(c.get_agent("w1:p2").unwrap(), None);
+        assert_eq!(
+            c.get_agent("w1:p9").unwrap(),
+            None,
+            "a closed pane holds no agent"
+        );
+        assert!(matches!(c.get_agent("w1:p2"), Err(Error::Api { .. })));
     }
 }
