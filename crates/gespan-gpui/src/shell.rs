@@ -60,6 +60,8 @@ mod quick_composer;
 mod quick_open;
 mod rail;
 pub(crate) use rail::project_tile;
+#[cfg(test)]
+mod e2e_access;
 mod rail_plan;
 mod rails;
 mod remote_projects;

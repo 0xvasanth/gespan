@@ -119,7 +119,7 @@ parking_lot = "0.12"
 # Native builds resolve separately from the root workspace.
 [workspace]
 resolver = "2"
-members = [".", "../gespan-core", "../gespan-first-launch"]
+members = [".", "../gespan-core", "../gespan-first-launch", "../gespan-fake-agent"]
 
 [workspace.package]
 version = "0.3.0"

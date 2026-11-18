@@ -132,6 +132,23 @@ pub(crate) fn run_turn(
         remote::run(summary, prompt, settings, controls, store, cancel, tx);
         return;
     }
+    // An end-to-end test's agent for this session (see `crate::e2e`). GPUI's
+    // test executor runs background tasks on the test thread, where a turn
+    // blocked on its process would stall the updates it sends, so it gets a
+    // thread of its own.
+    #[cfg(test)]
+    if let Some(binary) = crate::e2e::agent_binary(&store, summary.id) {
+        std::thread::spawn(move || {
+            let _session = enter_turn(&summary, false);
+            let input = TurnInput {
+                summary,
+                prompt,
+                settings,
+            };
+            run_turn_using(input, controls, store, cancel, tx, |_| Some(binary));
+        });
+        return;
+    }
     let _session = enter_turn(&summary, false);
     run_turn_using(
         TurnInput {
