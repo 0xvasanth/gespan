@@ -741,6 +741,8 @@ pub(crate) struct Shell {
     orchestrator_bridge: Option<gespan_core::orchestrator::bridge::Server>,
     /// What git and the transcripts say about each session, for rosters.
     session_facts: HashMap<i64, orchestrator::Facts>,
+    /// Sessions whose facts are being read.
+    facts_pending: HashSet<i64>,
     mobile: mobile_host::Mobile,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
@@ -1248,6 +1250,7 @@ impl Shell {
             app_bridge: None,
             orchestrator_bridge: None,
             session_facts: HashMap::new(),
+            facts_pending: HashSet::new(),
             mobile: mobile_host::Mobile::default(),
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
@@ -1793,13 +1796,13 @@ impl Shell {
             if let Some(bridge) = &self.app_bridge {
                 view.set_app_environment(bridge.environment(id));
             }
-            self.serve_sessions(id);
             view.set_project_appearance(appearance, cx);
             view.transcript.update(cx, |transcript, cx| {
                 transcript.apply_preferences(&self.workspace.preferences, cx)
             });
         });
         self.attach_session(id, view, cx);
+        self.serve_sessions(id, cx);
     }
     /// Keeps a chat, and answers its events, in this window.
     fn attach_session(&mut self, id: i64, view: Entity<Conversation>, cx: &mut Context<Self>) {
@@ -2153,6 +2156,8 @@ impl Shell {
             // The turn may have changed which files the session holds.
             self.refresh_session_facts(id, cx);
         }
+        // Its status is part of every sibling's roster.
+        self.push_rosters(cx);
     }
     fn toggle_archive(&mut self, id: i64, cx: &mut Context<Self>) {
         if !self.archiving.insert(id) {

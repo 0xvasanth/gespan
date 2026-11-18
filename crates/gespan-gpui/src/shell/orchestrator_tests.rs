@@ -74,6 +74,8 @@ struct Fixture {
     c: i64,
     archived: i64,
     remote: i64,
+    /// A new chat nothing was ever sent from.
+    blank: i64,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -95,6 +97,21 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
     let b = store.create("kiro", &project).unwrap();
     let c = store.create("claude", &other_project).unwrap();
     let archived = store.create("claude", &project).unwrap();
+    let blank = store.create("claude", &project).unwrap();
+    store
+        .write_rows(
+            a.id,
+            0,
+            &rows(&[("user", "Write the docs"), ("assistant", "On it.")]),
+        )
+        .unwrap();
+    store
+        .write_rows(
+            c.id,
+            0,
+            &rows(&[("user", "Bump the version"), ("assistant", "Done.")]),
+        )
+        .unwrap();
     store
         .save_agent_settings(
             b.id,
@@ -129,7 +146,7 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
     state.open(a.id);
     let saved = serde_json::to_string(&state).unwrap();
     let store = Arc::new(Mutex::new(store));
-    let ids = (a.id, b.id, c.id, archived.id, remote.id);
+    let ids = (a.id, b.id, c.id, archived.id, remote.id, blank.id);
     let window = cx.update(|cx| {
         cx.open_window(Default::default(), |_, cx| {
             cx.new(|cx| {
@@ -150,6 +167,7 @@ fn fixture(cx: &mut TestAppContext) -> Fixture {
         c: ids.2,
         archived: ids.3,
         remote: ids.4,
+        blank: ids.5,
     }
 }
 
@@ -272,17 +290,16 @@ fn archived_and_remote_sessions_are_not_readable(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_list_learns_facts_off_the_ui_thread_for_the_roster(cx: &mut TestAppContext) {
+fn facts_are_learned_in_the_background_for_the_roster(cx: &mut TestAppContext) {
     let f = fixture(cx);
-    let known = |cx: &mut TestAppContext| {
-        f.window
-            .update(cx, |shell, _, _| shell.session_facts.get(&f.b).cloned())
-            .unwrap()
-    };
-    assert_eq!(known(cx), None, "nothing is read before an agent asks");
-    let list = f.list(f.a, Scope::Repo, cx);
-    assert_eq!(list["sessions"][0]["files"], json!(["src/a.rs"]));
-    let facts = known(cx).expect("the list keeps what it learned");
+    // Opening A asked for its roster; what B is doing was read off the UI
+    // thread and kept, so the next turn's roster needs no git.
+    let facts = f
+        .window
+        .update(cx, |shell, _, _| shell.session_facts.get(&f.b).cloned())
+        .unwrap()
+        .expect("B's facts were learned");
+    assert_eq!(facts.goal, "Fix the sidebar flicker");
     assert_eq!(facts.files, ["src/a.rs"]);
     assert_eq!(facts.branch.as_deref(), Some("feature"));
 }
@@ -342,4 +359,18 @@ fn elsewhere_names_the_project_folder_not_its_path(cx: &mut TestAppContext) {
     assert!(c.get("cwd").is_none(), "{all:#}");
     let folder = f._other.path().file_name().unwrap().to_string_lossy();
     assert_eq!(c["project"], folder.as_ref());
+}
+
+#[gpui::test]
+fn a_blank_chat_is_not_a_sibling(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let all = f.list(f.a, Scope::All, cx);
+    for key in ["sessions", "elsewhere"] {
+        assert!(!ids(&all, key).contains(&f.blank), "{key}: {all:#}");
+    }
+    // A blank chat still sees the sessions at work around it.
+    assert_eq!(
+        ids(&f.list(f.blank, Scope::Repo, cx), "sessions"),
+        [f.b, f.a]
+    );
 }

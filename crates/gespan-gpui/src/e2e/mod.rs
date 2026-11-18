@@ -27,6 +27,7 @@ use std::{
 };
 
 mod hello_tests;
+mod roster_tests;
 
 /// The store setting that points a session's turns at a test agent.
 fn binary_key(session: i64) -> String {

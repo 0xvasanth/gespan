@@ -235,6 +235,10 @@ pub(crate) struct Conversation {
     file_drag: bool,
     attachment_error: Option<String>,
     app_environment: std::collections::HashMap<String, String>,
+    /// The sibling roster the next turn would carry, kept current by the shell.
+    roster: Option<String>,
+    /// The fingerprint of the roster this chat's agent was last told.
+    last_roster: Option<u64>,
     /// The running turn's policy, independent of the next composer's mode.
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
@@ -870,6 +874,8 @@ impl Conversation {
             file_drag: false,
             attachment_error: None,
             app_environment: Default::default(),
+            roster: None,
+            last_roster: None,
             app_read_only: false,
             planning_orchestration: false,
             orchestration_plan_checked: false,
@@ -1572,6 +1578,14 @@ impl Conversation {
                 if prepared != prompt {
                     settings.prepared_prompt = Some(prepared);
                 }
+            }
+            if let Some(roster) = self.take_roster_block() {
+                // The agent learns its siblings; the chat shows only what was typed.
+                let prepared = settings
+                    .prepared_prompt
+                    .take()
+                    .unwrap_or_else(|| prompt.clone());
+                settings.prepared_prompt = Some(format!("{roster}\n\n{prepared}"));
             }
             if self.inbox_ask.is_some() {
                 let prepared = settings.prepared_prompt.take();
