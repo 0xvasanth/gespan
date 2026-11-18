@@ -26,6 +26,11 @@ pub(super) struct Facts {
     pub repo: Option<PathBuf>,
     /// The checked-out branch, for a session in a worktree.
     pub branch: Option<String>,
+    /// Whether the transcript and git status were read. A session in a
+    /// repository no open chat works in only has its repository looked up.
+    pub full: bool,
+    /// Its folder no longer exists, as when its worktree was removed.
+    pub gone: bool,
 }
 
 /// A live session's status. Hold outranks the rest; a turn blocked on an
@@ -77,7 +82,7 @@ impl Shell {
         if let Some(bridge) = &self.orchestrator_bridge {
             bridge.serve(id);
         }
-        self.refresh_session_facts(id, cx);
+        self.learn_facts(vec![id], cx);
     }
 
     /// Answers one `sessions_list` or `sessions_read` call. The reply is
@@ -90,16 +95,19 @@ impl Shell {
         } = request;
         match action {
             Action::List { scope } => {
-                let sources: Vec<Source> = self
-                    .roster_candidates(cx)
+                let mut ids = self.missing_facts(cx);
+                if !ids.contains(&session) {
+                    ids.push(session);
+                }
+                let sources: Vec<Source> = ids
                     .into_iter()
-                    .filter(|id| *id == session || !self.session_facts.contains_key(id))
                     .filter_map(|id| self.facts_source(id, cx))
                     .collect();
+                let open = self.open_cwds(cx);
                 let store = self.store.clone();
                 let work = cx
                     .background_executor()
-                    .spawn(async move { collect_facts(&store, sources) });
+                    .spawn(async move { collect_facts(&store, sources, &open) });
                 cx.spawn(async move |this, cx| {
                     let found = work.await;
                     let answer = this.update(cx, |this, cx| {
@@ -160,20 +168,33 @@ impl Shell {
 
     /// Re-reads `id`'s facts in the background, as when its turn ends.
     pub(super) fn refresh_session_facts(&mut self, id: i64, cx: &mut Context<Self>) {
-        let Some(source) = self.facts_source(id, cx) else {
-            return;
-        };
-        if !self.facts_pending.insert(id) {
+        self.learn_facts(vec![id], cx);
+    }
+
+    /// Reads these sessions' facts in one background task, then hands every
+    /// open chat its roster once. Sessions already being read are skipped.
+    fn learn_facts(&mut self, ids: Vec<i64>, cx: &mut Context<Self>) {
+        let sources: Vec<Source> = ids
+            .into_iter()
+            .filter(|id| !self.facts_pending.contains(id))
+            .filter_map(|id| self.facts_source(id, cx))
+            .collect();
+        if sources.is_empty() {
             return;
         }
+        let batch: Vec<i64> = sources.iter().map(|s| s.id).collect();
+        self.facts_pending.extend(batch.iter().copied());
+        let open = self.open_cwds(cx);
         let store = self.store.clone();
         let work = cx
             .background_executor()
-            .spawn(async move { collect_facts(&store, vec![source]) });
+            .spawn(async move { collect_facts(&store, sources, &open) });
         cx.spawn(async move |this, cx| {
             let found = work.await;
             let _ = this.update(cx, |this, cx| {
-                this.facts_pending.remove(&id);
+                for id in &batch {
+                    this.facts_pending.remove(id);
+                }
                 this.session_facts.extend(found);
                 this.push_rosters(cx);
             });
@@ -181,19 +202,37 @@ impl Shell {
         .detach();
     }
 
-    /// `id`'s siblings from what is already known, for the start of a turn.
-    /// Sessions whose facts aren't known yet are left out, and learned.
-    fn roster_for(&mut self, id: i64, cx: &mut Context<Self>) -> Option<Roster> {
-        let missing: Vec<i64> = self
-            .roster_candidates(cx)
-            .into_iter()
-            .filter(|id| !self.session_facts.contains_key(id))
+    /// Sessions a roster could name whose facts are unknown, or only partly
+    /// known though their repository now has an open chat.
+    fn missing_facts(&self, cx: &App) -> Vec<i64> {
+        let open: Vec<&PathBuf> = self
+            .sessions
+            .keys()
+            .filter_map(|id| self.session_facts.get(id)?.repo.as_ref())
             .collect();
-        for session in missing {
-            if !self.facts_pending.contains(&session) {
-                self.refresh_session_facts(session, cx);
-            }
-        }
+        self.roster_candidates(cx)
+            .into_iter()
+            .filter(|id| !self.untouched(*id, cx) || self.sessions.contains_key(id))
+            .filter(|id| match self.session_facts.get(id) {
+                None => true,
+                Some(facts) => {
+                    !facts.full && facts.repo.as_ref().is_some_and(|repo| open.contains(&repo))
+                }
+            })
+            .collect()
+    }
+
+    /// The folders open chats work in: their repositories get full facts.
+    fn open_cwds(&self, cx: &App) -> Vec<String> {
+        self.sessions
+            .keys()
+            .filter_map(|id| Some(self.session_cwd(*id, cx)?.0))
+            .filter(|cwd| !cwd.starts_with("remote://"))
+            .collect()
+    }
+
+    /// `id`'s siblings from what is already known, for the start of a turn.
+    fn roster_for(&self, id: i64, cx: &App) -> Option<Roster> {
         let caller = self.roster_member(id, cx)?;
         let others: Vec<Member> = self
             .order
@@ -205,7 +244,8 @@ impl Shell {
     }
 
     /// Hands each open chat the roster its next turn would carry, so the
-    /// send path reads it without touching git or the store.
+    /// send path reads it without touching git or the store. Sessions not
+    /// yet known are learned in one batch, which hands the rosters out again.
     pub(super) fn push_rosters(&mut self, cx: &mut Context<Self>) {
         let ids: Vec<i64> = self.sessions.keys().copied().collect();
         for id in ids {
@@ -213,6 +253,10 @@ impl Shell {
             if let Some(view) = self.sessions.get(&id) {
                 view.update(cx, |view, _| view.set_roster(text));
             }
+        }
+        let missing = self.missing_facts(cx);
+        if !missing.is_empty() {
+            self.learn_facts(missing, cx);
         }
     }
 
@@ -278,11 +322,9 @@ impl Shell {
     fn session_cwd(&self, id: i64, cx: &App) -> Option<(String, bool)> {
         let metadata = self.session_metadata(id, cx);
         let worktree = match self.sessions.get(&id).map(|view| view.read(cx)) {
-            Some(live) => live
-                .settings
-                .worktree_cwd
-                .clone()
-                .filter(|_| !live.settings.worktree_removed),
+            // Its worktree is gone: it can't run, and isn't in the main checkout.
+            Some(live) if live.settings.worktree_removed => return None,
+            Some(live) => live.settings.worktree_cwd.clone(),
             None => self.session_worktrees.get(&id).cloned().flatten(),
         };
         match worktree {
@@ -319,6 +361,9 @@ impl Shell {
         };
         let (cwd, in_worktree) = self.session_cwd(id, cx)?;
         let facts = self.session_facts.get(&id).cloned().unwrap_or_default();
+        if facts.gone {
+            return None;
+        }
         let workspace = match (in_worktree, facts.branch) {
             (true, Some(branch)) => Workspace::Worktree { branch },
             (true, None) => Workspace::Worktree {
@@ -346,11 +391,40 @@ impl Shell {
     }
 }
 
-/// Reads each session's transcript and asks git about its folder.
-fn collect_facts(store: &crate::runtime::Database, sources: Vec<Source>) -> Vec<(i64, Facts)> {
+/// Asks git which repository each session's folder belongs to, once per
+/// folder. Only sessions in a repository one of the `open` folders shares
+/// get their transcript read and their checkout's status asked.
+fn collect_facts(
+    store: &crate::runtime::Database,
+    sources: Vec<Source>,
+    open: &[String],
+) -> Vec<(i64, Facts)> {
+    let mut repos: std::collections::HashMap<String, Option<PathBuf>> = Default::default();
+    let mut repo_of = |cwd: &str| {
+        repos
+            .entry(cwd.to_owned())
+            .or_insert_with(|| repo::repo_key(Path::new(cwd)))
+            .clone()
+    };
+    let relevant: Vec<PathBuf> = open.iter().filter_map(|cwd| repo_of(cwd)).collect();
     sources
         .into_iter()
         .map(|source| {
+            if !Path::new(&source.cwd).is_dir() {
+                let facts = Facts {
+                    gone: true,
+                    ..Default::default()
+                };
+                return (source.id, facts);
+            }
+            let repo = repo_of(&source.cwd);
+            if !repo.as_ref().is_some_and(|repo| relevant.contains(repo)) {
+                let facts = Facts {
+                    repo,
+                    ..Default::default()
+                };
+                return (source.id, facts);
+            }
             let rows = locked(store)
                 .and_then(|store| store.load(source.id))
                 .map(|transcript| transcript.rows)
@@ -373,8 +447,10 @@ fn collect_facts(store: &crate::runtime::Database, sources: Vec<Source>) -> Vec<
             let facts = Facts {
                 goal,
                 files,
-                repo: repo::repo_key(cwd),
+                repo,
                 branch,
+                full: true,
+                gone: false,
             };
             (source.id, facts)
         })

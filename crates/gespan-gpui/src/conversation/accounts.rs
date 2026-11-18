@@ -305,6 +305,7 @@ impl Conversation {
                             });
                     }
                     this.summary.provider_id = None;
+                    this.forget_roster_sent();
                     let store = this.store.clone();
                     let id = this.summary.id;
                     let expected = expected.clone();

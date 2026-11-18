@@ -584,6 +584,7 @@ impl Conversation {
         if self.summary.provider != provider.id() {
             self.summary.provider = provider.id().into();
             self.summary.provider_id = None;
+            self.forget_roster_sent();
             self.catalog.clear();
         }
         self.model = model;
