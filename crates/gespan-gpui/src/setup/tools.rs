@@ -1,7 +1,7 @@
 //! The shared tools card: Gespan's MCP hub, the servers found in the agents'
 //! own configs, and whether agents should use only the hub's.
 use super::{SetupStep, card::SetupCard, ui};
-use gespan_core::mcp::Importable;
+use gespan_core::mcp::{Importable, Survey};
 use gpui::{AnyElement, Context, Div, SharedString, Window, div, prelude::*, px, rgb};
 
 pub(super) fn render(
@@ -14,7 +14,11 @@ pub(super) fn render(
         .on_click(cx.listener(|card, _, _, cx| card.skip_setup(cx)));
     let back = ui::ghost("setup-back", "Back", 32.)
         .debug_selector(|| "setup-back".into())
-        .on_click(cx.listener(|card, _, _, cx| card.go(SetupStep::Agents, cx)));
+        .on_click(cx.listener(|card, _, _, cx| {
+            if !card.tools.busy {
+                card.go(SetupStep::Agents, cx)
+            }
+        }));
     let skip = ui::ghost("setup-skip", "Skip", 34.)
         .debug_selector(|| "setup-skip".into())
         .on_click(cx.listener(|card, _, _, cx| card.skip(SetupStep::Look, cx)));
@@ -30,7 +34,7 @@ pub(super) fn render(
             "Gespan runs one copy of each tool server and shares it with every agent \
              session, so sessions stop starting their own.",
         ))
-        .child(server_list(card.tools.found.as_deref()))
+        .child(server_list(card.tools.found.as_ref()))
         .child(switch_row(card.tools.on, cx));
     if let Some(error) = &card.tools.error {
         body = body.child(
@@ -41,7 +45,14 @@ pub(super) fn render(
             .text_color(rgb(0xf26d6d)),
         );
     }
-    body.child(ui::t3(
+    body.child(
+        ui::t3(
+            "Servers set up inside a project folder aren't moved, and stop loading there \
+             while this is on. Add them later in Settings → MCP.",
+        )
+        .debug_selector(|| "setup-tools-project-note".into()),
+    )
+    .child(ui::t3(
         "Cursor and Kiro still load their own servers as well.",
     ))
     .child(ui::footer(
@@ -51,40 +62,74 @@ pub(super) fn render(
     .into_any_element()
 }
 
-/// The servers found, one row each; a line while looking or when there are
-/// none.
-fn server_list(found: Option<&[Importable]>) -> Div {
+/// The servers found, one row each, then the ones that can't be moved; a
+/// line while looking or when there are none.
+fn server_list(found: Option<&Survey>) -> Div {
     let list = ui::list();
-    match found {
-        None => list.child(ui::row(true).child(ui::t2("Looking for your agents' tool servers…"))),
-        Some([]) => list.child(
+    let Some(found) = found else {
+        return list.child(ui::row(true).child(ui::t2("Looking for your agents' tool servers…")));
+    };
+    if found.movable.is_empty() && found.left_behind.is_empty() {
+        return list.child(
             ui::row(true)
                 .debug_selector(|| "setup-tools-empty".into())
                 .child(ui::t2(
                     "None of your agents has tool servers set up yet. \
                      You can add some later in Settings → MCP.",
                 )),
-        ),
-        Some(found) => list.children(found.iter().enumerate().map(|(i, server)| {
-            ui::row(i == 0)
-                .debug_selector(move || format!("setup-tools-row-{i}"))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(8.))
-                                .child(ui::t1(server.name.clone()))
-                                .child(ui::t3(format!("{} ({})", server.provider, server.scope))),
-                        )
-                        .child(ui::t3(command_line(server)).truncate()),
-                )
-        })),
+        );
     }
+    let moved = found.movable.iter().enumerate().map(|(i, server)| {
+        let mut title = div()
+            .flex()
+            .gap(px(8.))
+            .child(ui::t1(server.name.clone()))
+            .child(ui::t3(format!("{} ({})", server.provider, server.scope)));
+        if !server.enabled {
+            title = title.child(
+                ui::t3(format!("off in {}, stays off", server.provider))
+                    .debug_selector(move || format!("setup-tools-off-{i}")),
+            );
+        }
+        ui::row(i == 0)
+            .debug_selector(move || format!("setup-tools-row-{i}"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .min_w_0()
+                    .child(title)
+                    .child(ui::t3(command_line(server)).truncate()),
+            )
+    });
+    let first_left = found.movable.is_empty();
+    let left = found.left_behind.iter().enumerate().map(move |(i, server)| {
+        ui::row(first_left && i == 0)
+            .debug_selector(move || format!("setup-tools-left-{i}"))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.))
+                            .child(ui::t1(server.name.clone()))
+                            .child(ui::t3(server.provider.clone())),
+                    )
+                    .child(
+                        ui::t3(
+                            "Can't be moved as written (a variable that isn't set, or an \
+                             address Gespan won't send secrets to). Stops loading while this is on.",
+                        )
+                        .text_color(rgb(0xf2a65a)),
+                    ),
+            )
+    });
+    list.children(moved).children(left)
 }
 
 /// What the server runs: its address, or its command and arguments.
@@ -124,7 +169,7 @@ fn switch_row(on: bool, cx: &mut Context<SetupCard>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::super::{SetupStep, card::SetupEvent, test_support::*};
-    use gespan_core::mcp::Importable;
+    use gespan_core::mcp::{Importable, LeftBehind, Survey};
     use gespan_core::mcp_catalog::Catalog;
     use gpui::TestAppContext;
     use std::path::{Path, PathBuf};
@@ -138,6 +183,7 @@ mod tests {
             args: vec!["-y".into(), "server".into()],
             env: Default::default(),
             url: None,
+            enabled: true,
         }
     }
 
@@ -150,7 +196,13 @@ mod tests {
         opened.card.update(cx, |card, cx| {
             card.set_tools_dir(dir);
             if let Some(found) = found {
-                card.set_found(found, cx);
+                card.set_survey(
+                    Survey {
+                        movable: found,
+                        left_behind: Vec::new(),
+                    },
+                    cx,
+                );
             }
         });
         cx.run_until_parked();
@@ -283,5 +335,86 @@ mod tests {
         click(&opened, "setup-tools-switch", cx);
         click(&opened, "setup-continue", cx);
         assert_eq!(last(&opened), Some(SetupEvent::Step(SetupStep::Look)));
+    }
+
+    #[gpui::test]
+    fn servers_that_cannot_move_are_named(cx: &mut TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let opened = opened(tmp.path(), None, cx);
+        opened.card.update(cx, |card, cx| {
+            card.set_survey(
+                Survey {
+                    movable: vec![server("docs", "npx")],
+                    left_behind: vec![LeftBehind {
+                        provider: "claude".into(),
+                        name: "github".into(),
+                    }],
+                },
+                cx,
+            )
+        });
+        assert!(has(&opened, "setup-tools-row-0", cx));
+        assert!(has(&opened, "setup-tools-left-0", cx));
+        assert!(!has(&opened, "setup-tools-empty", cx));
+    }
+
+    #[gpui::test]
+    fn project_servers_are_called_out(cx: &mut TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let opened = opened(tmp.path(), Some(vec![]), cx);
+        assert!(has(&opened, "setup-tools-project-note", cx));
+    }
+
+    #[gpui::test]
+    fn a_server_its_agent_had_off_is_marked_and_stays_off(cx: &mut TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let off = Importable {
+            enabled: false,
+            ..server("old", "uvx")
+        };
+        let opened = opened(tmp.path(), Some(vec![server("docs", "npx"), off]), cx);
+        assert!(!has(&opened, "setup-tools-off-0", cx));
+        assert!(has(&opened, "setup-tools-off-1", cx));
+        click(&opened, "setup-continue", cx);
+        let catalog = Catalog::load(tmp.path()).unwrap();
+        let old = catalog.entries.iter().find(|e| e.name == "old").unwrap();
+        assert!(!old.enabled && old.approved.is_none());
+        let docs = catalog.entries.iter().find(|e| e.name == "docs").unwrap();
+        assert!(docs.enabled && docs.approved.is_some());
+    }
+
+    #[gpui::test]
+    fn leaving_while_servers_move_is_ignored(cx: &mut TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let opened = opened(tmp.path(), Some(vec![server("docs", "npx")]), cx);
+        opened.card.update(cx, |card, cx| {
+            card.tools_next(cx);
+            card.skip_setup(cx);
+            card.skip(SetupStep::Look, cx);
+            card.toggle_tools(cx);
+        });
+        cx.run_until_parked();
+        opened.card.read_with(cx, |card, _| {
+            assert_eq!(card.step(), SetupStep::Look);
+            assert!(!card.skipped.contains(&SetupStep::Tools));
+            assert!(card.tools.on);
+        });
+        assert!(Catalog::load(tmp.path()).unwrap().managed);
+    }
+
+    #[gpui::test]
+    fn a_result_after_the_user_left_does_not_pull_them_back(cx: &mut TestAppContext) {
+        let tmp = tempfile::tempdir().unwrap();
+        let opened = opened(tmp.path(), Some(vec![]), cx);
+        opened.card.update(cx, |card, cx| {
+            card.tools_next(cx);
+            // Somewhere else moved the card on before the save finished.
+            card.step = SetupStep::Project;
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            opened.card.read_with(cx, |c, _| c.step()),
+            SetupStep::Project
+        );
     }
 }

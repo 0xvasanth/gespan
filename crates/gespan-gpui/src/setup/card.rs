@@ -2,7 +2,7 @@
 //! itself in its own file from the pieces in `ui`.
 use super::{SetupStep, agents, look, project, tools, welcome};
 use crate::settings::Preferences;
-use gespan_core::mcp::Importable;
+use gespan_core::mcp::Survey;
 use gespan_core::provider::Kind;
 use gpui::{Context, EventEmitter, FocusHandle, Focusable, Window, prelude::*};
 use std::path::PathBuf;
@@ -33,7 +33,7 @@ pub(crate) struct Agent {
 /// The shared tools card's state.
 pub(crate) struct Tools {
     /// The servers found in the agents' configs; `None` while still looking.
-    pub(super) found: Option<Vec<Importable>>,
+    pub(super) found: Option<Survey>,
     /// Agents use only the hub's servers. On by default.
     pub(super) on: bool,
     /// The servers are being moved; Continue waits.
@@ -149,6 +149,9 @@ impl SetupCard {
 
     /// Skip on a card: its defaults stand.
     pub(super) fn skip(&mut self, next: SetupStep, cx: &mut Context<Self>) {
+        if self.tools.busy {
+            return;
+        }
         if !self.skipped.contains(&self.step) {
             self.skipped.push(self.step);
         }
@@ -157,6 +160,9 @@ impl SetupCard {
 
     /// Skip setup: straight to Project; cards not yet passed keep defaults.
     pub(super) fn skip_setup(&mut self, cx: &mut Context<Self>) {
+        if self.tools.busy {
+            return;
+        }
         for step in [SetupStep::Agents, SetupStep::Tools, SetupStep::Look] {
             if step as u8 >= self.step as u8 && !self.skipped.contains(&step) {
                 self.skipped.push(step);
@@ -173,11 +179,11 @@ impl SetupCard {
         let home = self.home.clone();
         let work = cx
             .background_executor()
-            .spawn(async move { gespan_core::mcp::mcp_importable(home) });
+            .spawn(async move { gespan_core::mcp::mcp_survey(home) });
         cx.spawn(async move |this, cx| {
             let found = work.await.unwrap_or_else(|error| {
                 tracing::warn!(%error, "could not look for the agents' MCP servers");
-                Vec::new()
+                Survey::default()
             });
             let _ = this.update(cx, |card, cx| {
                 card.tools.found = Some(found);
@@ -188,6 +194,9 @@ impl SetupCard {
     }
 
     pub(super) fn toggle_tools(&mut self, cx: &mut Context<Self>) {
+        if self.tools.busy {
+            return;
+        }
         self.tools.on = !self.tools.on;
         self.tools.error = None;
         cx.notify();
@@ -208,7 +217,7 @@ impl SetupCard {
         if self.tools.busy {
             return;
         }
-        let Some(found) = self.tools.found.clone() else {
+        let Some(found) = self.tools.found.as_ref().map(|s| s.movable.clone()) else {
             return;
         };
         if !self.tools.on {
@@ -237,7 +246,10 @@ impl SetupCard {
             let _ = this.update(cx, |card, cx| {
                 card.tools.busy = false;
                 match result {
-                    Ok(()) => card.go(SetupStep::Look, cx),
+                    // The user can't leave the card while this runs, but a
+                    // result that finds them elsewhere leaves them there.
+                    Ok(()) if card.step == SetupStep::Tools => card.go(SetupStep::Look, cx),
+                    Ok(()) => cx.notify(),
                     Err(error) => {
                         tracing::warn!(%error, "could not move the agents' MCP servers");
                         card.tools.error = Some(error);
@@ -257,7 +269,7 @@ impl SetupCard {
 
     /// Test seam: what discovery found.
     #[cfg(test)]
-    pub(crate) fn set_found(&mut self, found: Vec<Importable>, cx: &mut Context<Self>) {
+    pub(crate) fn set_survey(&mut self, found: Survey, cx: &mut Context<Self>) {
         self.tools.found = Some(found);
         cx.notify();
     }

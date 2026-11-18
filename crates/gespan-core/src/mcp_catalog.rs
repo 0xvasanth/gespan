@@ -298,7 +298,7 @@ impl Catalog {
     }
 
     /// Moves the user's servers here in one step, as setup's Shared tools
-    /// card does: imports `found`, approves each entry it describes (one
+    /// card does: imports `found`, approves each entry it describes that its agent had on (one
     /// already here included, so none drops out of sessions), and turns
     /// hub-only on. Entries the user wasn't shown are left as they were.
     /// Returns how many were added.
@@ -307,7 +307,11 @@ impl Catalog {
         let shown: Vec<String> = self
             .entries
             .iter()
-            .filter(|entry| found.iter().any(|server| matches(data_dir, entry, server)))
+            .filter(|entry| {
+                found
+                    .iter()
+                    .any(|server| server.enabled && matches(data_dir, entry, server))
+            })
             .map(|entry| entry.id.clone())
             .collect();
         for id in shown {
@@ -582,6 +586,7 @@ mod tests {
                 .map(|(k, v)| ((*k).into(), (*v).into()))
                 .collect(),
             url: None,
+            enabled: true,
         }
     }
 
@@ -1231,5 +1236,20 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(std::fs::read(path(dir.path())).unwrap(), before);
         assert!(!Catalog::load(dir.path()).unwrap().managed);
+    }
+
+    #[test]
+    fn adopt_leaves_a_server_its_agent_had_off_off() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let off = Importable {
+            enabled: false,
+            ..found("old", "npx", &[])
+        };
+        assert_eq!(catalog.adopt(dir.path(), vec![off]).unwrap(), 1);
+        assert!(catalog.managed);
+        let entry = &catalog.entries[0];
+        assert!(!entry.enabled && entry.approved.is_none());
+        assert!(catalog.specs(dir.path()).is_empty());
     }
 }

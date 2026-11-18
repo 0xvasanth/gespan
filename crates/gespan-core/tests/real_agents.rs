@@ -165,6 +165,7 @@ fn with_catalogue(folder: &Path) -> PathBuf {
                 ]
                 .into(),
                 url: None,
+                enabled: true,
             }],
         )
         .unwrap();
@@ -468,6 +469,7 @@ fn claude_uses_a_public_remote_server_through_the_hub() {
                 args: Vec::new(),
                 env: Default::default(),
                 url: Some("https://mcp.deepwiki.com/mcp".into()),
+                enabled: true,
             }],
         )
         .unwrap();
