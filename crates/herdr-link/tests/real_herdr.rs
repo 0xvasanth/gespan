@@ -411,3 +411,13 @@ fn prompting_a_pane_with_no_agent_is_refused_with_a_code() {
         }
     }
 }
+
+#[test]
+fn a_pane_without_an_agent_reads_as_none() {
+    let Some(binary) = herdr_binary() else { return };
+    let server = Server::start(&binary);
+    let made = server.create_workspace();
+    let root = made["root_pane"]["pane_id"].as_str().unwrap().to_owned();
+    assert_eq!(server.client().get_agent(&root).unwrap(), None);
+    assert_eq!(server.client().get_agent("w99:p99").unwrap(), None);
+}

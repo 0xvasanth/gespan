@@ -35,8 +35,8 @@ const DELIVER_WAIT: Duration = Duration::from_secs(30 * 60);
 #[derive(Clone, Debug)]
 pub(super) struct Peer {
     machine: Machine,
-    /// Its pane, or the name herdr knows it by.
-    target: String,
+    /// Its pane, and the name it goes by there, checked before each call.
+    target: remote::Target,
     title: String,
     /// The session that started it here; 0 for one found on the machine.
     parent: i64,
@@ -139,7 +139,10 @@ impl Shell {
                     .iter()
                     .find(|agent| remote::remote_id(&view.machine.id, &agent.pane_id) == id)
                     .map(|agent| Peer {
-                        target: agent.pane_id.clone(),
+                        target: remote::Target {
+                            pane: agent.pane_id.clone(),
+                            name: agent.name.clone(),
+                        },
                         title: agent.name.clone().unwrap_or_else(|| agent.pane_id.clone()),
                         machine: view.machine.clone(),
                         parent: 0,
@@ -222,7 +225,10 @@ impl Shell {
                     id,
                     Peer {
                         machine: machine.clone(),
-                        target: started.name.clone(),
+                        target: remote::Target {
+                            pane: started.pane_id.clone(),
+                            name: Some(started.name.clone()),
+                        },
                         title: title.clone(),
                         parent: caller,
                     },
@@ -338,8 +344,19 @@ impl Shell {
         let turn = mailbox::turn_text(&[&mail]);
         let remote = (self.remote_for)(&peer.machine);
         let target = peer.target.clone();
-        // The wait can be long; it runs on a thread of its own.
+        let answer = json!({
+            "to": peer.title,
+            "machine": peer.machine.label,
+            "state": "queued",
+        });
+        // The wait can be long; it runs on a thread of its own. The caller
+        // hears at once if the agent is gone or was replaced.
         std::thread::spawn(move || {
+            if let Err(error) = remote::check(remote.as_ref(), &target) {
+                let _ = reply.send(Err(Refusal::new(Code::NotFound, error).into()));
+                return;
+            }
+            let _ = reply.send(Ok(answer));
             if let Err(error) = remote::deliver_when_idle(
                 remote.as_ref(),
                 &target,
@@ -349,17 +366,16 @@ impl Shell {
                 tracing::warn!(%error, "a message to a remote agent was not delivered");
             }
         });
-        let _ = reply.send(Ok(json!({
-            "to": peer.title,
-            "machine": peer.machine.label,
-            "state": "queued",
-        })));
     }
 
     pub(super) fn answer_remote_read(&mut self, peer: Peer, reply: Reply, cx: &mut Context<Self>) {
         let remote = (self.remote_for)(&peer.machine);
         cx.background_executor()
             .spawn(async move {
+                if let Err(error) = remote::check(remote.as_ref(), &peer.target) {
+                    let _ = reply.send(Err(Refusal::new(Code::NotFound, error).into()));
+                    return;
+                }
                 let answer = remote::read_from(remote.as_ref(), &peer.target)
                     .map(|text| json!({"machine": peer.machine.label, "recent": text}));
                 let _ = reply.send(answer);
@@ -376,15 +392,20 @@ impl Shell {
     ) {
         let remote = (self.remote_for)(&peer.machine);
         std::thread::spawn(move || {
-            let answer = match remote.wait_settled(&peer.target, timeout.as_millis() as u64) {
-                Ok(status) => {
-                    Ok(json!({"ready": [{"id": id, "status": status}], "timedOut": false}))
-                }
-                Err(error) if error.contains("timeout") => {
-                    Ok(json!({"ready": [], "timedOut": true}))
-                }
-                Err(error) => Err(error),
-            };
+            if let Err(error) = remote::check(remote.as_ref(), &peer.target) {
+                let _ = reply.send(Err(Refusal::new(Code::NotFound, error).into()));
+                return;
+            }
+            let answer =
+                match remote::wait_on(remote.as_ref(), &peer.target, timeout.as_millis() as u64) {
+                    Ok(status) => {
+                        Ok(json!({"ready": [{"id": id, "status": status}], "timedOut": false}))
+                    }
+                    Err(error) if error.contains("timeout") => {
+                        Ok(json!({"ready": [], "timedOut": true}))
+                    }
+                    Err(error) => Err(error),
+                };
             let _ = reply.send(answer);
         });
     }

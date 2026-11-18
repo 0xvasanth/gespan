@@ -1,5 +1,6 @@
 use crate::orchestrator::remote::{
-    agent_name, deliver_when_idle, read_from, remote_id, remote_members, start_on, Remote,
+    agent_name, deliver_when_idle, read_from, remote_id, remote_members, start_on, wait_on, Remote,
+    Target,
 };
 use crate::orchestrator::roster::Status;
 use std::sync::Mutex;
@@ -10,6 +11,16 @@ struct Fake {
     calls: Mutex<Vec<String>>,
     status: Mutex<Vec<&'static str>>,
     refuse: Option<&'static str>,
+    /// Who each `agent_in` finds in the pane, in turn; "fixer" when empty,
+    /// `None` for no agent at all.
+    occupants: Mutex<Vec<Option<&'static str>>>,
+}
+
+fn fixer() -> Target {
+    Target {
+        pane: "w1:p2".into(),
+        name: Some("fixer".into()),
+    }
 }
 
 impl Fake {
@@ -56,6 +67,15 @@ impl Remote for Fake {
     fn read(&self, target: &str) -> Result<String, String> {
         self.log(format!("read {target}"));
         Ok("All green.".into())
+    }
+    fn agent_in(&self, pane: &str) -> Result<Option<String>, String> {
+        self.log(format!("who {pane}"));
+        let mut occupants = self.occupants.lock().unwrap();
+        Ok(if occupants.is_empty() {
+            Some("fixer".into())
+        } else {
+            occupants.remove(0).map(str::to_owned)
+        })
     }
 }
 
@@ -111,8 +131,17 @@ fn a_remote_start_in_a_worktree_runs_in_its_new_pane() {
 #[test]
 fn a_message_waits_for_the_agent_to_settle_and_never_interrupts() {
     let fake = Fake::default();
-    deliver_when_idle(&fake, "fixer", "Rebase on main", 60_000).unwrap();
-    assert_eq!(fake.calls(), ["wait fixer", "prompt fixer Rebase on main"]);
+    deliver_when_idle(&fake, &fixer(), "Rebase on main", 60_000).unwrap();
+    assert_eq!(
+        fake.calls(),
+        [
+            "who w1:p2",
+            "wait w1:p2",
+            "who w1:p2",
+            "prompt w1:p2 Rebase on main"
+        ],
+        "checked before the wait and again before typing"
+    );
 }
 
 #[test]
@@ -121,11 +150,10 @@ fn a_message_to_an_agent_waiting_on_its_user_is_not_sent() {
         status: Mutex::new(vec!["blocked"]),
         ..Default::default()
     };
-    let err = deliver_when_idle(&fake, "fixer", "go", 60_000).unwrap_err();
+    let err = deliver_when_idle(&fake, &fixer(), "go", 60_000).unwrap_err();
     assert!(err.contains("waiting on its user"), "{err}");
-    assert_eq!(
-        fake.calls(),
-        ["wait fixer"],
+    assert!(
+        !fake.calls().iter().any(|c| c.starts_with("prompt")),
         "nothing typed into its dialog"
     );
 }
@@ -136,14 +164,73 @@ fn a_refused_prompt_is_reported() {
         refuse: Some("agent_blocked"),
         ..Default::default()
     };
-    let err = deliver_when_idle(&fake, "fixer", "go", 60_000).unwrap_err();
+    let err = deliver_when_idle(&fake, &fixer(), "go", 60_000).unwrap_err();
     assert!(err.contains("agent_blocked"), "{err}");
 }
 
 #[test]
 fn reading_returns_the_agents_recent_output() {
     let fake = Fake::default();
-    assert_eq!(read_from(&fake, "fixer").unwrap(), "All green.");
+    assert_eq!(read_from(&fake, &fixer()).unwrap(), "All green.");
+    assert_eq!(fake.calls(), ["who w1:p2", "read w1:p2"]);
+}
+
+#[test]
+fn nothing_reaches_a_pane_whose_agent_was_replaced() {
+    let fake = Fake {
+        occupants: Mutex::new(vec![Some("intruder"), Some("intruder"), Some("intruder")]),
+        ..Default::default()
+    };
+    for err in [
+        deliver_when_idle(&fake, &fixer(), "go", 60_000).unwrap_err(),
+        read_from(&fake, &fixer()).unwrap_err(),
+        wait_on(&fake, &fixer(), 1_000).unwrap_err(),
+    ] {
+        assert!(err.contains("another agent"), "{err}");
+    }
+    assert_eq!(
+        fake.calls(),
+        ["who w1:p2", "who w1:p2", "who w1:p2"],
+        "nothing else asked"
+    );
+}
+
+#[test]
+fn nothing_reaches_a_pane_whose_agent_exited() {
+    let fake = Fake {
+        occupants: Mutex::new(vec![None]),
+        ..Default::default()
+    };
+    let err = read_from(&fake, &fixer()).unwrap_err();
+    assert!(err.contains("no longer runs"), "{err}");
+}
+
+#[test]
+fn an_agent_replaced_while_the_message_waited_gets_nothing() {
+    let fake = Fake {
+        occupants: Mutex::new(vec![Some("fixer"), Some("intruder")]),
+        ..Default::default()
+    };
+    let err = deliver_when_idle(&fake, &fixer(), "go", 60_000).unwrap_err();
+    assert!(err.contains("another agent"), "{err}");
+    assert!(
+        !fake.calls().iter().any(|c| c.starts_with("prompt")),
+        "{:?}",
+        fake.calls()
+    );
+}
+
+#[test]
+fn an_agent_listed_without_a_name_needs_only_to_still_be_there() {
+    let fake = Fake {
+        occupants: Mutex::new(vec![Some("renamed")]),
+        ..Default::default()
+    };
+    let anyone = Target {
+        pane: "w1:p2".into(),
+        name: None,
+    };
+    assert_eq!(wait_on(&fake, &anyone, 1_000).unwrap(), "idle");
 }
 
 #[test]
