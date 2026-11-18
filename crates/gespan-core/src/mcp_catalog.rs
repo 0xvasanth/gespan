@@ -189,6 +189,19 @@ fn id_for(name: &str, taken: &BTreeSet<String>) -> String {
     id
 }
 
+/// Whether `entry` is the server an agent's config describes: the same
+/// address, or the same command, arguments and environment.
+fn matches(data_dir: &Path, entry: &Entry, server: &Importable) -> bool {
+    match &server.url {
+        Some(url) => entry.url.as_deref() == Some(url),
+        None => {
+            entry.command == server.command
+                && entry.args == server.args
+                && read_secrets(data_dir, entry).is_ok_and(|env| env == server.env)
+        }
+    }
+}
+
 /// What a change to the catalogue left.
 pub struct Edited {
     pub catalog: Catalog,
@@ -255,15 +268,11 @@ impl Catalog {
     pub fn import(&mut self, data_dir: &Path, found: Vec<Importable>) -> Result<usize, String> {
         let mut added = 0;
         for server in found {
-            let same = |entry: &Entry| match &server.url {
-                Some(url) => entry.url.as_deref() == Some(url),
-                None => {
-                    entry.command == server.command
-                        && entry.args == server.args
-                        && read_secrets(data_dir, entry).is_ok_and(|env| env == server.env)
-                }
-            };
-            if self.entries.iter().any(same) {
+            if self
+                .entries
+                .iter()
+                .any(|entry| matches(data_dir, entry, &server))
+            {
                 continue;
             }
             let id = id_for(&server.name, &self.ids());
@@ -285,6 +294,26 @@ impl Catalog {
             });
             added += 1;
         }
+        Ok(added)
+    }
+
+    /// Moves the user's servers here in one step, as setup's Shared tools
+    /// card does: imports `found`, approves each entry it describes (one
+    /// already here included, so none drops out of sessions), and turns
+    /// hub-only on. Entries the user wasn't shown are left as they were.
+    /// Returns how many were added.
+    pub fn adopt(&mut self, data_dir: &Path, found: Vec<Importable>) -> Result<usize, String> {
+        let added = self.import(data_dir, found.clone())?;
+        let shown: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|entry| found.iter().any(|server| matches(data_dir, entry, server)))
+            .map(|entry| entry.id.clone())
+            .collect();
+        for id in shown {
+            self.approve(data_dir, &id)?;
+        }
+        self.managed = true;
         Ok(added)
     }
 
@@ -1125,5 +1154,82 @@ mod tests {
         let catalog = Catalog::load(dir.path()).unwrap();
         assert!(!catalog.managed);
         assert_eq!(catalog.entries[0].class, Class::PerWorktree);
+    }
+
+    #[test]
+    fn adopt_imports_approves_and_turns_hub_only_on() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        let added = catalog
+            .adopt(
+                dir.path(),
+                vec![found("GitHub Tools", "npx", &[("TOKEN", "s3cret-value")])],
+            )
+            .unwrap();
+        assert_eq!(added, 1);
+        assert!(catalog.managed);
+        let entry = &catalog.entries[0];
+        assert!(entry.enabled && entry.approved.is_some());
+        assert_eq!(catalog.specs(dir.path()).len(), 1, "it runs");
+    }
+
+    #[test]
+    fn adopt_with_nothing_found_only_turns_hub_only_on() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        assert_eq!(catalog.adopt(dir.path(), vec![]).unwrap(), 0);
+        assert_eq!(
+            catalog,
+            Catalog {
+                managed: true,
+                ..Catalog::default()
+            }
+        );
+    }
+
+    #[test]
+    fn adopt_approves_a_matching_server_already_here() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("a", "npx", &[])])
+            .unwrap();
+        assert!(catalog.entries[0].approved.is_none());
+        assert_eq!(
+            catalog
+                .adopt(dir.path(), vec![found("a", "npx", &[])])
+                .unwrap(),
+            0
+        );
+        assert_eq!(catalog.entries.len(), 1);
+        assert!(catalog.entries[0].enabled && catalog.entries[0].approved.is_some());
+    }
+
+    #[test]
+    fn adopt_leaves_servers_it_was_not_shown_alone() {
+        let dir = setup();
+        let mut catalog = Catalog::default();
+        catalog
+            .import(dir.path(), vec![found("other", "uvx", &[])])
+            .unwrap();
+        catalog
+            .adopt(dir.path(), vec![found("a", "npx", &[])])
+            .unwrap();
+        let other = catalog.entries.iter().find(|e| e.command == "uvx").unwrap();
+        assert!(!other.enabled && other.approved.is_none());
+    }
+
+    #[test]
+    fn a_failed_adopt_through_update_saves_nothing() {
+        let dir = setup();
+        Catalog::default().save(dir.path()).unwrap();
+        let before = std::fs::read(path(dir.path())).unwrap();
+        let result = update(dir.path(), |catalog| {
+            catalog.adopt(dir.path(), vec![found("a", "npx", &[])])?;
+            Err("keychain unavailable".into())
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(path(dir.path())).unwrap(), before);
+        assert!(!Catalog::load(dir.path()).unwrap().managed);
     }
 }
