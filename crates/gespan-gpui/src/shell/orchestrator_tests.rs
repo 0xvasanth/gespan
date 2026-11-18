@@ -315,3 +315,31 @@ fn every_local_turn_mounts_the_sessions_toolkit() {
     );
     assert_eq!(sessions_toolkit(true), None);
 }
+
+#[gpui::test]
+fn a_session_in_another_repo_is_not_readable(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    // Listed with scope all, but its transcript stays with its own repo.
+    f.list(f.a, Scope::All, cx);
+    let error = f
+        .ask(
+            f.a,
+            Action::Read {
+                id: f.c,
+                before: None,
+            },
+            cx,
+        )
+        .unwrap_err();
+    assert_eq!(error, "That session isn't readable here.");
+}
+
+#[gpui::test]
+fn elsewhere_names_the_project_folder_not_its_path(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    let all = f.list(f.a, Scope::All, cx);
+    let c = &all["elsewhere"][0];
+    assert!(c.get("cwd").is_none(), "{all:#}");
+    let folder = f._other.path().file_name().unwrap().to_string_lossy();
+    assert_eq!(c["project"], folder.as_ref());
+}
