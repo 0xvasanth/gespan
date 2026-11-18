@@ -29,11 +29,26 @@ Unknown fields and invalid options produce errors instead of being ignored.
 
 Every local session, with or without `/operator`, knows about the other sessions working in the same repository: in its main checkout or any of its worktrees. Nothing needs enabling.
 
-- **At the start of a turn** the agent is told about its siblings, but only when that has changed since it was last told. Each sibling gets one line: its title, its agent, its status (working, waiting on the user, on hold, idle), where it runs (`main checkout` or `worktree <branch>`), its goal (the first line of its first message) and the files it is changing. A `⚠` line flags a file that a sibling changes and this session changes too. The block is capped at 12 sessions and 2,000 characters. The chat shows only what the user typed.
+- **At the start of a turn** the agent is told about its siblings, but only when that has changed since it was last told. Each sibling gets one line: its title, its agent, its status (working, waiting on the user, on hold, idle), where it runs (`main checkout` or `worktree <branch>`), its goal (the first line of its first message) and the files it is changing. A started session also names the chat that started it. A `⚠` line flags a file that a sibling changes and this session changes too. The block is capped at 12 sessions and 2,000 characters. The chat shows only what the user typed.
 - **`sessions_list`** returns the same roster as data. With `scope: "all"` it also lists sessions in other projects, by title, agent, status and project folder name.
 - **`sessions_read`** returns a sibling's recent exchanges, paginated like `sessions.read`. It only reads sessions in the caller's own repository.
 
 A session's files are the paths its own Edit and Write calls touched that are still uncommitted in its checkout. Another session's edits in the same checkout are not counted as its own. Archived sessions, remote sessions and new chats nothing was sent from are left out.
+
+## Starting sessions
+
+Any local chat can start work that runs on its own: "do this in a new worktree" or "do this in the main repo". The agent calls `sessions_start`, and the new session appears in the sidebar at once, under the chat that started it, without taking focus.
+
+- **`sessions_start`** takes `prompt` and `workspace`: `"worktree"` makes a new worktree of the repository (from `base`, or the default branch), `"main"` uses the main checkout, and `"existing:<path>"` uses a worktree already on disk. Optional fields: `harness`, `model`, `title`, `access`, `wake` and `requestId`. It answers with the new session's id, title, folder and permissions.
+- **Permissions never widen.** A started session runs in its parent's mode unless it asks for a narrower one (`access`). Asking for a broader mode is refused with `permission_escalation`. A user can still widen a started session from its own composer.
+- **Limits.** Sessions can start sessions two levels below a chat (`depth_limit` past that), and at most 5 of one session's started sessions run at once (`fanout_limit`).
+- **Retries are safe.** The same `requestId` from the same session returns the first answer and starts nothing new, also after Gespan restarts.
+- **Reporting back.** When a started session's turn ends, its parent hears about it as a new turn labelled `[From session "<title>" (id N)]`, with the end of its reply. Nothing interrupts the parent: reports wait until it is idle, and reports that arrive meanwhile come as one turn. `wake` chooses when: `settled` (the default) when it finishes or fails, `always` also when it waits on the user or is stopped, `never` not at all. Approvals and questions go to the user, not the parent. A report not yet delivered survives a restart.
+- **Watching.** The parent's Watching chip lists the started sessions it will hear back from. Stop waiting there, and the session keeps running without reporting.
+- **`sessions_cancel`** stops a session the caller started, or one they started, and everything below it, leaves first. It can't reach other sessions (`out_of_scope`) or the caller itself (`self_target`).
+- **In the sidebar,** a chat with started sessions still running offers **Stop the sessions it started**. Stopping, archiving or deleting a chat leaves its started sessions running; deleting it makes them chats of their own.
+
+Bad input is refused with `invalid_input`, naming the field. Every refusal starts with its code.
 
 ## Project actions
 

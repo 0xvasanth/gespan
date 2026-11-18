@@ -61,6 +61,17 @@ impl Conversation {
             self.last_roster = Some(fingerprint);
         }
     }
+    pub(crate) fn record_turn_end(&mut self, succeeded: bool, stopping: bool) {
+        use gespan_core::orchestrator::tree::Outcome;
+        self.turn_ends += 1;
+        self.last_turn = Some(if stopping {
+            Outcome::Cancelled
+        } else if succeeded {
+            Outcome::Finished
+        } else {
+            Outcome::Failed
+        });
+    }
     pub(crate) fn forget_roster_sent(&mut self) {
         self.last_roster = None;
     }

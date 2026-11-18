@@ -23,7 +23,7 @@ const ROW_FONT: f32 = 12.5;
 /// `.fold`: a folder header.
 const FOLD_HEIGHT: f32 = 26.;
 /// `.kid`: a session under an open folder.
-const KID_INDENT: f32 = 22.;
+pub(super) const KID_INDENT: f32 = 22.;
 const MORE_HEIGHT: f32 = 24.;
 /// The time column, right-aligned.
 const TIME_WIDTH: f32 = 26.;

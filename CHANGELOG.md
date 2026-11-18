@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and which files they are changing, with a warning when two change the same
   file. Agents can also list their siblings and read their recent exchanges
   with the new `sessions_list` and `sessions_read` tools.
+- **Say it and it runs:** ask any chat to do something "in a new worktree"
+  or "in the main repo" and it starts a session of its own, shown under the
+  chat in the sidebar, that reports back when it's done. Started sessions
+  never get broader permissions than their chat, go at most two levels deep
+  with five running at once, and can be stopped from the chat's sidebar
+  menu or by the agent with `sessions_cancel`.
 
 ## [0.3.0] - 2026-11-15
 

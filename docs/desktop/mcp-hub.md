@@ -1,6 +1,6 @@
 # MCP hub
 
-Gespan runs one local MCP endpoint for all its agents. Every capability it gives them (visuals, tickets and cards, app access, orchestration control, sibling sessions) is a toolkit behind that endpoint, so a new capability needs no listener, token scheme or process of its own.
+Gespan runs one local MCP endpoint for all its agents. Every capability it gives them (visuals, tickets and cards, app access, orchestration control, sibling sessions and starting them) is a toolkit behind that endpoint, so a new capability needs no listener, token scheme or process of its own.
 
 `crates/mcp-hub` is the generic part: the HTTP endpoint, tokens, toolkit registry and stdio relay. It depends on nothing of Gespan's and never names it; the host passes in the server name and any environment keys. `crates/gespan-core/src/tool_servers.rs` is the Gespan side: which toolkits exist, and how each provider is told about the endpoint.
 

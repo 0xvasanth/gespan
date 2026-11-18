@@ -36,11 +36,17 @@ fn hi_reaches_the_agent_and_its_reply_shows(cx: &mut TestAppContext) {
 | `launches(id) -> Vec<Value>` | One `{argv, cwd, env}` per agent process. `env` keeps `GESPAN_*` values and only the names of other variables. |
 | `transcript(id, cx) -> Vec<Row>` | The rows the chat's transcript shows. |
 | `session(id, cx)`, `store(cx)`, `window()`, `repo()` | The live `Conversation`, the store, the window, the project. |
+| `script_frames(id, json!({"mcp": [{"tool": .., "arguments": {..}}]}))` | The turn calls Gespan's own tools (`sessions_start`, …) over the MCP endpoint Gespan mounted, for real, before its text. |
+| `mcp_calls(id) -> Vec<Value>` | Each such call with its `result` or `error`. |
+| `script_frames(id, json!({"text": .., "wait": true}))`, `release(id)` | A turn that keeps working until Gespan stops it (it then ends as failed) or the test releases it. |
+| `script_next_child(json!([..]))` | Scripts the next session the app starts by itself, as `sessions_start` does. Every such session gets an agent folder of its own. |
+| `until(cx, what, done)` | Runs the app until `done` holds, failing after the turn timeout. |
+| `busy(id, cx)`, `all_sessions(cx)` | Whether a session is in a turn; every open session. |
 
 ## Fake mode (default)
 
 `gespan-fake-agent` (`crates/gespan-fake-agent`, a Rust binary with only
-`serde_json`, so it runs the same on macOS, Windows and Linux) stands in for
+`serde_json` and `ureq` for its MCP calls, so it runs the same on macOS, Windows and Linux) stands in for
 `claude`. It answers each control request with `success`, and each prompt with
 `system/init`, one `assistant` message and a `result`, then waits on the same
 stdin for the next turn, like a warm Claude process. Its replies come from

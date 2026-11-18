@@ -1,11 +1,19 @@
 //! The `sessions` tools: how a session learns what its sibling sessions in
-//! the same repository are doing, and reads one of them. Read-only.
-use super::bridge::{dispatch, Action, Scope};
+//! the same repository are doing, reads one of them, and starts or cancels
+//! sessions of its own.
+use super::{
+    bridge::{dispatch, Action, Scope},
+    policy::Refusal,
+    start::StartInput,
+};
 use crate::tool_servers::SESSIONS;
 use mcp_hub::Grant;
 use serde_json::{json, Map, Value};
 
 const LIST_DESCRIPTION: &str = "List the other sessions working in this repository and its worktrees: what each is doing, its status, where it runs and which files it is changing. scope \"all\" also lists sessions in other repositories.";
+const START_DESCRIPTION: &str = "Start a new session that works on its own, shown under this one in the sidebar, and get its id at once. workspace \"worktree\" gives it a new git worktree of this repository, \"main\" the main checkout, \"existing:<path>\" a checkout already on disk. It runs with this session's permissions or narrower (access). When it finishes, a report arrives here as a new message (wake \"settled\", the default; \"always\" also reports when it waits on the user or is stopped; \"never\" sends none). Pass the same requestId to retry safely: a repeated request returns the first answer. At most 5 started sessions run at once, two levels deep.";
+const CANCEL_DESCRIPTION: &str =
+    "Stop a session this one started (or one they started), and every session below it.";
 const READ_DESCRIPTION: &str = "Read another session's recent exchanges, newest first. Pass the before cursor from a previous read for older ones.";
 
 pub struct Toolkit;
@@ -43,6 +51,40 @@ impl mcp_hub::Toolkit for Toolkit {
                 },
                 "annotations": {"readOnlyHint": true, "openWorldHint": false},
             }),
+            json!({
+                "name": "sessions_start",
+                "description": START_DESCRIPTION,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {"type": "string", "description": "What the new session should do, as you would ask a colleague"},
+                        "workspace": {"type": "string", "description": "\"worktree\", \"main\" or \"existing:<absolute path>\""},
+                        "base": {"type": "string", "description": "The branch a new worktree starts from; the default branch when left out"},
+                        "harness": {"type": "string", "description": "The agent to run, such as claude or codex; this session's when left out"},
+                        "model": {"type": "string", "description": "The model id; the agent's default when left out"},
+                        "access": {"enum": ["read-only", "supervised", "auto-accept-edits", "auto", "full-access"], "description": "Its permissions: this session's when left out, never broader"},
+                        "wake": {"enum": ["always", "settled", "never"], "description": "When its stop is reported here; \"settled\" by default"},
+                        "title": {"type": "string", "description": "Its sidebar title; the start of the prompt when left out"},
+                        "requestId": {"type": "string", "description": "A key of your choosing that makes a retry safe"},
+                    },
+                    "required": ["prompt", "workspace"],
+                    "additionalProperties": false,
+                },
+                "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false},
+            }),
+            json!({
+                "name": "sessions_cancel",
+                "description": CANCEL_DESCRIPTION,
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer", "description": "The session's id, from sessions_start or sessions_list"},
+                    },
+                    "required": ["id"],
+                    "additionalProperties": false,
+                },
+                "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": false},
+            }),
         ]
     }
 
@@ -75,6 +117,17 @@ impl mcp_hub::Toolkit for Toolkit {
                     Some(_) => return Err("before must be a string".into()),
                 };
                 Action::Read { id, before }
+            }
+            "sessions_start" => Action::Start {
+                input: Box::new(StartInput::parse(&fields)?),
+            },
+            "sessions_cancel" => {
+                only(tool, &fields, &["id"]).map_err(|e| Refusal::invalid(e).to_string())?;
+                let id = fields
+                    .get("id")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| Refusal::invalid("id must be a session id, a whole number"))?;
+                Action::Cancel { id }
             }
             _ => return Err(format!("Unknown sessions tool: {tool}")),
         };

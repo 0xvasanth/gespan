@@ -58,9 +58,7 @@ struct Source {
 
 impl Shell {
     pub(super) fn init_orchestrator_bridge(&mut self, cx: &mut Context<Self>) {
-        if cx.is_test() {
-            return;
-        }
+        // Tests run it too: the end-to-end tests call these tools for real.
         let (server, requests) = Server::start();
         self.orchestrator_bridge = Some(server);
         cx.spawn(async move |this, cx| {
@@ -121,6 +119,8 @@ impl Shell {
                 })
                 .detach();
             }
+            Action::Start { input } => self.answer_start(session, *input, reply, cx),
+            Action::Cancel { id } => self.answer_cancel(session, id, reply, cx),
             Action::Read { id, before } => {
                 let readable =
                     self.session_summaries.contains_key(&id) || self.sessions.contains_key(&id);
@@ -387,7 +387,22 @@ impl Shell {
             archived: summary.archived,
             cwd,
             last_active_ms: summary.updated_at,
+            parent: self
+                .session_tree
+                .parent(id)
+                .map(|parent| self.session_metadata_title(parent, cx)),
         })
+    }
+
+    /// A session's title, whether or not its chat is loaded.
+    pub(super) fn session_metadata_title(&self, id: i64, cx: &App) -> String {
+        if let Some(view) = self.sessions.get(&id) {
+            return view.read(cx).summary.title.clone();
+        }
+        self.session_summaries
+            .get(&id)
+            .map(|summary| summary.title.clone())
+            .unwrap_or_else(|| format!("session {id}"))
     }
 }
 

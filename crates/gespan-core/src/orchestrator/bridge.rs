@@ -1,6 +1,7 @@
 //! How a session's `sessions` tool calls reach the app. The app holds a
 //! [`Server`] and serves each local session it has loaded; a call from a
 //! session with no route fails at once with [`UNAVAILABLE`].
+use super::start::StartInput;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -21,6 +22,10 @@ pub enum Action {
     List { scope: Scope },
     /// One session's recent exchanges, older than the `before` cursor.
     Read { id: i64, before: Option<String> },
+    /// Start a child of the caller.
+    Start { input: Box<StartInput> },
+    /// Stop a session the caller started, and everything below it.
+    Cancel { id: i64 },
 }
 
 /// Which sessions a list covers.

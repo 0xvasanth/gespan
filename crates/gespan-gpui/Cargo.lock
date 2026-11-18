@@ -2907,6 +2907,7 @@ name = "gespan-fake-agent"
 version = "0.3.0"
 dependencies = [
  "serde_json",
+ "ureq",
 ]
 
 [[package]]

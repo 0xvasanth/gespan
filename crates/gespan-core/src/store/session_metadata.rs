@@ -10,6 +10,8 @@ pub struct SessionSidebarMetadata {
     pub drafts: HashSet<i64>,
     pub sidebar_hidden: HashSet<i64>,
     pub started_by: HashMap<i64, i64>,
+    /// Who started whom through the orchestration core.
+    pub links: crate::orchestrator::tree::Tree,
     pub orchestrations: HashMap<i64, orchestration::Summary>,
     pub groups: HashMap<String, session_groups::Groups>,
     pub reminders: Vec<super::Reminder>,
@@ -71,6 +73,7 @@ impl Store {
             drafts: self.draft_sessions().unwrap_or_default(),
             sidebar_hidden: self.shared_sidebar_hidden().unwrap_or_default(),
             started_by: self.started_links().unwrap_or_default(),
+            links: self.session_links().unwrap_or_default(),
             orchestrations: self.orchestration_summaries().unwrap_or_default(),
             groups: projects
                 .iter()

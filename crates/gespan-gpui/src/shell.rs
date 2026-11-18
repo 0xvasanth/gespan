@@ -47,6 +47,7 @@ mod orchestration;
 mod orchestrator;
 #[cfg(test)]
 mod orchestrator_tests;
+mod orchestrator_tree;
 mod picker_preferences;
 pub(crate) mod pilot_flows;
 mod pilot_panes;
@@ -743,6 +744,16 @@ pub(crate) struct Shell {
     session_facts: HashMap<i64, orchestrator::Facts>,
     /// Sessions whose facts are being read.
     facts_pending: HashSet<i64>,
+    /// Which session started which (`sessions_start`), loaded at start.
+    session_tree: gespan_core::orchestrator::tree::Tree,
+    /// Children started but whose first turn hasn't ended: live already.
+    launching: HashSet<i64>,
+    /// The turn ends each session's parent was already told about.
+    seen_turn_ends: HashMap<i64, u64>,
+    /// Children whose wait on the user was already reported.
+    waiting_reported: HashSet<i64>,
+    /// Parents whose wake reports are being delivered.
+    reports_flushing: HashSet<i64>,
     mobile: mobile_host::Mobile,
     app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
     app_pending: HashSet<(i64, String)>,
@@ -1251,6 +1262,11 @@ impl Shell {
             orchestrator_bridge: None,
             session_facts: HashMap::new(),
             facts_pending: HashSet::new(),
+            session_tree: sidebar_metadata.links.clone(),
+            launching: HashSet::new(),
+            seen_turn_ends: HashMap::new(),
+            waiting_reported: HashSet::new(),
+            reports_flushing: HashSet::new(),
             mobile: mobile_host::Mobile::default(),
             app_results: HashMap::new(),
             app_pending: HashSet::new(),
@@ -1596,6 +1612,7 @@ impl Shell {
         // Every window hosts its own runs, so each has its own control bridge.
         this.init_control_bridge(cx);
         this.init_orchestrator_bridge(cx);
+        this.resume_wake_reports(cx);
         for summary in summaries {
             if this
                 .pilots
@@ -1826,6 +1843,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let view = view.clone();
+        self.observations.push(cx.subscribe(
+            &view,
+            move |this, _, event: &crate::conversation::StopWatching, cx| {
+                this.stop_watching_child(id, event.0, cx)
+            },
+        ));
         self.observations
             .push(cx.subscribe(&view, move |this, _, _: &SessionChanged, cx| {
                 let Some(view) = this.sessions.get(&id) else {
@@ -2158,6 +2181,7 @@ impl Shell {
         }
         // Its status is part of every sibling's roster.
         self.push_rosters(cx);
+        self.orchestrator_session_changed(id, cx);
     }
     fn toggle_archive(&mut self, id: i64, cx: &mut Context<Self>) {
         if !self.archiving.insert(id) {
