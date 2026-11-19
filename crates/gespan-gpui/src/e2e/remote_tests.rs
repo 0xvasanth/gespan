@@ -127,6 +127,13 @@ fn turn(text: &str, calls: Vec<Value>) -> Value {
     json!({"text": text, "mcp": calls})
 }
 
+/// Only a full-access chat may type into a remote agent.
+fn with_full_access(e2e: &E2e, session: i64, cx: &mut TestAppContext) {
+    e2e.session(session, cx).update(cx, |view, _| {
+        view.settings.access = gespan_core::agent::AccessMode::FullAccess;
+    });
+}
+
 #[gpui::test]
 fn an_agent_on_a_machine_in_the_same_repository_is_in_the_roster(cx: &mut TestAppContext) {
     let e2e = E2e::new(cx, Mode::Fake);
@@ -185,6 +192,7 @@ fn a_chat_messages_reads_and_waits_on_a_remote_agent(cx: &mut TestAppContext) {
     let e2e = E2e::new(cx, Mode::Fake);
     let (herdr, builder) = with_devbox(&e2e, cx);
     let a = e2e.start_session(Kind::Claude, cx);
+    with_full_access(&e2e, a, cx);
     e2e.script_frames(
         a,
         turn(
@@ -327,6 +335,7 @@ fn a_remote_pane_that_now_holds_another_agent_gets_nothing(cx: &mut TestAppConte
     let e2e = E2e::new(cx, Mode::Fake);
     let (herdr, builder) = with_devbox(&e2e, cx);
     let a = e2e.start_session(Kind::Claude, cx);
+    with_full_access(&e2e, a, cx);
     let checkout = format!("/home/dev/{}", folder(&e2e));
     e2e.script_frames(
         a,
@@ -389,4 +398,39 @@ fn a_remote_pane_that_now_holds_another_agent_gets_nothing(cx: &mut TestAppConte
         "nothing typed, nothing read: {:?}",
         herdr.calls()
     );
+}
+
+#[gpui::test]
+fn an_auto_chat_cant_message_a_remote_agent(cx: &mut TestAppContext) {
+    // Auto is the broadest mode short of full access.
+    let e2e = E2e::new(cx, Mode::Fake);
+    let (herdr, builder) = with_devbox(&e2e, cx);
+    let a = e2e.start_session(Kind::Claude, cx);
+    e2e.session(a, cx).update(cx, |view, _| {
+        view.settings.access = gespan_core::agent::AccessMode::Auto;
+    });
+    e2e.script_frames(
+        a,
+        turn(
+            "ok",
+            vec![
+                json!({"tool": "sessions_message", "arguments": {"id": builder, "text": "Push it"}}),
+                json!({"tool": "sessions_read", "arguments": {"id": builder}}),
+            ],
+        ),
+    );
+
+    e2e.send(a, "Try", cx);
+
+    let calls = e2e.mcp_calls(a);
+    let error = calls[0]["error"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{}", calls[0]));
+    assert!(error.starts_with("permission_escalation: "), "{error}");
+    assert!(error.contains("full access"), "{error}");
+    assert_eq!(
+        calls[1]["result"]["recent"], "Tests pass on the devbox.",
+        "it may still read the agent"
+    );
+    assert_eq!(herdr.calls(), ["read w1:p1"], "nothing typed");
 }
