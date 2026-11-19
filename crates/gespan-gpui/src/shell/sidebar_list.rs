@@ -1455,7 +1455,139 @@ mod tests {
         let summary = visual.debug_bounds("sidebar-project-summary").unwrap();
         let name = visual.debug_bounds("sidebar-project-name").unwrap();
         assert!(name.bottom() <= summary.top());
-        assert!(visual.debug_bounds("sidebar-project-shortcut").is_some());
+        // The ⌘O hint gave its place to "…"; the shortcut is in the tooltip.
+        assert!(visual.debug_bounds("sidebar-project-shortcut").is_none());
+        let more = visual.debug_bounds("sidebar-project-actions").unwrap();
+        assert_eq!(more.size, gpui::size(px(28.), px(28.)));
+        assert_eq!(
+            switcher.right() - more.right(),
+            px(11.),
+            "10px padding, 1px edge"
+        );
+        assert_eq!(
+            more.top() - switcher.top(),
+            switcher.bottom() - more.bottom()
+        );
+        assert!(
+            summary.right() <= more.left(),
+            "the name truncates before \"…\""
+        );
+    }
+
+    fn click(visual: &mut gpui::VisualTestContext, selector: &'static str) {
+        visual.refresh().unwrap();
+        let bounds = visual
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is not on screen"));
+        visual.simulate_click(bounds.center(), Default::default());
+        visual.run_until_parked();
+    }
+
+    fn open_target(
+        window: gpui::WindowHandle<Shell>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> Option<MenuTarget> {
+        window
+            .update(cx, |shell, _, _| {
+                shell.menu.as_ref().map(|m| m.target.clone())
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn the_switchers_more_button_opens_and_closes_the_project_menu(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let project = window
+            .update(visual, |shell, _, _| shell.workspace.project.clone())
+            .unwrap();
+        click(visual, "sidebar-project-actions");
+        assert!(
+            open_target(window, visual)
+                == Some(MenuTarget::Project {
+                    path: project.clone()
+                }),
+            "\"…\" opens this project's menu, not the picker"
+        );
+        let items = window
+            .update(visual, |shell, _, cx| {
+                shell.menu.as_ref().unwrap().menu.read(cx).item_shape()
+            })
+            .unwrap();
+        for item in [
+            "Theme colors",
+            "Reveal in Finder",
+            "Import sessions…",
+            "Archive",
+            "Delete",
+        ] {
+            let item = if item == "Reveal in Finder" {
+                super::REVEAL_LABEL
+            } else {
+                item
+            };
+            assert!(items.iter().any(|i| i == item), "{item} in {items:?}");
+        }
+        // It drops from the button, not from where the pointer was.
+        let more = visual.debug_bounds("sidebar-project-actions").unwrap();
+        let card = window
+            .update(visual, |shell, _, cx| {
+                shell
+                    .menu
+                    .as_ref()
+                    .unwrap()
+                    .menu
+                    .read(cx)
+                    .surface_region()
+                    .get()
+                    .unwrap()
+            })
+            .unwrap();
+        assert!(card.top() >= more.top(), "{card:?} {more:?}");
+        click(visual, "sidebar-project-actions");
+        assert!(
+            open_target(window, visual).is_none(),
+            "a second click closes it"
+        );
+    }
+
+    #[gpui::test]
+    fn the_switcher_still_opens_the_picker_and_more_swaps_to_the_menu(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        click(visual, "sidebar-project-name");
+        assert!(open_target(window, visual) == Some(MenuTarget::Header));
+        click(visual, "sidebar-project-actions");
+        assert!(
+            matches!(
+                open_target(window, visual),
+                Some(MenuTarget::Project { .. })
+            ),
+            "\"…\" never toggles the picker it sits on"
+        );
+    }
+
+    #[gpui::test]
+    fn an_action_picked_from_the_more_menu_runs_on_this_project(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let project = window
+            .update(visual, |shell, _, _| {
+                shell.workspace.pinned_projects.clear();
+                shell.workspace.project.clone()
+            })
+            .unwrap();
+        click(visual, "sidebar-project-actions");
+        click(visual, "menu-action-pin-project");
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(shell.workspace.pinned_projects, [project]);
+                assert!(shell.menu.is_none(), "picking an item closes the menu");
+            })
+            .unwrap();
     }
 
     #[gpui::test]

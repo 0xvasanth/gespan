@@ -30,6 +30,12 @@ const TIME_WIDTH: f32 = 26.;
 /// A live row's folder label, before it truncates.
 const FOLDER_LABEL_MAX: f32 = 74.;
 const SWITCHER_HEIGHT: f32 = 44.;
+/// The switcher's tooltip: its shortcut moved here to make room for "…".
+const SWITCHER_HINT: &str = if cfg!(target_os = "macos") {
+    "Switch project  ⌘O"
+} else {
+    "Switch project  Ctrl+O"
+};
 const PAGE_WIDTH: f32 = 42.;
 const PAGE_HEIGHT: f32 = 32.;
 
@@ -564,8 +570,12 @@ impl Shell {
                             .child(summary),
                     ),
             )
-            .child(kbd(format!("{MOD}O")).debug_selector(|| "sidebar-project-shortcut".into()))
+            .child(self.rail_project_actions(cx))
             .child(self.project_anchor.probe())
+            .tooltip(|_, cx| {
+                cx.new(|_| crate::conversation::HintTooltip(SWITCHER_HINT))
+                    .into()
+            })
             .on_click(cx.listener(|this, _, window, cx| this.toggle_project_switcher(window, cx)))
             .on_mouse_down(
                 MouseButton::Right,
@@ -578,6 +588,48 @@ impl Shell {
                 }),
             )
             .into_any()
+    }
+
+    /// The switcher's "…": opens the project menu (appearance, Move, Pin,
+    /// Reveal, Open in editor, Mute, Import sessions, Archive, Delete), the
+    /// menu a right click on the switcher also opens.
+    fn rail_project_actions(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let label = self.project_label(&self.workspace.project);
+        let open = self.menu_open(&MenuTarget::Project {
+            path: self.workspace.project.clone(),
+        });
+        icon_button_hover(
+            "sidebar-project-actions",
+            "Project actions",
+            "more-horizontal",
+            0.12,
+        )
+        .debug_selector(|| "sidebar-project-actions".into())
+        .aria_label(format!("Project actions for {label}"))
+        .aria_expanded(open)
+        .size(px(28.))
+        .rounded(px(7.))
+        .relative()
+        .when(open, |d| d.bg(content(0.14)).text_color(content(1.)))
+        .child(self.project_actions_anchor.probe())
+        .on_click(cx.listener(|this, _, window, cx| {
+            cx.stop_propagation();
+            this.toggle_project_actions(window, cx);
+        }))
+        .into_any()
+    }
+
+    /// The switcher's "…": opens the current project's menu, or closes it.
+    pub(super) fn toggle_project_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = MenuTarget::Project {
+            path: self.workspace.project.clone(),
+        };
+        if self.menu_open(&target) {
+            self.close_menu(cx);
+        } else {
+            let anchor = Anchor::Slot(self.project_actions_anchor.clone());
+            self.open_menu(target, anchor, window, cx);
+        }
     }
 
     /// ⌘O and the switcher: opens the project picker, or closes it.
