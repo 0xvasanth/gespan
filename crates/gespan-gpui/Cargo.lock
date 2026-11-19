@@ -2811,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-browser"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.22.1",
  "hmac 0.13.0",
@@ -2831,7 +2831,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-channel",
  "async-trait",
@@ -2904,7 +2904,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-fake-agent"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "ureq",
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-first-launch"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "rusqlite",
  "tempfile",
@@ -2920,7 +2920,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-gpui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "alacritty_terminal",
  "async-channel",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-models"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "dirs 7.0.0",
  "sha2 0.11.1",
@@ -3063,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "gespan-speech"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "cpal",
  "gespan-models",

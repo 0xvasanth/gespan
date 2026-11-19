@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-19
+
 ### Added
 
 - **Sessions know about each other:** every session is told what the other
@@ -25,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never in the middle of a turn. Messages passed back and forth too often,
   too many in an hour, or sent to a session with broader permissions wait for
   you. `sessions_wait` waits for other sessions to finish.
-
 - **Pilots on the same rules:** a Pilot's started sessions join the session
   tree, never run with more power than the Pilot's chat, and count toward the
   same limits. Their reports to the Pilot fence what each session said.
@@ -37,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a checkout of the same repository shows in the roster, and a chat can
   read it and wait on it. A full-access chat can also start one there (in its
   checkout or a new herdr worktree) and message it once it has settled.
+
+### Fixed
+
+- **Releases:** a version bump on main is released even when other commits
+  land on main while its CI runs.
+- **Website:** the site takes its version and downloads from the published
+  GitHub release, so it never links to a release that is still a draft.
 
 ### Removed
 
@@ -2401,7 +2409,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/0xvasanth/gespan/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/0xvasanth/gespan/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/0xvasanth/gespan/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/0xvasanth/gespan/compare/v0.1.2...v0.1.3
