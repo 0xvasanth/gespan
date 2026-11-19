@@ -88,10 +88,11 @@ pub fn check(remote: &dyn Remote, target: &Target) -> Result<(), String> {
     }
 }
 
-/// Whether a session running `sender` may type into a remote agent. Gespan
-/// can't see or limit what an agent on another machine may do, so only a
-/// full-access session may tell one what to do; an unknown mode is refused.
-pub fn may_message(sender: Option<crate::agent::AccessMode>) -> bool {
+/// Whether a session running `sender` may start a remote agent or type into
+/// one. Gespan can't see or limit what an agent on another machine may do,
+/// so only a full-access session may tell one what to do; an unknown mode is
+/// refused.
+pub fn may_direct(sender: Option<crate::agent::AccessMode>) -> bool {
     sender == Some(crate::agent::AccessMode::FullAccess)
 }
 

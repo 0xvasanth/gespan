@@ -248,11 +248,10 @@ impl Shell {
         .detach();
     }
 
-    /// What a remote start must pass. A herdr agent runs interactively on
-    /// its machine, asking there before it acts: as `supervised` at best. So
-    /// a read-only or plan turn can't start one; the depth and running
-    /// limits count remote children with local ones; and it runs in a
-    /// checkout named like the caller's repository.
+    /// What a remote start must pass. Gespan can't see or limit what an
+    /// agent on another machine may do, so only a full-access turn can start
+    /// one; the depth and running limits count remote children with local
+    /// ones; and it runs in a checkout named like the caller's repository.
     fn remote_start_policy(
         &self,
         caller: i64,
@@ -266,6 +265,12 @@ impl Shell {
         let caller_access = view
             .map(super::orchestrator_tree::effective_access)
             .unwrap_or(AccessMode::ReadOnly);
+        if !remote::may_direct(Some(caller_access)) {
+            return Err(Refusal::new(
+                Code::PermissionEscalation,
+                "only a session with full access can start an agent on a machine",
+            ));
+        }
         let folder = member.repo.as_deref().and_then(repo_folder);
         let cwd = input.cwd.clone().unwrap_or_default();
         let same_repo = folder
@@ -317,7 +322,7 @@ impl Shell {
             .sessions
             .get(&caller)
             .map(|view| super::orchestrator_tree::effective_access(view.read(cx)));
-        if !remote::may_message(sender) {
+        if !remote::may_direct(sender) {
             let _ = reply.send(Err(Refusal::new(
                 Code::PermissionEscalation,
                 "only a session with full access can message an agent on a machine",
