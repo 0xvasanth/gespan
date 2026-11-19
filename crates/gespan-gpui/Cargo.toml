@@ -122,7 +122,7 @@ resolver = "2"
 members = [".", "../gespan-core", "../gespan-first-launch", "../gespan-fake-agent"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.3.1"
 edition = "2021"
 license = "MIT"
 
