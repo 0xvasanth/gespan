@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-19
+
+### Fixed
+
+- **The project menu is back in sight:** the project switcher at the top of
+  the rail ends in a "…" button that opens the current project's menu
+  (appearance, theme colors, background image, pin, Reveal in Finder, import
+  sessions, archive). Since the rail redesign it could only be opened by
+  right-clicking. The ⌘O hint moves into the switcher's tooltip.
+
 ## [0.3.1] - 2026-11-19
 
 ### Added
@@ -2409,7 +2419,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/0xvasanth/gespan/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/0xvasanth/gespan/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/0xvasanth/gespan/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/0xvasanth/gespan/compare/v0.1.3...v0.2.0
