@@ -127,7 +127,7 @@ fn turn(text: &str, calls: Vec<Value>) -> Value {
     json!({"text": text, "mcp": calls})
 }
 
-/// Only a full-access chat may type into a remote agent.
+/// Only a full-access chat may start a remote agent or type into one.
 fn with_full_access(e2e: &E2e, session: i64, cx: &mut TestAppContext) {
     e2e.session(session, cx).update(cx, |view, _| {
         view.settings.access = gespan_core::agent::AccessMode::FullAccess;
@@ -154,6 +154,7 @@ fn a_chat_starts_an_agent_in_a_new_worktree_on_a_machine(cx: &mut TestAppContext
     let e2e = E2e::new(cx, Mode::Fake);
     let (herdr, _) = with_devbox(&e2e, cx);
     let a = e2e.start_session(Kind::Claude, cx);
+    with_full_access(&e2e, a, cx);
     let checkout = format!("/home/dev/{}", folder(&e2e));
     e2e.script_frames(
         a,
@@ -241,6 +242,7 @@ fn a_start_on_a_machine_that_isnt_there_is_refused(cx: &mut TestAppContext) {
     let e2e = E2e::new(cx, Mode::Fake);
     let (herdr, _) = with_devbox(&e2e, cx);
     let a = e2e.start_session(Kind::Claude, cx);
+    with_full_access(&e2e, a, cx);
     let checkout = format!("/srv/{}", folder(&e2e));
     e2e.script_frames(
         a,
@@ -301,6 +303,7 @@ fn remote_agents_outside_this_repository_are_out_of_reach(cx: &mut TestAppContex
     let e2e = E2e::new(cx, Mode::Fake);
     let (herdr, _) = with_devbox(&e2e, cx);
     let a = e2e.start_session(Kind::Claude, cx);
+    with_full_access(&e2e, a, cx);
     // An agent the machine lists that is not in this repository.
     let stranger = remote_id("m-devbox", "w9:p9");
     e2e.script_frames(
@@ -401,7 +404,7 @@ fn a_remote_pane_that_now_holds_another_agent_gets_nothing(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-fn an_auto_chat_cant_message_a_remote_agent(cx: &mut TestAppContext) {
+fn an_auto_chat_cant_start_or_message_a_remote_agent(cx: &mut TestAppContext) {
     // Auto is the broadest mode short of full access.
     let e2e = E2e::new(cx, Mode::Fake);
     let (herdr, builder) = with_devbox(&e2e, cx);
@@ -409,11 +412,15 @@ fn an_auto_chat_cant_message_a_remote_agent(cx: &mut TestAppContext) {
     e2e.session(a, cx).update(cx, |view, _| {
         view.settings.access = gespan_core::agent::AccessMode::Auto;
     });
+    let checkout = format!("/home/dev/{}", folder(&e2e));
     e2e.script_frames(
         a,
         turn(
             "ok",
             vec![
+                json!({"tool": "sessions_start", "arguments": {
+                    "prompt": "Push it", "workspace": "main", "machine": "devbox", "cwd": checkout,
+                }}),
                 json!({"tool": "sessions_message", "arguments": {"id": builder, "text": "Push it"}}),
                 json!({"tool": "sessions_read", "arguments": {"id": builder}}),
             ],
@@ -423,14 +430,18 @@ fn an_auto_chat_cant_message_a_remote_agent(cx: &mut TestAppContext) {
     e2e.send(a, "Try", cx);
 
     let calls = e2e.mcp_calls(a);
-    let error = calls[0]["error"]
-        .as_str()
-        .unwrap_or_else(|| panic!("{}", calls[0]));
-    assert!(error.starts_with("permission_escalation: "), "{error}");
-    assert!(error.contains("full access"), "{error}");
+    for call in &calls[..2] {
+        let error = call["error"].as_str().unwrap_or_else(|| panic!("{call}"));
+        assert!(error.starts_with("permission_escalation: "), "{error}");
+        assert!(error.contains("full access"), "{error}");
+    }
     assert_eq!(
-        calls[1]["result"]["recent"], "Tests pass on the devbox.",
+        calls[2]["result"]["recent"], "Tests pass on the devbox.",
         "it may still read the agent"
     );
-    assert_eq!(herdr.calls(), ["read w1:p1"], "nothing typed");
+    assert_eq!(
+        herdr.calls(),
+        ["read w1:p1"],
+        "nothing started, nothing typed"
+    );
 }
