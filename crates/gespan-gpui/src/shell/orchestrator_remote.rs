@@ -311,18 +311,16 @@ impl Shell {
         reply: Reply,
         cx: &mut Context<Self>,
     ) {
-        // The remote agent acts as supervised; a narrower sender can't make
-        // it act for it.
+        // What a remote agent may do on its machine is out of Gespan's
+        // sight, so only a full-access session may tell it what to do.
         let sender = self
             .sessions
             .get(&caller)
             .map(|view| super::orchestrator_tree::effective_access(view.read(cx)));
-        if let Err(_held) =
-            mailbox::admit_known_access(sender, Some(gespan_core::agent::AccessMode::Supervised))
-        {
+        if !remote::may_message(sender) {
             let _ = reply.send(Err(Refusal::new(
                 Code::PermissionEscalation,
-                "this session can't message an agent that may do more than it",
+                "only a session with full access can message an agent on a machine",
             )
             .into()));
             return;

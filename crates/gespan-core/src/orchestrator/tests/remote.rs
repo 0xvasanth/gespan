@@ -324,3 +324,19 @@ fn a_remote_cwd_that_climbs_out_of_the_repository_is_not_a_sibling() {
     }];
     assert!(remote_members("m1", "devbox", &agents, "gespan", "/r/.git").is_empty());
 }
+
+#[test]
+fn only_a_full_access_session_may_message_a_remote_agent() {
+    use crate::agent::AccessMode;
+    use crate::orchestrator::remote::may_message;
+    assert!(may_message(Some(AccessMode::FullAccess)));
+    for narrower in [
+        AccessMode::ReadOnly,
+        AccessMode::Supervised,
+        AccessMode::AutoAcceptEdits,
+        AccessMode::Auto,
+    ] {
+        assert!(!may_message(Some(narrower)), "{narrower:?}");
+    }
+    assert!(!may_message(None), "an unknown sender is refused");
+}
