@@ -87,6 +87,18 @@ same. Replies are the model's, so tests check them loosely: branch on
 Real mode spends tokens on the signed-in account and needs network access;
 CI does not run it.
 
+A real CLI in a supervised chat asks before each of Gespan's tools. While a
+turn runs, the harness clicks Allow once on approvals for `sessions_*` tools
+only, as a user would, and `allowed()` lists them; any other approval still
+blocks the turn. `live_tests.rs` and the last test in `remote_tests.rs` tell
+the chat in plain words what to do, so in real mode the model picks the calls
+itself:
+
+```sh
+GESPAN_E2E_REAL=1 cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml \
+  -p gespan-gpui -E 'test(e2e::live_tests) | test(told_to_message_the_agent)'
+```
+
 ## How a session's agent is chosen
 
 `start_session` saves the agent's path in the session's store under

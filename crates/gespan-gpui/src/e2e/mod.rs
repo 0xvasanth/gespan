@@ -27,6 +27,7 @@ use std::{
 };
 
 mod hello_tests;
+mod live_tests;
 mod message_tests;
 mod remote_tests;
 mod roster_tests;
@@ -125,6 +126,8 @@ pub(crate) struct E2e {
     window: WindowHandle<Shell>,
     repo: tempfile::TempDir,
     agents: tempfile::TempDir,
+    /// The `sessions_*` approvals the test allowed, as `(session, tool)`.
+    allowed: std::cell::RefCell<Vec<(i64, String)>>,
 }
 
 impl E2e {
@@ -164,6 +167,7 @@ impl E2e {
             window,
             repo,
             agents,
+            allowed: Default::default(),
         }
     }
 
@@ -201,6 +205,7 @@ impl E2e {
         let deadline = Instant::now() + self.mode.turn_timeout();
         loop {
             cx.run_until_parked();
+            self.allow_session_tools(cx);
             if done(self, cx) {
                 return;
             }
@@ -304,6 +309,7 @@ impl E2e {
             // The turn runs on a thread of its own: give its updates a moment
             // to arrive, then let the foreground apply them.
             cx.run_until_parked();
+            self.allow_session_tools(cx);
             let (busy, rows) = view.read_with(cx, |view, cx| {
                 (view.busy, view.transcript.read(cx).source_rows().to_vec())
             });
@@ -369,6 +375,45 @@ impl E2e {
         self.window
             .update(cx, |shell, _, _| shell.e2e_store())
             .unwrap()
+    }
+
+    /// The `sessions_*` calls a supervised chat asked to make, which the
+    /// test allowed as a user clicking Allow once would.
+    pub(crate) fn allowed(&self) -> Vec<(i64, String)> {
+        self.allowed.borrow().clone()
+    }
+
+    /// Clicks Allow once on every pending approval for one of Gespan's
+    /// `sessions_*` tools. Any other approval is left for the test, so it
+    /// still blocks the turn.
+    fn allow_session_tools(&self, cx: &mut TestAppContext) {
+        for id in self.sessions(cx) {
+            let view = self.session(id, cx);
+            let pending: Vec<(String, String)> = view.read_with(cx, |view, _| {
+                view.e2e_approvals()
+                    .filter_map(|approval| {
+                        let name = approval
+                            .tool
+                            .as_ref()
+                            .map(|tool| tool.name.clone())
+                            .unwrap_or_else(|| approval.title.clone());
+                        let tool = name.rsplit("__").next().unwrap_or(&name).to_owned();
+                        tool.starts_with("sessions_")
+                            .then(|| (approval.id.clone(), tool))
+                    })
+                    .collect()
+            });
+            for (request, tool) in pending {
+                view.update(cx, |view, cx| {
+                    view.decide_notification_request(
+                        &request,
+                        gespan_core::agent::Decision::Allow,
+                        cx,
+                    )
+                });
+                self.allowed.borrow_mut().push((id, tool));
+            }
+        }
     }
 
     fn sessions(&self, cx: &mut TestAppContext) -> Vec<i64> {

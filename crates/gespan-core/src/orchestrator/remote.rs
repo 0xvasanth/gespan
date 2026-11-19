@@ -181,10 +181,12 @@ pub fn agent_name(title: &str) -> String {
 }
 
 /// The id a remote agent goes by in `sessions_*` calls: negative, so never
-/// a local session's, and the same for the same machine and pane.
+/// a local session's, and the same for the same machine and pane. It stays
+/// within 53 bits, like local ids, so a model or JSON parser that carries
+/// numbers as doubles sends it back exactly.
 pub fn remote_id(machine_id: &str, pane_id: &str) -> i64 {
     let hash = super::roster::fingerprint(&format!("{machine_id}\u{0}{pane_id}"));
-    -((hash >> 1) as i64) - 1
+    -((hash & ((1 << 52) - 1)) as i64) - 1
 }
 
 /// The agents on a machine that work in a folder named like the caller's

@@ -577,6 +577,11 @@ impl Conversation {
         self.status = "Waiting for your answer".into();
     }
     #[cfg(test)]
+    pub(crate) fn e2e_approvals(&self) -> impl Iterator<Item = &Approval> {
+        self.approvals.iter()
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_approvals_for_test(&mut self, approvals: Vec<Approval>) {
         self.approvals = approvals.into();
     }

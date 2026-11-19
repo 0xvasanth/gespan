@@ -445,3 +445,48 @@ fn an_auto_chat_cant_start_or_message_a_remote_agent(cx: &mut TestAppContext) {
         "nothing started, nothing typed"
     );
 }
+
+/// Told in plain words, the chat finds the remote agent in the roster and
+/// messages it. Fake by default; `GESPAN_E2E_REAL=1` lets the real Claude CLI
+/// choose the calls.
+#[gpui::test]
+fn told_to_message_the_agent_on_the_devbox_a_chat_reaches_it(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::from_env());
+    let (herdr, builder) = with_devbox(&e2e, cx);
+    let a = e2e.start_session(Kind::Claude, cx);
+    with_full_access(&e2e, a, cx);
+    e2e.script_frames(
+        a,
+        turn(
+            "Sent.",
+            vec![json!({"tool": "sessions_message", "arguments": {"id": builder, "text": "Rebase on main first."}})],
+        ),
+    );
+
+    e2e.send(
+        a,
+        "An agent named builder runs on the devbox machine. Find it with \
+         sessions_list and use sessions_message to tell it exactly: Rebase on \
+         main first. Then end your turn.",
+        cx,
+    );
+
+    e2e.until(cx, "the message to be typed", |_, _| {
+        herdr
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("prompt w1:p1"))
+    });
+    let calls = herdr.calls();
+    let typed = calls
+        .iter()
+        .find(|c| c.starts_with("prompt w1:p1"))
+        .unwrap();
+    assert!(typed.contains("[From session"), "{typed}");
+    assert!(typed.contains("Rebase on main"), "{typed}");
+    assert_eq!(
+        calls.iter().filter(|c| c.starts_with("prompt")).count(),
+        1,
+        "typed once: {calls:?}"
+    );
+}

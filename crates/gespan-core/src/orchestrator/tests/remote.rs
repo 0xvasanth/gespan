@@ -340,3 +340,18 @@ fn only_a_full_access_session_may_start_or_message_a_remote_agent() {
     }
     assert!(!may_direct(None), "an unknown sender is refused");
 }
+
+#[test]
+fn a_remote_agents_id_survives_a_trip_through_a_json_number() {
+    // Models and JSON parsers carry numbers as doubles: an id beyond 2^53
+    // comes back rounded and names nobody.
+    const MAX_SAFE: i64 = (1 << 53) - 1;
+    for machine in ["m1", "m-devbox", "a-long-machine-id-0123456789"] {
+        for pane in ["w1:p1", "w2:p9", "w123:p456"] {
+            let id = remote_id(machine, pane);
+            assert!(id < 0, "{id}");
+            assert!(id >= -MAX_SAFE, "{machine} {pane}: {id}");
+            assert_eq!(id as f64 as i64, id, "exact as a double");
+        }
+    }
+}
