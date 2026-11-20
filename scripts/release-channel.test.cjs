@@ -577,6 +577,66 @@ test("the Release workflow finishes on the draft and publishes only through the 
   assert.ok(!workflow.includes("allow_unsigned=true"));
 });
 
+// Runs the Release workflow's mobile build step with a stub release-run.sh
+// that logs each dispatch and fails the titles listed in FAIL.
+function runMobileStep({ ios, fail = [] }) {
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/release.yml"), "utf8");
+  const step = workflow.split("      - name: Build iOS and Android\n")[1].split("\n      - name:")[0];
+  const script = step.split("        run: |\n")[1].replace(/^ {10}/gm, "");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-mobile-"));
+  fs.mkdirSync(path.join(dir, "scripts"));
+  const stub = path.join(dir, "scripts", "release-run.sh");
+  fs.writeFileSync(stub, '#!/usr/bin/env bash\necho "$*" >> "$LOG"\ncase " $FAIL " in *" $2 "*) exit 1;; esac\n');
+  fs.chmodSync(stub, 0o755);
+  const log = path.join(dir, "log");
+  let status = 0;
+  let stdout = "";
+  try {
+    stdout = execFileSync("bash", ["-e", "-c", script], {
+      cwd: dir,
+      env: { ...process.env, IOS: String(ios), TAG: "v0.0.4", LOG: log, FAIL: fail.join(" ") },
+      encoding: "utf8",
+    });
+  } catch (error) {
+    status = error.status;
+    stdout = error.stdout;
+  }
+  const runs = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").sort() : [];
+  return { status, runs, stdout };
+}
+
+test("a release skips the iOS build unless it is opted in, and still builds the Android APK", () => {
+  const { status, runs, stdout } = runMobileStep({ ios: false });
+  assert.equal(status, 0);
+  assert.deepEqual(runs, ["mobile-release.yml Mobile apk android v0.0.4 -f release=apk -f platform=android -f submit=false"]);
+  assert.match(stdout, /Skipping the iOS build/);
+});
+
+test("an opted-in release builds iOS and submits it, alongside the Android APK", () => {
+  const { status, runs } = runMobileStep({ ios: true });
+  assert.equal(status, 0);
+  assert.deepEqual(runs, [
+    "mobile-release.yml Mobile apk android v0.0.4 -f release=apk -f platform=android -f submit=false",
+    "mobile-release.yml Mobile build ios v0.0.4 -f release=build -f platform=ios -f submit=true",
+  ]);
+});
+
+test("a failed mobile build still fails the release, with or without iOS", () => {
+  assert.equal(runMobileStep({ ios: false, fail: ["Mobile apk android v0.0.4"] }).status, 1);
+  assert.equal(runMobileStep({ ios: true, fail: ["Mobile apk android v0.0.4"] }).status, 1);
+  const iosFailed = runMobileStep({ ios: true, fail: ["Mobile build ios v0.0.4"] });
+  assert.equal(iosFailed.status, 1);
+  assert.equal(iosFailed.runs.length, 2);
+});
+
+test("iOS is opted in by the RELEASE_IOS variable or the Build iOS input, and is off by default", () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "../.github/workflows/release.yml"), "utf8");
+  assert.ok(workflow.includes("IOS: ${{ inputs.ios || vars.RELEASE_IOS == 'true' }}"));
+  const input = workflow.split("      ios:\n")[1].split("\npermissions:")[0];
+  assert.match(input, /type: boolean/);
+  assert.match(input, /default: false/);
+});
+
 const publishedRelease = (tag_name, published_at, extra = {}) => ({
   tag_name,
   published_at,
