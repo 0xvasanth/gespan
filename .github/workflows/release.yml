@@ -8,12 +8,23 @@ run-name: Release from ${{ github.event.workflow_run.head_sha || github.sha }}
 # is a file on that release, so a failure leaves only a draft. Run this workflow
 # again, or rerun it, to finish it: builds that already passed for the tag are
 # not repeated.
+#
+# The iOS App Store build is opt-in, because each one uses an Expo build
+# credit: set the repository variable RELEASE_IOS to true, or run this workflow
+# by hand with "Build iOS" ticked. Without it, a release ships desktop and the
+# Android APK. To add iOS to a version later, run Mobile release on its tag with
+# release=build, platform=ios.
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      ios:
+        description: Build iOS and submit it to TestFlight (uses an Expo build credit)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -102,13 +113,20 @@ jobs:
       # A tag made with this workflow's token starts no other workflow, and a
       # dispatch does, so each build is dispatched on the tag and waited for.
       - name: Build iOS and Android
+        env:
+          IOS: ${{ inputs.ios || vars.RELEASE_IOS == 'true' }}
         run: |
-          scripts/release-run.sh mobile-release.yml "Mobile build ios $TAG" -f release=build -f platform=ios -f submit=true &
-          ios=$!
+          status=0
+          if [ "$IOS" = true ]; then
+            scripts/release-run.sh mobile-release.yml "Mobile build ios $TAG" -f release=build -f platform=ios -f submit=true &
+            ios=$!
+          else
+            echo "Skipping the iOS build: set RELEASE_IOS=true or run Release with Build iOS to include it."
+            ios=""
+          fi
           scripts/release-run.sh mobile-release.yml "Mobile apk android $TAG" -f release=apk -f platform=android -f submit=false &
           android=$!
-          status=0
-          wait "$ios" || status=1
+          if [ -n "$ios" ]; then wait "$ios" || status=1; fi
           wait "$android" || status=1
           exit "$status"
       - name: Build and publish desktop

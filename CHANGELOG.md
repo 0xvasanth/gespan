@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases build iOS only when asked:** each iOS App Store build uses an
+  Expo build credit, so a release now ships desktop and the Android APK, and
+  builds iOS only when the `RELEASE_IOS` repository variable is `true` or the
+  Release workflow is run by hand with "Build iOS" ticked.
+
 ## [0.3.2] - 2026-11-19
 
 ### Fixed
