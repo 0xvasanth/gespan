@@ -2,6 +2,7 @@
   { "path": "/", "page": "home", "title": "Gespan: one desktop app to drive all of your coding agents" },
   { "path": "/features", "page": "features", "title": "Features · Gespan" },
   { "path": "/pilots", "page": "pilots", "title": "Pilots · Gespan" },
+  { "path": "/hub", "page": "hub", "title": "Web Hub concept (coming soon) · Gespan" },
   { "path": "/download", "page": "download", "title": "Download · Gespan" },
   { "path": "/changelog", "page": "changelog", "title": "Changelog · Gespan" },
   { "path": "/docs", "page": "docs", "title": "Docs · Gespan" }

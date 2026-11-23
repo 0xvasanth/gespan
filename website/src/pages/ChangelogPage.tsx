@@ -23,6 +23,7 @@ function Release({ entry, latest }: { entry: ChangelogRelease; latest: boolean }
         {latest && <span className="w-tag ok" style={{ alignSelf: "flex-start" }}>Latest</span>}
         <h2 id={id} className="cl-ver">{entry.version}</h2>
         <p className="w-meta">{formatDate(entry.date)}</p>
+        {entry.includes?.length ? <p className="w-meta">Also ships {entry.includes.join(", ")}, which had no release of its own.</p> : null}
       </div>
       <div className="cl-body">
         {latest && (

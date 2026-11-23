@@ -12,20 +12,31 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { compareVersions, releaseFromGitHub } from "./release.mjs";
+import { compareVersions, publishedVersions, releaseFromGitHub } from "./release.mjs";
 
 const REPO = "0xvasanth/gespan";
 export const RELEASE_FILE = join(dirname(fileURLToPath(import.meta.url)), "../src/release.json");
 
-/** Fetches a release from GitHub's API: the latest published one, or a tag. */
-export async function fetchRelease(tag, { fetchImpl = fetch, token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN } = {}) {
-  const path = tag ? `releases/tags/${encodeURIComponent(tag.startsWith("v") ? tag : `v${tag}`)}` : "releases/latest";
-  const response = await fetchImpl(`https://api.github.com/repos/${REPO}/${path}`, {
+const github = (path, fetchImpl, token) =>
+  fetchImpl(`https://api.github.com/repos/${REPO}/${path}`, {
     headers: { accept: "application/vnd.github+json", "user-agent": "gespan-website-sync", ...(token ? { authorization: `Bearer ${token}` } : {}) },
   });
+
+/**
+ * Fetches a release from GitHub's API: the latest published one, or a tag.
+ * The record also lists every published version up to it, so the Changelog
+ * can show a version that never got a release inside the one that shipped it.
+ */
+export async function fetchRelease(tag, { fetchImpl = fetch, token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN } = {}) {
+  const path = tag ? `releases/tags/${encodeURIComponent(tag.startsWith("v") ? tag : `v${tag}`)}` : "releases/latest";
+  const response = await github(path, fetchImpl, token);
   if (response.status === 404) throw new Error(tag ? `no published release ${tag} (a draft isn't public yet)` : "no published release");
   if (!response.ok) throw new Error(`GitHub answered ${response.status} for ${path}`);
-  return releaseFromGitHub(await response.json());
+  const release = releaseFromGitHub(await response.json());
+  const list = await github("releases?per_page=100", fetchImpl, token);
+  if (!list.ok) throw new Error(`GitHub answered ${list.status} for releases`);
+  const published = publishedVersions(await list.json()).filter((v) => compareVersions(v, release.version) <= 0);
+  return { ...release, published };
 }
 
 /** Writes the release record; returns what changed, for the summary line. */

@@ -10,6 +10,8 @@ export interface ChangelogRelease {
   version: string;
   date: string | null;
   sections: ChangelogSection[];
+  /** Versions without a GitHub release of their own that this one shipped. */
+  includes?: string[];
 }
 export interface ReleaseFiles {
   macArm: string;
@@ -25,6 +27,8 @@ export interface Release {
   date: string | null;
   url: string;
   files: ReleaseFiles;
+  /** Every published x.y.z version, newest first. */
+  published?: string[];
 }
 export interface GitHubRelease {
   tag_name: string;
@@ -37,3 +41,5 @@ export interface GitHubRelease {
 export function releaseFromGitHub(release: GitHubRelease): Release;
 export function compareVersions(a: string, b: string): number;
 export function parseChangelog(text: string, published?: string): ChangelogRelease[];
+export function publishedVersions(releases: GitHubRelease[]): string[];
+export function foldUnpublished(releases: ChangelogRelease[], published?: string[]): ChangelogRelease[];

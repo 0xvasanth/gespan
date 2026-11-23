@@ -6,7 +6,16 @@ import logoUrl from "../assets/logo.svg";
 import { AgentMarquee, FlowDiagram, GlowParticles, HeroAgents, ShinyText, SpotCard, StatBand, TaskFeed } from "../components/fx";
 import { GUIDES } from "../docs";
 import { changelog, formatDate, highlights, release } from "../release";
+import { SoonTag } from "./HubPage";
 import "./home.css";
+import "./hub.css";
+
+/** The Web Hub teaser's inbox rows: title, project and age, status tone. */
+const HUB_PREVIEW = [
+  ["Review asked: #212 Cart totals in minor units", "Checkout web · 8 min", "run"],
+  ["A run asks: keep the v1 charge endpoint?", "Payments API · 12 min", "wait"],
+  ["Decide: retry policy for webhooks", "Payments API · 1 h", "mute"],
+] as const;
 
 export function HomePage() {
   return (
@@ -275,6 +284,33 @@ export function HomePage() {
         </div>
       </section>
       {/* FAQ */}
+      <section className="w-sec" aria-labelledby="hub-h" style={{ paddingTop: "0" }}>
+        <div className="w-wrap">
+          <div className="w-hero soft hb-teaser">
+            <div style={{ flex: "1", minWidth: "0", display: "flex", flexDirection: "column", gap: "18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <p className="w-eyebrow">Gespan Web Hub</p>
+                <SoonTag />
+              </div>
+              <h2 id="hub-h" className="w-h2">A concept: your whole team's agents, in one place.</h2>
+              <p className="w-lead">An early design, not yet being built, for a hub a team would run itself: one inbox for every project, a shared board, Devboxes that run the agents, and decisions every agent follows.</p>
+              <div><Link className="w-btn w-btn-glass" to="/hub">See the concept</Link></div>
+            </div>
+            <div className="w-glass hb-panel" aria-hidden="true">
+              <div className="hb-tabs"><span className="on">Waiting <b>3</b></span><span>Snoozed</span><span>Handled</span></div>
+              <div className="hb-list">
+                {HUB_PREVIEW.map(([title, meta, tone]) => (
+                  <div key={title} className="hb-row">
+                    <span className={`hb-dot ${tone}`} />
+                    <span className="hb-grow"><span className="hb-strong">{title}</span><span className="hb-muted">{meta}</span></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="w-sec" aria-labelledby="faq-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
           <div data-reveal="" className="w-head">

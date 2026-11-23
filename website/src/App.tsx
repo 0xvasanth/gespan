@@ -6,6 +6,7 @@ import { DocsPage } from "./pages/DocsPage";
 import { DownloadPage } from "./pages/DownloadPage";
 import { FeaturesPage } from "./pages/FeaturesPage";
 import { HomePage } from "./pages/HomePage";
+import { HubPage } from "./pages/HubPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { PilotsPage } from "./pages/PilotsPage";
 import { useReveal } from "./reveal";
@@ -15,6 +16,7 @@ const PAGES: Record<Page, ComponentType> = {
   home: HomePage,
   features: FeaturesPage,
   pilots: PilotsPage,
+  hub: HubPage,
   download: DownloadPage,
   changelog: ChangelogPage,
   docs: DocsPage,

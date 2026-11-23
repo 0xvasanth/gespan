@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
-import { compareVersions, parseChangelog, releaseFromGitHub, type GitHubRelease } from "../scripts/release.mjs";
+import { compareVersions, foldUnpublished, parseChangelog, publishedVersions, releaseFromGitHub, type GitHubRelease } from "../scripts/release.mjs";
 import { fetchRelease, writeRelease } from "../scripts/sync-release.mjs";
 
 const site = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -74,15 +74,38 @@ describe("sync-release", () => {
 
   const respond = (status: number, body: unknown) => (async () => ({ status, ok: status < 400, json: async () => body })) as unknown as typeof fetch;
 
-  test("asks GitHub for the latest published release, or a tag", async () => {
-    const urls: string[] = [];
-    const fetchImpl = (async (url: string) => {
+  // GitHub's answers: one release for latest or a tag, the list for releases?per_page.
+  const github = (list: GitHubRelease[], urls: string[] = []) =>
+    (async (url: string) => {
       urls.push(url);
-      return { status: 200, ok: true, json: async () => published("1.4.0") };
+      const body = url.includes("releases?") ? list : published("1.4.0");
+      return { status: 200, ok: true, json: async () => body };
     }) as unknown as typeof fetch;
+
+  test("asks GitHub for the latest published release, or a tag, and the release list", async () => {
+    const urls: string[] = [];
+    const fetchImpl = github([published("1.4.0")], urls);
     await fetchRelease(undefined, { fetchImpl, token: "" });
     await fetchRelease("1.4.0", { fetchImpl, token: "" });
-    expect(urls).toEqual(["https://api.github.com/repos/0xvasanth/gespan/releases/latest", "https://api.github.com/repos/0xvasanth/gespan/releases/tags/v1.4.0"]);
+    expect(urls).toEqual([
+      "https://api.github.com/repos/0xvasanth/gespan/releases/latest",
+      "https://api.github.com/repos/0xvasanth/gespan/releases?per_page=100",
+      "https://api.github.com/repos/0xvasanth/gespan/releases/tags/v1.4.0",
+      "https://api.github.com/repos/0xvasanth/gespan/releases?per_page=100",
+    ]);
+  });
+
+  test("records the published versions up to the release, skipping drafts and newer ones", async () => {
+    const list = [published("1.5.0"), published("1.4.1", { draft: true }), published("1.4.0"), published("1.3.0"), published("1.2.0-beta", { prerelease: true })];
+    const release = await fetchRelease("1.4.0", { fetchImpl: github(list), token: "" });
+    expect(release.version).toBe("1.4.0");
+    expect(release.published).toEqual(["1.4.0", "1.3.0"]);
+  });
+
+  test("a failed release list fails the sync instead of dropping the versions", async () => {
+    const fetchImpl = (async (url: string) =>
+      url.includes("releases?") ? { status: 502, ok: false, json: async () => ({}) } : { status: 200, ok: true, json: async () => published("1.4.0") }) as unknown as typeof fetch;
+    await expect(fetchRelease(undefined, { fetchImpl, token: "" })).rejects.toThrow(/502 for releases/);
   });
 
   test("a tag that is only a draft reads as not published yet", async () => {
@@ -170,9 +193,77 @@ describe("parseChangelog", () => {
     expect(latest.sections.flatMap((s) => s.entries).every((e) => !e.body.startsWith("**"))).toBe(true);
   });
 
+  test("publishedVersions keeps x.y.z releases, newest first", () => {
+    const list = [published("0.10.0"), published("0.9.0"), published("0.11.0", { draft: true }), published("0.0.3-beta", { prerelease: true }), { ...published("0"), tag_name: "native-latest" }];
+    expect(publishedVersions(list)).toEqual(["0.10.0", "0.9.0"]);
+  });
+
   test("versions compare numerically", () => {
     expect(compareVersions("0.10.0", "0.9.9")).toBeGreaterThan(0);
     expect(compareVersions("1.0.0", "1.0.0")).toBe(0);
     expect(compareVersions("0.2.0", "0.3.0")).toBeLessThan(0);
+  });
+});
+
+describe("foldUnpublished", () => {
+  const rel = (version: string, sections: [string, string[]][]) => ({
+    version,
+    date: `2027-01-${version.split(".")[2].padStart(2, "0")}`,
+    sections: sections.map(([kind, titles]) => ({ kind, entries: titles.map((title) => ({ title, body: "." })) })),
+  });
+  // 0.3.1 and 0.3.3 were never published: 0.3.2 and 0.3.4 shipped them.
+  const releases = [
+    rel("0.3.4", [["Fixed", ["Menu"]]]),
+    rel("0.3.3", [["Added", ["Hub"]], ["Removed", ["Operator"]]]),
+    rel("0.3.2", [["Fixed", ["Rail"]]]),
+    rel("0.3.1", [["Added", ["Sessions"]], ["Fixed", ["Releases"]]]),
+    rel("0.3.0", [["Added", ["Pilot"]]]),
+  ];
+
+  test("shows an unpublished version inside the release that shipped it", () => {
+    const folded = foldUnpublished(releases, ["0.3.4", "0.3.2", "0.3.0"]);
+    expect(folded.map((r) => [r.version, r.includes ?? []])).toEqual([
+      ["0.3.4", ["0.3.3"]],
+      ["0.3.2", ["0.3.1"]],
+      ["0.3.0", []],
+    ]);
+    // The release keeps its own date, and its sections go Added, Changed, Fixed, Removed.
+    expect(folded[0].date).toBe("2027-01-04");
+    expect(folded[0].sections.map((s) => [s.kind, s.entries.map((e) => e.title)])).toEqual([
+      ["Added", ["Hub"]],
+      ["Fixed", ["Menu"]],
+      ["Removed", ["Operator"]],
+    ]);
+    // Within a kind, the shipping release's own entries come first.
+    expect(folded[1].sections.map((s) => [s.kind, s.entries.map((e) => e.title)])).toEqual([
+      ["Added", ["Sessions"]],
+      ["Fixed", ["Rail", "Releases"]],
+    ]);
+  });
+
+  test("folds several unpublished versions in a row, newest first", () => {
+    const folded = foldUnpublished(releases, ["0.3.4", "0.3.0"]);
+    expect(folded.map((r) => [r.version, r.includes ?? []])).toEqual([
+      ["0.3.4", ["0.3.3", "0.3.2", "0.3.1"]],
+      ["0.3.0", []],
+    ]);
+    expect(folded[0].sections.find((s) => s.kind === "Fixed")?.entries.map((e) => e.title)).toEqual(["Menu", "Rail", "Releases"]);
+  });
+
+  test("leaves the changelog alone without a published list, and before the oldest release", () => {
+    expect(foldUnpublished(releases)).toBe(releases);
+    expect(foldUnpublished(releases, [])).toBe(releases);
+    // Only 0.3.2 is known: older versions predate the list and stay as they are.
+    expect(foldUnpublished(releases, ["0.3.2"]).map((r) => r.version)).toEqual(["0.3.4", "0.3.3", "0.3.2", "0.3.1", "0.3.0"]);
+  });
+
+  test("the real changelog shows the committed release with what it shipped", () => {
+    const release = JSON.parse(readFileSync(join(site, "src/release.json"), "utf8"));
+    const folded = foldUnpublished(parseChangelog(CHANGELOG, release.version), release.published);
+    expect(folded[0].version).toBe(release.version);
+    for (const entry of folded) for (const v of entry.includes ?? []) expect(release.published).not.toContain(v);
+    // Every version shown newer than the oldest release has a release of its own to link to.
+    const oldest = release.published[release.published.length - 1];
+    for (const entry of folded) if (/^\d+\.\d+\.\d+$/.test(entry.version) && compareVersions(entry.version, oldest) > 0) expect(release.published).toContain(entry.version);
   });
 });
