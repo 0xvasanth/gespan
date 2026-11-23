@@ -98,3 +98,57 @@ export function parseChangelog(text, published) {
   if (!published) return releases;
   return releases.filter((r) => !/^\d+\.\d+\.\d+$/.test(r.version) || compareVersions(r.version, published) <= 0);
 }
+
+/** The published x.y.z versions in a list of GitHub releases, newest first. Drafts, pre-releases and other tags are left out. */
+export function publishedVersions(releases) {
+  return releases
+    .filter((r) => r && !r.draft && !r.prerelease && typeof r.tag_name === "string")
+    .map((r) => r.tag_name.replace(/^v/, ""))
+    .filter((v) => /^\d+\.\d+\.\d+$/.test(v))
+    .sort((a, b) => compareVersions(b, a));
+}
+
+/** Section order when releases are folded together; other kinds follow in the order they appear. */
+const KIND_ORDER = ["Added", "Changed", "Fixed", "Removed"];
+
+/**
+ * Folds each CHANGELOG version that never got a GitHub release of its own
+ * into the next published version, which shipped it (0.3.1 went out inside
+ * 0.3.2). The published version keeps its own number and date, lists what it
+ * took in under `includes`, and merges the sections by kind, its own entries
+ * first. With no `published` list, or for versions older than the oldest
+ * published one, the changelog is returned as it is.
+ */
+export function foldUnpublished(releases, published) {
+  if (!published?.length) return releases;
+  const shipped = new Set(published);
+  const oldest = published.reduce((a, b) => (compareVersions(a, b) <= 0 ? a : b));
+  const out = [];
+  let pending = [];
+  // Oldest first, so each unpublished version waits for the release that shipped it.
+  for (const release of [...releases].reverse()) {
+    const numbered = /^\d+\.\d+\.\d+$/.test(release.version);
+    if (numbered && !shipped.has(release.version) && compareVersions(release.version, oldest) > 0) {
+      pending.push(release);
+      continue;
+    }
+    if (!pending.length) {
+      out.push(release);
+      continue;
+    }
+    const parts = [release, ...pending.reverse()];
+    const kinds = [...new Set(parts.flatMap((p) => p.sections.map((s) => s.kind)))].sort((a, b) => {
+      const ia = KIND_ORDER.indexOf(a);
+      const ib = KIND_ORDER.indexOf(b);
+      return (ia < 0 ? KIND_ORDER.length : ia) - (ib < 0 ? KIND_ORDER.length : ib);
+    });
+    out.push({
+      ...release,
+      includes: pending.map((p) => p.version),
+      sections: kinds.map((kind) => ({ kind, entries: parts.flatMap((p) => p.sections.filter((s) => s.kind === kind).flatMap((s) => s.entries)) })),
+    });
+    pending = [];
+  }
+  // Unpublished versions with no newer release yet stay as they are.
+  return [...out, ...pending].reverse();
+}

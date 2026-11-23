@@ -1,7 +1,7 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from "react";
 import routes from "./routes.json";
 
-export type Page = "home" | "features" | "pilots" | "download" | "changelog" | "docs";
+export type Page = "home" | "features" | "pilots" | "hub" | "download" | "changelog" | "docs";
 export interface Route {
   path: string;
   page: Page;
