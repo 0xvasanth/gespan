@@ -1,0 +1,60 @@
+website/scripts/sync-release.mjs
+  s_af00bad6d764c9::t_5d1dfa96fa5c45 15,20-21,24-32,35-39
+website/vite.config.ts
+  s_af00bad6d764c9::t_5d1dfa96fa5c45 6,11-12,15
+website/src/pages/HomePage.tsx
+  s_af00bad6d764c9::t_f177cfe6801b8d 9,11-18
+  s_af00bad6d764c9::t_9aacbd40032428 295-297
+  s_af00bad6d764c9::t_a8197ac924b254 287-294,298-313
+website/tests/router.test.tsx
+  s_af00bad6d764c9::t_cf81acafcfb790 83
+  s_af00bad6d764c9::t_c18105c08c0cf7 12
+website/src/pages/HubPage.tsx
+  s_af00bad6d764c9::t_9aacbd40032428 8-10,13,15-20,141,143,146,149,152,159,171,183,201,213,228-229
+  s_af00bad6d764c9::t_3bc764ecacebe8 2-7,11-12,14,21-111,113-140,142,144-145,147-148,150-151,153-158,160-170,172-182,184-200,202-212,214-227,230-239
+  s_af00bad6d764c9::t_c18105c08c0cf7 1,112
+website/src/components/SiteNav.tsx
+  s_af00bad6d764c9::t_a8197ac924b254 10
+website/tests/release.test.ts
+  s_af00bad6d764c9::t_f5ab499a9c3484 265-267
+  s_af00bad6d764c9::t_24573b16d6f530 6,77-79,81-82,84-87,90-108,196-200,207-264,268
+  s_af00bad6d764c9::t_c0b919a04e399a 269
+website/src/routes.json
+  s_af00bad6d764c9::t_9aacbd40032428 5
+website/scripts/release.mjs
+  s_af00bad6d764c9::t_5d1dfa96fa5c45 101-154
+website/src/pages/ChangelogPage.tsx
+  s_af00bad6d764c9::t_d75747dc6c410b 26
+website/src/pages/hub.css
+  s_af00bad6d764c9::t_7ce6439f35d84d 1-65
+website/src/App.tsx
+  s_af00bad6d764c9::t_a8197ac924b254 9,19
+website/tests/hub.test.tsx
+  s_af00bad6d764c9::t_9aacbd40032428 15-16,29,33-39,53,55-56
+  s_af00bad6d764c9::t_c23b1de7f572c0 1-14,17-28,30-32,40-52,54,57-58
+website/scripts/release.d.mts
+  s_af00bad6d764c9::t_5d1dfa96fa5c45 13-14,30-31,44-45
+website/src/router.tsx
+  s_af00bad6d764c9::t_a8197ac924b254 4
+website/src/release.json
+  s_af00bad6d764c9::t_5d1dfa96fa5c45 13-29
+  s_af00bad6d764c9::t_46f4f1d100c1a3 2-5,7-12
+website/src/components/SiteFooter.tsx
+  s_af00bad6d764c9::t_9aacbd40032428 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20edd3fdff6161ac8d809caab57c83274403cf37",
+  "prompts": {},
+  "sessions": {
+    "s_af00bad6d764c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fdd4ed37-710d-471c-94e6-04be0861e2e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
