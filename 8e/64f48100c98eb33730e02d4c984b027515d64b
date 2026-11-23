@@ -1,0 +1,19 @@
+website/wrangler.jsonc
+  s_af00bad6d764c9::t_deb6446d1a147e 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e64f48100c98eb33730e02d4c984b027515d64b",
+  "prompts": {},
+  "sessions": {
+    "s_af00bad6d764c9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fdd4ed37-710d-471c-94e6-04be0861e2e7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
