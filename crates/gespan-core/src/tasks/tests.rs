@@ -177,6 +177,29 @@ fn only_the_latest_choices_card_counts() {
 }
 
 #[test]
+fn a_pilot_ask_card_waits_on_the_user_past_later_prose() {
+    let ask = row(
+        "pilot-card",
+        &serde_json::json!({
+            "type": "ask",
+            "question": "Keep legacy_admin_view as a read-only alias?",
+            "options": ["Go with all recommendations", "Review one by one"],
+        })
+        .to_string(),
+    );
+    let mut rows = vec![ask, row("assistant", "I'll wait for your answer.")];
+    let open = open_choice(&rows).expect("the question is open");
+    assert_eq!(open.row, 0);
+    assert_eq!(
+        open.question.as_deref(),
+        Some("Keep legacy_admin_view as a read-only alias?")
+    );
+    assert_eq!(open.options.len(), 2);
+    rows.push(row("user", "Go with all recommendations"));
+    assert_eq!(open_choice(&rows), None, "an answer closes it");
+}
+
+#[test]
 fn other_cards_and_malformed_json_are_not_choices() {
     assert_eq!(open_choice(&[row("pilot-card", "{\"type\":\"pr\"}")]), None);
     assert_eq!(open_choice(&[row("pilot-card", "{")]), None);

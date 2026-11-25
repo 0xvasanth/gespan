@@ -394,6 +394,7 @@ fn app_action(arguments: &Value) -> (&'static str, Option<String>) {
         "artifacts.read" => ("Read artifact", field(&["id"])),
         "artifacts.write" => ("Write artifact", field(&["title", "id"])),
         "soul.read" => ("Read soul", None),
+        "pilot.ask" => ("Ask you", field(&["question"])),
         "soul.update" => ("Update soul", None),
         "memory.read" => ("Read memory", field(&["topic"])),
         "memory.search" => ("Search memory", field(&["query"])),
