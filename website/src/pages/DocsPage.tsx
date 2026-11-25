@@ -17,6 +17,11 @@ export const DOC_GUIDES = [
   { title: "Desktop guide", href: GUIDES.desktop, summary: "The Rust and GPUI app: building, checks and current limitations." },
 ];
 
+/** The search shortcut's keys as this visitor's keyboard labels them: ⌘ on Apple devices, Ctrl elsewhere. */
+export function shortcutKeys(userAgent: string): [string, string] {
+  return /Mac|iPhone|iPad|iPod/.test(userAgent) ? ["⌘", "K"] : ["Ctrl", "K"];
+}
+
 /** Guides whose title or summary has every word of the query, in any order and case. */
 export function filterGuides(query: string) {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -51,8 +56,13 @@ export function DocsPage() {
             <p className="w-lead" style={{ maxWidth: "560px" }}>Set up your agents, run your first session and get the most out of the board, automations and Pilots.</p>
             <label className="dc-search" style={{ marginTop: "8px" }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-              <input ref={search} type="search" placeholder="Search the guides" aria-label="Search the guides" aria-controls="gd-list" value={query} onChange={(event) => setQuery(event.target.value)} />
-              <span className="w-kbd w-hide-m" style={{ marginRight: "8px" }}>⌘K</span>
+              <input ref={search} type="search" placeholder="Search the guides" aria-label="Search the guides" aria-keyshortcuts="Meta+K Control+K" aria-controls="gd-list" value={query} onChange={(event) => setQuery(event.target.value)} />
+              {/* The shortcut hint steps aside once there's a query beside it. */}
+              {!query && (
+                <span className="dc-keys w-hide-m" aria-hidden="true">
+                  {shortcutKeys(navigator.userAgent).map((key) => <kbd key={key}>{key}</kbd>)}
+                </span>
+              )}
             </label>
           </div>
         </section>
