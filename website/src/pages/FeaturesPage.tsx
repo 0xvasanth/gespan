@@ -1,5 +1,5 @@
 import { Link } from "../router";
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
 import { SpotCard } from "../components/fx";
 import "./features.css";
@@ -9,7 +9,7 @@ export function FeaturesPage() {
     <div className="w-site">
       <div className="w-frame">
         <section className="w-hero soft" aria-label="Features">
-          <SiteNav active="features" onHero />
+          <NavSpace />
           <div className="w-wrap" style={{ paddingTop: "56px", paddingBottom: "72px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "22px" }}>
             <p className="w-eyebrow">Features</p>
             <h1 className="w-h1" style={{ maxWidth: "860px" }}>Everything around your agents, in one window.</h1>

@@ -1,4 +1,14 @@
-.nv-bar{max-width:1120px;margin:0 auto;height:60px;border-radius:999px;display:flex;align-items:center;gap:8px;padding:0 8px 0 18px;box-sizing:border-box}
+/* Fixed over every page: at rest it sits where the hero leaves room for it
+   (NavSpace); once scrolled it tightens into a narrower, more solid pill. */
+.w-site.nv-fixed{position:fixed;top:0;left:0;right:0;z-index:60;padding:30px 36px 0;background:transparent;overflow:visible;pointer-events:none;transition:padding .35s cubic-bezier(.2,.7,.2,1)}
+.nv-fixed > *{pointer-events:auto}
+.w-site.nv-fixed.compact{padding-top:12px}
+.nv-space{height:96px}
+.nv-bar{max-width:1120px;margin:0 auto;height:60px;-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);border-radius:999px;display:flex;align-items:center;gap:8px;padding:0 8px 0 18px;box-sizing:border-box;transition:max-width .45s cubic-bezier(.2,.7,.2,1),height .35s,background .35s,box-shadow .35s}
+.nv-bar.compact{max-width:880px;height:52px;background:rgba(18,17,22,.86);border-color:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 14px 40px rgba(0,0,0,.5)}
+.nv-bar.compact .nv-star{display:none}
+@media (prefers-reduced-motion:reduce){.nv-fixed,.nv-bar{transition:none}}
+@media (max-width:760px){.w-site.nv-fixed{padding:24px 24px 0}.w-site.nv-fixed.compact{padding-top:8px}.nv-bar.compact{max-width:100%}}
 .nv-brand{display:flex;align-items:center;gap:10px;text-decoration:none;margin-right:auto}
 .nv-brand span{font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-.02em;color:#ebebeb}
 .nv-links{display:flex;align-items:center;gap:2px}

@@ -1,5 +1,5 @@
 import { SiteFooter } from "../components/SiteFooter";
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { Link } from "../router";
 
 export function NotFoundPage() {
@@ -7,7 +7,7 @@ export function NotFoundPage() {
     <div className="w-site">
       <div className="w-frame">
         <section className="w-hero soft" aria-labelledby="nf-h">
-          <SiteNav active="home" onHero />
+          <NavSpace />
           <div className="w-wrap" style={{ paddingTop: "72px", paddingBottom: "96px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "20px" }}>
             <p className="w-eyebrow">404</p>
             <h1 id="nf-h" className="w-h1">This page isn't here.</h1>

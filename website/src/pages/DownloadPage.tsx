@@ -1,4 +1,4 @@
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
 import logoUrl from "../assets/logo.svg";
 import { GUIDES } from "../docs";
@@ -40,7 +40,7 @@ export function DownloadPage() {
     <div className="w-site">
       <div className="w-frame">
         <section className="w-hero soft" aria-label="Download">
-          <SiteNav active="download" onHero />
+          <NavSpace />
           <div className="w-wrap" style={{ paddingTop: "56px", paddingBottom: "64px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "20px" }}>
             <img src={logoUrl} width="72" height="72" alt="" />
             <h1 className="w-h1">Download Gespan.</h1>
