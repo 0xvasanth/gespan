@@ -1,0 +1,66 @@
+crates/gespan-gpui/src/pilots/floating.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 101
+  s_7834315741ea37::t_7420d1efbba92a 347
+crates/gespan-gpui/src/shell/mobile_host.rs
+  s_7834315741ea37::t_7420d1efbba92a 440
+crates/gespan-gpui/src/conversation/pilot.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 290-298,614
+crates/gespan-gpui/src/conversation.rs
+  s_7834315741ea37::t_84701d64e44291 87-88
+crates/gespan-gpui/src/pilots/cards.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 161-227,235
+crates/gespan-core/src/pilot.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 391
+crates/gespan-core/src/tasks/tests.rs
+  s_7834315741ea37::t_84701d64e44291 180-201
+  s_7834315741ea37::t_9bf27271c816dd 179
+crates/gespan-core/src/tasks.rs
+  s_7834315741ea37::t_84701d64e44291 148-149,155-156,170,178,182
+crates/gespan-gpui/src/pilots/host.rs
+  s_7834315741ea37::t_84701d64e44291 815-823
+crates/gespan-core/src/pilot/actions.rs
+  s_7834315741ea37::t_84701d64e44291 271-280
+crates/gespan-core/src/tool/presentation.rs
+  s_7834315741ea37::t_84701d64e44291 397
+crates/gespan-gpui/src/pilots/tests.rs
+  s_7834315741ea37::t_84701d64e44291 1072-1073,1097-1105
+  s_7834315741ea37::t_40321861eea3ba 1145
+  s_7834315741ea37::t_cd6a2e6ef441d1 1058-1071,1074-1076,1078-1090,1092-1096,1106-1119,1138,1140-1141,1146-1147
+  s_7834315741ea37::t_3f587a9f064317 1077
+  s_7834315741ea37::t_e8c8b52af9c9d6 1091
+  s_7834315741ea37::t_7ae9ac2ac61047 1120-1122,1135-1137
+  s_7834315741ea37::t_4637c2c152d293 1139
+  s_7834315741ea37::t_cb62de13f9dde1 1142-1144
+crates/gespan-core/src/pilot/tests.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 203,207-208
+  s_7834315741ea37::t_84701d64e44291 204-206
+crates/gespan-gpui/src/shell/my_tasks.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 238-241
+crates/gespan-core/src/pilot/cards.rs
+  s_7834315741ea37::t_84701d64e44291 87-112,146-164
+crates/gespan-gpui/src/pilots/mod.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 1343,1474
+crates/gespan-gpui/src/pilots/panels.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 988
+crates/gespan-gpui/src/transcript.rs
+  s_7834315741ea37::t_cd6a2e6ef441d1 746-748,764-770,8068-8093,8099,8101-8103
+  s_7834315741ea37::t_7100f09330a16a 771-777,5589-5596,8094-8098,8100,8104,8106
+  s_7834315741ea37::t_d22531f64ed98d 8105
+  s_7834315741ea37::t_249522ba2f3dfa 8107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd2e23aadfe579ac7ebc3ecf036cdf5bbb05fd24",
+  "prompts": {},
+  "sessions": {
+    "s_7834315741ea37": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e229b00f-9919-4386-a899-7411d59109fc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
