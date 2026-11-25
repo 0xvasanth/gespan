@@ -16,6 +16,8 @@ pub(super) struct Watching {
 }
 
 const LIVE: u32 = 0x4ade80;
+/// A watched session that stopped to wait on the user.
+pub(crate) const WAITING: u32 = 0xfbbf24;
 
 impl Conversation {
     /// The delegated sessions this chat waits to hear back from.
@@ -45,13 +47,24 @@ impl Conversation {
     pub(super) fn watch_chip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let watches = self.watches();
         let label = watching::chip_label(watches.len())?;
+        let waiting = watches.iter().filter(|w| w.waiting).count();
         let weak = cx.entity().downgrade();
         Some(
             div()
                 .id("watch-chip")
-                .debug_selector(|| "watch-chip".into())
+                .debug_selector(move || {
+                    if waiting > 0 {
+                        "watch-chip-waiting".into()
+                    } else {
+                        "watch-chip".into()
+                    }
+                })
                 .role(Role::Button)
-                .aria_label(format!("{label}: what will wake this chat"))
+                .aria_label(if waiting > 0 {
+                    format!("{label}, {waiting} waiting on you: what will wake this chat")
+                } else {
+                    format!("{label}: what will wake this chat")
+                })
                 .child(self.watching.anchor.probe())
                 .cursor_pointer()
                 .h(px(20.))
@@ -64,7 +77,13 @@ impl Conversation {
                 .text_color(content(0.6))
                 .when(self.watching.open, |d| d.bg(content(0.08)))
                 .hover(|s| s.bg(content(0.06)))
-                .child(div().size(px(6.)).rounded_full().bg(gpui::rgb(LIVE)))
+                .when(waiting > 0, |d| d.text_color(gpui::rgb(WAITING)))
+                .child(
+                    div()
+                        .size(px(6.))
+                        .rounded_full()
+                        .bg(gpui::rgb(if waiting > 0 { WAITING } else { LIVE })),
+                )
                 .child(label)
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.watching.open = !this.watching.open;
@@ -178,7 +197,11 @@ impl Conversation {
                         div()
                             .truncate()
                             .text_size(px(11.))
-                            .text_color(content(0.5))
+                            .text_color(if watch.waiting {
+                                gpui::rgb(WAITING).into()
+                            } else {
+                                content(0.5)
+                            })
                             .child(watch.detail.clone()),
                     ),
             )
@@ -252,6 +275,7 @@ mod tests {
             label: "Monitor v0.0.9 Release Pipeline".into(),
             detail: "Reports back when it stops".into(),
             started_at: None,
+            waiting: false,
         }
     }
 
@@ -361,5 +385,56 @@ mod tests {
                 assert!(!view.watching.open);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn the_chip_turns_yellow_while_a_watched_session_waits_on_the_user(cx: &mut TestAppContext) {
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let summary = store.create("kiro", "/tmp").unwrap();
+        let window = cx.update(|cx| {
+            input::bind(cx);
+            cx.set_reduce_motion(true);
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = Conversation::new(summary, Arc::new(Mutex::new(store)), cx);
+                    view.loaded = true;
+                    view.summary.has_messages = true;
+                    view
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut VisualTestContext::from_window(window.into(), cx);
+        window
+            .update(visual, |view, _, cx| {
+                view.set_delegated_watches(vec![session(1), session(2)], cx)
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("watch-chip").is_some());
+        assert!(visual.debug_bounds("watch-chip-waiting").is_none());
+        window
+            .update(visual, |view, _, cx| {
+                let mut asking = session(1);
+                asking.waiting = true;
+                asking.detail = "Needs input before it can finish".into();
+                view.set_delegated_watches(vec![asking, session(2)], cx)
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("watch-chip-waiting").is_some(),
+            "a session waiting on you turns the chip yellow"
+        );
+        window
+            .update(visual, |view, _, cx| {
+                view.set_delegated_watches(vec![session(1), session(2)], cx)
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("watch-chip-waiting").is_none(),
+            "an answered session takes the yellow away"
+        );
     }
 }

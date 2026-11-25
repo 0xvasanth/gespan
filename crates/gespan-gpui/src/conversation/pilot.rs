@@ -660,9 +660,12 @@ impl Conversation {
                     .pb_1p5()
                     .flex()
                     .flex_col()
+                    // The shelves above the composer take its width.
+                    .child(self.composer_anchor.probe())
                     .children(self.queued_internal(cx))
                     .children(self.usage_notice(true, cx))
                     .children(self.auth_notice(cx))
+                    .child(self.background_shelf(window, cx))
                     .child(self.approval_shelf(window, cx))
                     .children(self.open_choices(cx))
                     .child({
@@ -1324,6 +1327,7 @@ impl Conversation {
                     .flex()
                     .items_center()
                     .gap_1()
+                    .children(self.watch_chip(cx))
                     .child(
                         text_control("pilot-model".into(), models_open)
                             .min_w_0()

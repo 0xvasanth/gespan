@@ -177,6 +177,32 @@ fn queued_messages_keep_their_report_entries_and_older_rosters_still_load() {
     assert_eq!(back.report, report.report);
 }
 
+/// "status" mid-job must not wait on a slow check: the 24 November turn sat
+/// for minutes while the Pilot re-read every machine.
+#[test]
+fn context_answers_status_quickly_next_to_never_polling() {
+    let pilot = Pilot::default();
+    let files = files::AgentFiles {
+        id: pilot.id.clone(),
+        dir: "/agents/pilot".into(),
+        soul: None,
+        soul_hash: String::new(),
+        memory: String::new(),
+        memory_hash: String::new(),
+        memory_path: "/agents/pilot/MEMORY.md".into(),
+        topics: Vec::new(),
+    };
+    for access in [AppAccess::Tools, AppAccess::Cli("/usr/bin/gespan".into())] {
+        let prompt = context(&pilot, &files, &access);
+        let rule = "When the user asks for status, answer in one short step from what you already know, and start any slow check in the background instead of making them wait for it.";
+        assert_eq!(prompt.matches(rule).count(), 1);
+        assert!(
+            prompt.contains(&format!("Never poll delegated work. {rule}")),
+            "it sits next to the polling rule"
+        );
+    }
+}
+
 #[test]
 fn context_explains_roadmap_requests() {
     let pilot = Pilot {
