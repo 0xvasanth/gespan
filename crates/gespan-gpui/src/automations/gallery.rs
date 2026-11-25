@@ -14,6 +14,7 @@ impl Automations {
         let mut cards = vec![
             // A dashed glass card: an empty frame to start from.
             template_card(
+                &self.text,
                 "automation-scratch".into(),
                 "Start from scratch",
                 layout::icon_glyph("plus", 16., content(0.92)),
@@ -28,7 +29,11 @@ impl Automations {
                 white(0.16)
             })
             .bg(if is_light() { white(0.35) } else { white(0.02) })
-            .on_click(cx.listener(|this, _, _, cx| this.begin(None, cx)))
+            .on_click(cx.listener(|this, _, _, cx| {
+                if !crate::selectable::drag_selected(cx) {
+                    this.begin(None, cx)
+                }
+            }))
             .into_any_element(),
         ];
         for template in self.templates.iter().filter(|t| {
@@ -61,6 +66,7 @@ impl Automations {
             );
             cards.push(
                 template_card(
+                    &self.text,
                     SharedString::from(format!("template-{}", template.id)),
                     template.name.clone(),
                     layout::icon_glyph(path, 16., eyebrow_ink()),
@@ -69,6 +75,10 @@ impl Automations {
                 )
                 .debug_selector(move || selector)
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    // A drag across the card selected its text instead.
+                    if crate::selectable::drag_selected(cx) {
+                        return;
+                    }
                     if selected.setup.as_deref() == Some("review") {
                         this.open_review_setup(cx);
                     } else {
@@ -117,35 +127,41 @@ impl Automations {
             .min_h_0()
             .overflow_y_scroll()
             .child(
-                div()
-                    .w_full()
-                    .max_w(px(1032.))
-                    .px(px(36.))
-                    .pt(px(26.))
-                    .pb(px(40.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(18.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(6.))
-                            .child(
-                                glass::eyebrow("New automation")
-                                    .line_height(px(13.))
-                                    .text_color(eyebrow_ink()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(24.))
-                                    .line_height(px(29.))
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("Pick an example or start from scratch."),
-                            ),
-                    )
-                    .child(div().flex().child(tabs))
-                    .child(grid),
+                self.text.region(
+                    "automation-gallery-text",
+                    div()
+                        .w_full()
+                        .max_w(px(1032.))
+                        .px(px(36.))
+                        .pt(px(26.))
+                        .pb(px(40.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(18.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(6.))
+                                .child(
+                                    glass::eyebrow("New automation")
+                                        .line_height(px(13.))
+                                        .text_color(eyebrow_ink()),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(24.))
+                                        .line_height(px(29.))
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(
+                                            self.text
+                                                .text("Pick an example or start from scratch."),
+                                        ),
+                                ),
+                        )
+                        .child(div().flex().child(tabs))
+                        .child(grid),
+                ),
             )
             .into_any_element()
     }
@@ -164,6 +180,7 @@ fn eyebrow_ink() -> gpui::Hsla {
 /// example, its schedule (trigger kind and label) as a glass pill along the
 /// bottom. The title is also the card's accessible name.
 fn template_card(
+    text: &crate::selectable::SelectionScope,
     id: SharedString,
     title: impl Into<SharedString>,
     glyph: AnyElement,
@@ -189,14 +206,14 @@ fn template_card(
                 .text_size(px(14.5))
                 .line_height(px(18.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(title),
+                .child(text.text(title)),
         )
         .child(
             div()
                 .text_size(px(12.))
                 .line_height(px(17.))
                 .text_color(content(0.68))
-                .child(description.into()),
+                .child(text.text(description)),
         )
         .when_some(schedule, |d, (kind, label)| {
             d.child(

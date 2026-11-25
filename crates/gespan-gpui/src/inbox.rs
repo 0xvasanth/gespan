@@ -113,6 +113,8 @@ impl Inbox {
 }
 
 pub(crate) struct Inbox {
+    /// The detail pane's selectable text.
+    pub(crate) text: crate::selectable::SelectionScope,
     store: Database,
     service: Service,
     projects: Vec<PathBuf>,
@@ -364,6 +366,7 @@ impl Inbox {
             .map(|db| checks::CiState::load(&db))
             .unwrap_or_default();
         Self {
+            text: crate::selectable::SelectionScope::new(cx),
             service: Service {
                 data_dir,
                 cwd: cwd.clone(),

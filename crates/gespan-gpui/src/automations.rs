@@ -151,6 +151,8 @@ struct ChoiceMenu {
 }
 
 pub(crate) struct Automations {
+    /// The gallery's selectable text.
+    pub(crate) text: crate::selectable::SelectionScope,
     service: Arc<Mutex<Service>>,
     database: Option<Database>,
     cwd: String,
@@ -226,6 +228,7 @@ impl Automations {
             cx.new(|cx| Input::field("Filter automations", "Filter automations", content(0.4), cx));
         let subscription = cx.subscribe(&filter, |_, _, _: &input::Changed, cx| cx.notify());
         let mut this = Self {
+            text: crate::selectable::SelectionScope::new(cx),
             service,
             database: None,
             cwd,

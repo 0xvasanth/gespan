@@ -865,3 +865,48 @@ fn more_holds_cancelled_and_skipped(cx: &mut TestAppContext) {
         assert_eq!(view.more_label(), "More");
     });
 }
+
+/// A run's trigger, details and error select and copy, while the Open
+/// thread button keeps the pointer.
+#[gpui::test]
+fn a_runs_text_and_error_select_and_copy(cx: &mut TestAppContext) {
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+    cx.update(crate::input::bind);
+    let (view, cx) = cx.add_window_view(|_, cx| Runs::new(service(), cx));
+    cx.simulate_resize(gpui::size(px(1200.), px(800.)));
+    cx.run_until_parked();
+    let mut failed = run("broken", "gone", "failed", now_ms());
+    failed.error = Some("Agent exited with code 2".into());
+    failed.session_id = Some("7".into());
+    view.update(cx, |view, cx| view.apply(vec![failed], vec![], cx));
+    cx.run_until_parked();
+    let bounds = |needle: &str, cx: &mut gpui::VisualTestContext| {
+        view.read_with(cx, |view, _| view.text.bounds_for_test(needle))
+            .unwrap_or_else(|| panic!("{needle:?} is selectable"))
+    };
+    let error = bounds("Agent exited with code 2", cx);
+    assert_eq!(
+        cursor_at(cx, error.center()),
+        Some(gpui::CursorStyle::IBeam)
+    );
+    drag(
+        cx,
+        gpui::point(error.left() + px(1.), error.center().y),
+        gpui::point(error.right() + px(2.), error.center().y),
+    );
+    assert_eq!(copy(cx).as_deref(), Some("Agent exited with code 2"));
+    let trigger = bounds("Test run", cx);
+    drag(
+        cx,
+        gpui::point(trigger.left() + px(1.), trigger.center().y),
+        gpui::point(error.right() + px(2.), error.center().y),
+    );
+    let copied = copy(cx).expect("the row copies");
+    assert!(copied.starts_with("Test run"), "{copied:?}");
+    assert!(copied.ends_with("Agent exited with code 2"), "{copied:?}");
+    let open = cx.debug_bounds("runs-open-broken").expect("open thread");
+    assert_eq!(
+        cursor_at(cx, open.center()),
+        Some(gpui::CursorStyle::PointingHand)
+    );
+}

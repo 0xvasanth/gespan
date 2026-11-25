@@ -248,6 +248,8 @@ fn scale_step(percent: u32) -> u32 {
 }
 
 pub(crate) struct SettingsView {
+    /// The page's selectable text: row descriptions and notes.
+    pub(crate) text: crate::selectable::SelectionScope,
     pub(crate) section: Section,
     prefs: Preferences,
     notification_state: notification_preferences::State,
@@ -481,6 +483,7 @@ impl SettingsView {
         }));
         let selected_project = ctx.cwd.clone();
         let mut this = Self {
+            text: crate::selectable::SelectionScope::new(cx),
             section,
             prefs,
             notification_state: notification_preferences::State::default(),
@@ -1326,64 +1329,67 @@ impl Render for SettingsView {
                         .flex_1()
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll)
-                        .child(if self.glass() {
-                            // The glass page: a narrower column whose groups
-                            // stand apart as cards.
-                            div()
-                                .mx_auto()
-                                .w_full()
-                                .flex()
-                                .flex_col()
-                                .map(|d| {
-                                    if self.section == Section::Services {
-                                        // Connections spans the pane: a
-                                        // list, not a column of settings.
-                                        d.gap(px(14.)).px(px(28.)).pt(px(24.)).pb(px(40.))
-                                    } else if narrow {
-                                        d.max_w(px(860.)).gap(px(22.)).px_5().pt_6().pb(px(40.))
-                                    } else {
-                                        d.max_w(px(860.))
-                                            .gap(px(22.))
-                                            .px_8()
-                                            .pt(px(28.))
-                                            .pb(px(40.))
-                                    }
-                                })
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_end()
-                                        .gap(px(16.))
-                                        .child(
-                                            div().min_w_0().flex_1().child(
-                                                widgets::glass_page_header(
-                                                    self.section.label(),
-                                                    self.services_description()
-                                                        .unwrap_or(self.section.description()),
+                        .child(self.text.region(
+                            "settings-text",
+                            if self.glass() {
+                                // The glass page: a narrower column whose groups
+                                // stand apart as cards.
+                                div()
+                                    .mx_auto()
+                                    .w_full()
+                                    .flex()
+                                    .flex_col()
+                                    .map(|d| {
+                                        if self.section == Section::Services {
+                                            // Connections spans the pane: a
+                                            // list, not a column of settings.
+                                            d.gap(px(14.)).px(px(28.)).pt(px(24.)).pb(px(40.))
+                                        } else if narrow {
+                                            d.max_w(px(860.)).gap(px(22.)).px_5().pt_6().pb(px(40.))
+                                        } else {
+                                            d.max_w(px(860.))
+                                                .gap(px(22.))
+                                                .px_8()
+                                                .pt(px(28.))
+                                                .pb(px(40.))
+                                        }
+                                    })
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_end()
+                                            .gap(px(16.))
+                                            .child(
+                                                div().min_w_0().flex_1().child(
+                                                    widgets::glass_page_header(
+                                                        self.section.label(),
+                                                        self.services_description()
+                                                            .unwrap_or(self.section.description()),
+                                                    ),
                                                 ),
-                                            ),
-                                        )
-                                        .children(header_action),
-                                )
-                                .children(page)
-                        } else {
-                            div()
-                                .mx_auto()
-                                .w_full()
-                                .max_w(px(1024.))
-                                .map(|d| {
-                                    if narrow {
-                                        d.px_5().pt_6().pb_16()
-                                    } else {
-                                        d.px_8().pt_8().pb_16()
-                                    }
-                                })
-                                .child(widgets::page_header(
-                                    self.section.label(),
-                                    self.section.description(),
-                                ))
-                                .children(page)
-                        })
+                                            )
+                                            .children(header_action),
+                                    )
+                                    .children(page)
+                            } else {
+                                div()
+                                    .mx_auto()
+                                    .w_full()
+                                    .max_w(px(1024.))
+                                    .map(|d| {
+                                        if narrow {
+                                            d.px_5().pt_6().pb_16()
+                                        } else {
+                                            d.px_8().pt_8().pb_16()
+                                        }
+                                    })
+                                    .child(widgets::page_header(
+                                        self.section.label(),
+                                        self.section.description(),
+                                    ))
+                                    .children(page)
+                            },
+                        ))
                         .into_any_element(),
                 ]
             })

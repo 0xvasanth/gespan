@@ -1143,3 +1143,41 @@ fn devices_without_machines_or_phones_show_their_empty_states(cx: &mut TestAppCo
         [true, true]
     );
 }
+
+/// A setting's description selects and copies, and dragging across it
+/// leaves the setting alone; its toggle keeps the pointer.
+#[gpui::test]
+fn a_settings_description_selects_and_copies(cx: &mut TestAppContext) {
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+    cx.update(crate::input::bind);
+    let (window, mut visual) = window(Section::General, Preferences::default(), cx);
+    let visual = &mut visual;
+    let text = "Play sounds for activity, completed turns, and updates.";
+    let before = prefs(window, visual).sounds;
+    let description = window
+        .update(visual, |view, _, _| view.text.bounds_for_test(text))
+        .unwrap()
+        .expect("the description is selectable");
+    assert_eq!(
+        cursor_at(visual, description.center()),
+        Some(gpui::CursorStyle::IBeam)
+    );
+    drag(
+        visual,
+        point(description.left() + px(1.), description.center().y),
+        point(description.right() + px(2.), description.center().y),
+    );
+    assert_eq!(copy(visual).as_deref(), Some(text));
+    assert_eq!(
+        prefs(window, visual).sounds,
+        before,
+        "the drag changed nothing"
+    );
+    let toggle = visual
+        .debug_bounds("settings-toggle-sounds")
+        .expect("the sounds toggle");
+    assert_eq!(
+        cursor_at(visual, toggle.center()),
+        Some(gpui::CursorStyle::PointingHand)
+    );
+}

@@ -2890,6 +2890,13 @@ impl Window {
         self.rendered_frame.scene.quads.clone()
     }
 
+    /// The cursor style the most recently rendered frame asks for at the
+    /// current mouse position, so tests can assert on hover cursors.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn cursor_style_for_test(&self) -> Option<CursorStyle> {
+        self.rendered_frame.cursor_style(self)
+    }
+
     /// Returns the underlines in the most recently rendered frame's scene.
     #[cfg(any(test, feature = "test-support"))]
     pub fn painted_underlines(&self) -> Vec<Underline> {

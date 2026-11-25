@@ -239,7 +239,14 @@ impl InboxDocument {
         self.measured
     }
 
-    fn row(&self, ix: usize, width: Pixels, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn row(
+        &self,
+        ix: usize,
+        width: Pixels,
+        selection: Option<crate::selectable::TextSelection>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         let row = &self.rows[ix];
         match row {
             Row::Image { url, alt } => {
@@ -314,6 +321,7 @@ impl InboxDocument {
                         .child(CodeLines {
                             #[cfg(test)]
                             rendered: self.code_rendered.clone(),
+                            selection: selection.clone(),
                             fence: fence.clone(),
                             lines: lines.clone(),
                             width: (*code_width).max(
@@ -332,7 +340,15 @@ impl InboxDocument {
                             ),
                         })
                         .into_any_element(),
-                    _ => markdown::body(row, id, Tone::Normal, None, Instant::now()),
+                    _ => markdown::body_selected(
+                        row,
+                        id,
+                        Tone::Normal,
+                        None,
+                        Instant::now(),
+                        selection,
+                        None,
+                    ),
                 };
                 div()
                     .w_full()
@@ -418,7 +434,7 @@ impl InboxDocument {
                 return limit.map_or(height, |limit| height.min(limit));
             }
             let measured = self
-                .row(ix, width, window, cx)
+                .row(ix, width, None, window, cx)
                 .layout_as_root(
                     size(AvailableSpace::Definite(width), AvailableSpace::MinContent),
                     window,
@@ -442,6 +458,7 @@ pub(super) struct DocumentElement {
     document: Entity<InboxDocument>,
     width: Pixels,
     limit: Option<Pixels>,
+    selection: Option<(crate::selectable::SelectionScope, usize)>,
 }
 impl DocumentElement {
     pub(super) fn new(
@@ -453,7 +470,18 @@ impl DocumentElement {
             document,
             width: width.max(px(1.)),
             limit,
+            selection: None,
         }
+    }
+    /// Makes the document's text selectable in `scope`, as its `block`th
+    /// document, so selections order across a description and comments.
+    pub(super) fn selectable(
+        mut self,
+        scope: &crate::selectable::SelectionScope,
+        block: usize,
+    ) -> Self {
+        self.selection = Some((scope.clone(), block));
+        self
     }
 }
 impl IntoElement for DocumentElement {
@@ -520,7 +548,11 @@ impl Element for DocumentElement {
                 } else {
                     doc.layout.as_ref().unwrap().bottoms[ix - 1]
                 };
-                let mut child = doc.row(ix, self.width, window, cx);
+                let selection = self
+                    .selection
+                    .as_ref()
+                    .map(|(scope, block)| scope.keyed((*block, ix)));
+                let mut child = doc.row(ix, self.width, selection, window, cx);
                 child.layout_as_root(
                     size(
                         AvailableSpace::Definite(self.width),
@@ -558,6 +590,7 @@ impl Element for DocumentElement {
 /// Preserve a fence's full dimensions and single horizontal scroll container,
 /// while only constructing the code lines inside the vertical content mask.
 struct CodeLines {
+    selection: Option<crate::selectable::TextSelection>,
     #[cfg(test)]
     rendered: std::rc::Rc<std::cell::Cell<usize>>,
     fence: Arc<markdown::Fence>,
@@ -613,12 +646,13 @@ impl Element for CodeLines {
         {
             self.rendered.set(end - start);
         }
-        let mut body = markdown::code_lines(
+        let mut body = markdown::code_lines_selected(
             &self.fence,
             self.lines.start + start..self.lines.start + end,
             None,
             "",
             false,
+            self.selection.clone(),
         )
         .into_any_element();
         body.layout_as_root(
@@ -672,7 +706,9 @@ mod tests {
                         .w_full()
                         .flex()
                         .flex_col()
-                        .children((0..doc.rows.len()).map(|ix| doc.row(ix, self.width, window, cx)))
+                        .children(
+                            (0..doc.rows.len()).map(|ix| doc.row(ix, self.width, None, window, cx)),
+                        )
                         .into_any_element()
                 })
             } else {

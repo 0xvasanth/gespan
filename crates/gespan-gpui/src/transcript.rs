@@ -5332,7 +5332,11 @@ impl TranscriptView {
                         div()
                             .when(loading, |d| d.min_w_0().flex_1())
                             .opacity(step_opacity)
-                            .child(self.tool(*call, message_start, cx)),
+                            .child({
+                                let selection =
+                                    self.text_selection(row.key, message_start, false, cx);
+                                self.tool(*call, message_start, selection, cx)
+                            }),
                     )
                     .into_any_element()
             }
@@ -5387,11 +5391,14 @@ impl TranscriptView {
                     self.local_media(href, label, ix)
                 } else {
                     let thread = self.thread;
-                    let selection = if reasoning {
-                        None
-                    } else {
-                        self.text_selection(row.key, message_start, !user && !error, cx)
-                    };
+                    // Reasoning selects and copies too, but stays out of
+                    // "Add to chat": it is the agent's scratch work.
+                    let selection = self.text_selection(
+                        row.key,
+                        message_start,
+                        !user && !error && !reasoning,
+                        cx,
+                    );
                     let fades = self.reveals.get(&message_start).map(|r| &r.fades);
                     let now = self.frame_now;
                     markdown::in_thread(thread, || {
@@ -6048,7 +6055,9 @@ impl Render for TranscriptView {
             self.load_older_history(cx);
         }
         if self.selection_focus.is_none() {
-            self.selection_focus = Some(cx.focus_handle());
+            let focus = cx.focus_handle();
+            self.selection.bind(cx.entity_id(), focus.clone());
+            self.selection_focus = Some(focus);
         }
         self.selection.begin_frame();
         self.phase_max_height = live_phase::max_height(window);
@@ -6091,6 +6100,7 @@ impl Render for TranscriptView {
             .on_action(cx.listener(Self::open_link_menu))
             .capture_any_mouse_down(cx.listener(
                 |this, event: &gpui::MouseDownEvent, window, cx| {
+                    crate::selectable::begin_gesture(cx);
                     if event.button == gpui::MouseButton::Right && this.links.open.is_none() {
                         window.focus(this.selection_focus.as_ref().unwrap(), cx);
                     }
@@ -6098,8 +6108,11 @@ impl Render for TranscriptView {
             ))
             .on_mouse_down(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.selection.clear_if_not_dragging();
+                // A press beside the text (a paragraph gap, a bubble's
+                // padding, a row's chrome) anchors at the nearest text, so a
+                // drag from there selects; a plain click there clears.
+                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                    this.selection.press_near(event, window, cx);
                     cx.notify();
                 }),
             )

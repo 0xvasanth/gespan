@@ -979,7 +979,7 @@ fn agent_step(
     if step.kind == "tool" {
         let mut call = step.to_tool_call();
         call.id = identity.clone();
-        return view.tool_in(call, start, Some(&identity), Some(width), cx);
+        return view.tool_in(call, start, Some(&identity), Some(width), None, cx);
     }
     let reasoning = step.kind == "reasoning";
     let key = format!("agent-note:{start}:{identity}");

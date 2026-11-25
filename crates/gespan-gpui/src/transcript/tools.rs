@@ -1,8 +1,9 @@
 //! Compact semantic tool captions with clickable file targets.
 use super::{TranscriptView, tasks};
+use crate::selectable::TextSelection;
 use crate::theme::*;
 use gespan_core::tool::{CommandStep, ToolCall, ToolState};
-use gpui::{AnyElement, Context, Div, Role, div, prelude::*, px, rgb};
+use gpui::{AnyElement, Context, CursorStyle, Div, Role, div, prelude::*, px, rgb};
 
 /// Shell plumbing that says nothing about what a chained command was for.
 fn is_noise(step: &CommandStep) -> bool {
@@ -44,14 +45,49 @@ fn search_pill() -> Div {
         .bg(content(0.06))
 }
 
+/// A tool row's selectable text: its pieces share one row text, so a
+/// selection across the summary, the steps and the error copies in order.
+#[derive(Default)]
+struct ToolText {
+    text: String,
+    selection: Option<TextSelection>,
+}
+impl ToolText {
+    fn push(&mut self, piece: &str, separator: &str) -> usize {
+        if !self.text.is_empty() {
+            self.text.push_str(separator);
+        }
+        let at = self.text.len();
+        self.text.push_str(piece);
+        at
+    }
+    fn finish(mut self, selection: Option<TextSelection>) -> Self {
+        let text: gpui::SharedString = std::mem::take(&mut self.text).into();
+        self.selection = selection.map(|s| s.with_text(text));
+        self
+    }
+    fn piece(&self, at: Option<usize>, text: String, cursor: Option<CursorStyle>) -> AnyElement {
+        let text: gpui::SharedString = text.into();
+        let (Some(selection), Some(at)) = (&self.selection, at) else {
+            return div().child(text).into_any_element();
+        };
+        let selection = selection.offset(at);
+        let selection = cursor.map_or(selection.clone(), |c| selection.with_cursor(c));
+        let styled = gpui::StyledText::new(text.clone());
+        let layout = styled.layout().clone();
+        selection.wrap(text, layout, styled.into_any_element())
+    }
+}
+
 impl TranscriptView {
     pub(super) fn tool(
         &mut self,
         tool: ToolCall,
         start: usize,
+        selection: Option<TextSelection>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.tool_in(tool, start, None, None, cx)
+        self.tool_in(tool, start, None, None, selection, cx)
     }
 
     pub(super) fn tool_in(
@@ -60,6 +96,7 @@ impl TranscriptView {
         start: usize,
         scope: Option<&str>,
         width: Option<gpui::Pixels>,
+        selection: Option<TextSelection>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if let Some(panel) = tasks::render(self, &tool, start, width, cx) {
@@ -215,6 +252,18 @@ impl TranscriptView {
             Vec::new()
         };
         let error_detail = tool.output.clone();
+        // The row's text copies as one piece: the summary line, then the
+        // chained commands, then the error, each fragment at its offset.
+        let mut text = ToolText::default();
+        let action_at = (shown.action != "Run").then(|| text.push(action, " "));
+        let target_at = (!is_search && !chain).then(|| text.push(&shown.target, "\n"));
+        let step_at: Vec<usize> = steps
+            .iter()
+            .map(|(_, command, _)| text.push(command, "\n"))
+            .collect();
+        let error_at = has_error.then(|| text.push(&error_detail, "\n"));
+        let text = text.finish(selection);
+        let is_link = target_path.is_some();
         let edit_preview = matches!(shown.action.as_str(), "Edit" | "Write")
             .then(|| tool.edit_preview())
             .flatten()
@@ -253,7 +302,7 @@ impl TranscriptView {
                         } else {
                             content(0.5)
                         })
-                        .child(action.to_owned()),
+                        .child(text.piece(action_at, action.to_owned(), None)),
                 )
             })
             .child(
@@ -335,6 +384,9 @@ impl TranscriptView {
                                 .cursor_pointer()
                                 .hover(|style| style.text_color(rgb(0x7dd3fc)))
                                 .on_click(cx.listener(move |this, _, window, cx| {
+                                    if crate::selectable::drag_selected(cx) {
+                                        return;
+                                    }
                                     cx.stop_propagation();
                                     this.hide_edit_preview(cx);
                                     window.dispatch_action(
@@ -344,7 +396,12 @@ impl TranscriptView {
                                 }))
                         })
                         .when(!is_search && !chain, |d| {
-                            d.child(div().min_w_0().truncate().child(shown.target))
+                            let link = is_link.then_some(CursorStyle::PointingHand);
+                            d.child(div().min_w_0().truncate().child(text.piece(
+                                target_at,
+                                shown.target.clone(),
+                                link,
+                            )))
                         })
                         .when(chain, |d| {
                             let hidden = chips.len().saturating_sub(3);
@@ -483,6 +540,9 @@ impl TranscriptView {
                             ),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        if crate::selectable::drag_selected(cx) {
+                            return;
+                        }
                         this.toggle_agent_part(toggle_key.clone(), !error_open, start, cx);
                     }))
             });
@@ -522,11 +582,13 @@ impl TranscriptView {
                                             .child(op.unwrap_or("")),
                                     )
                                     .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_color(content(0.6))
-                                            .child(command),
+                                        div().min_w_0().truncate().text_color(content(0.6)).child(
+                                            text.piece(
+                                                step_at.get(index).copied(),
+                                                command,
+                                                path.is_some().then_some(CursorStyle::PointingHand),
+                                            ),
+                                        ),
                                     )
                                     .when_some(path, |d, path| {
                                         d.role(Role::Button)
@@ -534,6 +596,9 @@ impl TranscriptView {
                                             .cursor_pointer()
                                             .hover(|style| style.text_color(rgb(0x7dd3fc)))
                                             .on_click(move |_, window, cx| {
+                                                if crate::selectable::drag_selected(cx) {
+                                                    return;
+                                                }
                                                 cx.stop_propagation();
                                                 window.dispatch_action(
                                                     Box::new(crate::file_editor::OpenPath(
@@ -556,7 +621,7 @@ impl TranscriptView {
                         .text_size(px(12.))
                         .line_height(px(20.))
                         .text_color(rgb(0xf87171))
-                        .child(error_detail),
+                        .child(text.piece(error_at, error_detail, None)),
                 )
             })
             .into_any_element()
@@ -1141,5 +1206,142 @@ mod tests {
                 .advance_clock(super::super::edit_preview::CLOSE_DELAY);
             visual.run_until_parked();
         }
+    }
+}
+
+/// Tool rows and reasoning select like prose, while a click on a tool row
+/// still opens it.
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use crate::selectable::test_support::{click, cursor_at, drag};
+    use gespan_core::transcript::Row;
+    use gpui::{Bounds, Pixels, TestAppContext, VisualTestContext, WindowHandle, point};
+
+    fn row(role: &str, text: String) -> Row {
+        Row {
+            role: role.into(),
+            text,
+            first: true,
+            sent_at: None,
+        }
+    }
+
+    fn open(cx: &mut TestAppContext) -> WindowHandle<TranscriptView> {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|_| TranscriptView::new())
+            })
+            .unwrap()
+        });
+        window
+            .update(cx, |view, _, cx| {
+                let mut failed = ToolCall::new("run", "Bash");
+                failed.input = r#"{"command":"npm run build"}"#.into();
+                failed.output = "Build failed: missing module".into();
+                failed.state = ToolState::Failed;
+                view.patch(
+                    0,
+                    vec![
+                        row("user", "Build it".into()),
+                        row(
+                            "reasoning",
+                            "**Planning.**\n\nThe build needs its modules first.".into(),
+                        ),
+                        row("tool", serde_json::to_string(&failed).unwrap()),
+                        row("assistant", "It failed.".into()),
+                    ],
+                    cx,
+                );
+                view.work_folds.insert(1, true);
+                view.phases.insert(1, true);
+                view.expanded.insert(1);
+                view.rebuild(0, cx);
+            })
+            .unwrap();
+        window
+    }
+
+    fn bounds(
+        window: WindowHandle<TranscriptView>,
+        needle: &str,
+        cx: &mut VisualTestContext,
+    ) -> Option<Bounds<Pixels>> {
+        window
+            .update(cx, |view, _, _| view.text_bounds_for_test(needle))
+            .unwrap()
+    }
+
+    fn selected(
+        window: WindowHandle<TranscriptView>,
+        cx: &mut VisualTestContext,
+    ) -> Option<String> {
+        window
+            .update(cx, |view, _, _| view.selected_text_for_test())
+            .unwrap()
+    }
+
+    fn across(b: Bounds<Pixels>) -> (gpui::Point<Pixels>, gpui::Point<Pixels>) {
+        (
+            point(b.left() + px(1.), b.center().y),
+            point(b.right() + px(2.), b.center().y),
+        )
+    }
+
+    #[gpui::test]
+    fn a_tool_row_opens_on_a_click_but_a_drag_across_it_selects(cx: &mut TestAppContext) {
+        let window = open(cx);
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        let command = bounds(window, "npm run build", cx).expect("the command is selectable");
+        assert_eq!(
+            cursor_at(cx, command.center()),
+            Some(CursorStyle::IBeam),
+            "text in a clickable row shows an I-beam"
+        );
+        let row = cx.debug_bounds("tool-2").expect("the tool row");
+        assert_eq!(
+            cursor_at(cx, point(row.right() - px(8.), row.center().y)),
+            Some(CursorStyle::PointingHand),
+            "the row's chevron keeps the pointer"
+        );
+        // A drag across the command selects it and leaves the row closed.
+        let (from, to) = across(command);
+        drag(cx, from, to);
+        assert_eq!(selected(window, cx).as_deref(), Some("npm run build"));
+        assert!(
+            bounds(window, "missing module", cx).is_none(),
+            "the drag did not open the row"
+        );
+        // A click on the same text opens it.
+        click(cx, command.center(), 1);
+        let error = bounds(window, "Build failed: missing module", cx).expect("the row opened");
+        // The error it shows selects, and the selection runs from the
+        // command into the error as one piece.
+        let (from, _) = across(command);
+        let (_, to) = across(error);
+        drag(cx, from, to);
+        assert_eq!(
+            selected(window, cx).as_deref(),
+            Some("npm run build\nBuild failed: missing module")
+        );
+        assert!(bounds(window, "missing module", cx).is_some(), "still open");
+    }
+
+    #[gpui::test]
+    fn reasoning_text_selects_and_copies(cx: &mut TestAppContext) {
+        let window = open(cx);
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        let thought = bounds(window, "The build needs its modules first.", cx)
+            .expect("reasoning is painted as selectable text");
+        assert_eq!(cursor_at(cx, thought.center()), Some(CursorStyle::IBeam));
+        let (from, to) = across(thought);
+        drag(cx, from, to);
+        assert_eq!(
+            selected(window, cx).as_deref(),
+            Some("The build needs its modules first.")
+        );
     }
 }

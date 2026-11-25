@@ -1727,3 +1727,48 @@ fn gallery_tabs_switch_category_in_a_two_column_grid(cx: &mut TestAppContext) {
         "always offered"
     );
 }
+
+/// A gallery card opens on a click, but a drag across its description
+/// selects the text and leaves the gallery up.
+#[gpui::test]
+fn a_gallery_card_opens_on_a_click_but_a_drag_across_it_selects(cx: &mut TestAppContext) {
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+    cx.update(crate::input::bind);
+    let page = page();
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    let visual = &mut visual;
+    let description = window
+        .read_with(visual, |view, _| {
+            view.text
+                .bounds_for_test("Write your own instructions and choose a trigger.")
+        })
+        .unwrap()
+        .expect("the scratch card's description is selectable");
+    assert_eq!(
+        cursor_at(visual, description.center()),
+        Some(gpui::CursorStyle::IBeam)
+    );
+    drag(
+        visual,
+        gpui::point(description.left() + gpui::px(1.), description.center().y),
+        gpui::point(description.right() + gpui::px(2.), description.center().y),
+    );
+    assert_eq!(
+        copy(visual).as_deref(),
+        Some("Write your own instructions and choose a trigger.")
+    );
+    let gallery =
+        |visual: &mut VisualTestContext| window.read_with(visual, |view, _| view.gallery).unwrap();
+    assert!(gallery(visual), "the drag did not open the card");
+    let card = visual.drawn("automation-scratch").unwrap();
+    assert_eq!(
+        cursor_at(
+            visual,
+            gpui::point(card.right() - gpui::px(6.), card.top() + gpui::px(6.))
+        ),
+        Some(gpui::CursorStyle::PointingHand),
+        "the card itself keeps the pointer"
+    );
+    click(visual, "automation-scratch");
+    assert!(!gallery(visual), "a click still opens it");
+}
