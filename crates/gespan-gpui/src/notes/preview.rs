@@ -16,9 +16,11 @@ enum Row {
 }
 pub(super) struct Preview {
     rows: Vec<Row>,
+    /// The note's selectable text.
+    pub(super) text: crate::selectable::SelectionScope,
 }
 impl Preview {
-    pub(super) fn new(text: &str, cwd: &str, store: &Database) -> Self {
+    pub(super) fn new(text: &str, cwd: &str, store: &Database, cx: &mut Context<Self>) -> Self {
         let mut spans = Vec::new();
         let mut open = None;
         for (event, range) in Parser::new_ext(text, Options::all()).into_offset_iter() {
@@ -66,7 +68,10 @@ impl Preview {
             at = span.end;
         }
         append_markdown(&mut rows, &text[at..], cwd);
-        Self { rows }
+        Self {
+            rows,
+            text: crate::selectable::SelectionScope::new(cx),
+        }
     }
 }
 fn append_markdown(rows: &mut Vec<Row>, text: &str, cwd: &str) {
@@ -79,7 +84,8 @@ fn append_markdown(rows: &mut Vec<Row>, text: &str, cwd: &str) {
 }
 impl Render for Preview {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let scope = self.text.clone();
+        let body = div()
             .w_full()
             .min_w_0()
             .flex()
@@ -127,9 +133,24 @@ impl Render for Preview {
                                 .border_color(content(0.1))
                                 .bg(content(0.03))
                                 .py_2()
-                                .child(markdown::code_lines(fence, lines.clone(), None, "", false))
+                                .child(markdown::code_lines_selected(
+                                    fence,
+                                    lines.clone(),
+                                    None,
+                                    "",
+                                    false,
+                                    Some(scope.keyed((0, ix))),
+                                ))
                                 .into_any_element(),
-                            _ => markdown::body(row, id, Tone::Normal, None, Instant::now()),
+                            _ => markdown::body_selected(
+                                row,
+                                id,
+                                Tone::Normal,
+                                None,
+                                Instant::now(),
+                                Some(scope.keyed((0, ix))),
+                                None,
+                            ),
                         };
                         div()
                             .pt(px(row.gap))
@@ -155,6 +176,58 @@ impl Render for Preview {
                             .into_any_element()
                     }
                 }
-            }))
+            }));
+        self.text.region("note-preview-text", body).w_full()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+
+    /// A note's rendered preview selects across its markdown and copies.
+    #[gpui::test]
+    fn a_note_preview_selects_and_copies(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::input::bind);
+        let store: Database = std::sync::Arc::new(std::sync::Mutex::new(
+            gespan_core::store::Store::open(Path::new(":memory:")).unwrap(),
+        ));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    Preview::new(
+                        "Ship **the fix** today.\n\n```\nlet done = true;\n```\n",
+                        "/missing",
+                        &store,
+                        cx,
+                    )
+                })
+            })
+            .unwrap()
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let bounds = |needle: &str, visual: &mut gpui::VisualTestContext| {
+            window
+                .update(visual, |view, _, _| view.text.bounds_for_test(needle))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{needle:?} is selectable"))
+        };
+        let first = bounds("Ship", visual);
+        let code = bounds("let done = true;", visual);
+        assert_eq!(
+            cursor_at(visual, first.center()),
+            Some(gpui::CursorStyle::IBeam)
+        );
+        drag(
+            visual,
+            gpui::point(first.left() + px(1.), first.center().y),
+            gpui::point(code.right() + px(2.), code.center().y),
+        );
+        assert_eq!(
+            copy(visual).as_deref(),
+            Some("Ship the fix today.\nlet done = true;")
+        );
     }
 }

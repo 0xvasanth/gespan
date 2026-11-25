@@ -169,6 +169,8 @@ impl ReadLog {
 }
 
 pub(crate) struct BoardView {
+    /// The task drawer's selectable text: comments and activity.
+    pub(crate) text: crate::selectable::SelectionScope,
     store: Database,
     db_path: PathBuf,
     service: Option<Service>,
@@ -473,6 +475,7 @@ impl BoardView {
         let live_turns = cx.observe_global::<turns::BoardTurns>(|this, cx| this.turns_changed(cx));
         let settle_seen = turns::settle_seq(cx);
         Self {
+            text: crate::selectable::SelectionScope::new(cx),
             store,
             db_path,
             service: None,

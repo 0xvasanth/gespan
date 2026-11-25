@@ -181,6 +181,7 @@ impl TranscriptView {
         let button = |id: &'static str, label: &'static str, glyph: &'static str| {
             div()
                 .id(id)
+                .debug_selector(move || id.into())
                 .role(Role::Button)
                 .aria_label(label)
                 .flex()
@@ -205,9 +206,13 @@ impl TranscriptView {
             .flex_col()
             .gap(px(2.))
             .child(
+                // Every action closes the menu; the copied text stays
+                // highlighted until the next press, as a text field leaves it.
                 button("selection-copy", "Copy", "copy").on_click(cx.listener(
-                    move |_, _, _, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                    move |this, _, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
+                        this.selection.hide_menu();
+                        cx.notify()
                     },
                 )),
             )
@@ -239,8 +244,9 @@ impl TranscriptView {
                                     text: note.clone(),
                                     selection: true,
                                 });
-                                cx.notify()
                             }
+                            this.selection.hide_menu();
+                            cx.notify()
                         }),
                     ),
                 )
@@ -502,5 +508,231 @@ mod tests {
             gpui::point(asked.right() + px(2.), asked.center().y),
         );
         assert_eq!(copy(cx).as_deref(), Some("shipped today"));
+    }
+
+    /// A transcript with one exchange, Pilot or not, and its events.
+    fn menu_chat(
+        pilot: bool,
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::WindowHandle<TranscriptView>,
+        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    ) {
+        cx.update(|cx| {
+            cx.set_reduce_motion(true);
+            crate::input::bind(cx);
+        });
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let (chat, pilot_seen) = (seen.clone(), seen.clone());
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = TranscriptView::new();
+                    if pilot {
+                        view.pilot_mode("cat", 0xe86b5f, "PilotCat");
+                    }
+                    view.patch(
+                        0,
+                        vec![
+                            Row {
+                                role: "user".into(),
+                                text: "What shipped today?".into(),
+                                first: true,
+                                sent_at: None,
+                            },
+                            Row {
+                                role: "assistant".into(),
+                                text: "Two fixes shipped to main this morning.".into(),
+                                first: true,
+                                sent_at: None,
+                            },
+                        ],
+                        cx,
+                    );
+                    cx.subscribe_self(move |_, event: &ResponseRequest, _| {
+                        chat.borrow_mut().push(match event {
+                            ResponseRequest::QuoteSelection { text } => format!("quote:{text}"),
+                            ResponseRequest::SaveNote { text, .. } => format!("note:{text}"),
+                            _ => "other".into(),
+                        })
+                    })
+                    .detach();
+                    cx.subscribe_self(move |_, event: &PilotResponseAction, _| {
+                        if let PilotResponseAction::Quote { text, .. } = event {
+                            pilot_seen.borrow_mut().push(format!("pilot-quote:{text}"))
+                        }
+                    })
+                    .detach();
+                    view
+                })
+            })
+            .unwrap()
+        });
+        (window, seen)
+    }
+    /// Drags across `from`..`to` and waits out the menu's delay.
+    fn select_for_menu(
+        window: gpui::WindowHandle<TranscriptView>,
+        from: &str,
+        to: &str,
+        cx: &mut gpui::VisualTestContext,
+    ) {
+        let bounds = |needle: &str, cx: &mut gpui::VisualTestContext| {
+            window
+                .update(cx, |view, _, _| view.text_bounds_for_test(needle))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{needle:?} is selectable"))
+        };
+        let (a, b) = (bounds(from, cx), bounds(to, cx));
+        crate::selectable::test_support::drag(
+            cx,
+            gpui::point(a.left() + px(1.), a.center().y),
+            gpui::point(b.right() + px(2.), b.center().y),
+        );
+        cx.executor().advance_clock(MENU_DELAY * 2);
+        cx.run_until_parked();
+        let state = window
+            .update(cx, |view, _, _| {
+                let st = view.selection.0.borrow();
+                format!(
+                    "{:?} {:?} drag={} menu={:?} text={:?}",
+                    st.anchor,
+                    st.head,
+                    st.drag.is_some(),
+                    st.menu,
+                    view.selected_text()
+                )
+            })
+            .unwrap();
+        assert!(menu_open(cx), "the menu opens over the selection: {state}");
+    }
+    fn menu_open(cx: &mut gpui::VisualTestContext) -> bool {
+        cx.debug_bounds("selection-copy").is_some()
+    }
+    fn press(cx: &mut gpui::VisualTestContext, selector: &'static str) {
+        let at = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is drawn"))
+            .center();
+        crate::selectable::test_support::click(cx, at, 1);
+    }
+
+    #[gpui::test]
+    fn copy_closes_the_menu_and_copies(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            let (window, _) = menu_chat(pilot, cx);
+            let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            cx.run_until_parked();
+            select_for_menu(window, "fixes", "main", cx);
+            press(cx, "selection-copy");
+            assert!(!menu_open(cx), "pilot={pilot}: Copy closes the menu");
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|c| c.text()).as_deref(),
+                Some("fixes shipped to main")
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn add_to_chat_closes_the_menu_and_quotes(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            let (window, seen) = menu_chat(pilot, cx);
+            let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            cx.run_until_parked();
+            select_for_menu(window, "fixes", "main", cx);
+            press(cx, "selection-chat");
+            assert!(!menu_open(cx), "pilot={pilot}: Add to chat closes the menu");
+            let expected = if pilot {
+                "pilot-quote:fixes shipped to main"
+            } else {
+                "quote:fixes shipped to main"
+            };
+            assert_eq!(seen.borrow().as_slice(), [expected.to_string()]);
+        }
+    }
+
+    #[gpui::test]
+    fn add_to_notes_closes_the_menu(cx: &mut TestAppContext) {
+        let (window, seen) = menu_chat(false, cx);
+        let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        select_for_menu(window, "fixes", "main", cx);
+        press(cx, "selection-note");
+        assert!(!menu_open(cx));
+        assert_eq!(
+            seen.borrow().as_slice(),
+            ["note:fixes shipped to main".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    fn a_click_elsewhere_escape_and_a_cleared_selection_close_the_menu(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            let (window, _) = menu_chat(pilot, cx);
+            let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            cx.run_until_parked();
+            // A click elsewhere: on other text in the chat.
+            select_for_menu(window, "fixes", "main", cx);
+            let other = window
+                .update(cx, |view, _, _| view.text_bounds_for_test("shipped today"))
+                .unwrap()
+                .unwrap();
+            crate::selectable::test_support::click(cx, other.center(), 1);
+            cx.executor().advance_clock(MENU_DELAY * 2);
+            cx.run_until_parked();
+            assert!(!menu_open(cx), "pilot={pilot}: a click elsewhere closes it");
+            // Escape.
+            select_for_menu(window, "fixes", "main", cx);
+            cx.simulate_keystrokes("escape");
+            cx.run_until_parked();
+            assert!(!menu_open(cx), "pilot={pilot}: Escape closes it");
+            // The selection clearing, as a scroll or resize clears it.
+            select_for_menu(window, "fixes", "main", cx);
+            window
+                .update(cx, |view, _, cx| {
+                    view.selection.clear();
+                    cx.notify()
+                })
+                .unwrap();
+            cx.run_until_parked();
+            assert!(
+                !menu_open(cx),
+                "pilot={pilot}: a cleared selection closes it"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn repeated_select_then_act_cycles_open_and_close_the_menu_each_time(cx: &mut TestAppContext) {
+        for pilot in [false, true] {
+            let (window, seen) = menu_chat(pilot, cx);
+            let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            cx.run_until_parked();
+            for round in 0..4 {
+                let (from, to) = if round % 2 == 0 {
+                    ("fixes", "main")
+                } else {
+                    ("Two", "fixes")
+                };
+                select_for_menu(window, from, to, cx);
+                press(
+                    cx,
+                    if round % 2 == 0 {
+                        "selection-copy"
+                    } else {
+                        "selection-chat"
+                    },
+                );
+                // Nothing reopens it once the delay has passed again.
+                cx.executor().advance_clock(MENU_DELAY * 2);
+                cx.run_until_parked();
+                assert!(!menu_open(cx), "pilot={pilot} round {round}");
+            }
+            assert_eq!(
+                seen.borrow().len(),
+                2,
+                "pilot={pilot}: one quote per Add to chat"
+            );
+        }
     }
 }

@@ -35,19 +35,22 @@ impl DocumentData {
 }
 
 pub(super) struct SkillDocument {
+    /// The document's selectable text.
+    pub(super) text: crate::selectable::SelectionScope,
     data: Arc<DocumentData>,
     source: bool,
     metadata_open: bool,
     list: ListState,
 }
 impl SkillDocument {
-    pub fn new(data: Arc<DocumentData>, source: bool) -> Self {
+    pub fn new(data: Arc<DocumentData>, source: bool, cx: &mut Context<Self>) -> Self {
         let count = if source {
             data.source.len()
         } else {
             data.rows.len() + usize::from(data.metadata.is_some())
         };
         Self {
+            text: crate::selectable::SelectionScope::new(cx),
             data,
             source,
             metadata_open: false,
@@ -82,13 +85,18 @@ impl SkillDocument {
                     })
                 })
                 .collect();
+            let styled = gpui::StyledText::new(text.clone()).with_highlights(headings);
             return frame
                 .pt(px(if ix == 0 { 12. } else { 0. }))
                 .font_family(crate::fonts::monospace())
                 .text_size(px(13.))
                 .line_height(px(20.))
                 .text_color(content(0.85))
-                .child(gpui::StyledText::new(text).with_highlights(headings))
+                .child(self.text.keyed((0, ix)).wrap(
+                    text.clone().into(),
+                    styled.layout().clone(),
+                    styled.into_any_element(),
+                ))
                 .into_any_element();
         }
         if ix == 0
@@ -164,9 +172,24 @@ impl SkillDocument {
                 .border_color(content(0.1))
                 .bg(content(0.03))
                 .py_2()
-                .child(markdown::code_lines(fence, lines.clone(), None, "", false))
+                .child(markdown::code_lines_selected(
+                    fence,
+                    lines.clone(),
+                    None,
+                    "",
+                    false,
+                    Some(self.text.keyed((0, ix))),
+                ))
                 .into_any_element(),
-            _ => markdown::body(row, id, Tone::Normal, None, Instant::now()),
+            _ => markdown::body_selected(
+                row,
+                id,
+                Tone::Normal,
+                None,
+                Instant::now(),
+                Some(self.text.keyed((0, ix))),
+                None,
+            ),
         };
         frame
             .pt(px(if at == 0 { 16. } else { row.gap }))
@@ -211,12 +234,17 @@ impl Render for SkillDocument {
             .min_w_0()
             .overflow_hidden()
             .child(
-                list(
-                    self.list.clone(),
-                    cx.processor(|this, ix, _, cx| this.row(ix, cx)),
-                )
-                .size_full()
-                .pb_5(),
+                self.text
+                    .region(
+                        "skill-document-text",
+                        list(
+                            self.list.clone(),
+                            cx.processor(|this, ix, _, cx| this.row(ix, cx)),
+                        )
+                        .size_full()
+                        .pb_5(),
+                    )
+                    .size_full(),
             )
     }
 }
@@ -245,16 +273,64 @@ fn frontmatter(text: &str) -> (Option<&str>, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn skill_header_is_collapsed_metadata_and_body_starts_at_the_heading() {
+    #[gpui::test]
+    fn skill_header_is_collapsed_metadata_and_body_starts_at_the_heading(
+        cx: &mut gpui::TestAppContext,
+    ) {
         let data = DocumentData::new(
             "\u{feff}---\r\nname: review\r\n...\r\n# Review\n\nInstructions".into(),
         );
         assert_eq!(data.metadata.as_deref(), Some("name: review"));
         assert!(matches!(data.rows[0].part, Part::Text { heading: 1, .. }));
-        let view = SkillDocument::new(data, false);
-        assert!(!view.metadata_open);
-        assert_eq!(view.list.logical_scroll_top().item_ix, 0);
+        let view = cx.new(|cx| SkillDocument::new(data, false, cx));
+        view.read_with(cx, |view, _| {
+            assert!(!view.metadata_open);
+            assert_eq!(view.list.logical_scroll_top().item_ix, 0);
+        });
         assert!(frontmatter("---\nunterminated").0.is_none());
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+
+    /// A skill's preview and its source both select and copy.
+    #[gpui::test]
+    fn a_skill_document_selects_and_copies_in_preview_and_source(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::input::bind);
+        for source in [false, true] {
+            let data = DocumentData::new("# Review\n\nCheck every changed file.\n".into());
+            let window = cx.update(|cx| {
+                cx.open_window(Default::default(), |_, cx| {
+                    cx.new(|cx| SkillDocument::new(data, source, cx))
+                })
+                .unwrap()
+            });
+            let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            let line = window
+                .update(visual, |view, _, _| {
+                    view.text.bounds_for_test("Check every changed file.")
+                })
+                .unwrap()
+                .expect("the line is selectable");
+            assert_eq!(
+                cursor_at(visual, line.center()),
+                Some(gpui::CursorStyle::IBeam),
+                "source={source}"
+            );
+            drag(
+                visual,
+                gpui::point(line.left() + px(1.), line.center().y),
+                gpui::point(line.right() + px(2.), line.center().y),
+            );
+            assert_eq!(
+                copy(visual).as_deref(),
+                Some("Check every changed file."),
+                "source={source}"
+            );
+        }
     }
 }

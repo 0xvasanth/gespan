@@ -945,15 +945,6 @@ pub(crate) fn body_selected(
     }
 }
 
-pub(crate) fn code_lines(
-    fence: &Fence,
-    range: Range<usize>,
-    highlighted: Option<&HighlightedDocument>,
-    query: &str,
-    current: bool,
-) -> Div {
-    code_lines_selected(fence, range, highlighted, query, current, None)
-}
 pub(crate) fn code_lines_selected(
     fence: &Fence,
     range: Range<usize>,

@@ -8764,3 +8764,39 @@ fn new_card_menus_open_under_their_chip(cx: &mut TestAppContext) {
         );
     }
 }
+
+/// A task's comments select and copy in the drawer.
+#[gpui::test]
+fn a_tasks_comments_select_and_copy(cx: &mut TestAppContext) {
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+    let f = seeded(cx, &["Task"]);
+    let card = detail(&f, cx).cards[0].id.clone();
+    Service::open(&f.db)
+        .unwrap()
+        .add_comment(&card, "Retry after the cache warms up")
+        .unwrap();
+    let visual = &mut VisualTestContext::from_window(f.window.into(), cx);
+    click(visual, "board-card-1");
+    visual.refresh().unwrap();
+    visual.run_until_parked();
+    let comment = f
+        .window
+        .update(visual, |view, _, _| {
+            view.text.bounds_for_test("Retry after the cache warms up")
+        })
+        .unwrap()
+        .expect("the comment is selectable");
+    assert_eq!(
+        cursor_at(visual, comment.center()),
+        Some(gpui::CursorStyle::IBeam)
+    );
+    drag(
+        visual,
+        point(comment.left() + px(1.), comment.center().y),
+        point(comment.right() + px(2.), comment.center().y),
+    );
+    assert_eq!(
+        copy(visual).as_deref(),
+        Some("Retry after the cache warms up")
+    );
+}

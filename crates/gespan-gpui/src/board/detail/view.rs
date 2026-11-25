@@ -273,7 +273,14 @@ impl BoardView {
                         .border_color(content(0.07))
                 })
                 .child(top_bar)
-                .child(body)
+                .child(
+                    self.text
+                        .region("board-drawer-text", body)
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .flex_col(),
+                )
                 .children(choice)
                 .into_any_element(),
         )
@@ -1510,7 +1517,7 @@ impl BoardView {
                                         div()
                                             .text_size(px(13.))
                                             .text_color(content(0.85))
-                                            .child(comment.body.clone()),
+                                            .child(self.text.text(comment.body.clone())),
                                     ),
                             )
                     }))
@@ -1588,7 +1595,7 @@ impl BoardView {
                             div()
                                 .text_size(px(12.))
                                 .text_color(content(0.65))
-                                .child(format!("{} · {when}", activity_text(row)))
+                                .child(self.text.text(format!("{} · {when}", activity_text(row))))
                         }))
                         .into_any_element(),
                     Some(Err(_)) => div()

@@ -618,8 +618,8 @@ impl SettingsView {
                     self.skill_documents
                         .entry((skill.path.clone(), source))
                         .or_insert_with(|| {
-                            cx.new(|_| {
-                                super::super::skill_document::SkillDocument::new(data, source)
+                            cx.new(|cx| {
+                                super::super::skill_document::SkillDocument::new(data, source, cx)
                             })
                         })
                         .clone()
