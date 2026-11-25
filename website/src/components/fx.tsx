@@ -8,7 +8,6 @@ import { BorderBeam } from "@/components/ui/border-beam";
 import { MagicCard } from "@/components/ui/magic-card";
 import { Marquee } from "@/components/ui/marquee";
 import { NumberTicker } from "@/components/ui/number-ticker";
-import { Particles } from "@/components/ui/particles";
 import { cn } from "@/lib/utils";
 import { AGENTS } from "./AgentWall";
 import "./fx.css";
@@ -240,13 +239,4 @@ export function StatBand() {
       ))}
     </dl>
   );
-}
-
-/** Drifting violet particles behind a section; nothing for reduced motion. */
-export function GlowParticles() {
-  const reduced = useReducedMotion();
-  if (reduced) return null;
-  // Inline position: the hero card's own rule (.w-hero > *) would otherwise make
-  // this layer a full-height block and push the content down.
-  return <Particles className="pointer-events-none" style={{ position: "absolute", inset: 0 }} quantity={90} ease={70} size={0.6} color="#c0affc" vy={-0.08} />;
 }

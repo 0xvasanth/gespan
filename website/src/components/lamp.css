@@ -1,0 +1,16 @@
+/* The lamp: a strip light at the top throwing a cone of light downwards. */
+.lm{position:relative;overflow:hidden;isolation:isolate}
+.lm-light{position:absolute;inset:0 0 auto;height:420px;pointer-events:none;z-index:0}
+/* The cone: a conic wedge opening down from the light, fading out below. */
+.lm-cone{position:absolute;left:50%;top:0;width:min(960px,140%);height:420px;margin-left:calc(min(960px,140%) / -2);transform-origin:50% 0;
+  /* Centred on straight down: from 132deg, the light peaks 48deg in, at 180deg.
+     The apex sits 220px above the card, so the light leaves the whole strip. */
+  background:conic-gradient(from 132deg at 50% -220px,transparent 0deg,rgba(150,118,248,.5) 24deg,rgba(205,190,255,.62) 48deg,rgba(150,118,248,.5) 72deg,transparent 96deg);
+  -webkit-mask-image:linear-gradient(#000 0%,rgba(0,0,0,.5) 45%,transparent 92%);mask-image:linear-gradient(#000 0%,rgba(0,0,0,.5) 45%,transparent 92%)}
+.lm-glow{position:absolute;left:50%;top:-90px;width:560px;height:180px;margin-left:-280px;border-radius:50%;background:radial-gradient(closest-side,rgba(192,175,252,.55),rgba(143,100,246,.18) 60%,transparent);filter:blur(18px)}
+.lm-line{position:absolute;left:50%;top:0;width:min(520px,80%);height:2px;margin-left:calc(min(520px,80%) / -2);border-radius:2px;transform-origin:50% 50%;
+  background:linear-gradient(90deg,transparent,#c0affc 20%,#ffffff 50%,#c0affc 80%,transparent);box-shadow:0 0 18px 3px rgba(192,175,252,.55),0 0 60px 8px rgba(143,100,246,.35)}
+.lm-content{position:relative;z-index:1}
+@container (max-width:760px){.lm-glow{width:320px;margin-left:-160px}}
+/* The card a lamp sits in: its own background glow dims so the lamp is the light. */
+.w-hero.lm-hero::before{opacity:.3}
