@@ -100,7 +100,12 @@ fn a_pilots_question_shows_while_its_turn_is_still_open(cx: &mut TestAppContext)
         .unwrap();
     cx.update(|cx| {
         manager.update(cx, |m, cx| {
-            m.mobile_send(&id, "Start the API lead on the batch".into(), Vec::new(), cx)
+            m.mobile_send(
+                &id,
+                "Start the API lead on the batch".into(),
+                Vec::new(),
+                cx,
+            )
         })
     })
     .unwrap();
