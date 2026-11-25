@@ -128,9 +128,13 @@ export function AgentMarquee() {
 const SOURCES = ["GitHub", "GitLab", "Linear", "Jira", "Azure DevOps"];
 const TARGETS = AGENTS.filter((a) => ["Claude Code", "Codex", "Cursor CLI", "OpenCode", "Kiro CLI"].includes(a.name));
 
+/** The words on the beams: what the work is on each side of Gespan. */
+export const FLOW_LABELS = { in: "Inbox", hub: "Board · Automations · Pilots", out: "Sessions" } as const;
+
 /**
- * How work moves through Gespan: tickets flow in from the trackers, through
- * Gespan's board and Pilots, out to the agents that run them.
+ * How work moves through Gespan, hub and spokes: tickets flow in from the
+ * trackers along the Inbox beams, Gespan's board, automations and Pilots sit
+ * at the hub, and Sessions go out to the agents that run them.
  */
 export function FlowDiagram() {
   const box = useRef<HTMLDivElement>(null);
@@ -140,9 +144,9 @@ export function FlowDiagram() {
   const reduced = useReducedMotion();
   const repeat = reduced ? 0 : Infinity;
   return (
-    <figure className="fx-flow" aria-label="Tickets from GitHub, GitLab, Linear, Jira and Azure DevOps flow into Gespan, which runs them with Claude Code, Codex, Cursor CLI, OpenCode and Kiro CLI.">
-      <div ref={box} className="fx-flow-box">
-        <div className="fx-col">
+    <figure className="fx-flow" aria-label="Tickets from GitHub, GitLab, Linear, Jira and Azure DevOps flow into Gespan's Inbox. Gespan's board, automations and Pilots turn them into sessions run by Claude Code, Codex, Cursor CLI, OpenCode and Kiro CLI.">
+      <div ref={box} className="fx-flow-box" aria-hidden="true">
+        <div className="fx-col fx-from">
           {SOURCES.map((name, i) => (
             <div key={name} ref={from[i]} className="fx-node">
               <span className="fx-dot" />
@@ -150,12 +154,16 @@ export function FlowDiagram() {
             </div>
           ))}
         </div>
+        <div className="fx-beam-label" data-flow-label="in">{FLOW_LABELS.in}</div>
         <div className="fx-col fx-center">
-          <div ref={hub} className="fx-hub">
+          <div ref={hub} className={reduced ? "fx-hub" : "fx-hub pulse"}>
             <img src={logoUrl} width="44" height="44" alt="" />
           </div>
+          <div className="fx-hub-name">Gespan</div>
+          <div className="fx-hub-sub" data-flow-label="hub">{FLOW_LABELS.hub}</div>
         </div>
-        <div className="fx-col">
+        <div className="fx-beam-label" data-flow-label="out">{FLOW_LABELS.out}</div>
+        <div className="fx-col fx-to">
           {TARGETS.map((agent, i) => (
             <div key={agent.name} ref={to[i]} className="fx-node fx-agent-node">
               <img src={agent.logo} alt="" width="22" height="22" />
@@ -170,11 +178,6 @@ export function FlowDiagram() {
           <AnimatedBeam key={`out-${i}`} containerRef={box} fromRef={hub} toRef={ref} curvature={(i - 2) * 18} duration={4} delay={1.6 + i * 0.35} repeat={repeat} pathColor="#ebebeb" pathOpacity={0.09} gradientStartColor="#9f7ef8" gradientStopColor="#459bf7" />
         ))}
       </div>
-      <figcaption className="fx-flow-caption">
-        <span><b>Inbox</b> Tickets and review requests</span>
-        <span><b>Gespan</b> Board, automations and Pilots</span>
-        <span><b>Sessions</b> Any agent, each in its own worktree</span>
-      </figcaption>
     </figure>
   );
 }

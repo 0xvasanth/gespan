@@ -1,6 +1,7 @@
 import { Link } from "../router";
 import { NavSpace } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
+import { HowItWorks } from "../components/HowItWorks";
 import { Macbook } from "../components/Macbook";
 import { ScrollShot } from "../components/ScrollShot";
 import logoUrl from "../assets/logo.svg";
@@ -81,50 +82,7 @@ export function HomePage() {
             <p className="w-eyebrow">How it works</p>
             <h2 id="loop-h" className="w-h2">From ticket to merged, with you holding the reins.</h2>
           </div>
-          <ol data-stagger="" className="w-g4" style={{ listStyle: "none", margin: "0", padding: "0" }}>
-            <li className="w-glass lp-step">
-              <span className="w-num">01</span>
-              <h3 className="w-h4">Board</h3>
-              <p className="w-small">Tickets from GitHub, GitLab, Linear, Jira and Azure DevOps land in the Inbox and become cards.</p>
-              <div className="lp-mini">
-                <div className="r"><span className="w-meta" style={{ marginRight: "auto" }}>Todo</span><span className="w-meta">2</span></div>
-                <div style={{ padding: "10px", borderRadius: "9px", background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.09)" }}>
-                  <div style={{ fontSize: "12.5px", fontWeight: "600", color: "#ebebeb" }}>Fix the login redirect loop</div>
-                  <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}><span className="w-tag mute">LIN-482</span><span className="w-tag mute">acme-web</span></div>
-                </div>
-              </div>
-            </li>
-            <li className="w-glass lp-step">
-              <span className="w-num">02</span>
-              <h3 className="w-h4">Sessions</h3>
-              <p className="w-small">Run a card with any agent, each in its own Git worktree. The card moves as the session starts, opens a pull request and finishes.</p>
-              <div className="lp-mini">
-                <div className="r"><span style={{ width: "14px", height: "14px", borderRadius: "4px", background: "#d97757" }} />Claude Code<span className="w-tag run" style={{ marginLeft: "auto" }}>Running</span></div>
-                <div className="r" style={{ color: "#8a8a8a", fontSize: "12px" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg><span className="w-mono">fix-login-redirect</span></div>
-              </div>
-            </li>
-            <li className="w-glass lp-step">
-              <span className="w-num">03</span>
-              <h3 className="w-h4">Automations</h3>
-              <p className="w-small">Agents run on a schedule, like a daily dependency audit, and their runs show up on the board.</p>
-              <div className="lp-mini">
-                <div className="r" style={{ fontWeight: "600", color: "#ebebeb" }}>Daily dependency audit</div>
-                <div className="r">
-                  <span className="w-meta" style={{ marginRight: "auto" }}>Every day at 09:00 · Codex</span>
-                  <div className="lp-bars" aria-hidden="true"><span style={{ height: "9px" }} /><span style={{ height: "12px" }} /><span style={{ height: "8px" }} /><span className="x" style={{ height: "6px" }} /><span style={{ height: "14px" }} /><span style={{ height: "11px" }} /><span style={{ height: "16px" }} /></div>
-                </div>
-              </div>
-            </li>
-            <li className="w-glass lp-step">
-              <span className="w-num">04</span>
-              <h3 className="w-h4">Pilots</h3>
-              <p className="w-small">A long-running agent with memory triages the Inbox, starts sessions and gets a report back from each one.</p>
-              <div className="lp-mini">
-                <div className="r"><span style={{ width: "14px", height: "14px", borderRadius: "5px", background: "#f59e0b" }} /><span style={{ fontWeight: "600", color: "#ebebeb" }}>ReleasePilot</span><span className="w-tag wait" style={{ marginLeft: "auto" }}>Needs you</span></div>
-                <div className="r" style={{ color: "#a3a3a3", fontSize: "12px" }}>Started 3 sessions · 2 reported back</div>
-              </div>
-            </li>
-          </ol>
+          <HowItWorks />
           <p className="w-meta" style={{ maxWidth: "760px" }}>This is where Gespan is heading, and parts of the loop are still being built: adding Inbox items to the board, pull requests moving cards, and Pilots and automations working the board directly. Follow along in <a className="w-link" href="https://github.com/0xvasanth/gespan/issues/211">issue 211</a>.</p>
         </div>
       </section>
