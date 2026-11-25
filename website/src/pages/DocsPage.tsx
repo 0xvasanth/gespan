@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { SiteFooter } from "../components/SiteFooter";
 import { NavSpace } from "../components/SiteNav";
 import { GUIDES, REPO } from "../docs";
+import { QUICK_START, Terminal } from "../components/Terminal";
 import "./docs.css";
 
 /** The guides in README.md's Documentation table. */
@@ -72,8 +73,10 @@ export function DocsPage() {
           <div className="w-glass" style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <p className="w-eyebrow">Quick start</p>
-              <span className="w-meta" style={{ marginLeft: "auto" }}>5 steps</span>
+              <span className="w-meta" style={{ marginLeft: "auto" }}>Set up, then 5 steps</span>
             </div>
+            <Terminal title="Before you open Gespan" lines={QUICK_START} />
+            <h3 className="dc-then">Then, in Gespan</h3>
             <ol className="dc-qs">
               <li>
                 <span className="n">1</span>

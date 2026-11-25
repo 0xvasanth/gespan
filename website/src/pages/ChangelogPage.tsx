@@ -1,3 +1,5 @@
+import { motion, useMotionValueEvent, useReducedMotion, useScroll } from "motion/react";
+import { useRef, useState } from "react";
 import { Inline } from "../components/Inline";
 import { ScrollShot } from "../components/ScrollShot";
 import { SiteFooter } from "../components/SiteFooter";
@@ -13,12 +15,58 @@ const KIND_CLASS: Record<string, string> = { Added: "add", Changed: "chg", Fixed
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-function Release({ entry, latest }: { entry: ChangelogRelease; latest: boolean }) {
+/**
+ * How many releases the tracing beam has reached: `progress` is how far the
+ * beam has filled the rail (0…1) and `dots` is where each release's dot sits
+ * on it, as a fraction of the rail's height, in order.
+ */
+export function litReleases(progress: number, dots: number[]): number {
+  const p = Number.isFinite(progress) ? Math.min(1, Math.max(0, progress)) : 0;
+  let lit = 0;
+  for (const dot of dots) {
+    if (dot <= p + 1e-9) lit += 1;
+    else break;
+  }
+  return lit;
+}
+
+/**
+ * The releases on a timeline: a rail down the left that a beam of light fills
+ * as the page scrolls, lighting each release's dot as it reaches it. With
+ * reduced motion the rail is full and every dot is lit.
+ */
+function Timeline({ entries }: { entries: ChangelogRelease[] }) {
+  const rail = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
+  const [lit, setLit] = useState(1);
+  const { scrollYProgress } = useScroll({ target: rail, offset: ["start 55%", "end 55%"] });
+  useMotionValueEvent(scrollYProgress, "change", (p) => {
+    const el = rail.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const dots = [...el.querySelectorAll<HTMLElement>(".cl-dot")].map((d) => (d.getBoundingClientRect().top - box.top) / (box.height || 1));
+    setLit(Math.max(1, litReleases(p, dots)));
+  });
+  const shown = reduced ? entries.length : lit;
+  return (
+    <div ref={rail} className="cl-line" data-timeline="">
+      <div className="cl-track" aria-hidden="true">
+        <motion.div className="cl-beam" style={{ scaleY: reduced ? 1 : scrollYProgress }} />
+      </div>
+      {entries.map((entry, i) => (
+        <Release key={entry.version} entry={entry} latest={entry.version === release.version} lit={i < shown} />
+      ))}
+    </div>
+  );
+}
+
+function Release({ entry, latest, lit }: { entry: ChangelogRelease; latest: boolean; lit: boolean }) {
   const items = entry.sections.flatMap((section) => section.entries.map((e) => ({ kind: section.kind, ...e })));
   const hidden = items.length - SHOWN;
   const id = `r${entry.version.replace(/\W/g, "")}`;
   return (
     <article className="cl-rel" aria-labelledby={id}>
+      <span className={lit ? "cl-dot lit" : "cl-dot"} aria-hidden="true" />
       <div className="cl-side">
         {latest && <span className="w-tag ok" style={{ alignSelf: "flex-start" }}>Latest</span>}
         <h2 id={id} className="cl-ver">{entry.version}</h2>
@@ -71,9 +119,7 @@ export function ChangelogPage() {
       </div>
       <section className="w-sec-tight" aria-label="Releases">
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column" }}>
-          {changelog.map((entry) => (
-            <Release key={entry.version} entry={entry} latest={entry.version === release.version} />
-          ))}
+          <Timeline entries={changelog} />
           <div style={{ display: "flex", justifyContent: "center", paddingTop: "24px" }}>
             <a className="w-btn w-btn-glass" href={`${REPO}/blob/main/CHANGELOG.md`}>Older releases</a>
           </div>

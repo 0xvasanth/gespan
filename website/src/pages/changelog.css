@@ -1,6 +1,6 @@
-.cl-rel{display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px;padding:40px 0;border-top:1px solid rgba(235,235,235,.07)}
+.cl-rel{position:relative;display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px;padding:40px 0;border-top:1px solid rgba(235,235,235,.07)}
 .cl-rel:first-child{border-top:0;padding-top:0}
-.cl-side{display:flex;flex-direction:column;gap:8px;position:sticky;top:24px;align-self:start}
+.cl-side{display:flex;flex-direction:column;gap:8px;position:sticky;top:104px;align-self:start}
 .cl-ver{font-family:var(--display);font-size:28px;font-weight:500;letter-spacing:-.025em;margin:0}
 .cl-body{display:flex;flex-direction:column;gap:16px}
 .cl-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
@@ -13,3 +13,13 @@
 .cl-shot{max-width:760px;margin:4px 0}
 @container (max-width:760px){.cl-shot{margin:4px auto}}
 @container (max-width:760px){.cl-rel{grid-template-columns:minmax(0,1fr);gap:16px;padding:32px 0}.cl-side{position:static;flex-direction:row;align-items:baseline;flex-wrap:wrap;gap:10px}.cl-list li{grid-template-columns:minmax(0,1fr);gap:2px}}
+/* The timeline: a rail down the left, filled by a beam as the page scrolls;
+   each release's dot lights when the beam reaches it. */
+.cl-line{position:relative;padding-left:48px}
+.cl-track{position:absolute;left:11px;top:14px;bottom:0;width:2px;border-radius:2px;background:linear-gradient(rgba(255,255,255,.10),rgba(255,255,255,.04) 85%,transparent)}
+.cl-beam{position:absolute;inset:0;transform-origin:50% 0;border-radius:2px;background:linear-gradient(#c0affc,#9f7ef8 60%,#459bf7);box-shadow:0 0 14px rgba(143,100,246,.55)}
+.cl-dot{position:absolute;left:-43px;top:54px;width:12px;height:12px;border-radius:50%;box-sizing:border-box;background:#141416;border:2px solid rgba(255,255,255,.18);transition:background .3s,border-color .3s,box-shadow .3s}
+.cl-rel:first-child .cl-dot{top:14px}
+.cl-dot.lit{background:#c0affc;border-color:#c0affc;box-shadow:0 0 0 4px rgba(192,175,252,.16),0 0 18px rgba(143,100,246,.7)}
+@media (prefers-reduced-motion:reduce){.cl-dot{transition:none}}
+@container (max-width:760px){.cl-line{padding-left:32px}.cl-track{left:5px}.cl-dot{left:-32px;top:38px}.cl-rel:first-child .cl-dot{top:8px}}
