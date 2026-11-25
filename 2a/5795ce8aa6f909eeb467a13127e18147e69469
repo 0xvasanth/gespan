@@ -1,0 +1,29 @@
+website/tests/how.test.tsx
+  s_ed5fc16e195ddf::t_31236b49c1683b 1-79
+website/src/pages/HomePage.tsx
+  s_ed5fc16e195ddf::t_ba3b137cde58b0 4,85
+website/src/components/fx.css
+  s_ed5fc16e195ddf::t_135c5b115fff95 18,20-21,26-32,46-52
+website/src/components/fx.tsx
+  s_ed5fc16e195ddf::t_135c5b115fff95 131-133,135-137,147-149,157,159,162-163,165-166
+website/src/components/how.css
+  s_ed5fc16e195ddf::t_ba3b137cde58b0 1-47
+website/src/components/HowItWorks.tsx
+  s_ed5fc16e195ddf::t_bc738d6a049026 1-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2a5795ce8aa6f909eeb467a13127e18147e69469",
+  "prompts": {},
+  "sessions": {
+    "s_ed5fc16e195ddf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01a3f41-b72e-4aef-a6a8-323f91dfd6a1",
+        "model": "unknown"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
