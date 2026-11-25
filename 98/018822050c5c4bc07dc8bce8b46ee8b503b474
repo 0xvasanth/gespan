@@ -1,0 +1,36 @@
+website/src/pages/docs.css
+  s_ed5fc16e195ddf::t_6be5a615de6172 15
+website/src/pages/changelog.css
+  s_ed5fc16e195ddf::t_43c927949b3803 1,3,16-25
+website/src/pages/ChangelogPage.tsx
+  s_ed5fc16e195ddf::t_43c927949b3803 1-2,18-63,69,122
+website/tests/stage4.test.tsx
+  s_ed5fc16e195ddf::t_09def90cd63c04 1-84
+website/src/components/Terminal.tsx
+  s_ed5fc16e195ddf::t_c4b5d296939794 1-80
+website/src/pages/DocsPage.tsx
+  s_ed5fc16e195ddf::t_09def90cd63c04 76
+  s_ed5fc16e195ddf::t_6be5a615de6172 5,78-79
+website/src/components/terminal.css
+  s_ed5fc16e195ddf::t_ed41ca8377122f 1-23
+scripts/ci-impact.mjs
+  s_ed5fc16e195ddf::t_eda3529f35cadf 13-15
+scripts/ci-impact.test.mjs
+  s_ed5fc16e195ddf::t_5d45963cc3aa62 41-49
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "98018822050c5c4bc07dc8bce8b46ee8b503b474",
+  "prompts": {},
+  "sessions": {
+    "s_ed5fc16e195ddf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e01a3f41-b72e-4aef-a6a8-323f91dfd6a1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
