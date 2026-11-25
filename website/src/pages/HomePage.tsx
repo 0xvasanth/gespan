@@ -22,7 +22,11 @@ export function HomePage() {
     <div className="w-site">
       {/* Hero */}
       <div className="w-frame">
-        <Link className="w-announce" to="/changelog" style={{ maxWidth: "760px", margin: "0 auto 12px" }}><span><b>Gespan {release.version}</b> is out: {highlights(changelog[0])}.</span> <span className="go">Read the changelog →</span></Link>
+        <Link className="w-announce" to="/changelog">
+          <span className="new">New in {release.version}</span>
+          <span className="txt">{highlights(changelog[0], 1)}</span>
+          <span className="go">Changelog →</span>
+        </Link>
         <section className="w-hero" aria-label="Introduction">
           {/* A slow drifting glow behind the hero copy. */}
           <div aria-hidden="true" className="w-glow violet animate-drift motion-reduce:animate-none" style={{ width: "900px", height: "620px", right: "-260px", top: "-180px" }} />
