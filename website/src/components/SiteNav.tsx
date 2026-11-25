@@ -7,7 +7,7 @@ import "./site-nav.css";
 const LINKS: { page: Page; to: string; label: string }[] = [
   { page: "features", to: "/features", label: "Features" },
   { page: "pilots", to: "/pilots", label: "Pilots" },
-  { page: "hub", to: "/hub", label: "Web Hub" },
+  { page: "cloud", to: "/cloud", label: "Cloud" },
   { page: "docs", to: "/docs", label: "Docs" },
   { page: "changelog", to: "/changelog", label: "Changelog" },
   { page: "download", to: "/download", label: "Download" },

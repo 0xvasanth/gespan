@@ -1,5 +1,5 @@
 import { motion, useReducedMotion, useScroll, useTransform } from "motion/react";
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { Shot, type ShotName } from "./Shot";
 import "./macbook.css";
 
@@ -38,11 +38,12 @@ export function laptopPose(progress: number): LaptopPose {
 export const LAPTOP_AT_REST: LaptopPose = { lid: 0, scale: 1, lift: 0, base: 1 };
 
 /**
- * A laptop showing a real Gespan screen. As the page scrolls, the lid swings
+ * A laptop showing a real Gespan screen (a shot, or a screen drawn in page
+ * markup passed as children). As the page scrolls, the lid swings
  * up and the screen lifts out to fill the page (the stage keeps it in view
  * while that happens). Reduced motion shows it open and still.
  */
-export function Macbook({ shot }: { shot: ShotName }) {
+export function Macbook({ shot, children }: { shot?: ShotName; children?: ReactNode }) {
   const stage = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const { scrollYProgress } = useScroll({ target: stage, offset: ["start 75%", "end end"] });
@@ -56,7 +57,7 @@ export function Macbook({ shot }: { shot: ShotName }) {
         <motion.div className="mb-screen" style={reduced ? { rotateX: 0, scale: 1, y: 0 } : { rotateX: lid, scale, y: lift }}>
           <div className="mb-bezel">
             <span className="mb-camera" aria-hidden="true" />
-            <Shot name={shot} beam />
+            {shot ? <Shot name={shot} beam /> : <div className="mb-app">{children}</div>}
           </div>
         </motion.div>
         <motion.div className="mb-base" aria-hidden="true" style={reduced ? { opacity: 1 } : { opacity: base }}>

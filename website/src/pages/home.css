@@ -6,17 +6,8 @@
 /* The Home hero: one light source. A faint grid fades out from the
    headline, and a spotlight sweeps in once from the top left. */
 .lp-hero::before{opacity:.35}
-.w-hero > .lp-grid,.w-hero > .lp-spot{position:absolute;pointer-events:none}
-.lp-grid{inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:56px 56px;background-position:center top;mask-image:radial-gradient(ellipse 60% 45% at 50% 22%,#000 20%,transparent 75%);-webkit-mask-image:radial-gradient(ellipse 60% 45% at 50% 22%,#000 20%,transparent 75%)}
-.lp-spot{left:-25%;top:-55%;width:120%;height:130%;background:radial-gradient(ellipse 32% 42% at 50% 50%,rgba(205,190,255,.26),rgba(143,100,246,.10) 45%,transparent 72%);transform:rotate(-24deg);animation:lp-spot-in 2.4s cubic-bezier(.2,.7,.2,1) .15s both}
-@keyframes lp-spot-in{from{opacity:0;transform:translate(-16%,-12%) rotate(-24deg)}to{opacity:1;transform:rotate(-24deg)}}
-@media (prefers-reduced-motion:reduce){.lp-spot{animation:none}}
 .lp-hero .w-announce{margin:0 0 4px}
 /* The lid starts leaning back, which draws it well below its box; pull the stage up into that band. */
-.w-wrap.lp-laptop{margin-top:-110px;padding-bottom:48px}
 /* The pulled-up stage overlaps the copy's box; it draws on top as it rises, but
    lets clicks through to the buttons and links (the screen inside is a picture). */
-.lp-laptop,.lp-laptop .mb-stage,.lp-laptop .mb-sticky{pointer-events:none}
 /* Reduced motion keeps the lid upright from the start, so there is no band to pull into. */
-@media (prefers-reduced-motion:reduce){.w-wrap.lp-laptop{margin-top:48px}}
-@container (max-width:760px){.w-wrap.lp-laptop{margin-top:24px;padding-bottom:24px}}
