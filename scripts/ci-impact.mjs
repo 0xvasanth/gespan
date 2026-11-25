@@ -10,6 +10,9 @@ import { pathToFileURL } from "node:url";
 export const pieces = ["core", "desktop", "host", "mobile", "release", "website"];
 
 const rules = [
+  // The website's tests read the top-level guides: every guide it links to
+  // must exist, and the Docs quick start may only quote their commands.
+  [/^docs\/[^/]+\.md$/, ["website"]],
   // Nothing reads these. docs/desktop/examples is compiled into Native, and
   // Native and the release scripts read CHANGELOG.md, so neither matches.
   [/^docs\/(?!desktop\/examples\/)/, []],

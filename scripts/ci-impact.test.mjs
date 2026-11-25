@@ -38,6 +38,15 @@ test("files only people read run nothing", () => {
   assert.deepEqual(affected("CONTRIBUTING.md", "docs/desktop/verification.md", "LICENSE", ".github/CODEOWNERS"), []);
 });
 
+test("the top-level guides run the website's checks, which link to and quote them", async () => {
+  assert.deepEqual(affected("docs/providers.md"), ["website"]);
+  assert.deepEqual(affected("docs/install.md", "docs/board.md"), ["website"]);
+  // Nested docs stay documentation only.
+  assert.deepEqual(affected("docs/desktop/verification.md"), []);
+  assert.match(await read("website/tests/stage4.test.tsx"), /docs\/providers\.md/);
+  assert.match(await read("website/tests/content.test.tsx"), /every guide the site links to exists/);
+});
+
 test("the README runs the release checks that keep its downloads current", async () => {
   assert.deepEqual(affected("README.md"), ["release"]);
   assert.match(await read("scripts/readme-release.test.mjs"), /README\.md/);
