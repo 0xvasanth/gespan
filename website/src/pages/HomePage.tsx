@@ -1,11 +1,13 @@
 import { Link } from "../router";
 import { NavSpace } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
+import { FeatureBento } from "../components/FeatureBento";
 import { HowItWorks } from "../components/HowItWorks";
+import { Lamp } from "../components/Lamp";
 import { Macbook } from "../components/Macbook";
 import { ScrollShot } from "../components/ScrollShot";
 import logoUrl from "../assets/logo.svg";
-import { AgentMarquee, FlowDiagram, GlowParticles, HeroAgents, HeroLight, ShinyText, SpotCard, StatBand, TaskFeed } from "../components/fx";
+import { AgentMarquee, FlowDiagram, HeroAgents, HeroLight, ShinyText, SpotCard, StatBand, TaskFeed } from "../components/fx";
 import { GUIDES } from "../docs";
 import { changelog, formatDate, highlights, release } from "../release";
 import { SoonTag } from "./CloudPage";
@@ -111,50 +113,7 @@ export function HomePage() {
             </div>
             <Link className="w-btn w-btn-glass" to="/features" style={{ marginLeft: "auto" }}>See every feature</Link>
           </div>
-          <div data-stagger="" className="w-g3">
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="12" y1="4" x2="12" y2="20" /></svg></div>
-              <h3 className="w-h4">Multi-agent workspace</h3>
-              <p className="w-small">Every conversation is a tab. Split panes to run several agents at once, and set the model, effort and permission mode for each session.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg></div>
-              <h3 className="w-h4">Worktrees built in</h3>
-              <p className="w-small">Each parallel task gets its own Git worktree, named after the task. Setup and Teardown scripts prepare and clean up each one.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10" /><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10" /></svg></div>
-              <h3 className="w-h4">Review, undo and fork</h3>
-              <p className="w-small">Checkpoints record what each turn changed, shell edits included. Keep or undo a turn's diff, or fork a new chat from any message.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg></div>
-              <h3 className="w-h4">Inbox and automations</h3>
-              <p className="w-small">Bring in GitHub, GitLab, Linear, Jira and Azure DevOps work. Run agents on a schedule or when an Inbox event arrives.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" /></svg></div>
-              <h3 className="w-h4">MCP in one place</h3>
-              <p className="w-small">Add an MCP server once and share it with every session. Servers need your approval, and their secrets stay in the keychain.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg></div>
-              <h3 className="w-h4">In-app browser</h3>
-              <p className="w-small">Agents open, read and click through pages in a browser Gespan runs, and you use the same tab in a pane beside the chat.</p>
-            </div>
-</SpotCard>
-          </div>
+          <FeatureBento />
         </div>
       </section>
       {/* Pilots */}
@@ -302,15 +261,16 @@ export function HomePage() {
       </section>
       {/* Download CTA */}
       <section className="w-frame" aria-labelledby="cta-h" style={{ paddingBottom: "12px" }}>
-        <div className="w-hero">
-          <GlowParticles />
-          <div className="w-wrap" style={{ paddingTop: "96px", paddingBottom: "96px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "22px" }}>
+        <div className="w-hero lm-hero">
+          <Lamp>
+          <div className="w-wrap" style={{ paddingTop: "120px", paddingBottom: "96px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "22px" }}>
             <img src={logoUrl} width="64" height="64" alt="" />
             <h2 id="cta-h" className="w-h1">Hold the reins.</h2>
             <p className="w-lead" style={{ maxWidth: "520px" }}>Install and sign in to at least one supported agent, then download Gespan for your machine.</p>
             <div className="lp-cta w-stack-m w-full-m" style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center" }}><Link className="w-btn w-btn-light" to="/download">macOS</Link> <Link className="w-btn w-btn-glass" to="/download">Windows</Link> <Link className="w-btn w-btn-glass" to="/download">Linux</Link></div>
             <p className="w-meta">Version {release.version} · Released {formatDate(release.date)} · <a className="w-link" href="https://github.com/0xvasanth/gespan/releases">All releases</a></p>
           </div>
+          </Lamp>
         </div>
       </section>
       <SiteFooter />
