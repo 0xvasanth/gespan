@@ -58,3 +58,10 @@
   .fx-stat{padding:18px}
   .fx-agent{height:52px}
 }
+
+/* The hero light: one spotlight sweeping in over a faint grid. */
+.w-hero > .fx-grid,.w-hero > .fx-spot{position:absolute;pointer-events:none}
+.fx-grid{inset:0;background-image:linear-gradient(rgba(255,255,255,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.05) 1px,transparent 1px);background-size:56px 56px;background-position:center top;mask-image:radial-gradient(ellipse 60% 45% at 50% 22%,#000 20%,transparent 75%);-webkit-mask-image:radial-gradient(ellipse 60% 45% at 50% 22%,#000 20%,transparent 75%)}
+.fx-spot{left:-25%;top:-55%;width:120%;height:130%;background:radial-gradient(ellipse 32% 42% at 50% 50%,rgba(205,190,255,.26),rgba(143,100,246,.10) 45%,transparent 72%);transform:rotate(-24deg);animation:fx-spot-in 2.4s cubic-bezier(.2,.7,.2,1) .15s both}
+@keyframes fx-spot-in{from{opacity:0;transform:translate(-16%,-12%) rotate(-24deg)}to{opacity:1;transform:rotate(-24deg)}}
+@media (prefers-reduced-motion:reduce){.fx-spot{animation:none}}

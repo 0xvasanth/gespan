@@ -84,6 +84,16 @@ export function HeroAgents({ interval = 2400 }: { interval?: number }) {
   );
 }
 
+/** The hero light: a spotlight that sweeps in over a faint grid. Put it first in a .w-hero. */
+export function HeroLight() {
+  return (
+    <>
+      <div aria-hidden="true" className="fx-grid" />
+      <div aria-hidden="true" className="fx-spot" />
+    </>
+  );
+}
+
 /** A beam of light running around its parent's border; nothing for reduced motion. */
 export function Beam({ duration = 8, size = 160, delay = 0 }: { duration?: number; size?: number; delay?: number }) {
   const reduced = useReducedMotion();
