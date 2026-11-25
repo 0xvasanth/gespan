@@ -251,6 +251,8 @@ struct Owner {
 }
 
 pub(crate) struct Runs {
+    /// The run list's selectable text.
+    pub(crate) text: crate::selectable::SelectionScope,
     service: Arc<Mutex<Service>>,
     runs: Vec<AutomationRun>,
     owners: HashMap<String, Owner>,
@@ -284,6 +286,7 @@ impl Runs {
             this.set_query(query, cx);
         });
         let mut runs = Self {
+            text: crate::selectable::SelectionScope::new(cx),
             service,
             runs: Vec::new(),
             owners: HashMap::new(),
@@ -738,21 +741,21 @@ impl Runs {
                         div()
                             .flex_none()
                             .text_color(content(0.62))
-                            .child(format!("{} ·", row.trigger)),
+                            .child(self.text.text(format!("{} ·", row.trigger))),
                     )
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
                             .text_color(content(1.))
-                            .child(item.clone()),
+                            .child(self.text.text(item.clone())),
                     ),
                 None => d.child(
                     div()
                         .min_w_0()
                         .truncate()
                         .text_color(content(1.))
-                        .child(row.trigger.clone()),
+                        .child(self.text.text(row.trigger.clone())),
                 ),
             });
         let button = if open {
@@ -823,7 +826,7 @@ impl Runs {
                             .text_size(px(11.5))
                             .line_height(px(16.))
                             .text_color(content(0.55))
-                            .child(owner),
+                            .child(self.text.text(owner)),
                     )
                     .when_some(row.error.clone(), |d, error| {
                         d.child(
@@ -833,7 +836,7 @@ impl Runs {
                                 .text_color(glass::Tone::Bad.ink().opacity(0.85))
                                 .line_clamp(2)
                                 .text_ellipsis()
-                                .child(error),
+                                .child(self.text.text(error)),
                         )
                     }),
             )
@@ -966,75 +969,81 @@ impl Render for Runs {
             .overflow_y_scroll()
             .text_color(content(1.))
             .child(
-                div()
-                    .w_full()
-                    .max_w(px(1040.))
-                    .mx_auto()
-                    .px(px(40.))
-                    .pt(px(26.))
-                    .pb(px(40.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(18.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .items_end()
-                            .gap(px(16.))
-                            .child(
-                                glass::page_header(
-                                    "Runs",
-                                    "Every automation run across your projects, newest first.",
+                self.text.region(
+                    "runs-text",
+                    div()
+                        .w_full()
+                        .max_w(px(1040.))
+                        .mx_auto()
+                        .px(px(40.))
+                        .pt(px(26.))
+                        .pb(px(40.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(18.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_end()
+                                .gap(px(16.))
+                                .child(
+                                    glass::page_header(
+                                        "Runs",
+                                        "Every automation run across your projects, newest first.",
+                                    )
+                                    .flex_1()
+                                    .min_w(px(260.)),
                                 )
-                                .flex_1()
-                                .min_w(px(260.)),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(8.))
-                                    .child(glass::stat(
-                                        "runs-count-running",
-                                        running.to_string(),
-                                        "Running",
-                                        glass::Tone::Running.ink(),
-                                    ))
-                                    .child(glass::stat(
-                                        "runs-count-today",
-                                        today.to_string(),
-                                        "Today",
-                                        content(1.),
-                                    ))
-                                    .child(glass::stat(
-                                        "runs-count-failed",
-                                        failed.to_string(),
-                                        "Failed today",
-                                        // Green while nothing failed today.
-                                        if failed > 0 {
-                                            glass::Tone::Bad.ink()
-                                        } else {
-                                            glass::Tone::Ok.ink()
-                                        },
-                                    )),
-                            ),
-                    )
-                    // Rows from the last good load stay; the failure is said.
-                    .when_some(
-                        self.error.clone().filter(|_| !self.runs.is_empty()),
-                        |d, error| {
-                            d.child(
-                                div()
-                                    .debug_selector(|| "runs-refresh-error".into())
-                                    .truncate()
-                                    .text_size(px(12.))
-                                    .text_color(glass::Tone::Bad.ink())
-                                    .child(format!("Could not refresh runs: {error}")),
-                            )
-                        },
-                    )
-                    .child(self.filters(cx))
-                    .child(self.panel(rows, today_start, cx)),
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(8.))
+                                        .child(glass::stat(
+                                            "runs-count-running",
+                                            running.to_string(),
+                                            "Running",
+                                            glass::Tone::Running.ink(),
+                                        ))
+                                        .child(glass::stat(
+                                            "runs-count-today",
+                                            today.to_string(),
+                                            "Today",
+                                            content(1.),
+                                        ))
+                                        .child(glass::stat(
+                                            "runs-count-failed",
+                                            failed.to_string(),
+                                            "Failed today",
+                                            // Green while nothing failed today.
+                                            if failed > 0 {
+                                                glass::Tone::Bad.ink()
+                                            } else {
+                                                glass::Tone::Ok.ink()
+                                            },
+                                        )),
+                                ),
+                        )
+                        // Rows from the last good load stay; the failure is said.
+                        .when_some(
+                            self.error.clone().filter(|_| !self.runs.is_empty()),
+                            |d, error| {
+                                d.child(
+                                    div()
+                                        .debug_selector(|| "runs-refresh-error".into())
+                                        .truncate()
+                                        .text_size(px(12.))
+                                        .text_color(glass::Tone::Bad.ink())
+                                        .child(
+                                            self.text
+                                                .text(format!("Could not refresh runs: {error}")),
+                                        ),
+                                )
+                            },
+                        )
+                        .child(self.filters(cx))
+                        .child(self.panel(rows, today_start, cx)),
+                ),
             )
             .children(self.more_menu.as_ref().map(|(menu, _)| {
                 crate::popover::menu_popover(menu, Anchor::Slot(self.more_anchor.clone()), cx)

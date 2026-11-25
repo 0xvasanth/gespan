@@ -13,7 +13,7 @@ pub(super) fn command_line(agent: Option<&str>) -> String {
 
 /// The command as the design's code well: monospace, one line per line,
 /// never wrapped; a line too long for the card scrolls sideways.
-fn code_well(command: &str) -> Stateful<Div> {
+fn code_well(command: &str, text: &crate::selectable::SelectionScope) -> Stateful<Div> {
     div()
         .id("my-tasks-command")
         .debug_selector(|| "my-tasks-command".into())
@@ -39,7 +39,7 @@ fn code_well(command: &str) -> Stateful<Div> {
         .children(
             command
                 .lines()
-                .map(|line| div().whitespace_nowrap().child(line.to_owned())),
+                .map(|line| div().whitespace_nowrap().child(text.text(line.to_owned()))),
         )
 }
 
@@ -172,7 +172,7 @@ impl MyTasks {
                     if let Some(tool) = &approval.tool {
                         aside = tool.name.clone();
                     }
-                    body.push(code_well(command).into_any_element());
+                    body.push(code_well(command, &self.text).into_any_element());
                 } else if !card.is_empty() {
                     body.push(card.render(true));
                 }
@@ -209,7 +209,7 @@ impl MyTasks {
                             .text_size(px(13.))
                             .line_height(px(20.))
                             .text_color(content(0.8))
-                            .child(prompt.clone())
+                            .child(self.text.text(prompt.clone()))
                             .into_any_element(),
                     );
                 }
@@ -244,13 +244,14 @@ impl MyTasks {
                 let Source::DraftReview { run, .. } = &task.source else {
                     return div().into_any_element();
                 };
+                let scope = self.text.clone();
                 let line = |id: String, text: String, strong: bool| {
                     div()
                         .debug_selector(move || id.clone())
                         .text_size(px(13.))
                         .line_height(px(20.))
                         .text_color(content(if strong { 0.85 } else { 0.7 }))
-                        .child(text)
+                        .child(scope.text(text))
                         .into_any_element()
                 };
                 if !text.trim().is_empty() {
@@ -346,7 +347,7 @@ impl MyTasks {
                             .text_size(px(17.))
                             .line_height(px(28.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
+                            .child(self.text.text(title)),
                     )
                     .child(
                         div()

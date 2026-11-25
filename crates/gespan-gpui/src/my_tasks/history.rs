@@ -227,14 +227,17 @@ impl MyTasks {
                 .text_size(px(13.))
                 .line_height(px(20.))
                 .text_color(content(0.95))
-                .child(text.clone())
+                .child(self.text.text(text.clone()))
                 .into_any_element(),
             Entry::Agent { text, .. } => div()
                 .id(SharedString::from(format!("my-tasks-entry-{turn}-{n}")))
                 .py(px(10.))
                 .text_size(px(13.))
                 .line_height(px(20.))
-                .child(agent_text(text))
+                .child(
+                    self.text
+                        .styled(code_spans(text).0.into(), agent_text(text)),
+                )
                 .into_any_element(),
         }
     }

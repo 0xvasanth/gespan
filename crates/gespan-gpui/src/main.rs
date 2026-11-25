@@ -98,6 +98,7 @@ mod right_panel;
 mod runs;
 mod runtime;
 mod search;
+mod selectable;
 mod send_morph;
 mod session_mark;
 mod session_review;

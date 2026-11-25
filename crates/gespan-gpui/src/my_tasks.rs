@@ -161,6 +161,8 @@ pub(crate) fn shown_waits_changed(before: u64, now: u64) -> bool {
 }
 
 pub(crate) struct MyTasks {
+    /// The detail pane's selectable text.
+    pub(crate) text: crate::selectable::SelectionScope,
     tasks: Vec<TaskItem>,
     selected: Option<String>,
     now_ms: u64,
@@ -233,6 +235,7 @@ impl MyTasks {
             this.sync_selection(cx)
         });
         Self {
+            text: crate::selectable::SelectionScope::new(cx),
             tasks: Vec::new(),
             selected: None,
             now_ms: 0,
@@ -463,10 +466,18 @@ impl Render for MyTasks {
             .text_color(content(1.))
             .child(self.page_bounds.layout_probe())
             .child(self.list_column(cx))
-            .child(match self.tab {
-                Tab::Waiting => self.task_pane(cx),
-                Tab::Answered => self.past_pane(cx),
-                Tab::Decisions => self.decision_pane(cx),
+            .child({
+                let pane = match self.tab {
+                    Tab::Waiting => self.task_pane(cx),
+                    Tab::Answered => self.past_pane(cx),
+                    Tab::Decisions => self.decision_pane(cx),
+                };
+                self.text
+                    .region("my-tasks-detail-text", pane)
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .flex()
             })
             .when(self.filters_open, |d| d.child(self.filter_menu(cx)))
     }

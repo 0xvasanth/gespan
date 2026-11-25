@@ -277,6 +277,8 @@ struct Comment {
 }
 
 pub(crate) struct DiffView {
+    /// The diff's selectable code lines.
+    pub(crate) text: crate::selectable::SelectionScope,
     files: Vec<DiffFile>,
     by_id: HashMap<SharedString, usize>,
     open: HashSet<SharedString>,
@@ -331,6 +333,7 @@ impl DiffView {
             });
         });
         Self {
+            text: crate::selectable::SelectionScope::new(cx),
             files: Vec::new(),
             by_id: HashMap::new(),
             open: HashSet::new(),
@@ -1285,7 +1288,19 @@ impl DiffView {
                                     .font_family(crate::fonts::monospace())
                                     .text_size(px(CODE_SIZE))
                                     .text_color(content(0.92))
-                                    .child(StyledText::new(text).with_highlights(styles)),
+                                    // Each line is its own row, so a
+                                    // selection copies the lines it crosses.
+                                    .child({
+                                        let text = SharedString::from(text);
+                                        let styled =
+                                            StyledText::new(text.clone()).with_highlights(styles);
+                                        let layout = styled.layout().clone();
+                                        self.text.keyed((0, ix)).wrap(
+                                            text,
+                                            layout,
+                                            styled.into_any_element(),
+                                        )
+                                    }),
                             ),
                     )
                     .into_any_element()
@@ -1607,7 +1622,9 @@ impl Render for DiffView {
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| {
                     this.pending = None;
-                    if this.comment.is_none() {
+                    // A press on a line's text focuses the selection, so
+                    // Cmd/Ctrl+C copies it.
+                    if this.comment.is_none() && !this.text.pressed() {
                         window.focus(&this.focus, cx);
                     }
                 }),
@@ -1699,10 +1716,15 @@ impl Render for DiffView {
                         .size_full(),
                     )
                     .child(
-                        list(self.list.clone(), move |ix, window, cx| {
-                            entity.update(cx, |this, cx| this.row(ix, window, cx))
-                        })
-                        .size_full(),
+                        self.text
+                            .region(
+                                "diff-text",
+                                list(self.list.clone(), move |ix, window, cx| {
+                                    entity.update(cx, |this, cx| this.row(ix, window, cx))
+                                })
+                                .size_full(),
+                            )
+                            .size_full(),
                     )
                     .children(sticky)
                     .child(self.overview(cx)),
@@ -1945,5 +1967,59 @@ mod tests {
             RowKind::Notice(t) if t.as_ref() == "Binary file changed")
         );
         assert_eq!(expand_tabs("\tab\tc"), "    ab  c");
+    }
+
+    /// Diff lines select across lines and copy with the shortcut, and the
+    /// cursor is an I-beam over the code.
+    #[gpui::test]
+    fn diff_lines_select_across_lines_and_copy(cx: &mut gpui::TestAppContext) {
+        use crate::selectable::test_support::{click, copy, cursor_at, drag};
+        cx.update(crate::input::bind);
+        let original = "fn main() {\n    old();\n}\n";
+        let current = "fn main() {\n    new_call(1);\n}\n";
+        let unified = diff::build_unified_file(original, current, usize::MAX);
+        let mut model = file("lines", original, current);
+        model.blocks = Arc::new(unified.blocks);
+        let window = cx.update(|cx| {
+            cx.open_window(
+                gpui::WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::new(
+                        gpui::point(px(0.), px(0.)),
+                        gpui::size(px(700.), px(400.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| cx.new(DiffView::new),
+            )
+            .unwrap()
+        });
+        window
+            .update(cx, |view, _, cx| view.set_files(vec![model], cx))
+            .unwrap();
+        let cx = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        cx.run_until_parked();
+        let bounds = |needle: &str, cx: &mut gpui::VisualTestContext| {
+            window
+                .update(cx, |view, _, _| view.text.bounds_for_test(needle))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{needle:?} is selectable"))
+        };
+        let added = bounds("new_call(1);", cx);
+        assert_eq!(
+            cursor_at(cx, added.center()),
+            Some(gpui::CursorStyle::IBeam)
+        );
+        let word = bounds("new_call", cx).center();
+        click(cx, word, 2);
+        assert_eq!(copy(cx).as_deref(), Some("new_call"));
+        let first = bounds("fn main() {", cx);
+        drag(
+            cx,
+            gpui::point(first.left() + px(1.), first.center().y),
+            gpui::point(added.right() + px(2.), added.center().y),
+        );
+        let copied = copy(cx).expect("the lines copy");
+        assert!(copied.starts_with("fn main() {\n"), "{copied:?}");
+        assert!(copied.ends_with("new_call(1);"), "{copied:?}");
     }
 }

@@ -1387,7 +1387,7 @@ impl Inbox {
                     .line_height(px(29.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(content(1.))
-                    .child(item.title.clone()),
+                    .child(self.text.text(item.title.clone())),
             )
             .child(
                 div()
@@ -1413,7 +1413,7 @@ impl Inbox {
                             .into_any_element()
                         })
                     })
-                    .child(opened_line(&author, &item.created_at))
+                    .child(self.text.text(opened_line(&author, &item.created_at)))
                     .children(diff_pill.map(|pill| pill.ml(px(6.))))
                     .children(self.run_pill_view(&item, cx))
                     .when_some(self.action_notice.clone(), |d, notice| {
@@ -1742,11 +1742,15 @@ impl Inbox {
         } else {
             content(0.5)
         };
-        let document = self
+        // Comments select after the description (block 0), in the order
+        // they were loaded, which is the order they are shown.
+        let (block, document) = self
             .comments
             .iter()
-            .find(|(cached, _)| cached.id == comment.id)
-            .map(|(_, document)| document.clone());
+            .enumerate()
+            .find(|(_, (cached, _))| cached.id == comment.id)
+            .map(|(ix, (_, document))| (ix + 1, document.clone()))
+            .unzip();
         let clamped = timeline
             && !self.expanded_comments.contains(&comment.id)
             && (comment.body.len() > 1200 || comment.body.lines().count() > 12);
@@ -1860,15 +1864,18 @@ impl Inbox {
                                 .w_full()
                                 .when(clamped, |d| d.max_h(px(180.)).overflow_hidden())
                                 .when_some(document, |d, document| {
-                                    d.child(document::DocumentElement::new(
-                                        document,
-                                        if nested {
-                                            width
-                                        } else {
-                                            (width - px(26.)).max(px(1.))
-                                        },
-                                        clamped.then_some(px(180.)),
-                                    ))
+                                    d.child(
+                                        document::DocumentElement::new(
+                                            document,
+                                            if nested {
+                                                width
+                                            } else {
+                                                (width - px(26.)).max(px(1.))
+                                            },
+                                            clamped.then_some(px(180.)),
+                                        )
+                                        .selectable(&self.text, block.unwrap_or(0)),
+                                    )
                                 }),
                         )
                         .when(expandable, |d| {
@@ -2416,15 +2423,15 @@ impl Inbox {
                 )
                 .when_some(self.document.clone(), |d, document| {
                     d.child(
-                        div()
-                            .w_full()
-                            .flex_shrink_0()
-                            .child(document::DocumentElement::new(
+                        div().w_full().flex_shrink_0().child(
+                            document::DocumentElement::new(
                                 document,
                                 // The description card's padding and border.
                                 (self.summary_body_width() - px(42.)).max(px(1.)),
                                 None,
-                            )),
+                            )
+                            .selectable(&self.text, 0),
+                        ),
                     )
                 })
                 .when(self.thread.is_none(), |d| {
@@ -3330,7 +3337,13 @@ impl gpui::Render for Inbox {
                     .min_w_0()
                     .flex()
                     .child(list)
-                    .child(div().flex_1().min_w_0().min_h_0().child(detail))
+                    .child(
+                        self.text
+                            .region("inbox-detail-text", detail)
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0(),
+                    )
                     .children(ask),
             )
             .when_some(self.error.clone(), |d, text| d.child(error(text)))
@@ -4445,5 +4458,77 @@ mod glass_view_tests {
                 .unwrap()
         );
         assert!(visual.debug_bounds("inbox-read-all").is_none());
+    }
+
+    /// The detail pane's title, byline and description select and copy,
+    /// while its buttons keep the pointer.
+    #[gpui::test]
+    fn the_detail_pane_text_selects_and_copies(cx: &mut TestAppContext) {
+        use crate::selectable::test_support::{copy, cursor_at, drag};
+        cx.update(crate::input::bind);
+        let item = Item {
+            title: "Fix flaky retries".into(),
+            ..pr("gespan/app", 12, "Fix flaky retries")
+        };
+        let key = item.key();
+        let window = open(cx, move |inbox| {
+            connect(inbox);
+            inbox.snapshot.items = vec![item];
+            inbox.selected = Some(key);
+            inbox.details = Some(Details {
+                body: "Retries flake on slow runners.".into(),
+                ..Default::default()
+            });
+        });
+        window
+            .update(cx, |inbox, _, cx| {
+                inbox.document = Some(cx.new(|cx| {
+                    document::InboxDocument::description(
+                        "Retries **flake** on slow runners.".into(),
+                        PathBuf::from("/missing/inbox"),
+                        cx,
+                    )
+                }));
+                cx.notify();
+            })
+            .unwrap();
+        let mut visual = visual(window, cx);
+        let cx = &mut visual;
+        cx.run_until_parked();
+        let bounds = |needle: &str, cx: &mut VisualTestContext| {
+            window
+                .update(cx, |inbox, _, _| inbox.text.bounds_for_test(needle))
+                .unwrap()
+                .unwrap_or_else(|| panic!("{needle:?} is selectable"))
+        };
+        let title = bounds("Fix flaky retries", cx);
+        assert_eq!(
+            cursor_at(cx, title.center()),
+            Some(gpui::CursorStyle::IBeam)
+        );
+        let more = cx.debug_bounds("inbox-more").expect("the more button");
+        assert_eq!(
+            cursor_at(cx, more.center()),
+            Some(gpui::CursorStyle::PointingHand)
+        );
+        drag(
+            cx,
+            point(title.left() + px(1.), title.center().y),
+            point(title.right() + px(2.), title.center().y),
+        );
+        assert_eq!(copy(cx).as_deref(), Some("Fix flaky retries"));
+        // From the title into the description, across the markdown.
+        let body = bounds("slow runners.", cx);
+        drag(
+            cx,
+            point(title.left() + px(1.), title.center().y),
+            point(body.right() + px(2.), body.center().y),
+        );
+        let copied = copy(cx).expect("a selection across the pane copies");
+        assert!(copied.starts_with("Fix flaky retries"), "{copied:?}");
+        assert!(
+            copied.ends_with("Retries flake on slow runners."),
+            "{copied:?}"
+        );
     }
 }
