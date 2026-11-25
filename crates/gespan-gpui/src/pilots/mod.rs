@@ -1340,7 +1340,7 @@ impl Pilots {
         let status = |id: &str| {
             self.chats
                 .get(id)
-                .map(|v| v.read(cx).pilot_status().to_owned())
+                .map(|v| v.read(cx).pilot_status(cx).to_owned())
                 .unwrap_or_else(|| "idle".to_owned())
         };
         let rank = |pilot: &Pilot| match status(&pilot.id).as_str() {
@@ -1471,7 +1471,7 @@ impl Pilots {
                 let state = self
                     .chats
                     .get(&pilot.id)
-                    .map(|v| v.read(cx).pilot_status())
+                    .map(|v| v.read(cx).pilot_status(cx))
                     .unwrap_or("idle");
                 let unread = self
                     .chats

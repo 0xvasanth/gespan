@@ -268,6 +268,16 @@ static ACTIONS: LazyLock<Vec<Action>> = LazyLock::new(|| {
             ],
             json!({"type":"choices","options":["Ship now","Wait for QA"]}),
         ),
+        action(
+            "pilot.ask",
+            "Ask the user for a decision you need. It shows as a decision card with one-tap answers, and you show as Needs you until they answer. End your turn after asking; their answer arrives as their next message.",
+            vec![
+                req("question", Text, "One line, what you need decided"),
+                req("options", Options, "One to four answers, your recommendation first"),
+                opt("detail", Text, "Context or your recommendation for each item, under 4000 characters"),
+            ],
+            json!({"question":"The API lead stopped with 12 decisions. Go with my recommendations?","options":["Go with all recommendations","Review one by one"],"detail":"1. Keep legacy_admin_view as a read-only alias: yes"}),
+        ),
         action("ticket.get", "Read this session's linked ticket.", vec![opt("key", Text, "Another linked ticket's key")], json!({})),
         action("ticket.comment", "Comment on this session's linked ticket.", vec![req("body", Text, "Markdown"), opt("key", Text, "")], json!({"body":"Fixed in #42."})),
         action(

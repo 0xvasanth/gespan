@@ -1055,6 +1055,96 @@ fn the_pilot_composer_shows_running_jobs_and_watched_sessions(cx: &mut TestAppCo
     assert!(live, "the pending job keeps the Pilot's turn live");
 }
 
+/// Option B on the Waiting board: the Pilot asks with `pilot.ask`, the
+/// question shows as a decision card with one-tap answers, and the Pilot
+/// needs the user until one is given.
+#[gpui::test]
+fn pilot_ask_needs_you_until_the_question_is_answered(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.dismiss_settings(w, cx));
+        })
+        .unwrap();
+    let chat = cx.update(|cx| s.manager.read(cx).chat().unwrap());
+    let status =
+        |cx: &mut TestAppContext| cx.update(|cx| chat.read(cx).pilot_status(cx).to_owned());
+    assert_eq!(status(cx), "idle");
+    let rejected = call(&s, "ask-0", "pilot.ask", json!({"options": ["Yes"]}), cx);
+    assert!(
+        rejected.try_recv().unwrap().is_err(),
+        "a question is required"
+    );
+    let reply = call(
+        &s,
+        "ask-1",
+        "pilot.ask",
+        json!({
+            "question": "The API lead stopped with 12 decisions. Go with my recommendations?",
+            "options": ["Go with all recommendations", "Review one by one"],
+            "detail": "1. Keep legacy_admin_view as a read-only alias: yes",
+        }),
+        cx,
+    );
+    let card = reply.try_recv().expect("pilot.ask replies").unwrap();
+    assert_eq!(card["type"], "ask");
+    cx.run_until_parked();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert_eq!(
+        status(visual),
+        "needs-you",
+        "the rail, My tasks and the tab read this"
+    );
+    assert!(
+        visual.debug_bounds("pilot-ask-open").is_some(),
+        "the decision card shows"
+    );
+    let first = visual
+        .debug_bounds("pilot-open-choice-0")
+        .expect("its answers wait above the composer");
+    assert!(visual.debug_bounds("pilot-open-choice-1").is_some());
+    let open = visual.update(|_, cx| {
+        gespan_core::tasks::open_choice(chat.read(cx).history_rows(cx))
+            .and_then(|open| open.question)
+    });
+    assert_eq!(
+        open.as_deref(),
+        Some("The API lead stopped with 12 decisions. Go with my recommendations?"),
+        "My tasks lists the question"
+    );
+
+    let _ = first;
+    // The answer lands in the chat, picked here, typed, or from My tasks.
+    visual.update(|_, cx| {
+        let transcript = chat.read(cx).transcript.clone();
+        let at = transcript.read(cx).source_rows().len();
+        transcript.update(cx, |t, cx| {
+            t.patch(
+                at,
+                vec![gespan_core::transcript::Row {
+                    role: "user".into(),
+                    text: "Go with all recommendations".into(),
+                    first: true,
+                    sent_at: None,
+                }],
+                cx,
+            );
+        });
+    });
+    visual.run_until_parked();
+    assert_eq!(status(visual), "idle", "an answer ends the wait");
+    visual.refresh().unwrap();
+    assert!(visual.debug_bounds("pilot-open-choice-0").is_none());
+    assert!(
+        visual.debug_bounds("pilot-ask-answered").is_some(),
+        "the card reads as answered"
+    );
+}
+
 #[gpui::test]
 fn activity_tells_the_whole_turn_with_its_messages(cx: &mut TestAppContext) {
     let s = setup(cx);

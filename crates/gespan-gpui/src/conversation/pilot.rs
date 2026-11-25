@@ -287,8 +287,15 @@ impl Conversation {
         cx.notify();
         Ok(())
     }
-    pub(crate) fn pilot_status(&self) -> &str {
-        if self.needs_approval() || self.settings.usage_limit.is_some() {
+    /// Needs you while an approval, a usage limit or an unanswered
+    /// `pilot.ask` question waits on the user; the rail, My tasks and the
+    /// title-bar tab all read it.
+    pub(crate) fn pilot_status(&self, cx: &App) -> &str {
+        if self.needs_approval()
+            || self.settings.usage_limit.is_some()
+            || (self.transcript.read(cx).open_question().is_some()
+                && self.pilot_ui.pending.iter().all(|m| m.internal))
+        {
             "needs-you"
         } else if self.responding() {
             "working"
@@ -604,7 +611,7 @@ impl Conversation {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let pilot = self.settings.pilot.as_ref().unwrap().pilot.clone();
-        let status = self.pilot_status();
+        let status = self.pilot_status(cx);
         let name = pilot.label();
         // PilotHeader's greeting: it shows only before the first message.
         let body = if !self.summary.has_messages {

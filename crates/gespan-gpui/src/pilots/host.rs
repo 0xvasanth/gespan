@@ -812,6 +812,15 @@ impl Pilots {
                 .and_then(|id| pilot.documents.iter().find(|d| d.id == id))
                 .map(|d| json!(d))
                 .ok_or("Document not found".into()),
+            "pilot.ask" => pilot::cards::ask(&input).map(|mut card| {
+                // A decision card: it shows in the chat with one-tap answers
+                // above the composer, and the Pilot needs the user until one
+                // is given.
+                card["id"] = json!(pilot::new_id());
+                self.hold_card(call.session, &pilot.id, card.clone());
+                self.save(cx);
+                card
+            }),
             "chat.card" => {
                 let mut card = match pilot::cards::parse(&input) {
                     Ok(c) => c,

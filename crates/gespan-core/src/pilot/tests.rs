@@ -200,6 +200,12 @@ fn context_answers_status_quickly_next_to_never_polling() {
             prompt.contains(&format!("Never poll delegated work. {rule}")),
             "it sits next to the polling rule"
         );
+        assert!(
+            prompt.contains(
+                "When you need the user to decide something, ask with pilot.ask and end your turn."
+            ),
+            "decisions go through the decision card, which marks the Pilot Needs you"
+        );
     }
 }
 

@@ -743,6 +743,9 @@ impl TranscriptView {
     /// PilotChat's one-tap answers: the options of a choices card that ends
     /// the chat, which wait above the composer until one is picked.
     pub(crate) fn open_choices(&self) -> Vec<String> {
+        if let Some(question) = self.open_question() {
+            return question.options;
+        }
         self.source
             .last()
             .filter(|row| self.pilot && row.role == "pilot-card")
@@ -757,6 +760,20 @@ impl TranscriptView {
                 })
             })
             .unwrap_or_default()
+    }
+    /// A `pilot.ask` decision the user has not answered: the Pilot needs
+    /// them until a message of theirs follows it.
+    pub(crate) fn open_question(&self) -> Option<gespan_core::tasks::OpenChoice> {
+        if !self.pilot {
+            return None;
+        }
+        gespan_core::tasks::open_choice(&self.source).filter(|open| open.question.is_some())
+    }
+    /// Whether the user wrote after the decision card at source row `at`.
+    fn ask_answered(&self, at: usize) -> bool {
+        self.source
+            .get(at + 1..)
+            .is_some_and(|rows| rows.iter().any(|r| r.first && r.role == "user"))
     }
     /// The prose the chat shows, message by message; rows folding away
     /// are already gone.
@@ -5569,6 +5586,14 @@ impl TranscriptView {
                     })
                     .into_any_element()
             }
+            // A decision card reads as answered once the user wrote after it;
+            // until then its answers wait above the composer. That can land
+            // in a later turn, so it is read from the source as it draws.
+            Body::PilotCard(ref value) if value["type"] == "ask" => {
+                let mut value = value.clone();
+                value["answered"] = serde_json::json!(self.ask_answered(message_start));
+                crate::pilots::cards::render(&value, cx)
+            }
             Body::PilotCard(ref value) => crate::pilots::cards::render(value, cx),
             Body::Trace(ref line) => self.trace_row(line, cx),
             Body::TraceSummary {
@@ -8037,6 +8062,46 @@ mod scroll_tests {
                 "settled, the card stays once"
             );
             assert_eq!(view.rows.iter().filter(|r| matches!(r.body, Body::PilotCard(_))).count(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn a_pilot_ask_card_stays_open_past_later_prose_until_the_user_answers(
+        cx: &mut TestAppContext,
+    ) {
+        let view = pilot_view(cx);
+        let ask = serde_json::json!({
+            "id": "q1", "type": "ask",
+            "question": "Backfill audit_log for 2024?",
+            "options": ["No, archive only", "Yes"],
+        })
+        .to_string();
+        view.update(cx, |view, cx| {
+            view.patch(
+                0,
+                vec![
+                    row("user", "Port the batch"),
+                    row("pilot-card", &ask),
+                    row("assistant", "I'll wait for your answer."),
+                ],
+                cx,
+            );
+            assert_eq!(
+                view.open_question().and_then(|q| q.question).as_deref(),
+                Some("Backfill audit_log for 2024?")
+            );
+            assert_eq!(view.open_choices(), ["No, archive only", "Yes"]);
+            assert!(
+                view.rows
+                    .iter()
+                    .any(|r| matches!(&r.body, Body::PilotCard(v) if v["type"] == "ask")),
+                "the decision card stays in the chat"
+            );
+            assert!(!view.ask_answered(1));
+            view.patch(3, vec![row("user", "No, archive only")], cx);
+            assert!(view.open_question().is_none());
+            assert!(view.open_choices().is_empty());
+            assert!(view.ask_answered(1), "the card reads as answered");
         });
     }
 

@@ -985,7 +985,7 @@ impl Pilots {
         let state = self
             .chats
             .get(&pilot.id)
-            .map(|v| v.read(cx).pilot_status().to_owned())
+            .map(|v| v.read(cx).pilot_status(cx).to_owned())
             .unwrap_or_else(|| "idle".into());
         let status = match state.as_str() {
             "needs-you" => Some(("Needs you", crate::glass::Tone::Waiting)),

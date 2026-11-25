@@ -437,7 +437,7 @@ impl Shell {
                             let rows = chat.transcript.read(cx).source_rows();
                             let last = turns::messages(rows).pop();
                             json!({
-                                "status": chat.pilot_status(),
+                                "status": chat.pilot_status(cx),
                                 "busy": chat.busy,
                                 "harness": chat.summary.provider,
                                 "model": mobile_catalog::model_id(Kind::from_id(&chat.summary.provider), chat.mobile_model()),

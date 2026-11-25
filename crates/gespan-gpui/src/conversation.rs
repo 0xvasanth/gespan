@@ -84,6 +84,8 @@ use std::{
     time::Instant,
 };
 pub(crate) use watching::StopWatching;
+/// The yellow of anything waiting on the user: a watch chip, a decision card.
+pub(crate) use watching::WAITING as WATCH_WAITING;
 // Keep empty and docked composers aligned with the transcript column. Below
 // this width the empty session drops its title.
 const COMPOSER_COLUMN: f32 = COLUMN;
