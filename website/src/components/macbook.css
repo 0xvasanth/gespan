@@ -19,3 +19,12 @@
   .mb-bezel{padding:7px 7px 10px;border-radius:14px 14px 6px 6px}
   .mb-base{height:10px}
 }
+/* A screen drawn in page markup, clipped to the lid like a shot. */
+.mb-app{border-radius:8px;overflow:hidden}
+/* Under a page's hero copy. The lid starts tilted back, which leaves room
+   above it, so the stage tucks up under the copy; it takes no clicks, so the
+   buttons it overlaps stay usable. */
+.w-wrap.mb-under-hero{margin-top:-110px;padding-bottom:48px}
+.mb-under-hero,.mb-under-hero .mb-stage,.mb-under-hero .mb-sticky{pointer-events:none}
+@media (prefers-reduced-motion:reduce){.w-wrap.mb-under-hero{margin-top:48px}}
+@container (max-width:760px){.w-wrap.mb-under-hero{margin-top:24px;padding-bottom:24px}}

@@ -80,6 +80,8 @@ export interface Step {
   key: string;
   title: string;
   body: string;
+  /** A shorter name for the picture's tab strip, when the title is long. */
+  tab?: string;
   picture: ReactNode;
 }
 
@@ -91,21 +93,22 @@ export const STEPS: Step[] = [
 ];
 
 /**
- * How it works, as a scroll story: the steps scroll by on the left while the
- * picture on the right stays put and switches to the step in view. On a
- * phone each step carries its own picture instead.
+ * A scroll story: the steps scroll by on the left while the picture on the
+ * right stays put and switches to the step in view. On narrow screens each
+ * step carries its own picture instead.
  */
-export function HowItWorks() {
+/** `wide` gives the picture most of the row, for screenshots that need the room to be read. */
+export function ScrollStory({ steps, wide = false }: { steps: Step[]; wide?: boolean }) {
   const track = useRef<HTMLOListElement>(null);
   const [active, setActive] = useState(0);
   const { scrollYProgress } = useScroll({ target: track, offset: ["start 55%", "end 55%"] });
-  useMotionValueEvent(scrollYProgress, "change", (p) => setActive(stepAt(p, STEPS.length)));
-  const step = STEPS[active];
+  useMotionValueEvent(scrollYProgress, "change", (p) => setActive(stepAt(p, steps.length)));
+  const step = steps[Math.min(active, steps.length - 1)];
   return (
-    <div className="hw" data-how="">
+    <div className={wide ? "hw wide" : "hw"} data-how="">
       <ol ref={track} className="hw-steps">
-        {STEPS.map((s, i) => (
-          <li key={s.key} className={i === active ? "hw-step on" : "hw-step"} data-step={s.key} aria-current={i === active ? "step" : undefined}>
+        {steps.map((s, i) => (
+          <li key={s.key} className={s === step ? "hw-step on" : "hw-step"} data-step={s.key} aria-current={s === step ? "step" : undefined}>
             <span className="w-num">{String(i + 1).padStart(2, "0")}</span>
             <h3 className="w-h3">{s.title}</h3>
             <p className="w-lead">{s.body}</p>
@@ -116,7 +119,7 @@ export function HowItWorks() {
       <div className="hw-sticky" aria-hidden="true">
         <div className="w-glass hw-panel" data-picture={step.key}>
           <div className="hw-panel-head">
-            {STEPS.map((s, i) => <span key={s.key} className={i === active ? "on" : undefined}>{s.title}</span>)}
+            {steps.map((s) => <span key={s.key} className={s === step ? "on" : undefined}>{s.tab ?? s.title}</span>)}
           </div>
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={step.key} className="hw-panel-body" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -14 }} transition={{ duration: 0.3, ease: [0.2, 0.7, 0.2, 1] }}>
@@ -127,4 +130,9 @@ export function HowItWorks() {
       </div>
     </div>
   );
+}
+
+/** Home's How it works: Board, Sessions, Automations and Pilots. */
+export function HowItWorks() {
+  return <ScrollStory steps={STEPS} />;
 }

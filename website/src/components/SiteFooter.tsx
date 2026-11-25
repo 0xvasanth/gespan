@@ -19,7 +19,7 @@ export function SiteFooter() {
             <h3>Product</h3>
             <Link to="/features">Features</Link>
             <Link to="/pilots">Pilots</Link>
-            <Link to="/hub">Web Hub (concept)</Link>
+            <Link to="/cloud">Gespan Cloud (concept)</Link>
             <Link to="/download">Download</Link>
             <Link to="/changelog">Changelog</Link>
           </nav>
