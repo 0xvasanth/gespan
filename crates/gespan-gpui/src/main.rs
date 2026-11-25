@@ -114,8 +114,8 @@ mod terminal;
 mod theme;
 mod ticket_chip;
 mod tickets;
-#[cfg(target_os = "macos")]
 mod trace;
+#[cfg(target_os = "macos")]
 mod traffic_lights;
 mod transcript;
 mod tray;
