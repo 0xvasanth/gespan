@@ -1,5 +1,6 @@
 import { MotionConfig } from "motion/react";
 import { ScrollProgress } from "@/components/ui/scroll-progress";
+import { SiteNav } from "./components/SiteNav";
 import { useEffect, type ComponentType } from "react";
 import { ChangelogPage } from "./pages/ChangelogPage";
 import { DocsPage } from "./pages/DocsPage";
@@ -34,6 +35,7 @@ export function App() {
   return (
     <MotionConfig reducedMotion="user">
       <ScrollProgress className="h-0.5 from-[#c0affc] via-[#9f7ef8] to-[#7e47ea]" />
+      <SiteNav active={route?.page ?? "home"} />
       <main>
         <Page />
       </main>

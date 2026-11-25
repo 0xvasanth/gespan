@@ -1,5 +1,5 @@
 import { Link } from "../router";
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
 import { ScrollShot } from "../components/ScrollShot";
 import { Beam } from "../components/fx";
@@ -10,7 +10,7 @@ export function PilotsPage() {
     <div className="w-site">
       <div className="w-frame">
         <section className="w-hero" aria-label="Pilots">
-          <SiteNav active="pilots" onHero />
+          <NavSpace />
           <div className="w-wrap" style={{ paddingTop: "56px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "22px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <p className="w-eyebrow">Pilots</p>

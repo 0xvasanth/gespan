@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "../router";
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
 import { REPO } from "../docs";
 import "./hub.css";
@@ -132,7 +132,7 @@ export function HubPage() {
     <div className="w-site">
       <div className="w-frame">
         <section className="w-hero" aria-label="Gespan Web Hub">
-          <SiteNav active="hub" onHero />
+          <NavSpace />
           <div className="w-wrap" style={{ paddingTop: "56px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "22px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <p className="w-eyebrow">Gespan Web Hub</p>

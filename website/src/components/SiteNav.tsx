@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import logoUrl from "../assets/logo.svg";
 import { Link, type Page } from "../router";
 import { GitHubIcon } from "./icons";
@@ -13,12 +13,32 @@ const LINKS: { page: Page; to: string; label: string }[] = [
   { page: "download", to: "/download", label: "Download" },
 ];
 
-/** The glass nav pill. `onHero` drops its own ground so the hero mesh shows through. */
-export function SiteNav({ active, onHero = false }: { active: Page; onHero?: boolean }) {
+/** Past this many pixels of scrolling the nav pill tightens into its compact form. */
+export const NAV_COMPACT_AT = 40;
+
+/** Whether the page has scrolled far enough for the compact nav. */
+function useCompact() {
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const update = () => setCompact(window.scrollY > NAV_COMPACT_AT);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
+  return compact;
+}
+
+/**
+ * The glass nav pill, fixed to the top of every page (App renders it once;
+ * each page's hero keeps a NavSpace where it sits at rest). Once the page
+ * scrolls it tightens into a narrower, more solid pill that stays in reach.
+ */
+export function SiteNav({ active }: { active: Page }) {
   const [open, setOpen] = useState(false);
+  const compact = useCompact();
   return (
-    <div className="w-site" style={{ background: onHero ? "transparent" : "#111111", overflow: "visible", padding: "18px 24px" }}>
-      <header className="w-glass nv-bar">
+    <div className={compact ? "w-site nv-fixed compact" : "w-site nv-fixed"}>
+      <header className={compact ? "w-glass nv-bar compact" : "w-glass nv-bar"}>
         <Link to="/" className="nv-brand" aria-label="Gespan home">
           <img src={logoUrl} width="28" height="28" alt="" />
           <span>Gespan</span>
@@ -31,7 +51,7 @@ export function SiteNav({ active, onHero = false }: { active: Page; onHero?: boo
           ))}
         </nav>
         <div className="nv-actions">
-          <a className="w-btn w-btn-glass sm w-hide-m" href="https://github.com/0xvasanth/gespan" style={{ borderRadius: "999px" }}>
+          <a className="w-btn w-btn-glass sm w-hide-m nv-star" href="https://github.com/0xvasanth/gespan" style={{ borderRadius: "999px" }}>
             <GitHubIcon size={15} />
             Star on GitHub
           </a>
@@ -65,4 +85,9 @@ export function SiteNav({ active, onHero = false }: { active: Page; onHero?: boo
       )}
     </div>
   );
+}
+
+/** The room the fixed nav takes at the top of a page's hero. */
+export function NavSpace() {
+  return <div className="nv-space" aria-hidden="true" />;
 }

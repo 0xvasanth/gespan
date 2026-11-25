@@ -1,7 +1,7 @@
 import { Inline } from "../components/Inline";
 import { ScrollShot } from "../components/ScrollShot";
 import { SiteFooter } from "../components/SiteFooter";
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { REPO } from "../docs";
 import { changelog, formatDate, highlights, release } from "../release";
 import type { ChangelogRelease } from "../../scripts/release.mjs";
@@ -56,7 +56,7 @@ export function ChangelogPage() {
     <div className="w-site">
       <div className="w-frame">
         <section className="w-hero soft" aria-label="Changelog">
-          <SiteNav active="changelog" onHero />
+          <NavSpace />
           <div className="w-wrap w-stack-m" style={{ paddingTop: "48px", paddingBottom: "56px", display: "flex", alignItems: "flex-end", gap: "32px" }}>
             <div data-reveal="" className="w-head" style={{ flex: "1" }}>
               <p className="w-eyebrow">Changelog</p>
