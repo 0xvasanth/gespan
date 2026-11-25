@@ -408,6 +408,7 @@ impl Shell {
                 label: self.session_metadata_title(child, cx),
                 detail: "Reports back here when it finishes".into(),
                 started_at: None,
+                waiting: false,
             })
             .collect();
         view.update(cx, |view, cx| view.set_delegated_watches(watches, cx));

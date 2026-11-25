@@ -21,6 +21,8 @@ pub struct Watch {
     pub detail: String,
     /// Unix milliseconds, when known.
     pub started_at: Option<u64>,
+    /// A delegated session that stopped to wait on the user.
+    pub waiting: bool,
 }
 
 /// Background commands and subagents, in start order.
@@ -58,6 +60,7 @@ pub fn background(tasks: &[BackgroundTask]) -> Vec<Watch> {
                 label: label.into(),
                 detail: detail.into(),
                 started_at: Some(task.started_at),
+                waiting: false,
             }
         })
         .collect()
@@ -76,6 +79,7 @@ pub fn delegated<'a>(
         .filter(|l| l.notify_on_complete && !l.completed && !l.dismissed && launched_by(l, chat))
         .map(|l| {
             let title = l.title.trim();
+            let state = state(l.session_id);
             Watch {
                 id: format!("session:{}", l.session_id),
                 source: Source::Session(l.session_id),
@@ -84,13 +88,14 @@ pub fn delegated<'a>(
                 } else {
                     title.into()
                 },
-                detail: match state(l.session_id) {
+                detail: match state {
                     Some("input") => "Needs input before it can finish",
                     Some("failed" | "stopped" | "done") => "Stopped; its report is on the way",
                     _ => "Reports back when it stops",
                 }
                 .into(),
                 started_at: None,
+                waiting: state == Some("input"),
             }
         })
         .collect()
@@ -167,8 +172,20 @@ mod tests {
                 label: "Monitor v0.0.9 Release Pipeline".into(),
                 detail: "Reports back when it stops".into(),
                 started_at: None,
+                waiting: false,
             }]
         );
+    }
+
+    #[test]
+    fn a_session_that_needs_input_waits_on_the_user() {
+        let launches = vec![launch(1, 7, "API lead"), launch(2, 7, "docs lead")];
+        let got = delegated(&launches, 7, |id| {
+            Some(if id == 1 { "input" } else { "working" })
+        });
+        assert!(got[0].waiting, "the API lead stopped to ask");
+        assert_eq!(got[0].detail, "Needs input before it can finish");
+        assert!(!got[1].waiting, "the docs lead keeps working");
     }
 
     #[test]

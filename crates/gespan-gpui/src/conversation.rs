@@ -1881,7 +1881,7 @@ impl Conversation {
                             this.summary.updated_at = gespan_core::time::now_ms();
                             this.busy = false;
                             this.stopping = false;
-                            this.clear_background();
+                            this.clear_background(cx);
                             if this.is_remote() {
                                 this.refresh_remote_snapshot(cx);
                             }
@@ -3320,7 +3320,7 @@ impl Conversation {
             self.pilot_pause_queue();
         }
         self.follow_ups.ready = false;
-        self.clear_background();
+        self.clear_background(cx);
         self.approvals.clear();
         self.questions.clear();
         self.controls = None;

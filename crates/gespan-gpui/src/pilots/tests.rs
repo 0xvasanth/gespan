@@ -981,6 +981,140 @@ fn activity_list_keeps_its_view_as_commands_arrive(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_pilot_composer_shows_running_jobs_and_watched_sessions(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.dismiss_settings(w, cx));
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let chat = visual.update(|_, cx| s.manager.read(cx).chat().unwrap());
+    visual.update(|_, cx| {
+        chat.update(cx, |c, cx| {
+            c.summary.has_messages = true;
+            c.transcript.update(cx, |t, cx| {
+                t.patch(
+                    0,
+                    vec![
+                        gespan_core::transcript::Row {
+                            role: "user".into(),
+                            text: "Start the batch".into(),
+                            first: true,
+                            sent_at: None,
+                        },
+                        gespan_core::transcript::Row {
+                            role: "assistant".into(),
+                            text: "Copying the DB, then I'll start the tests lead.".into(),
+                            first: true,
+                            sent_at: None,
+                        },
+                    ],
+                    cx,
+                );
+            });
+            c.set_background(
+                vec![gespan_core::provider::BackgroundTask {
+                    id: "job".into(),
+                    description: "Copy the community DB to staging".into(),
+                    agent: false,
+                    command: Some("rsync db staging/".into()),
+                    started_at: gespan_core::time::now_ms(),
+                    tool_id: None,
+                    latest: None,
+                    steps: 0,
+                }],
+                cx,
+            );
+            c.set_delegated_watches(
+                vec![gespan_core::watching::Watch {
+                    id: "session:9".into(),
+                    source: gespan_core::watching::Source::Session(9),
+                    label: "API lead".into(),
+                    detail: "Needs input before it can finish".into(),
+                    started_at: None,
+                    waiting: true,
+                }],
+                cx,
+            );
+        })
+    });
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual.debug_bounds("background-tasks-header").is_some(),
+        "the running job sits on the shelf above the Pilot composer"
+    );
+    assert!(
+        visual.debug_bounds("watch-chip-waiting").is_some(),
+        "the watched session that waits on you shows as a yellow chip"
+    );
+    let live = visual.update(|_, cx| chat.read(cx).transcript.read(cx).pilot_group_live(1));
+    assert!(live, "the pending job keeps the Pilot's turn live");
+}
+
+#[gpui::test]
+fn activity_tells_the_whole_turn_with_its_messages(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let row = |role: &str, text: &str| gespan_core::transcript::Row {
+        role: role.into(),
+        text: text.into(),
+        first: true,
+        sent_at: None,
+    };
+    let mut call = gespan_core::tool::ToolCall::new("copy", "Bash");
+    call.input = r#"{"command":"rsync -a fixtures/ db/"}"#.into();
+    call.state = gespan_core::tool::ToolState::Completed;
+    let tool = serde_json::to_string(&call).unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let chat = visual.update(|_, cx| s.manager.read(cx).chat().unwrap());
+    let transcript = visual.update(|_, cx| chat.read(cx).transcript.clone());
+    visual.update(|_, cx| {
+        transcript.update(cx, |t, cx| {
+            t.patch(
+                0,
+                vec![
+                    row("user", "Start the batch"),
+                    row("assistant", "Copying the fixtures first."),
+                    row("tool", &tool),
+                    row("assistant", "<reaction>👍</reaction>"),
+                    row("assistant", "Started both leads."),
+                ],
+                cx,
+            )
+        });
+        s.manager.update(cx, |m, cx| {
+            m.activity_turn = Some(0);
+            m.show_overview(cx);
+            m.route = None;
+            m.overview_tab = OverviewTab::Activity;
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    let shown = visual.update(|_, cx| {
+        let list = s.manager.read(cx).activity.as_ref().unwrap().view.clone();
+        list.read(cx)
+            .history_rows()
+            .iter()
+            .map(|r| (r.role.clone(), r.text.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        shown
+            .iter()
+            .map(|(role, _)| role.as_str())
+            .collect::<Vec<_>>(),
+        ["assistant", "tool", "assistant"],
+        "Activity keeps the Pilot's messages between its steps, without reactions"
+    );
+    assert_eq!(shown[0].1, "Copying the fixtures first.");
+    assert_eq!(shown[2].1, "Started both leads.");
+}
+
+#[gpui::test]
 fn floating_chat_opens_after_releasing_the_manager_and_shares_the_runtime(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| {

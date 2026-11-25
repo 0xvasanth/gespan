@@ -912,9 +912,16 @@ impl Pilots {
             .find(|(_, r)| r.is_prompt() && r.first)
             .map(|(i, _)| i)
             .unwrap_or(source.len());
+        // The full story of the turn: its steps and what it said between them.
+        // A reaction is not a message.
         let rows = source[start..end]
             .iter()
-            .filter(|r| matches!(r.role.as_str(), "tool" | "reasoning"))
+            .filter(|r| {
+                matches!(r.role.as_str(), "tool" | "reasoning")
+                    || (r.role == "assistant"
+                        && !r.text.trim().is_empty()
+                        && !r.text.trim_start().starts_with("<reaction>"))
+            })
             .cloned()
             .collect::<Vec<_>>();
         if rows.is_empty() {
