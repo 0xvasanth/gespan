@@ -1,0 +1,59 @@
+crates/gespan-gpui/src/workspace.rs
+  s_1af47de6072da9::t_488936c544ee65 661,821-827
+crates/gespan-gpui/src/shell/title_tabs.rs
+  s_1af47de6072da9::t_3188f150eb1fc6 210-214
+  s_1af47de6072da9::t_627c14f7acd332 198-209,215-219,232
+crates/gespan-gpui/src/shell/tab_colors.rs
+  s_1af47de6072da9::t_f3028e6d8c0982 19-20
+  s_1af47de6072da9::t_36df39024fecf4 1-18,21-59
+crates/gespan-gpui/src/shell/tab_groups_tests.rs
+  s_1af47de6072da9::t_6204d8bfa9abe4 6,12-22
+  s_1af47de6072da9::t_f46d9fd40d19df 23
+crates/gespan-gpui/src/pilots/mod.rs
+  s_1af47de6072da9::t_4e7c9498f5a060 1680-1690,1719-1727
+crates/gespan-core/src/project_appearance.rs
+  s_1af47de6072da9::t_dfbc157fb234d3 704-705,710-723,725-752,761-787,792-815
+  s_1af47de6072da9::t_c108f705bfc579 5,42-44,71-127
+  s_1af47de6072da9::t_3188f150eb1fc6 706-709,724,753-760,788-791
+  s_1af47de6072da9::t_295b4f90f3f8af 128
+crates/gespan-gpui/src/settings/layout_tests.rs
+  s_1af47de6072da9::t_886475bcf559a7 302-320
+  s_1af47de6072da9::t_f0b91c6b131e6a 301
+crates/gespan-gpui/src/shell.rs
+  s_1af47de6072da9::t_32abdf335c99aa 97,7965-7975,7979-7984,8012,8030-8042
+  s_1af47de6072da9::t_35f0e38736a5ea 8043
+  s_1af47de6072da9::t_1ec6dc8f0d4560 7683-7686,7693
+  s_1af47de6072da9::t_f841c1520d9933 99
+  s_1af47de6072da9::t_627c14f7acd332 960-963,1430-1431
+  s_1af47de6072da9::t_3188f150eb1fc6 7976-7978
+  s_1af47de6072da9::t_f90e1be893927e 10423-10430,11316-11317,11320,11322
+  s_1af47de6072da9::t_4e7c9498f5a060 8180,8183-8187
+  s_1af47de6072da9::t_8179a443c9a9b8 98
+crates/gespan-gpui/src/settings/model.rs
+  s_1af47de6072da9::t_663307886aa04b 865-875
+  s_1af47de6072da9::t_754dcaeaae1b42 876-878
+crates/gespan-gpui/src/shell/tab_colors_tests.rs
+  s_1af47de6072da9::t_dce70a84e5fa03 1-23,29,33-47,52-54,67-106,111,116-129,134-177,183-186,192-237
+  s_1af47de6072da9::t_3188f150eb1fc6 24-28,30-32,48-51,55-66,107-110,112-115,130-133,178-182,187-191
+crates/gespan-gpui/src/settings/preferences.rs
+  s_1af47de6072da9::t_627c14f7acd332 17-20,157,233-235,239,241,244,253-254,256
+crates/gespan-gpui/src/shell/tab_layout_tests.rs
+  s_1af47de6072da9::t_daad4129f4db24 1-4,6,47-59,61,63,69,72-75,83-86,91-141,146-160,183,185,187-188
+  s_1af47de6072da9::t_3188f150eb1fc6 79,87-90,142-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "386356bcb0e37b3eabf268e2e65c317f67e0a13e",
+  "prompts": {},
+  "sessions": {
+    "s_1af47de6072da9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b5dea75e-c883-4c60-9a78-a29260ad4d76",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
