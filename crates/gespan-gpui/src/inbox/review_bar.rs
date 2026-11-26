@@ -9,7 +9,7 @@ use super::*;
 use crate::conversation::Conversation;
 use crate::glass;
 use gespan_core::inbox::{
-    Verdict,
+    LineComment, Verdict,
     polish::{self, Tone},
     queue,
 };
@@ -37,6 +37,8 @@ pub(crate) struct ReviewBar {
     pub(super) submitting: Option<Verdict>,
     pub(super) error: Option<String>,
     pub(super) notice: Option<String>,
+    /// Line comments written in Files, sent with the review on their lines.
+    pub(super) drafts: Vec<LineComment>,
 }
 impl ReviewBar {
     pub(super) fn reset(&mut self) {
@@ -88,11 +90,11 @@ impl Inbox {
 }
 
 impl Inbox {
-    /// Reviews are for someone else's open pull request.
+    /// An open pull request on a host that takes reviews. Your own gets the
+    /// bar too, with Comment only: hosts don't let you approve your own.
     pub(super) fn review_open(&self) -> bool {
         self.item().is_some_and(|item| {
             item.kind == "pr"
-                && !queue::is_mine(&item)
                 && matches!(item.provider.as_str(), "github" | "gitlab" | "azuredevops")
                 && !item.state.eq_ignore_ascii_case("merged")
                 && !item.state.eq_ignore_ascii_case("closed")
@@ -107,7 +109,13 @@ impl Inbox {
             return;
         };
         let body = self.review_body.read(cx).content.trim().to_string();
-        if body.is_empty() && verdict != Verdict::Approve {
+        let drafts = self.review.drafts.clone();
+        let words_needed = match verdict {
+            Verdict::Approve => false,
+            Verdict::RequestChanges => true,
+            Verdict::Comment => drafts.is_empty(),
+        };
+        if body.is_empty() && words_needed {
             self.review.error = Some(format!(
                 "Write a comment to {}.",
                 if verdict == Verdict::Comment {
@@ -134,12 +142,15 @@ impl Inbox {
         let task = cx.background_executor().spawn(async move {
             if offline {
                 #[cfg(test)]
-                reviews.lock().unwrap().push((item.key(), verdict, body));
+                reviews
+                    .lock()
+                    .unwrap()
+                    .push((item.key(), verdict, body, drafts));
                 return Ok(
                     gespan_core::inbox::review::review_notice(&item.provider, verdict).to_string(),
                 );
             }
-            service.submit_review(&item, verdict, &body)
+            service.submit_review(&item, verdict, &body, &drafts)
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -156,6 +167,7 @@ impl Inbox {
                         this.review_body
                             .update(cx, |input, cx| input.set_text(String::new(), cx));
                         this.review.polished = None;
+                        this.review.drafts.clear();
                         this.review.notice = Some(notice);
                         this.load_detail(false, cx);
                         this.refresh(cx);
@@ -166,6 +178,17 @@ impl Inbox {
             });
         })
         .detach();
+        cx.notify();
+    }
+
+    /// "Add to review" on a diff line: a draft sent with the review.
+    pub(super) fn add_line_comment(&mut self, comment: LineComment, cx: &mut Context<Self>) {
+        if !self.review_open() {
+            return;
+        }
+        self.review.drafts.push(comment);
+        self.review.error = None;
+        self.review.notice = None;
         cx.notify();
     }
 
@@ -388,6 +411,66 @@ impl Inbox {
                 .when(review.submitting.is_some(), |d| d.opacity(0.5))
                 .on_click(cx.listener(move |this, _, _, cx| this.submit_review(verdict, cx)))
         };
+        let mine = self.item().is_some_and(|item| queue::is_mine(&item));
+        let drafts = (!review.drafts.is_empty()).then(|| {
+            let count = review.drafts.len();
+            glass::card()
+                .debug_selector(|| "git-review-drafts".into())
+                .px(px(14.))
+                .py(px(10.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .text_size(px(11.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(content(0.75))
+                        .child(format!(
+                            "Your review · {count} comment{} drafted",
+                            if count == 1 { "" } else { "s" }
+                        )),
+                )
+                .children(review.drafts.iter().enumerate().map(|(ix, draft)| {
+                    div()
+                        .debug_selector(move || format!("git-review-draft-{ix}"))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .text_size(px(12.))
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_family(crate::fonts::monospace())
+                                .text_size(px(11.))
+                                .text_color(content(0.55))
+                                .child(format!("{}:{}", draft.path, draft.line)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(content(0.9))
+                                .child(draft.body.clone()),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("git-review-draft-remove-{ix}")))
+                                .debug_selector(move || format!("git-review-draft-remove-{ix}"))
+                                .role(Role::Button)
+                                .aria_label("Remove this comment")
+                                .cursor_pointer()
+                                .child(icon("x", 12.).text_color(content(0.5)))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if ix < this.review.drafts.len() {
+                                        this.review.drafts.remove(ix);
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                }))
+        });
         let status = review
             .error
             .clone()
@@ -405,6 +488,7 @@ impl Inbox {
                 .flex_col()
                 .gap(px(8.))
                 .children(suggestion)
+                .children(drafts)
                 .child(
                     glass::card_strong()
                         .px(px(12.))
@@ -439,16 +523,18 @@ impl Inbox {
                                     Verdict::Comment,
                                     glass::Button::Ghost,
                                 ))
-                                .child(verdict(
-                                    "git-review-request-changes",
-                                    Verdict::RequestChanges,
-                                    glass::Button::Glass,
-                                ))
-                                .child(verdict(
-                                    "git-review-approve",
-                                    Verdict::Approve,
-                                    glass::Button::Primary,
-                                )),
+                                .when(!mine, |d| {
+                                    d.child(verdict(
+                                        "git-review-request-changes",
+                                        Verdict::RequestChanges,
+                                        glass::Button::Glass,
+                                    ))
+                                    .child(verdict(
+                                        "git-review-approve",
+                                        Verdict::Approve,
+                                        glass::Button::Primary,
+                                    ))
+                                }),
                         ),
                 )
                 .when_some(status, |d, (text, bad)| {

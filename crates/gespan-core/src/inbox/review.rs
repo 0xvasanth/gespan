@@ -89,6 +89,28 @@ pub fn review_notice(provider: &str, verdict: Verdict) -> &'static str {
     }
 }
 
+/// Which side of a diff a line comment sits on: the new file (added or
+/// unchanged lines) or the old one (deleted lines).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Side {
+    #[default]
+    New,
+    Old,
+}
+
+/// A comment on one line of a pull request's diff, sent with a review so it
+/// lands on that line instead of in the general discussion.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LineComment {
+    pub path: String,
+    /// The line's number on its side.
+    pub line: u32,
+    pub side: Side,
+    pub body: String,
+}
+
 /// What a submitted review says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -261,8 +283,19 @@ impl<V: Clone> TtlCache<V> {
 }
 
 /// GitHub turns down a request for changes or a comment without words.
-fn check_review_body(verdict: Verdict, body: &str) -> Result<(), String> {
-    if verdict != Verdict::Approve && body.trim().is_empty() {
+/// Approving needs no words; requesting changes needs a summary; a comment
+/// review needs a summary or at least one line comment.
+fn check_review_body(verdict: Verdict, body: &str, comments: &[LineComment]) -> Result<(), String> {
+    let empty = body.trim().is_empty();
+    if comments
+        .iter()
+        .any(|c| c.body.trim().is_empty() || c.path.trim().is_empty() || c.line == 0)
+    {
+        return Err("A line comment is missing its text or line.".into());
+    }
+    if (verdict == Verdict::RequestChanges && empty)
+        || (verdict == Verdict::Comment && empty && comments.is_empty())
+    {
         return Err(match verdict {
             Verdict::RequestChanges => "Say what needs to change before requesting changes.",
             _ => "Write a comment before sending it.",
@@ -291,16 +324,23 @@ impl Service {
         item: &Item,
         verdict: Verdict,
         body: &str,
+        comments: &[LineComment],
     ) -> Result<String, String> {
-        self.send_review(item, verdict, body)
+        self.send_review(item, verdict, body, comments)
             .map(|()| review_notice(&item.provider, verdict).to_string())
     }
 
-    fn send_review(&self, item: &Item, verdict: Verdict, body: &str) -> Result<(), String> {
+    fn send_review(
+        &self,
+        item: &Item,
+        verdict: Verdict,
+        body: &str,
+        comments: &[LineComment],
+    ) -> Result<(), String> {
         if item.kind != "pr" {
             return Err("Only pull requests can be reviewed".into());
         }
-        check_review_body(verdict, body)?;
+        check_review_body(verdict, body, comments)?;
         match item.provider.as_str() {
             "gitlab" => gitlab::gitlab_submit_review(
                 self.data_dir.clone(),
@@ -308,6 +348,7 @@ impl Service {
                 item.number,
                 verdict,
                 body,
+                comments,
             ),
             "azuredevops" => azure_devops::azure_devops_submit_review(
                 self.data_dir.clone(),
@@ -315,6 +356,7 @@ impl Service {
                 item.number,
                 verdict,
                 body,
+                comments,
             ),
             "github" => {
                 let project = self.project(item);
@@ -327,6 +369,7 @@ impl Service {
                         "number": item.number,
                         "verdict": verdict.as_str(),
                         "body": body,
+                        "comments": comments,
                     }),
                     || {
                         github::git_github_pr_review_for(
@@ -335,6 +378,7 @@ impl Service {
                             item.number,
                             verdict,
                             body,
+                            comments,
                         )
                         .map(|()| serde_json::Value::Null)
                     },
@@ -707,12 +751,96 @@ mod tests {
 
     #[test]
     fn requests_for_changes_and_comments_need_words() {
-        assert!(check_review_body(Verdict::Approve, "").is_ok());
-        assert!(check_review_body(Verdict::RequestChanges, "  ")
+        assert!(check_review_body(Verdict::Approve, "", &[]).is_ok());
+        assert!(check_review_body(Verdict::RequestChanges, "  ", &[])
             .unwrap_err()
             .contains("needs to change"));
-        assert!(check_review_body(Verdict::Comment, "").is_err());
-        assert!(check_review_body(Verdict::Comment, "nice").is_ok());
+        assert!(check_review_body(Verdict::Comment, "", &[]).is_err());
+        assert!(check_review_body(Verdict::Comment, "nice", &[]).is_ok());
+        // Line comments are enough for a comment review, never for changes.
+        let line = LineComment {
+            path: "src/lib.rs".into(),
+            line: 12,
+            side: Side::New,
+            body: "add the index".into(),
+        };
+        assert!(check_review_body(Verdict::Comment, "", std::slice::from_ref(&line)).is_ok());
+        assert!(check_review_body(Verdict::Approve, "", std::slice::from_ref(&line)).is_ok());
+        assert!(
+            check_review_body(Verdict::RequestChanges, "", std::slice::from_ref(&line)).is_err()
+        );
+        for broken in [
+            LineComment {
+                body: " ".into(),
+                ..line.clone()
+            },
+            LineComment {
+                line: 0,
+                ..line.clone()
+            },
+            LineComment {
+                path: String::new(),
+                ..line.clone()
+            },
+        ] {
+            assert!(check_review_body(Verdict::Approve, "ok", &[broken]).is_err());
+        }
+    }
+
+    #[test]
+    fn line_comments_land_on_their_line_on_every_host() {
+        let new = LineComment {
+            path: "docs/hackathon.md".into(),
+            line: 100,
+            side: Side::New,
+            body: " test comment ".into(),
+        };
+        let old = LineComment {
+            path: "src/old.rs".into(),
+            line: 7,
+            side: Side::Old,
+            body: "why remove this?".into(),
+        };
+        let github =
+            super::github::github_review_payload(Verdict::Comment, "", &[new.clone(), old.clone()]);
+        assert_eq!(
+            github,
+            json!({
+                "event": "COMMENT",
+                "comments": [
+                    {"path": "docs/hackathon.md", "line": 100, "side": "RIGHT", "body": "test comment"},
+                    {"path": "src/old.rs", "line": 7, "side": "LEFT", "body": "why remove this?"},
+                ],
+            }),
+            "no summary is sent when there is none"
+        );
+        assert_eq!(
+            super::github::github_review_payload(Verdict::RequestChanges, " fix it ", &[])["body"],
+            "fix it"
+        );
+        let refs = json!({"base_sha": "b", "start_sha": "s", "head_sha": "h"});
+        let gitlab = super::gitlab::gitlab_line_discussion(&refs, &new).unwrap();
+        assert_eq!(gitlab["body"], "test comment");
+        assert_eq!(gitlab["position"]["new_line"], 100);
+        assert!(gitlab["position"].get("old_line").is_none());
+        assert_eq!(gitlab["position"]["head_sha"], "h");
+        let gitlab_old = super::gitlab::gitlab_line_discussion(&refs, &old).unwrap();
+        assert_eq!(gitlab_old["position"]["old_line"], 7);
+        assert!(gitlab_old["position"].get("new_line").is_none());
+        assert!(super::gitlab::gitlab_line_discussion(&json!({}), &new).is_err());
+        let ado = super::azure_devops::azure_line_thread(&new);
+        assert_eq!(ado["threadContext"]["filePath"], "/docs/hackathon.md");
+        assert_eq!(
+            ado["threadContext"]["rightFileStart"],
+            json!({"line": 100, "offset": 1})
+        );
+        assert!(ado["threadContext"].get("leftFileStart").is_none());
+        let ado_old = super::azure_devops::azure_line_thread(&old);
+        assert_eq!(
+            ado_old["threadContext"]["leftFileEnd"],
+            json!({"line": 7, "offset": 1})
+        );
+        assert_eq!(ado_old["comments"][0]["content"], "why remove this?");
     }
 
     #[test]

@@ -22,7 +22,7 @@ pub(super) const DESCRIPTION: &str = "Agents open their own tabs in Gespan's bui
 pub(super) const SWITCH_HELP: &str = "Gespan remembers this switch, and nothing starts until an agent needs the browser. Turning it off stops every agent action and closes the agents' tabs; pages you opened from links stay open.";
 
 /// Thread access's description.
-pub(super) const ACCESS_HELP: &str = "While the switch is on, a thread or Inbox Ask can use the browser for the messages you type in it, including those you send from your phone. Pilot chats and their habit runs, turns an agent or automation starts, orchestration and remote threads never can.";
+pub(super) const ACCESS_HELP: &str = "While the switch is on, a thread or a pull request's Ask can use the browser for the messages you type in it, including those you send from your phone. Pilot chats and their habit runs, turns an agent or automation starts, orchestration and remote threads never can.";
 
 /// Thread access this build offers. "Ask in the thread" joins it with the
 /// Allow bar; until then a turn whose access would be Ask gets no browser.

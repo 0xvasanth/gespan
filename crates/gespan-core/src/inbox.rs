@@ -16,7 +16,7 @@ pub mod events;
 pub mod polish;
 pub mod queue;
 pub mod review;
-pub use review::{CheckSummary, RepoHit, Review, Verdict};
+pub use review::{CheckSummary, LineComment, RepoHit, Review, Side, Verdict};
 pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;

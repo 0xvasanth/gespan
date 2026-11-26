@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use super::review::{self, latest_reviews, CheckSummary, Outcome, Review, TtlCache, Verdict};
+use super::review::{
+    self, latest_reviews, CheckSummary, LineComment, Outcome, Review, Side, TtlCache, Verdict,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -654,11 +656,26 @@ pub fn gitlab_submit_review(
     number: i64,
     verdict: Verdict,
     body: &str,
+    comments: &[LineComment],
 ) -> Result<(), String> {
     let config = require_config(&app)?;
     let repo = validate_repo(repo)?;
     validate_item("pr", number)?;
     let base = item_path(&repo, "pr", number);
+    if !comments.is_empty() {
+        // A diff note is a discussion positioned on the merge request's
+        // current versions.
+        let refs = gitlab_get(&config, &base)?.value["diff_refs"].clone();
+        for comment in comments {
+            let payload = gitlab_line_discussion(&refs, comment)?;
+            gitlab_send(
+                &config,
+                "POST",
+                &format!("{base}/discussions"),
+                Some(&payload),
+            )?;
+        }
+    }
     match verdict {
         Verdict::Approve => {
             gitlab_send(&config, "POST", &format!("{base}/approve"), None)?;
@@ -671,10 +688,37 @@ pub fn gitlab_submit_review(
     }
     if !body.trim().is_empty() {
         gitlab_work_item_comment_for(&config, &repo, "pr", number, body)?;
-    } else if verdict != Verdict::Approve {
+    } else if verdict != Verdict::Approve && comments.is_empty() {
         return Err("Write a comment before sending it.".into());
     }
     Ok(())
+}
+
+/// A discussion on one line of a merge request's diff, positioned on its
+/// `diff_refs`: a new line by its new number, a deleted one by its old.
+pub(crate) fn gitlab_line_discussion(refs: &Value, comment: &LineComment) -> Result<Value, String> {
+    let sha = |key: &str| {
+        refs[key]
+            .as_str()
+            .filter(|sha| !sha.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                "GitLab did not say which versions the merge request compares".to_string()
+            })
+    };
+    let mut position = serde_json::json!({
+        "position_type": "text",
+        "base_sha": sha("base_sha")?,
+        "start_sha": sha("start_sha")?,
+        "head_sha": sha("head_sha")?,
+        "old_path": comment.path,
+        "new_path": comment.path,
+    });
+    match comment.side {
+        Side::New => position["new_line"] = comment.line.into(),
+        Side::Old => position["old_line"] = comment.line.into(),
+    }
+    Ok(serde_json::json!({ "body": comment.body.trim(), "position": position }))
 }
 
 /// Retries the head pipeline's failed jobs.

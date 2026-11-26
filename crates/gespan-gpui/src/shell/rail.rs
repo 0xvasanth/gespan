@@ -67,7 +67,7 @@ pub(super) fn rail_tint(label: &str) -> Option<Hsla> {
     let tint = match label {
         "New thread" => 0x6ee7b7,
         "My tasks" => WAIT,
-        "Git" => 0xfdba74,
+        "Git" => 0x2dd4bf,
         "Automations" => 0xfbbf24,
         _ => return nav_tint(label).filter(|_| label != "Home" && label != "Search"),
     };
@@ -1328,7 +1328,7 @@ mod tests {
             },
             false,
         );
-        assert_eq!(rail_tint("Git"), Some(rgb(0xfdba74).into()));
+        assert_eq!(rail_tint("Git"), Some(rgb(0x2dd4bf).into()));
         assert_eq!(rail_tint("Automations"), Some(rgb(0xfbbf24).into()));
         assert_eq!(rail_tint("New thread"), Some(rgb(0x6ee7b7).into()));
         // Home and Search take the row's ink.
