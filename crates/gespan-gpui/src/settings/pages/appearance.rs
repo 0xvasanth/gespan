@@ -48,7 +48,7 @@ const SWATCH_DOT: f32 = 10.;
 /// The sidebar entries Layout offers as chips, in the sidebar's own order:
 /// (id for Shell::change_sidebar_option, label).
 const SIDEBAR_CHIPS: [(&str, &str); 6] = [
-    ("sidebar-inbox", "Inbox"),
+    ("sidebar-inbox", "Git"),
     ("sidebar-automations", "Automations"),
     ("sidebar-pilots", "Pilots"),
     ("sidebar-board", "Board"),

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use super::review::{self, latest_reviews, CheckSummary, Outcome, Review, TtlCache, Verdict};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -40,7 +41,7 @@ pub struct GitlabAssignee {
     pub avatar_url: String,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitlabWorkItem {
     pub kind: String,
@@ -54,6 +55,16 @@ pub struct GitlabWorkItem {
     pub draft: bool,
     pub repo: String,
     pub attention_reason: String,
+    pub author: String,
+    /// Merge requests (see [`super::Item`]): the review and check fields the
+    /// Git page groups by. Diff sizes stay 0: GitLab's lists don't carry them.
+    pub review_decision: String,
+    pub reviews: Vec<Review>,
+    pub requested_reviewers: Vec<String>,
+    pub viewer: String,
+    pub check_summary: CheckSummary,
+    pub additions: i64,
+    pub deletions: i64,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -323,7 +334,385 @@ fn gitlab_list_work_items_for(
         encode_path_component(repo)
     );
     let response = gitlab_get(config, &path)?;
-    parse_work_items(&response.value, kind, repo)
+    let mut items = parse_work_items(&response.value, kind, repo)?;
+    if kind == "pr" {
+        enrich_merge_requests(config, repo, &mut items);
+    }
+    Ok(items)
+}
+
+/// Open merge requests whose reviews and pipeline are looked up per list,
+/// at most this many, with this many requests at once.
+const MAX_ENRICHED: usize = 30;
+const ENRICH_WORKERS: usize = 6;
+
+/// Fills reviews, approvals and checks on the open merge requests of one
+/// project's list. Each needs its own requests, so they run a few at once
+/// and are kept for a minute; one that fails keeps its fields empty.
+fn enrich_merge_requests(config: &GitlabConfig, repo: &str, items: &mut [GitlabWorkItem]) {
+    let viewer = gitlab_viewer(config);
+    for item in items.iter_mut() {
+        item.viewer = viewer.clone();
+    }
+    let open: Vec<&mut GitlabWorkItem> = items
+        .iter_mut()
+        .filter(|item| item.state == "open")
+        .take(MAX_ENRICHED)
+        .collect();
+    review::for_each_bounded(open, ENRICH_WORKERS, |item| {
+        if let Ok(found) = cached_mr_review(config, repo, item.number, &item.updated_at) {
+            found.apply(item);
+        }
+    });
+}
+
+/// The connected account's username, asked at most every few minutes;
+/// empty when GitLab can't say.
+fn gitlab_viewer(config: &GitlabConfig) -> String {
+    static VIEWERS: TtlCache<String> =
+        TtlCache::new(Duration::from_secs(300), Duration::from_secs(60));
+    VIEWERS
+        .get(&config.url, || {
+            parse_current_user(&gitlab_get(config, "/user")?.value)
+        })
+        .unwrap_or_default()
+}
+
+/// What one merge request's reviewers, approvals and pipeline say.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MrReview {
+    review_decision: String,
+    reviews: Vec<Review>,
+    /// `None` when the reviewers' states could not be read, so the list's
+    /// reviewers stand.
+    requested_reviewers: Option<Vec<String>>,
+    check_summary: CheckSummary,
+}
+
+impl MrReview {
+    fn apply(self, item: &mut GitlabWorkItem) {
+        item.review_decision = self.review_decision;
+        if let Some(requested) = self.requested_reviewers {
+            item.requested_reviewers = requested;
+        } else {
+            item.requested_reviewers.retain(|login| {
+                !self
+                    .reviews
+                    .iter()
+                    .any(|review| review.login.eq_ignore_ascii_case(login))
+            });
+        }
+        item.reviews = self.reviews;
+        item.check_summary = self.check_summary;
+    }
+}
+
+fn cached_mr_review(
+    config: &GitlabConfig,
+    repo: &str,
+    number: i64,
+    updated_at: &str,
+) -> Result<MrReview, String> {
+    static REVIEWS: TtlCache<MrReview> =
+        TtlCache::new(Duration::from_secs(60), Duration::from_secs(60));
+    let key = format!("{}|{repo}|{number}|{updated_at}", config.url);
+    REVIEWS.get(&key, || fetch_mr_review(config, repo, number))
+}
+
+/// The merge request itself (its pipeline and merge status) must load; its
+/// approvals, reviewers and jobs are each optional.
+fn fetch_mr_review(config: &GitlabConfig, repo: &str, number: i64) -> Result<MrReview, String> {
+    let base = item_path(repo, "pr", number);
+    let mr = gitlab_get(config, &base)?.value;
+    let approvals = gitlab_get(config, &format!("{base}/approvals")).ok();
+    let reviewers = gitlab_get(config, &format!("{base}/reviewers")).ok();
+    let jobs = mr
+        .get("head_pipeline")
+        .and_then(|pipeline| pipeline.get("id"))
+        .and_then(Value::as_i64)
+        .and_then(|id| {
+            gitlab_get(
+                config,
+                &format!(
+                    "/projects/{}/pipelines/{id}/jobs?per_page=100",
+                    encode_path_component(repo)
+                ),
+            )
+            .ok()
+        });
+    Ok(mr_review_from(
+        &mr,
+        approvals.as_ref().map(|r| &r.value),
+        reviewers.as_ref().map(|r| &r.value),
+        jobs.as_ref().map(|r| &r.value),
+    ))
+}
+
+fn username(user: &Value) -> Option<String> {
+    string_field(user, "username").filter(|name| !name.is_empty())
+}
+
+/// Maps a merge request, `/approvals`, `/reviewers` (GitLab 17's states,
+/// `requested_changes` among them) and the head pipeline's `/jobs`.
+fn mr_review_from(
+    mr: &Value,
+    approvals: Option<&Value>,
+    reviewers: Option<&Value>,
+    jobs: Option<&Value>,
+) -> MrReview {
+    let mut rows: Vec<(String, String, String)> = Vec::new();
+    let mut requested: Option<Vec<String>> = None;
+    if let Some(reviewers) = reviewers.and_then(Value::as_array) {
+        let mut waiting = Vec::new();
+        for reviewer in reviewers {
+            let Some(login) = reviewer.get("user").and_then(username) else {
+                continue;
+            };
+            let state = string_field(reviewer, "state").unwrap_or_default();
+            match review::review_state(&state) {
+                Some(state) => rows.push((login, state.into(), String::new())),
+                None => waiting.push(login),
+            }
+        }
+        requested = Some(waiting);
+    }
+    let approved_by: Vec<String> = approvals
+        .and_then(|a| a.get("approved_by"))
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row.get("user").and_then(username))
+                .collect()
+        })
+        .unwrap_or_default();
+    // An approval stands over what the reviewer said before.
+    rows.extend(
+        approved_by
+            .iter()
+            .map(|login| (login.clone(), "approved".to_string(), "~".to_string())),
+    );
+    let mut reviews = latest_reviews(rows);
+    for login in &approved_by {
+        if let Some(review) = reviews
+            .iter_mut()
+            .find(|r| r.login.eq_ignore_ascii_case(login))
+        {
+            review.state = "approved".into();
+        }
+    }
+    if let Some(waiting) = requested.as_mut() {
+        waiting.retain(|login| !approved_by.iter().any(|a| a.eq_ignore_ascii_case(login)));
+    }
+    let merge_status = string_field(mr, "detailed_merge_status").unwrap_or_default();
+    let approvals_left = approvals
+        .and_then(|a| a.get("approvals_left"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let approved = approvals
+        .and_then(|a| a.get("approved"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let review_decision = if merge_status == "requested_changes"
+        || reviews.iter().any(|r| r.state == "changes_requested")
+    {
+        "changes_requested"
+    } else if approved && approvals_left <= 0 && !approved_by.is_empty() {
+        "approved"
+    } else if merge_status == "not_approved"
+        || approvals_left > 0
+        || requested.as_ref().is_some_and(|r| !r.is_empty())
+    {
+        "review_required"
+    } else {
+        ""
+    };
+    MrReview {
+        review_decision: review_decision.into(),
+        reviews,
+        requested_reviewers: requested,
+        check_summary: mr_checks(mr, jobs),
+    }
+}
+
+/// A job counts by its status; a failure allowed to fail passes. Without
+/// the jobs, the head pipeline counts as one check.
+fn mr_checks(mr: &Value, jobs: Option<&Value>) -> CheckSummary {
+    if let Some(jobs) = jobs.and_then(Value::as_array) {
+        return CheckSummary::tally(jobs.iter().map(|job| {
+            let allowed = job
+                .get("allow_failure")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let outcome =
+                match gitlab_status_outcome(&string_field(job, "status").unwrap_or_default()) {
+                    Outcome::Failed if allowed => Outcome::Passed,
+                    outcome => outcome,
+                };
+            (string_field(job, "name").unwrap_or_default(), outcome)
+        }));
+    }
+    match mr
+        .get("head_pipeline")
+        .and_then(|pipeline| string_field(pipeline, "status"))
+    {
+        Some(status) if !status.is_empty() => {
+            CheckSummary::tally([("Pipeline".to_string(), gitlab_status_outcome(&status))])
+        }
+        _ => CheckSummary::default(),
+    }
+}
+
+fn gitlab_status_outcome(status: &str) -> Outcome {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "success" | "skipped" | "manual" => Outcome::Passed,
+        "failed" | "canceled" | "cancelled" => Outcome::Failed,
+        _ => Outcome::Pending,
+    }
+}
+
+/// The open merge requests of a project added by hand.
+pub fn gitlab_list_repo_prs(
+    app: PathBuf,
+    repo: &str,
+    limit: u32,
+) -> Result<Vec<GitlabWorkItem>, String> {
+    let config = require_config(&app)?;
+    let repo = validate_repo(repo)?;
+    gitlab_list_work_items_for(&config, &repo, "pr", false, "open", limit)
+}
+
+/// Open merge requests anywhere that ask for your review: one request.
+pub fn gitlab_review_requests(app: PathBuf) -> Result<Vec<GitlabWorkItem>, String> {
+    let config = require_config(&app)?;
+    let viewer = gitlab_viewer(&config);
+    if viewer.is_empty() {
+        return Err("GitLab did not say which account is connected".into());
+    }
+    let path = format!(
+        "/merge_requests?reviewer_username={}&state=opened&scope=all&order_by=updated_at&sort=desc&per_page=50",
+        encode_path_component(&viewer)
+    );
+    let mut items = parse_review_requests(&gitlab_get(&config, &path)?.value)?;
+    for item in &mut items {
+        item.viewer = viewer.clone();
+    }
+    Ok(items)
+}
+
+/// Rows from `/merge_requests`, each naming its project in `references`.
+fn parse_review_requests(value: &Value) -> Result<Vec<GitlabWorkItem>, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "GitLab did not return merge requests".to_string())?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let full = row
+                .get("references")
+                .and_then(|r| string_field(r, "full"))?;
+            let repo = full.rsplit_once('!').map(|(repo, _)| repo)?.to_string();
+            if !valid_project_path(&repo) {
+                return None;
+            }
+            let mut item = parse_work_item(row, "pr", &repo)?;
+            item.attention_reason = "review_requested".into();
+            Some(item)
+        })
+        .collect())
+}
+
+/// Projects you are a member of whose name or path matches `query`.
+pub fn gitlab_search_repos(app: PathBuf, query: &str) -> Result<Vec<(String, String)>, String> {
+    let config = require_config(&app)?;
+    let path = format!(
+        "/projects?membership=true&simple=true&search={}&order_by=last_activity_at&per_page=20",
+        encode_path_component(query.trim())
+    );
+    parse_repo_hits(&gitlab_get(&config, &path)?.value)
+}
+
+fn parse_repo_hits(value: &Value) -> Result<Vec<(String, String)>, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "GitLab did not return projects".to_string())?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let repo =
+                string_field(row, "path_with_namespace").filter(|r| valid_project_path(r))?;
+            Some((repo, string_field(row, "description").unwrap_or_default()))
+        })
+        .collect())
+}
+
+/// Approves, requests changes or comments. GitLab's REST API has no
+/// "Request changes", so that removes your approval, if any, and posts
+/// `body` as a note: the request reads as the note's words.
+pub fn gitlab_submit_review(
+    app: PathBuf,
+    repo: &str,
+    number: i64,
+    verdict: Verdict,
+    body: &str,
+) -> Result<(), String> {
+    let config = require_config(&app)?;
+    let repo = validate_repo(repo)?;
+    validate_item("pr", number)?;
+    let base = item_path(&repo, "pr", number);
+    match verdict {
+        Verdict::Approve => {
+            gitlab_send(&config, "POST", &format!("{base}/approve"), None)?;
+        }
+        Verdict::RequestChanges => {
+            // Not approved before is fine: GitLab answers 404 then.
+            let _ = gitlab_send(&config, "POST", &format!("{base}/unapprove"), None);
+        }
+        Verdict::Comment => {}
+    }
+    if !body.trim().is_empty() {
+        gitlab_work_item_comment_for(&config, &repo, "pr", number, body)?;
+    } else if verdict != Verdict::Approve {
+        return Err("Write a comment before sending it.".into());
+    }
+    Ok(())
+}
+
+/// Retries the head pipeline's failed jobs.
+pub fn gitlab_rerun_failed(app: PathBuf, repo: &str, number: i64) -> Result<String, String> {
+    let config = require_config(&app)?;
+    let repo = validate_repo(repo)?;
+    validate_item("pr", number)?;
+    let mr = gitlab_get(&config, &item_path(&repo, "pr", number))?.value;
+    let pipeline = mr
+        .get("head_pipeline")
+        .and_then(|pipeline| pipeline.get("id"))
+        .and_then(Value::as_i64)
+        .ok_or_else(|| "This merge request has no pipeline to rerun".to_string())?;
+    let project = encode_path_component(&repo);
+    let failed = gitlab_get(
+        &config,
+        &format!("/projects/{project}/pipelines/{pipeline}/jobs?scope%5B%5D=failed&scope%5B%5D=canceled&per_page=100"),
+    )
+    .ok()
+    .and_then(|jobs| jobs.value.as_array().map(Vec::len))
+    .unwrap_or(0);
+    if failed == 0 {
+        return Err("Nothing failed in this merge request's pipeline".into());
+    }
+    gitlab_send(
+        &config,
+        "POST",
+        &format!("/projects/{project}/pipelines/{pipeline}/retry"),
+        None,
+    )?;
+    Ok(rerun_notice(failed, "job"))
+}
+
+fn rerun_notice(count: usize, what: &str) -> String {
+    format!(
+        "Rerun requested for {count} failed {what}{}.",
+        if count == 1 { "" } else { "s" }
+    )
 }
 
 fn gitlab_list_todos_for(
@@ -529,6 +918,16 @@ fn parse_work_item(row: &Value, kind: &str, repo: &str) -> Option<GitlabWorkItem
         draft,
         repo: repo.into(),
         attention_reason: String::new(),
+        author: row.get("author").and_then(username).unwrap_or_default(),
+        requested_reviewers: if kind == "pr" {
+            row.get("reviewers")
+                .and_then(Value::as_array)
+                .map(|people| people.iter().filter_map(username).collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        },
+        ..Default::default()
     })
 }
 
@@ -1163,5 +1562,155 @@ mod member_access_tests {
         assert_eq!(parse_member_access(&rows, "Alice").unwrap(), 40);
         assert_eq!(parse_member_access(&rows, "mallory").unwrap(), 0);
         assert!(parse_member_access(&serde_json::json!({}), "alice").is_err());
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn approvals_and_reviewer_states_make_the_verdict() {
+        let mr = json!({"detailed_merge_status": "mergeable",
+            "head_pipeline": {"id": 7, "status": "success"}});
+        let approvals = json!({"approved": true, "approvals_left": 0,
+            "approved_by": [{"user": {"username": "mira"}}]});
+        let reviewers = json!([
+            {"user": {"username": "mira"}, "state": "reviewed"},
+            {"user": {"username": "jo"}, "state": "unreviewed"},
+            {"user": {"username": ""}, "state": "approved"}
+        ]);
+        let review = mr_review_from(&mr, Some(&approvals), Some(&reviewers), None);
+        assert_eq!(review.review_decision, "approved");
+        assert_eq!(
+            review.reviews,
+            [Review {
+                login: "mira".into(),
+                state: "approved".into()
+            }]
+        );
+        assert_eq!(review.requested_reviewers, Some(vec!["jo".to_string()]));
+        // Without jobs, the head pipeline is one check.
+        assert_eq!(
+            (review.check_summary.total, review.check_summary.passed),
+            (1, 1)
+        );
+    }
+
+    #[test]
+    fn a_request_for_changes_wins_over_approvals() {
+        let mr = json!({"detailed_merge_status": "requested_changes"});
+        let reviewers = json!([{"user": {"username": "mira"}, "state": "requested_changes"}]);
+        let approvals = json!({"approved": true, "approvals_left": 0,
+            "approved_by": [{"user": {"username": "cubic"}}]});
+        let review = mr_review_from(&mr, Some(&approvals), Some(&reviewers), None);
+        assert_eq!(review.review_decision, "changes_requested");
+        let states: Vec<(&str, &str)> = review
+            .reviews
+            .iter()
+            .map(|r| (r.login.as_str(), r.state.as_str()))
+            .collect();
+        assert_eq!(
+            states,
+            [("mira", "changes_requested"), ("cubic", "approved")]
+        );
+    }
+
+    #[test]
+    fn free_tier_approved_without_approvers_still_needs_review() {
+        // GitLab Free says `approved` when no rule needs anyone.
+        let approvals = json!({"approved": true, "approvals_left": 0, "approved_by": []});
+        let none = mr_review_from(&json!({}), Some(&approvals), None, None);
+        assert_eq!(none.review_decision, "");
+        assert_eq!(none.requested_reviewers, None);
+        let required = mr_review_from(
+            &json!({"detailed_merge_status": "not_approved"}),
+            Some(&json!({"approved": false, "approvals_left": 1, "approved_by": []})),
+            None,
+            None,
+        );
+        assert_eq!(required.review_decision, "review_required");
+        assert!(required.check_summary.is_empty());
+    }
+
+    #[test]
+    fn jobs_count_with_allowed_failures_passing() {
+        let jobs = json!([
+            {"name": "lint", "status": "success"},
+            {"name": "windows", "status": "failed"},
+            {"name": "flaky", "status": "failed", "allow_failure": true},
+            {"name": "deploy", "status": "manual"},
+            {"name": "e2e", "status": "running"},
+            {"name": "macos", "status": "canceled"}
+        ]);
+        let summary = mr_checks(&json!({"head_pipeline": {"status": "failed"}}), Some(&jobs));
+        assert_eq!(
+            (
+                summary.total,
+                summary.passed,
+                summary.failed,
+                summary.pending
+            ),
+            (6, 3, 2, 1)
+        );
+        assert_eq!(summary.failed_names, ["windows", "macos"]);
+    }
+
+    #[test]
+    fn list_rows_carry_author_and_reviewers_and_reviews_override_them() {
+        let row = json!({"iid": 3, "title": "Fix", "state": "opened",
+            "author": {"username": "vasanth"},
+            "reviewers": [{"username": "mira"}, {"username": "jo"}]});
+        let mut item = parse_work_item(&row, "pr", "grp/app").unwrap();
+        assert_eq!(item.author, "vasanth");
+        assert_eq!(item.requested_reviewers, ["mira", "jo"]);
+        // Without reviewer states, whoever reviewed is no longer waited on.
+        MrReview {
+            reviews: vec![Review {
+                login: "Mira".into(),
+                state: "approved".into(),
+            }],
+            ..Default::default()
+        }
+        .apply(&mut item);
+        assert_eq!(item.requested_reviewers, ["jo"]);
+        let issue = parse_work_item(&row, "issue", "grp/app").unwrap();
+        assert!(issue.requested_reviewers.is_empty());
+    }
+
+    #[test]
+    fn review_requests_name_their_project_from_references() {
+        let rows = json!([
+            {"iid": 12, "title": "A", "state": "opened",
+             "references": {"full": "grp/sub/app!12"}},
+            {"iid": 13, "title": "B", "state": "opened"},
+            {"iid": 14, "title": "C", "state": "opened",
+             "references": {"full": "../x!14"}}
+        ]);
+        let items = parse_review_requests(&rows).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].repo, "grp/sub/app");
+        assert_eq!(items[0].attention_reason, "review_requested");
+        assert!(parse_review_requests(&json!({})).is_err());
+    }
+
+    #[test]
+    fn repo_hits_and_rerun_notices() {
+        let hits = parse_repo_hits(&json!([
+            {"path_with_namespace": "grp/app", "description": "The app"},
+            {"path_with_namespace": "grp/lib", "description": null},
+            {"name": "no path"}
+        ]))
+        .unwrap();
+        assert_eq!(
+            hits,
+            [
+                ("grp/app".to_string(), "The app".to_string()),
+                ("grp/lib".to_string(), String::new())
+            ]
+        );
+        assert_eq!(rerun_notice(1, "job"), "Rerun requested for 1 failed job.");
+        assert_eq!(rerun_notice(2, "job"), "Rerun requested for 2 failed jobs.");
     }
 }

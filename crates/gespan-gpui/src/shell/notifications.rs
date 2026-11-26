@@ -47,6 +47,9 @@ pub(super) struct State {
     /// The session notices that reached the OS.
     #[cfg(test)]
     pub(super) session_notices: Vec<SessionNotice>,
+    /// The Git notices that reached the OS: subtitle and body.
+    #[cfg(test)]
+    pub(super) git_notices: Vec<(String, String)>,
 }
 
 #[cfg(test)]
@@ -92,6 +95,8 @@ impl State {
             machine_notices: Vec::new(),
             #[cfg(test)]
             session_notices: Vec::new(),
+            #[cfg(test)]
+            git_notices: Vec::new(),
         }
     }
 }
@@ -581,6 +586,45 @@ impl Shell {
             &format!("{body} → {pilot}"),
             cx,
         );
+    }
+
+    /// Tells the user a pull request started waiting on them, unless Git is
+    /// on screen. Follows the global notification and sound preferences.
+    pub(super) fn deliver_git_notice(
+        &mut self,
+        item: &gespan_core::inbox::Item,
+        body: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let prefs = &self.workspace.preferences;
+        let watching = self.window_active && self.app_view_label() == Some("Git");
+        let notify = delivery::should_notify(
+            prefs.notifications,
+            self.notification_state.permission,
+            self.window_active,
+            watching,
+        );
+        if !notify {
+            return;
+        }
+        self.notification_state.sequence = self.notification_state.sequence.wrapping_add(1);
+        let subtitle = format!(
+            "{} {} · {}",
+            gespan_core::inbox::queue::short_repo(&item.repo),
+            gespan_core::inbox::queue::number_label(item),
+            item.title
+        );
+        let notification = platform::Notification {
+            tag: format!("gespan-git:{}", self.notification_state.sequence),
+            subtitle: subtitle.clone(),
+            body: delivery::clip_body(body),
+            sound: prefs.sounds,
+        };
+        #[cfg(test)]
+        self.notification_state
+            .git_notices
+            .push((subtitle, notification.body.clone()));
+        let _ = platform::show(notification, cx);
     }
 
     /// Tells the user a herdr agent needs input or finished a turn, unless

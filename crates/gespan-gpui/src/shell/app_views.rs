@@ -15,7 +15,7 @@ impl Shell {
         self.active_app_view.map(|view| match view {
             AppView::Home => "Home",
             AppView::MyTasks => "My tasks",
-            AppView::Inbox => "Inbox",
+            AppView::Inbox => "Git",
             AppView::Notes => "Notes",
             AppView::Automations => "Automations",
             AppView::Flows => "Flows",
@@ -596,6 +596,9 @@ impl Shell {
                     ),
                     inbox::Event::OpenConnections => {
                         this.open_settings(crate::settings::Section::Services, window, cx)
+                    }
+                    inbox::Event::ReviewNotice { item, body } => {
+                        this.deliver_git_notice(item, body, cx)
                     }
                 },
             ));

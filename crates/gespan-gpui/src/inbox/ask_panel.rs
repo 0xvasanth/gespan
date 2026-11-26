@@ -123,8 +123,17 @@ impl Inbox {
     ) {
         if self.ask.requested.as_ref() == Some(&key) {
             self.ask.hosted = Some(Hosted { key, session, view });
+            self.send_polish(cx);
             cx.notify();
         }
+    }
+    /// The conversation the panel holds.
+    pub(crate) fn ask_conversation(&self) -> Option<Entity<Conversation>> {
+        self.ask.hosted.as_ref().map(|hosted| hosted.view.clone())
+    }
+    /// The item key of the conversation the panel holds.
+    pub(super) fn ask_hosted_key(&self) -> Option<String> {
+        self.ask.hosted.as_ref().map(|hosted| hosted.key.clone())
     }
     pub(crate) fn ask_failed(&mut self, key: String, error: String, cx: &mut Context<Self>) {
         if self.ask.requested.as_ref() == Some(&key) {
@@ -329,9 +338,6 @@ impl Inbox {
     }
     pub(crate) fn ask_open(&self) -> bool {
         self.ask.open
-    }
-    pub(crate) fn ask_conversation(&self) -> Option<Entity<Conversation>> {
-        self.ask.hosted.as_ref().map(|hosted| hosted.view.clone())
     }
     pub(crate) fn ask_error(&self) -> Option<String> {
         self.ask.error.clone()

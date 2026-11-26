@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Inbox is now Git, a review queue for pull and merge requests:** the rail,
+  the page and Settings say Git. It lists open pull requests from GitHub,
+  GitLab and Azure DevOps together, grouped by who they wait on (Waiting on
+  you, Waiting on others, Ready to merge), each with a line saying why. Needs
+  me / Mine / All open sit on one line with a Filters dropdown (repos, host,
+  author, drafts, and label, reviewer, checks, size or updated once added)
+  that is kept per view, with saved views. The list pages 25 at a time and
+  holds new arrivals behind "N new since HH:MM · Show". dependabot and
+  renovate fold into a Bots view. Issues and tracker tickets leave the page
+  (automations still get them). Only your projects' repos, plus any you add
+  in Settings › Git, are fetched; one search folds review requests from other
+  repos under the list. Files shows hunks only, and a review bar sends
+  Comment, Request changes or Approve, with a tone and Polish, which asks the
+  pull request's Ask agent for a rewrite. Your pull request with failing
+  checks opens on the failed job, with Re-run failed and Fix with an agent.
+
 - **Releases build iOS only when asked:** each iOS App Store build uses an
   Expo build credit, so a release now ships desktop and the Android APK, and
   builds iOS only when the `RELEASE_IOS` repository variable is `true` or the

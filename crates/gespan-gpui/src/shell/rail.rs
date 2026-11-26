@@ -67,7 +67,7 @@ pub(super) fn rail_tint(label: &str) -> Option<Hsla> {
     let tint = match label {
         "New thread" => 0x6ee7b7,
         "My tasks" => WAIT,
-        "Inbox" => 0xa5b4fc,
+        "Git" => 0xfdba74,
         "Automations" => 0xfbbf24,
         _ => return nav_tint(label).filter(|_| label != "Home" && label != "Search"),
     };
@@ -266,7 +266,7 @@ pub(super) fn automations_aria(going: usize, failing: usize) -> String {
 const PAGES: [(&str, &str); 8] = [
     ("Home", "home"),
     ("My tasks", "circle-alert"),
-    ("Inbox", "inbox"),
+    ("Git", "git-pull-request"),
     ("Automations", "zap"),
     ("Flows", "git-merge"),
     ("Board", "kanban"),
@@ -679,7 +679,7 @@ impl Shell {
                         "Automations" => self.workspace.sidebar_automations_visible,
                         "Flows" => flows_visible,
                         "Board" => self.workspace.preferences.board,
-                        "Inbox" => self.workspace.sidebar_inbox_visible,
+                        "Git" => self.workspace.sidebar_inbox_visible,
                         _ => true,
                     })
                     .map(|(label, glyph)| {
@@ -690,7 +690,6 @@ impl Shell {
                         };
                         let badge = match label {
                             "My tasks" if waiting > 0 => Some((waiting, true)),
-                            "Inbox" if unread > 0 => Some((unread, false)),
                             _ => None,
                         };
                         // The bolt: a rose count while automations are
@@ -700,7 +699,7 @@ impl Shell {
                         let going = label == "Automations" && runs_going > 0 && failing.is_none();
                         let aria: SharedString = match (label, badge) {
                             ("My tasks", Some((n, _))) => format!("My tasks, {n} waiting").into(),
-                            ("Inbox", Some((n, _))) => format!("Inbox, {n} new").into(),
+                            ("Git", _) if unread > 0 => format!("Git, {unread} new").into(),
                             ("Search", _) => "Search sessions".into(),
                             ("Automations", _) => automations_aria(runs_going, runs_failing).into(),
                             _ => label.into(),
@@ -779,6 +778,19 @@ impl Shell {
                                         .child(n.to_string()),
                                 )
                             })
+                            // Git marks something new with a dot, not a count.
+                            .when(label == "Git" && unread > 0, |d| {
+                                d.child(
+                                    div()
+                                        .debug_selector(|| "sidebar-navigation-unread-Git".into())
+                                        .absolute()
+                                        .top(px(5.))
+                                        .right(px(7.))
+                                        .size(px(7.))
+                                        .rounded_full()
+                                        .bg(accent_color()),
+                                )
+                            })
                             .when(going, |d| {
                                 d.child(
                                     div()
@@ -793,7 +805,7 @@ impl Shell {
                                         .bg(crate::glass::Tone::Running.ink()),
                                 )
                             })
-                            .when(label == "Inbox", |d| {
+                            .when(label == "Git", |d| {
                                 d.on_mouse_down(
                                     MouseButton::Right,
                                     cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
@@ -810,7 +822,7 @@ impl Shell {
                             .on_click(cx.listener(move |this, _, window, cx| match label {
                                 "Home" => this.open_home(window, cx),
                                 "My tasks" => this.open_my_tasks(window, cx),
-                                "Inbox" => this.open_inbox(window, cx),
+                                "Git" => this.open_inbox(window, cx),
                                 "Notes" => this.open_notes(window, cx),
                                 "Automations" => this.open_automations(window, cx),
                                 "Flows" => this.open_flows(window, cx),
@@ -1235,6 +1247,52 @@ impl Shell {
 mod tests {
     use super::*;
 
+    /// Something new in Git shows as a dot on its icon, never a count, and
+    /// the icon's name says how many.
+    #[gpui::test]
+    fn git_marks_unread_pull_requests_with_a_dot(cx: &mut gpui::TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        assert!(
+            visual
+                .debug_bounds("sidebar-navigation-unread-Git")
+                .is_none()
+        );
+        window
+            .update(visual, |shell, window, cx| {
+                let store = shell.store.clone();
+                let inbox = cx.new(|cx| crate::inbox::Inbox::offline(store, cx));
+                inbox.update(cx, |inbox, _| {
+                    inbox.receive_unread(vec![gespan_core::inbox::Item {
+                        provider: "github".into(),
+                        kind: "pr".into(),
+                        repo: "acme/web".into(),
+                        number: 7,
+                        state: "open".into(),
+                        updated_at: "2026-11-26T10:00:00Z".into(),
+                        ..Default::default()
+                    }])
+                });
+                shell.adopt_inbox(inbox, window, cx);
+                shell.invalidate_chrome(cx);
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let dot = visual
+            .debug_bounds("sidebar-navigation-unread-Git")
+            .expect("the dot shows");
+        let icon = visual.debug_bounds("sidebar-navigation-Git").unwrap();
+        assert!(icon.contains(&dot.origin), "the dot sits on the icon");
+        assert!(
+            visual
+                .debug_bounds("sidebar-navigation-count-Git")
+                .is_none()
+        );
+    }
+
     #[test]
     fn switching_moves_a_project_to_the_front_of_recents_once() {
         let mut recent = vec!["/a".to_owned(), "/b".to_owned()];
@@ -1270,7 +1328,7 @@ mod tests {
             },
             false,
         );
-        assert_eq!(rail_tint("Inbox"), Some(rgb(0xa5b4fc).into()));
+        assert_eq!(rail_tint("Git"), Some(rgb(0xfdba74).into()));
         assert_eq!(rail_tint("Automations"), Some(rgb(0xfbbf24).into()));
         assert_eq!(rail_tint("New thread"), Some(rgb(0x6ee7b7).into()));
         // Home and Search take the row's ink.

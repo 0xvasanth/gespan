@@ -13,6 +13,10 @@ pub mod azure_devops;
 pub use avatar::png as avatar_png;
 pub mod ci_repair;
 pub mod events;
+pub mod polish;
+pub mod queue;
+pub mod review;
+pub use review::{CheckSummary, RepoHit, Review, Verdict};
 pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
@@ -89,6 +93,23 @@ pub struct Item {
     pub attention_reason: String,
     /// Who opened it, where the provider's list says (GitHub).
     pub author: String,
+    /// Pull requests: the host's verdict, `approved`, `changes_requested`,
+    /// `review_required`, or empty when the host gives none.
+    pub review_decision: String,
+    /// Pull requests: each reviewer's latest review.
+    pub reviews: Vec<Review>,
+    /// Pull requests: who is still asked to review (logins or team names).
+    pub requested_reviewers: Vec<String>,
+    /// The connected account's login on this item's host, so "you" can be
+    /// told apart from everyone else without asking the host again.
+    pub viewer: String,
+    /// Pull requests: how the head commit's checks stand.
+    pub check_summary: CheckSummary,
+    /// Pull requests: lines added and removed.
+    pub additions: i64,
+    pub deletions: i64,
+    /// Found by the org-wide review-requested search, outside your repos.
+    pub other_repo: bool,
     /// What happened on the item, when this item stands for one event on
     /// it (a comment, a failed check, a review request, a merge or an
     /// assignment) rather than the item itself. Such items are offered to
@@ -671,6 +692,20 @@ pub struct Snapshot {
     pub repo_errors: BTreeMap<String, String>,
     /// `Item::key` to its repository scope, for repository-backed items.
     pub item_scopes: HashMap<String, String>,
+    /// Every repository this poll visited, listed or not, so Settings › Git
+    /// can show repositories with no open pull requests. Hand-added ones
+    /// (see [`Service::list_git`]) have no `project_path`.
+    pub repos: Vec<ProjectRepo>,
+}
+
+/// A repository the Git page follows: one an open project points at, or one
+/// added by hand (no `project_path`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProjectRepo {
+    pub provider: String,
+    pub repo: String,
+    pub project_path: String,
 }
 
 /// One project's repository and work-item kind: the unit a forge fetch
@@ -689,6 +724,7 @@ struct RepoFetch {
     fetched: BTreeSet<String>,
     errors: BTreeMap<String, String>,
     item_scopes: HashMap<String, String>,
+    repos: Vec<ProjectRepo>,
 }
 
 /// Fetches issues and PRs for each project's repositories. One failing
@@ -781,7 +817,7 @@ fn github_work_items(
         return Ok(vec![]);
     };
     let assigned_to_me = filters.assigned_to_me;
-    github_call(
+    let mut items: Vec<Item> = github_call(
         project,
         "git_github_work_items",
         json!({
@@ -803,7 +839,33 @@ fn github_work_items(
                 limit,
             )
         },
-    )
+    )?;
+    // Another machine signs in with its own account; a host that can't say
+    // which leaves `viewer` empty rather than failing the list.
+    if kind == "pr"
+        && remote_workspace::is_remote(project)
+        && items.iter().any(|i| i.viewer.is_empty())
+    {
+        let viewer = remote_github_login(project);
+        for item in items.iter_mut().filter(|i| i.viewer.is_empty()) {
+            item.viewer = viewer.clone();
+        }
+    }
+    Ok(items)
+}
+
+/// The login of the `gh` account on a remote project's machine, cached per
+/// machine for a few minutes; empty when its host can't say.
+fn remote_github_login(project: &Path) -> String {
+    static LOGINS: review::TtlCache<String> = review::TtlCache::new(
+        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(120),
+    );
+    LOGINS
+        .get(github_account(project), || {
+            remote_workspace::command::<String>("git_github_login", json!({"cwd": project}))
+        })
+        .unwrap_or_default()
 }
 
 /// What `gh` searches for `kind` under `filters`, or `None` when nothing of
@@ -845,6 +907,11 @@ fn collect_repo_items(
             if !visited.insert(format!("{account}:{}", repo.to_lowercase())) {
                 continue;
             }
+            out.repos.push(ProjectRepo {
+                provider: provider.into(),
+                repo: repo.clone(),
+                project_path: project.to_string_lossy().into_owned(),
+            });
             for kind in ["issue", "pr"] {
                 let scope = repo_scope(provider, project, &repo, kind);
                 match fetch(project, &repo, kind) {
@@ -1187,6 +1254,7 @@ impl Service {
                 snapshot.fetched.extend(fetch.fetched);
                 snapshot.repo_errors.extend(fetch.errors);
                 snapshot.item_scopes.extend(fetch.item_scopes);
+                snapshot.repos.extend(fetch.repos);
                 Ok(fetch.items)
             })();
             match result {
@@ -1211,6 +1279,34 @@ impl Service {
         });
         let mut seen = HashSet::new();
         snapshot.items.retain(|i| seen.insert(i.key()));
+        snapshot
+    }
+    /// The Git page's poll: [`Service::list`] for `projects`, then the open
+    /// pull requests of each repository in `added` (`(provider, repo)`,
+    /// added by hand) that no project already covers, then, when
+    /// `other_repos`, the pull requests asking for your review anywhere
+    /// else (rows with `other_repo` set).
+    ///
+    /// A hand-added repository that fails is recorded in `repo_errors` under
+    /// its repository scope (no project); a host whose review-request search
+    /// fails is recorded under `<provider>:other-review-requests`. Rows are
+    /// deduplicated by [`Item::key`], newest first, and every followed
+    /// repository is in `repos`.
+    pub fn list_git(
+        &self,
+        projects: &[PathBuf],
+        state: &ViewState,
+        added: &[(String, String)],
+        other_repos: bool,
+    ) -> Snapshot {
+        let mut snapshot = self.list(projects, state);
+        let other = |known: &[(String, String)]| self.other_review_requests_by_host(known);
+        review::merge_git(
+            &mut snapshot,
+            added,
+            |provider, repo| self.list_added_repo(provider, repo),
+            other_repos.then_some(&other as &dyn Fn(&[(String, String)]) -> _),
+        );
         snapshot
     }
     pub fn details(&self, item: &Item) -> Result<Details, String> {
@@ -1911,6 +2007,44 @@ mod notification_tests {
     }
 
     #[test]
+    fn every_visited_repo_is_listed_once_even_without_rows_or_when_failing() {
+        // Settings › Git lists a project's repos with no open pull requests.
+        let projects = [PathBuf::from(PROJECT), PathBuf::from("/work/app-2")];
+        let fetch = collect_repo_items(
+            "github",
+            &projects,
+            // A second checkout of the same repository is visited once.
+            |_| {
+                Ok(vec![
+                    "acme/app".into(),
+                    "acme/fork".into(),
+                    "Acme/App".into(),
+                ])
+            },
+            |_, repo, _| match repo {
+                "acme/fork" => Err("disabled".into()),
+                _ => Ok(vec![]),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            fetch.repos,
+            [
+                ProjectRepo {
+                    provider: "github".into(),
+                    repo: "acme/app".into(),
+                    project_path: PROJECT.into(),
+                },
+                ProjectRepo {
+                    provider: "github".into(),
+                    repo: "acme/fork".into(),
+                    project_path: PROJECT.into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn every_repo_failing_fails_the_provider() {
         let projects = [PathBuf::from(PROJECT)];
         let error = collect_repo_items(
@@ -2339,6 +2473,8 @@ mod remote_github_tests {
                 "git_github_repositories" => json!(["acme/web"]),
                 "git_github_work_items" if args["kind"] == "pr" => json!([host_item()]),
                 "git_github_work_items" => json!([]),
+                // The machine's own account, which "you" are there.
+                "git_github_login" => json!("remote-me"),
                 other => panic!("unexpected command {other}"),
             })
         });
@@ -2358,6 +2494,7 @@ mod remote_github_tests {
             .expect("the remote pull request");
         assert_eq!(item.number, 42);
         assert_eq!(item.project_path, PROJECT);
+        assert_eq!(item.viewer, "remote-me");
         let calls = calls.borrow();
         assert_eq!(calls[0].1, json!({"cwd": "/home/me/web"}));
         assert_eq!(calls[1].1["repo"], "acme/web");

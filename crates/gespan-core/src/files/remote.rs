@@ -117,6 +117,8 @@ fn host_arguments(command: &str, args: Value) -> Result<(String, Value), String>
             | "git_github_work_item_thread"
             | "git_github_work_item_comment"
             | "git_github_pr_action"
+            | "git_github_pr_review"
+            | "git_github_login"
             | "git_github_pr_diff"
             | "git_github_pr_checks"
             | "git_github_check_details"
