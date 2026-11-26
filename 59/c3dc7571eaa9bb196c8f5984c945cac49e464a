@@ -1,10 +1,12 @@
 crates/gespan-gpui/src/shell/agents_panel_tests.rs
   s_5464f69916eb5b::t_2ab6d4443fd869 423
   s_5464f69916eb5b::t_62bd91422fd105 424
+  s_5464f69916eb5b::t_2d94a177b64159 40,42-48,411,426
 crates/gespan-gpui/src/settings/pages/appearance.rs
   s_5464f69916eb5b::t_2ab6d4443fd869 50,805
 crates/gespan-gpui/src/settings/glass_tests.rs
   s_5464f69916eb5b::t_2ab6d4443fd869 270,276
+  s_5464f69916eb5b::t_2d94a177b64159 279-283
 crates/gespan-gpui/src/shell/sidebar_list.rs
   s_5464f69916eb5b::t_39241fd7384883 61-62,3136-3148
   s_5464f69916eb5b::t_fc958aef25020e 68-69,99,413-414,589-595,598-601
@@ -14,6 +16,7 @@ crates/gespan-gpui/src/shell/sidebar_list.rs
   s_5464f69916eb5b::t_7872067b98d269 2148-2150
   s_5464f69916eb5b::t_197c9e64853ed8 3149-3151
   s_5464f69916eb5b::t_b729fe730434b0 3153
+  s_5464f69916eb5b::t_2d94a177b64159 888,2203,3011
 crates/gespan-gpui/src/shell/rail.rs
   s_5464f69916eb5b::t_aaf112decb15b3 1216
   s_5464f69916eb5b::t_fc958aef25020e 28-31,41,1088
