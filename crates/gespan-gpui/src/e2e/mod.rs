@@ -30,6 +30,7 @@ mod git_polish_tests;
 mod hello_tests;
 mod message_tests;
 mod pilot_live_tests;
+mod rail_tests;
 mod remote_tests;
 mod roster_tests;
 mod start_tests;

@@ -1103,6 +1103,22 @@ fn pilot_ask_needs_you_until_the_question_is_answered(cx: &mut TestAppContext) {
         visual.debug_bounds("pilot-ask-open").is_some(),
         "the decision card shows"
     );
+    // The rail's Pilot row shows what it waits on, between name and status.
+    let pilot_id = s
+        .manager
+        .read_with(visual, |m, _| m.current().unwrap().id.clone());
+    let question =
+        |v: &mut gpui::VisualTestContext| v.update(|_, cx| chat.read(cx).pilot_question(cx));
+    assert_eq!(
+        question(visual).as_deref(),
+        Some("The API lead stopped with 12 decisions. Go with my recommendations?")
+    );
+    let rail_question: &'static str =
+        Box::leak(format!("pilot-rail-question-{pilot_id}").into_boxed_str());
+    assert!(
+        visual.debug_bounds(rail_question).is_some(),
+        "the rail row carries the question"
+    );
     let first = visual
         .debug_bounds("pilot-open-choice-0")
         .expect("its answers wait above the composer");
@@ -1138,6 +1154,8 @@ fn pilot_ask_needs_you_until_the_question_is_answered(cx: &mut TestAppContext) {
     visual.run_until_parked();
     assert_eq!(status(visual), "idle", "an answer ends the wait");
     visual.refresh().unwrap();
+    assert_eq!(question(visual), None, "answered: the rail row drops it");
+    assert!(visual.debug_bounds(rail_question).is_none());
     assert!(visual.debug_bounds("pilot-open-choice-0").is_none());
     assert!(
         visual.debug_bounds("pilot-ask-answered").is_some(),
@@ -6921,12 +6939,13 @@ fn the_pilots_section_spans_the_rail_with_its_status_at_the_right_edge(cx: &mut 
         );
     }
     assert_eq!(
-        row.right(),
-        section.right() - px(10.),
-        "a row spans the section"
+        (row.left(), row.right()),
+        (section.left(), section.right()),
+        "a row spans the section, on the project card's row edges"
     );
     assert!(
-        row.right() - status.right() <= px(9.),
+        // The row's 10px `.prow` padding, as on the board.
+        row.right() - status.right() <= px(10.),
         "the status sits at the row's right edge, not after the name"
     );
 }
@@ -7003,7 +7022,8 @@ fn focused_rail_shows_status_dot_not_words(cx: &mut TestAppContext) {
     let avatar_dot = visual.debug_bounds(dot).expect("a working Pilot has a dot");
     assert_eq!(avatar_dot.size, gpui::size(px(8.), px(8.)));
     assert!(
-        row.contains(&avatar_dot.center()) && avatar_dot.center().x < row.left() + px(24.),
+        // 10px row padding, then the 16px mascot the dot sits on.
+        row.contains(&avatar_dot.center()) && avatar_dot.center().x < row.left() + px(28.),
         "the dot sits on the avatar at the row's start"
     );
     assert_ne!(

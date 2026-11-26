@@ -1,7 +1,9 @@
-//! Rail F1, the left nav scoped to one project: the project switcher, one
-//! row of page icons, New thread, then (in the virtual list) Needs you,
-//! Running, the project's folders and its Pilots. Measured from the design
-//! board `ExpNavTopProject.dc.html`.
+//! The "Two zones" left nav. An **Everywhere** card holds what spans every
+//! project: Search as a field, then Home, My tasks, Git and Automations as
+//! labelled rows. Under it, a **This project** card tinted with the
+//! project's own colour holds the switcher, New thread and (in the virtual
+//! list) the Pilots, Now and Sessions. The running card and Settings close
+//! the rail. Measured from the design board `SoTSidebar.dc.html`.
 //!
 //! What goes in which section is decided in [`super::rail_plan`]; this
 //! module gathers the inputs and draws the rows.
@@ -11,7 +13,6 @@
 use super::rail_plan::{self, Folder, FolderInput, FolderKind, Live};
 use super::session_groups::{PILOT_PREFIX, RenameTarget, toggle_group};
 use super::*;
-use gespan_core::files::path_key;
 use gespan_core::session_groups::Entry;
 use gpui::{BoxShadow, Hsla, Stateful};
 
@@ -22,13 +23,20 @@ pub(super) const ROW_HEIGHT: f32 = 28.;
 const ROW_FONT: f32 = 12.5;
 /// `.fold`: a folder header.
 const FOLD_HEIGHT: f32 = 26.;
+/// A row's own left padding in the flat Sessions list.
+pub(super) const ROW_INSET: f32 = 10.;
 /// `.kid`: a session under an open folder.
 pub(super) const KID_INDENT: f32 = 22.;
+/// `.zone`: a card's padding, inside its 1px border.
+pub(super) const CARD_PAD: f32 = 4.;
+/// The space between the Everywhere and This project cards.
+const CARD_GAP: f32 = 10.;
+const SEARCH_HEIGHT: f32 = 30.;
 const MORE_HEIGHT: f32 = 24.;
 /// The time column, right-aligned.
 const TIME_WIDTH: f32 = 26.;
-/// A live row's folder label, before it truncates.
-const FOLDER_LABEL_MAX: f32 = 74.;
+/// A row's branch label, before it truncates (`.wt`).
+const BRANCH_LABEL_WIDTH: f32 = 84.;
 const SWITCHER_HEIGHT: f32 = 44.;
 /// The switcher's tooltip: its shortcut moved here to make room for "…".
 const SWITCHER_HINT: &str = if cfg!(target_os = "macos") {
@@ -36,8 +44,6 @@ const SWITCHER_HINT: &str = if cfg!(target_os = "macos") {
 } else {
     "Switch project  Ctrl+O"
 };
-const PAGE_WIDTH: f32 = 42.;
-const PAGE_HEIGHT: f32 = 32.;
 
 /// The waiting yellow and its ink, light-theme variants second.
 const WAIT: u32 = 0xe8c547;
@@ -123,29 +129,6 @@ pub(super) fn kbd(text: impl Into<SharedString>) -> gpui::Div {
         .line_height(px(14.))
         .text_color(faint_ink())
         .child(text.into())
-}
-
-/// `.count`, and `.count.hot` for what waits on you.
-pub(super) fn count_pill(n: usize, hot: bool) -> gpui::Div {
-    let (ink, fill) = if hot {
-        (wait_ink(), Hsla::from(rgb(WAIT)).opacity(0.22))
-    } else {
-        (content(1.), content(0.10))
-    };
-    div()
-        .flex_shrink_0()
-        .h(px(16.))
-        .min_w(px(18.))
-        .px(px(5.))
-        .rounded_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(fill)
-        .text_size(px(11.))
-        .font_weight(FontWeight::NORMAL)
-        .text_color(ink)
-        .child(n.to_string())
 }
 
 /// `.rl-sec`: a section heading, with an optional count and a trailing
@@ -262,8 +245,9 @@ pub(super) fn automations_aria(going: usize, failing: usize) -> String {
     parts.join(", ")
 }
 
-/// The pages in the icon row, in order, with their glyphs.
-const PAGES: [(&str, &str); 8] = [
+/// The Everywhere card's pages, in order, with their glyphs. Flows, Board
+/// and Notes join when Settings turns them on.
+const PAGES: [(&str, &str); 7] = [
     ("Home", "home"),
     ("My tasks", "circle-alert"),
     ("Git", "git-pull-request"),
@@ -271,8 +255,50 @@ const PAGES: [(&str, &str); 8] = [
     ("Flows", "git-merge"),
     ("Board", "kanban"),
     ("Notes", "note"),
-    ("Search", "search"),
 ];
+
+/// `.zone`: a rounded card on the rail. `tint` colours its border and fill,
+/// for the project card; without it, the neutral Everywhere card.
+pub(super) fn zone(tint: Option<Hsla>) -> gpui::Div {
+    let (edge, fill) = match tint {
+        Some(tint) => (tint.opacity(0.30), tint.opacity(0.045)),
+        None => (content(0.07), content(0.025)),
+    };
+    div()
+        .w_full()
+        .rounded(px(12.))
+        .border_1()
+        .border_color(edge)
+        .bg(fill)
+        .p(px(CARD_PAD))
+        .flex()
+        .flex_col()
+        .gap_px()
+        .overflow_hidden()
+}
+
+/// `.zlab`: a card's small caps label, "EVERYWHERE".
+fn zone_label(text: &'static str) -> gpui::Div {
+    div()
+        .debug_selector(move || format!("rail-zone-{text}"))
+        .pt(px(10.))
+        .px(px(10.))
+        .pb(px(4.))
+        .text_size(px(10.5))
+        .line_height(px(13.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(faint_ink())
+        .child(text.to_uppercase())
+}
+
+/// What a row's trailing column shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Trailing {
+    /// Its age, as in Now.
+    Age,
+    /// Its branch as a small label, or its age while the branch is unknown.
+    Branch,
+}
 
 impl Shell {
     /// The project switcher's groups and, per project, its branch, what
@@ -341,166 +367,176 @@ impl Shell {
             .collect()
     }
 
-    /// The rail's folders for this project, by the Settings choice: the
-    /// worktrees sessions run in, or the user's own folders.
+    /// The user's own folders for this project, when Settings groups by
+    /// folders, and every session in none of them. By worktree there are
+    /// no folders: every session is in the one flat list. A Pilot's
+    /// sessions are listed here too; the plan lists them under the Pilot.
     pub(super) fn rail_folders(
         &self,
         entries: &[Entry],
-        ids: &[i64],
-        cx: &App,
-    ) -> Vec<FolderInput> {
-        let recent_first = |sessions: &[i64]| {
-            let mut sessions = sessions.to_vec();
-            sessions.sort_by_key(|id| {
-                std::cmp::Reverse((self.session_metadata(*id, cx).summary.updated_at, *id))
-            });
-            sessions
-        };
-        let stored = |key: &str| self.workspace.rail_folds.get(key).copied();
-        if !self.workspace.preferences.groups_by_worktree() {
-            let groups = self.project_groups();
-            let mut inputs = Vec::new();
-            let mut loose = Vec::new();
+        _cx: &App,
+    ) -> (Vec<FolderInput>, Vec<i64>) {
+        let mut loose = Vec::new();
+        if self.workspace.preferences.groups_by_worktree() {
             for entry in entries {
-                let (key, label, kind, sessions, open) = match entry {
-                    Entry::Reminders {
-                        collapsed,
-                        sessions,
-                    } => (
-                        "reminders".to_owned(),
-                        "Reminders".to_owned(),
-                        FolderKind::Reminders,
-                        sessions.clone(),
-                        !collapsed,
-                    ),
-                    Entry::Folder { id, sessions } => {
-                        let Some(folder) = groups.folder(id) else {
-                            continue;
-                        };
-                        (
-                            format!("folder:{id}"),
-                            folder.name.clone(),
-                            FolderKind::Folder,
-                            recent_first(sessions),
-                            !folder.collapsed,
-                        )
-                    }
-                    Entry::Fixed { id, name, sessions } => (
-                        id.clone(),
-                        name.clone(),
-                        match id.strip_prefix(PILOT_PREFIX) {
-                            Some(pilot) => FolderKind::Pilot(pilot.to_owned()),
-                            None => FolderKind::Automation,
-                        },
-                        recent_first(sessions),
-                        !groups.fixed_is_collapsed(id),
-                    ),
-                    Entry::Pinned { sessions } => (
-                        "pinned".to_owned(),
-                        "Pinned".to_owned(),
-                        FolderKind::Pinned,
-                        sessions.clone(),
-                        !groups.pinned_collapsed,
-                    ),
-                    Entry::Session(id) => {
-                        loose.push(*id);
-                        continue;
-                    }
-                };
-                inputs.push(FolderInput {
-                    key,
-                    label,
-                    kind,
-                    sessions,
-                    stored_open: Some(open),
-                    open_by_default: true,
+                loose.extend(match entry {
+                    Entry::Session(id) => vec![*id],
+                    Entry::Reminders { sessions, .. }
+                    | Entry::Folder { sessions, .. }
+                    | Entry::Fixed { sessions, .. }
+                    | Entry::Pinned { sessions } => sessions.clone(),
                 });
             }
-            let key = format!("loose:{}", path_key(&self.workspace.project));
+            return (Vec::new(), loose);
+        }
+        let groups = self.project_groups();
+        let mut inputs = Vec::new();
+        for entry in entries {
+            let (key, label, kind, sessions, open) = match entry {
+                Entry::Reminders {
+                    collapsed,
+                    sessions,
+                } => (
+                    "reminders".to_owned(),
+                    "Reminders".to_owned(),
+                    FolderKind::Reminders,
+                    sessions.clone(),
+                    !collapsed,
+                ),
+                Entry::Folder { id, sessions } => {
+                    let Some(folder) = groups.folder(id) else {
+                        continue;
+                    };
+                    (
+                        format!("folder:{id}"),
+                        folder.name.clone(),
+                        FolderKind::Folder,
+                        sessions.clone(),
+                        !folder.collapsed,
+                    )
+                }
+                // A Pilot's sessions go under the Pilot, never a folder.
+                Entry::Fixed { id, sessions, .. } if id.starts_with(PILOT_PREFIX) => {
+                    loose.extend(sessions.iter().copied());
+                    continue;
+                }
+                Entry::Fixed { id, name, sessions } => (
+                    id.clone(),
+                    name.clone(),
+                    FolderKind::Automation,
+                    sessions.clone(),
+                    !groups.fixed_is_collapsed(id),
+                ),
+                Entry::Pinned { sessions } => (
+                    "pinned".to_owned(),
+                    "Pinned".to_owned(),
+                    FolderKind::Pinned,
+                    sessions.clone(),
+                    !groups.pinned_collapsed,
+                ),
+                Entry::Session(id) => {
+                    loose.push(*id);
+                    continue;
+                }
+            };
             inputs.push(FolderInput {
-                stored_open: stored(&key),
                 key,
-                label: "Sessions".into(),
-                kind: FolderKind::Loose,
-                sessions: recent_first(&loose),
-                open_by_default: true,
+                label,
+                kind,
+                sessions,
+                open,
             });
-            return inputs;
         }
-        // By worktree: a worktree whose sessions a Pilot launched shows the
-        // Pilot; one holding only automation runs, a bolt.
-        let (_, fixed) = self.sidebar_groups(cx);
-        let mut pilot_of: HashMap<i64, String> = HashMap::new();
-        for folder in &fixed {
-            if let Some(pilot) = folder.id.strip_prefix(PILOT_PREFIX) {
-                for id in &folder.session_ids {
-                    pilot_of.entry(*id).or_insert_with(|| pilot.to_owned());
-                }
-            }
-        }
-        let automation = |id: &i64| self.automation_state.session_automations.contains_key(id);
-        let listed: Vec<_> = ids
-            .iter()
-            .map(|id| super::sidebar_list::Listed {
-                id: *id,
-                created_at: self.session_metadata(*id, cx).summary.created_at,
-                path: self.session_working_copy(*id, cx).to_owned(),
-            })
-            .collect();
-        let here = path_key(self.working_copy());
-        let mut inputs: Vec<FolderInput> = super::sidebar_list::worktree_groups(&listed)
-            .into_iter()
-            .map(|(path, sessions)| {
-                let key = format!("wt:{}", path_key(&path));
-                let kind = match sessions.iter().find_map(|id| pilot_of.get(id)) {
-                    Some(pilot) => FolderKind::Pilot(pilot.clone()),
-                    None if sessions.iter().all(automation) => FolderKind::Automation,
-                    None => FolderKind::Branch,
-                };
-                FolderInput {
-                    stored_open: stored(&key),
-                    key,
-                    label: self.worktree_label(&path),
-                    kind,
-                    sessions: recent_first(&sessions),
-                    open_by_default: path_key(&path) == here,
-                }
-            })
-            .collect();
-        // The folder the project works in leads, as on the board.
-        if let Some(ix) = inputs.iter().position(|f| f.open_by_default) {
-            let first = inputs.remove(ix);
-            inputs.insert(0, first);
-        }
-        inputs
+        (inputs, loose)
+    }
+
+    /// A session row's branch label, from the worktree it runs in. `None`
+    /// while the branch is unknown: the row shows its age instead.
+    pub(super) fn rail_branch_label(&self, id: i64, cx: &App) -> Option<SharedString> {
+        let path = self.session_working_copy(id, cx);
+        crate::git_cache::worktree_branch(&self.workspace.project, path)
+            .map(|branch| rail_plan::branch_label(&branch).into())
     }
 
     /// Opens or closes a rail folder, remembering the choice. The user's
     /// folders keep their own stored state, as before.
     pub(super) fn toggle_rail_folder(&mut self, folder: &Folder, cx: &mut Context<Self>) {
         let key = folder.key.clone();
-        if key.starts_with("wt:") || key.starts_with("loose:") {
-            self.workspace.rail_folds.insert(key, !folder.open);
-            self.persist(cx);
-            self.notify_sidebar(cx);
-        } else {
-            self.update_groups(cx, |groups| toggle_group(groups, &key));
-        }
+        self.update_groups(cx, |groups| toggle_group(groups, &key));
     }
 
-    /// The pinned top of the rail: switcher, page icons and New thread.
+    /// The Everywhere card, pinned at the top of the rail: Search, then the
+    /// pages that span every project as labelled rows.
     pub(super) fn rail_top(&mut self, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex_shrink_0()
             .w_full()
             .px(px(RAIL_PAD))
             .pt(px(4.))
+            .pb(px(CARD_GAP))
+            .child(
+                zone(None)
+                    .debug_selector(|| "rail-everywhere".into())
+                    .child(zone_label("Everywhere"))
+                    .child(self.rail_search_field(cx))
+                    .children(self.rail_page_rows(cx)),
+            )
+            .into_any()
+    }
+
+    /// The This project card: tinted with the project's colour, the one its
+    /// title-bar tab group wears. It holds the switcher, New thread and the
+    /// scrolling list of Pilots, Now and Sessions.
+    pub(super) fn rail_project_card(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let project = self.workspace.project.clone();
+        let tint: Hsla = rgb(self.appearance(&project).color(&project)).into();
+        div()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .px(px(RAIL_PAD))
             .flex()
             .flex_col()
-            .gap_px()
-            .child(self.rail_switcher(cx))
-            .child(self.rail_pages(cx))
-            .child(self.sidebar_new_thread(cx))
+            .child(
+                zone(Some(tint))
+                    .debug_selector(|| "rail-project-card".into())
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.rail_switcher(cx))
+                    .child(self.sidebar_new_thread(cx))
+                    .child(self.virtual_sidebar(cx)),
+            )
+            .into_any()
+    }
+
+    /// Search as a real field, ⌘K.
+    fn rail_search_field(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let on = self.app_search.is_some();
+        div()
+            .id("Search")
+            .debug_selector(|| "sidebar-navigation-Search".into())
+            .role(Role::Button)
+            .aria_label("Search sessions")
+            .aria_selected(on)
+            .cursor_pointer()
+            .mx(px(2.))
+            .mb(px(4.))
+            .h(px(SEARCH_HEIGHT))
+            .px(px(8.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(content(if on { 0.16 } else { 0.08 }))
+            .bg(content(if on { 0.08 } else { 0.04 }))
+            .hover(|s| s.bg(content(0.07)))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .text_size(px(12.5))
+            .text_color(faint_ink())
+            .child(icon("search", 14.).text_color(muted_ink()))
+            .child(div().flex_1().min_w_0().truncate().child("Search"))
+            .child(kbd(format!("{MOD}K")))
+            .on_click(cx.listener(|this, _, window, cx| this.focus_search(window, cx)))
             .into_any()
     }
 
@@ -653,198 +689,161 @@ impl Shell {
         }
     }
 
-    /// The pages as one row of icons. Flows, Board and Notes join it when
-    /// Settings turns them on, and the icons share the width.
-    fn rail_pages(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    /// The Everywhere card's pages as labelled rows: My tasks with its
+    /// yellow count, Git with an unread dot, Automations with a run dot or
+    /// a failed count.
+    fn rail_page_rows(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let flows_visible = crate::flows::visible(cx);
         let waiting = self.my_task_count(cx);
         let unread = self
             .inbox
             .as_ref()
             .map_or(0, |inbox| inbox.read(cx).unread_count());
-        let searching = self.app_search.is_some();
         let (runs_going, runs_failing) = self.automation_state.rail_runs;
-        div()
-            .debug_selector(|| "sidebar-pages".into())
-            .w_full()
-            .pt(px(8.))
-            .pb(px(4.))
-            .flex()
-            .justify_between()
-            .children(
-                PAGES
-                    .into_iter()
-                    .filter(|(label, _)| match *label {
-                        "Notes" => self.workspace.preferences.notes,
-                        "Automations" => self.workspace.sidebar_automations_visible,
-                        "Flows" => flows_visible,
-                        "Board" => self.workspace.preferences.board,
-                        "Git" => self.workspace.sidebar_inbox_visible,
-                        _ => true,
-                    })
-                    .map(|(label, glyph)| {
-                        let on = if label == "Search" {
-                            searching
-                        } else {
-                            self.app_view_label() == Some(label)
-                        };
-                        let badge = match label {
-                            "My tasks" if waiting > 0 => Some((waiting, true)),
-                            _ => None,
-                        };
-                        // The bolt: a rose count while automations are
-                        // failing, else a blue dot while a run is going.
-                        let failing =
-                            (label == "Automations" && runs_failing > 0).then_some(runs_failing);
-                        let going = label == "Automations" && runs_going > 0 && failing.is_none();
-                        let aria: SharedString = match (label, badge) {
-                            ("My tasks", Some((n, _))) => format!("My tasks, {n} waiting").into(),
-                            ("Git", _) if unread > 0 => format!("Git, {unread} new").into(),
-                            ("Search", _) => "Search sessions".into(),
-                            ("Automations", _) => automations_aria(runs_going, runs_failing).into(),
-                            _ => label.into(),
-                        };
-                        let ink =
-                            rail_tint(label).unwrap_or_else(|| content(if on { 1. } else { 0.74 }));
+        let open = self.app_view_label();
+        PAGES
+            .into_iter()
+            .filter(|(label, _)| match *label {
+                "Notes" => self.workspace.preferences.notes,
+                "Automations" => self.workspace.sidebar_automations_visible,
+                "Flows" => flows_visible,
+                "Board" => self.workspace.preferences.board,
+                "Git" => self.workspace.sidebar_inbox_visible,
+                _ => true,
+            })
+            .map(|(label, glyph)| {
+                let on = open == Some(label);
+                let aria: SharedString = match label {
+                    "My tasks" if waiting > 0 => format!("My tasks, {waiting} waiting").into(),
+                    "Git" if unread > 0 => format!("Git, {unread} new").into(),
+                    "Automations" => automations_aria(runs_going, runs_failing).into(),
+                    _ => label.into(),
+                };
+                let ink = rail_tint(label).unwrap_or_else(|| content(if on { 1. } else { 0.74 }));
+                let trailing: Option<AnyElement> = match label {
+                    "My tasks" if waiting > 0 => Some(
                         div()
-                            .id(label)
-                            .debug_selector(move || format!("sidebar-navigation-{label}"))
-                            .role(Role::Button)
-                            .aria_label(aria)
-                            .aria_selected(on)
-                            .tooltip(move |_, cx| {
-                                cx.new(|_| crate::conversation::HintTooltip(label)).into()
-                            })
-                            .cursor_pointer()
-                            .relative()
-                            .w(px(PAGE_WIDTH))
-                            .min_w_0()
-                            .flex_shrink(1.)
-                            .h(px(PAGE_HEIGHT))
-                            .rounded(px(8.))
+                            .debug_selector(|| "sidebar-navigation-count-My tasks".into())
+                            .h(px(16.))
+                            .min_w(px(16.))
+                            .px(px(5.))
+                            .rounded_full()
                             .flex()
                             .items_center()
                             .justify_center()
-                            .when(on, |d| d.bg(content(0.11)))
-                            .hover(|s| s.bg(content(0.06)))
-                            .child(icon(glyph, 16.).text_color(ink))
-                            .when_some(badge, |d, (n, hot)| {
-                                d.child(
-                                    div()
-                                        .debug_selector(move || {
-                                            format!("sidebar-navigation-count-{label}")
-                                        })
-                                        .absolute()
-                                        .top(px(2.))
-                                        .right(px(3.))
-                                        .h(px(14.))
-                                        .min_w(px(14.))
-                                        .px(px(4.))
-                                        .rounded_full()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .bg(if hot {
-                                            Hsla::from(rgb(WAIT))
-                                        } else {
-                                            content(0.18)
-                                        })
-                                        .text_size(px(9.5))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(if hot { black(0.93) } else { content(1.) })
-                                        .child(n.to_string()),
-                                )
+                            .bg(Hsla::from(rgb(WAIT)).opacity(0.22))
+                            .text_size(px(11.))
+                            .text_color(wait_ink())
+                            .child(waiting.to_string())
+                            .into_any_element(),
+                    ),
+                    "Git" if unread > 0 => Some(
+                        div()
+                            .debug_selector(|| "sidebar-navigation-unread-Git".into())
+                            .size(px(7.))
+                            .rounded_full()
+                            .bg(rail_tint("Git").unwrap_or_else(accent_color))
+                            .into_any_element(),
+                    ),
+                    "Automations" if runs_going > 0 || runs_failing > 0 => Some(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .when(runs_going > 0, |d| {
+                                d.child(live_dot(Some(Live::Running)).debug_selector(|| {
+                                    "sidebar-navigation-running-Automations".into()
+                                }))
                             })
-                            .when_some(failing, |d, n| {
+                            .when(runs_failing > 0, |d| {
                                 d.child(
                                     div()
                                         .debug_selector(|| {
                                             "sidebar-navigation-failing-Automations".into()
                                         })
-                                        .absolute()
-                                        .top(px(2.))
-                                        .right(px(3.))
-                                        .h(px(14.))
-                                        .min_w(px(14.))
-                                        .px(px(4.))
+                                        .h(px(16.))
+                                        .min_w(px(16.))
+                                        .px(px(5.))
                                         .rounded_full()
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .bg(crate::glass::Tone::Bad.ink())
-                                        .text_size(px(9.5))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(black(0.93))
-                                        .child(n.to_string()),
+                                        .bg(crate::glass::Tone::Bad.ink().opacity(0.22))
+                                        .text_size(px(11.))
+                                        .text_color(crate::glass::Tone::Bad.ink())
+                                        .child(runs_failing.to_string()),
                                 )
                             })
-                            // Git marks something new with a dot, not a count.
-                            .when(label == "Git" && unread > 0, |d| {
-                                d.child(
-                                    div()
-                                        .debug_selector(|| "sidebar-navigation-unread-Git".into())
-                                        .absolute()
-                                        .top(px(5.))
-                                        .right(px(7.))
-                                        .size(px(7.))
-                                        .rounded_full()
-                                        .bg(accent_color()),
-                                )
-                            })
-                            .when(going, |d| {
-                                d.child(
-                                    div()
-                                        .debug_selector(|| {
-                                            "sidebar-navigation-running-Automations".into()
-                                        })
-                                        .absolute()
-                                        .top(px(5.))
-                                        .right(px(7.))
-                                        .size(px(7.))
-                                        .rounded_full()
-                                        .bg(crate::glass::Tone::Running.ink()),
-                                )
-                            })
-                            .when(label == "Git", |d| {
-                                d.on_mouse_down(
-                                    MouseButton::Right,
-                                    cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
-                                        this.open_menu(
-                                            MenuTarget::InboxNav,
-                                            Anchor::Point(e.position),
-                                            w,
-                                            cx,
-                                        );
-                                        cx.stop_propagation();
-                                    }),
-                                )
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| match label {
-                                "Home" => this.open_home(window, cx),
-                                "My tasks" => this.open_my_tasks(window, cx),
-                                "Git" => this.open_inbox(window, cx),
-                                "Notes" => this.open_notes(window, cx),
-                                "Automations" => this.open_automations(window, cx),
-                                "Flows" => this.open_flows(window, cx),
-                                "Board" => this.open_board(window, cx),
-                                "Search" => this.focus_search(window, cx),
-                                _ => (),
-                            }))
-                    }),
-            )
-            .into_any()
+                            .into_any_element(),
+                    ),
+                    _ => None,
+                };
+                div()
+                    .id(label)
+                    .debug_selector(move || format!("sidebar-navigation-{label}"))
+                    .role(Role::Button)
+                    .aria_label(aria)
+                    .aria_selected(on)
+                    .cursor_pointer()
+                    .w_full()
+                    .h(px(ROW_HEIGHT))
+                    .px(px(10.))
+                    .rounded(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(9.))
+                    .text_size(px(ROW_FONT))
+                    .text_color(if on { content(1.) } else { row_ink() })
+                    .hover(|s| s.bg(content(0.06)).text_color(content(1.)))
+                    .when(on, selected)
+                    .child(icon(glyph, 15.).flex_shrink_0().text_color(ink))
+                    .child(div().flex_1().min_w_0().truncate().child(label))
+                    .children(trailing)
+                    .when(label == "Git", |d| {
+                        d.on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
+                                this.open_menu(
+                                    MenuTarget::InboxNav,
+                                    Anchor::Point(e.position),
+                                    w,
+                                    cx,
+                                );
+                                cx.stop_propagation();
+                            }),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| match label {
+                        "Home" => this.open_home(window, cx),
+                        "My tasks" => this.open_my_tasks(window, cx),
+                        "Git" => this.open_inbox(window, cx),
+                        "Notes" => this.open_notes(window, cx),
+                        "Automations" => this.open_automations(window, cx),
+                        "Flows" => this.open_flows(window, cx),
+                        "Board" => this.open_board(window, cx),
+                        _ => (),
+                    }))
+                    .into_any_element()
+            })
+            .collect()
     }
 
-    /// A session as the rail lists it: dot, title, its folder when it is
-    /// listed outside one, and its age. Hovering swaps the age for Archive.
+    /// A session as the rail lists it: dot, title, then its age (in Now)
+    /// or its branch as a small label (in Sessions; its age while the branch
+    /// is unknown). Hovering swaps either for Archive. `indent` is its left
+    /// padding.
     pub(super) fn rail_session_row(
         &self,
         id: i64,
         live: Option<Live>,
-        folder: Option<SharedString>,
-        kid: bool,
+        trailing: Trailing,
+        indent: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let label = match trailing {
+            Trailing::Age => None,
+            Trailing::Branch => self.rail_branch_label(id, cx),
+        };
         if let Some(row) = self.rename_row(&RenameTarget::Session(id), cx) {
             return row;
         }
@@ -861,6 +860,17 @@ impl Shell {
         self.sidebar_list.track_anchor(anchor.clone());
         let trailing = if self.session_hover == Some(id) {
             self.session_archive_button(id, &session, cx)
+        } else if let Some(label) = label {
+            // A labelled row shows no age.
+            div()
+                .debug_selector(move || format!("rail-session-branch-{id}"))
+                .flex_shrink_0()
+                .max_w(px(BRANCH_LABEL_WIDTH))
+                .truncate()
+                .text_size(px(11.))
+                .text_color(faint_ink())
+                .child(label)
+                .into_any_element()
         } else {
             div()
                 .debug_selector(move || format!("rail-session-age-{id}"))
@@ -896,7 +906,7 @@ impl Shell {
             .relative()
             .w_full()
             .h(px(ROW_HEIGHT))
-            .pl(px(if kid { KID_INDENT } else { 10. }))
+            .pl(px(indent))
             .pr(px(10.))
             .rounded(px(8.))
             .flex()
@@ -946,18 +956,6 @@ impl Shell {
                     .truncate()
                     .child(crate::particle_text::particle_text(title)),
             )
-            .when_some(folder, |d, folder| {
-                d.child(
-                    div()
-                        .debug_selector(move || format!("rail-session-folder-{id}"))
-                        .flex_shrink_0()
-                        .max_w(px(FOLDER_LABEL_MAX))
-                        .truncate()
-                        .text_size(px(11.))
-                        .text_color(faint_ink())
-                        .child(folder),
-                )
-            })
             .child(trailing)
             // At the row's corner, not after its padding, so the anchor
             // covers the whole row.
@@ -1007,7 +1005,7 @@ impl Shell {
 
     /// The mark before a folder's name: a branch, a bolt, the Pilot's
     /// mascot, or the folder's own glyph and colour.
-    fn folder_mark(&self, key: &str, kind: &FolderKind, cx: &App) -> AnyElement {
+    fn folder_mark(&self, key: &str, kind: &FolderKind) -> AnyElement {
         let glyph = |name: &'static str, color: Option<Hsla>| {
             icon(name, 12.)
                 .flex_shrink_0()
@@ -1015,23 +1013,7 @@ impl Shell {
                 .into_any_element()
         };
         match kind {
-            FolderKind::Branch => glyph("git-branch", None), // drawn as text
             FolderKind::Automation => glyph("zap", rail_tint("Automations")),
-            FolderKind::Pilot(pilot) => self
-                .pilots
-                .as_ref()
-                .and_then(|pilots| {
-                    let pilots = pilots.read(cx);
-                    let pilot = pilots.roster.get(pilot)?;
-                    Some(crate::pilots::avatar::avatar(
-                        &pilot.mascot,
-                        pilot.color,
-                        "idle",
-                        12.,
-                        true,
-                    ))
-                })
-                .unwrap_or_else(|| glyph("bot", None)),
             FolderKind::Folder => glyph(
                 "folder",
                 key.strip_prefix("folder:")
@@ -1040,7 +1022,6 @@ impl Shell {
             ),
             FolderKind::Reminders => glyph("clock", Some(rgb(0xf59e0b).into())),
             FolderKind::Pinned => glyph("pin", None),
-            FolderKind::Loose => glyph("chat", None),
         }
     }
 
@@ -1122,10 +1103,7 @@ impl Shell {
                 )
                 .flex_shrink_0(),
             )
-            // A worktree is marked as on the board: "⑂ main", in its text.
-            .when(folder.kind != FolderKind::Branch, |d| {
-                d.child(self.folder_mark(&key, &folder.kind, cx))
-            })
+            .child(self.folder_mark(&key, &folder.kind))
             .child(
                 div()
                     .debug_selector({
@@ -1135,11 +1113,7 @@ impl Shell {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .child(if folder.kind == FolderKind::Branch {
-                        format!("⑂ {}", folder.label)
-                    } else {
-                        folder.label.clone()
-                    }),
+                    .child(folder.label.clone()),
             )
             .child(
                 div()
@@ -1209,11 +1183,12 @@ impl Shell {
             .into_any()
     }
 
-    /// "N more…" under an open folder: lists the rest of it.
+    /// "N more" under Now, Sessions or an open folder: lists the rest.
     pub(super) fn rail_more_row(
         &self,
         key: &str,
-        more: usize,
+        label: String,
+        indent: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let expand = key.to_owned();
@@ -1222,11 +1197,11 @@ impl Shell {
             .id(SharedString::from(format!("rail-folder-more-{key}")))
             .debug_selector(move || selector.clone())
             .role(Role::Button)
-            .aria_label(format!("Show {more} more"))
+            .aria_label(format!("Show {label}"))
             .cursor_pointer()
             .w_full()
             .h(px(MORE_HEIGHT))
-            .pl(px(KID_INDENT))
+            .pl(px(indent))
             .pr(px(10.))
             .rounded(px(8.))
             .flex()
@@ -1234,7 +1209,7 @@ impl Shell {
             .text_size(px(11.5))
             .text_color(faint_ink())
             .hover(|s| s.bg(content(0.06)).text_color(content(1.)))
-            .child(format!("{more} more…"))
+            .child(label)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.sidebar_list.expanded.insert(expand.clone());
                 this.notify_sidebar(cx);

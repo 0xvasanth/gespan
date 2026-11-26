@@ -303,6 +303,15 @@ impl Conversation {
             "idle"
         }
     }
+    /// The question a Pilot's open decision card asks, for its rail row.
+    pub(crate) fn pilot_question(&self, cx: &App) -> Option<String> {
+        self.transcript
+            .read(cx)
+            .open_question()
+            .and_then(|open| open.question)
+            .map(|q| q.trim().to_owned())
+            .filter(|q| !q.is_empty())
+    }
     pub(crate) fn pilot_model(&self) -> Option<String> {
         self.model.clone()
     }

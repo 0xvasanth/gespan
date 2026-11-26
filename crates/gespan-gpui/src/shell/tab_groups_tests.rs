@@ -399,12 +399,10 @@ fn a_worktree_of_another_project_is_named_by_its_branch(cx: &mut TestAppContext)
             let id = add_background_tab(shell, project, cx);
             shell.workspace.tab_workspaces.insert(id, fix.into());
             assert_eq!(
-                shell.worktree_label_in(project, fix),
-                "fix-tabs",
+                crate::git_cache::worktree_branch(project, fix).as_deref(),
+                Some("fix-tabs"),
                 "the branch, resolved under the tab's own project"
             );
-            // The current project's lookup is unchanged.
-            assert_eq!(shell.worktree_label("/work/gespan-other"), "gespan-other");
         })
         .unwrap();
 }

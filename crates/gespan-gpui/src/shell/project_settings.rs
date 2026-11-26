@@ -450,7 +450,7 @@ mod inbox_menu_tests {
         let (window, _, _) = crate::shell::tests::window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
-        // Right-clicking the Inbox row opens it.
+        // Right-clicking the Git row opens it.
         let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
         visual.simulate_mouse_down(inbox.center(), gpui::MouseButton::Right, Default::default());
         visual.run_until_parked();
