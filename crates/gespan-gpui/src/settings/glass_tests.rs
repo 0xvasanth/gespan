@@ -267,14 +267,20 @@ fn layout_pictures_and_sidebar_chips_send_the_shell_events(cx: &mut TestAppConte
     let (seen, _keep) = record(window, visual);
     click(visual, "settings-new-layout-style-boxy");
     click(visual, "settings-toggle-sidebar-inbox");
-    click(visual, "settings-toggle-sidebar-activity");
+    click(visual, "settings-toggle-sidebar-pilots");
     assert_eq!(
         *seen.borrow(),
         [
             "boxy:true",
             "sidebar:sidebar-inbox",
-            "sidebar:sidebar-activity",
+            "sidebar:sidebar-pilots",
         ]
+    );
+    // The running card has no switch: it is always shown.
+    assert!(
+        visual
+            .debug_bounds("settings-toggle-sidebar-activity")
+            .is_none()
     );
     // The rail's grouping is a preference of its own.
     assert_eq!(prefs(window, visual).sidebar_group_by, "worktree");

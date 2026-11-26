@@ -131,7 +131,7 @@ impl Counts {
             parts.push((format!("{} running", self.running), Tone::Strong));
         }
         if self.needs_you > 0 {
-            parts.push((format!("{} needs you", self.needs_you), Tone::Wait));
+            parts.push((needs_you(self.needs_you), Tone::Wait));
         }
         if parts.is_empty() {
             let idle = match self.idle {
@@ -161,12 +161,18 @@ impl Counts {
     pub(super) fn header_text(&self) -> String {
         let parts: Vec<String> = [
             (self.running, "running"),
-            (self.needs_you, "needs you"),
+            (self.needs_you, ""),
             (self.idle, "idle"),
         ]
         .into_iter()
         .filter(|(n, _)| *n > 0)
-        .map(|(n, label)| format!("{n} {label}"))
+        .map(|(n, label)| {
+            if label.is_empty() {
+                needs_you(n)
+            } else {
+                format!("{n} {label}")
+            }
+        })
         .collect();
         if parts.is_empty() {
             "Nothing open".into()
@@ -182,6 +188,15 @@ impl Counts {
         } else {
             Dot::Idle
         }
+    }
+}
+
+/// "1 needs you", "4 need you".
+fn needs_you(n: usize) -> String {
+    if n == 1 {
+        "1 needs you".to_owned()
+    } else {
+        format!("{n} need you")
     }
 }
 
@@ -392,14 +407,10 @@ impl Shell {
         }
     }
 
-    /// The footer pinned above the sidebar's Settings row, and the panel
-    /// above it while open. `None` when Settings turns Activity off.
+    /// The running card pinned above the sidebar's Settings row, and the
+    /// panel above it while open. Always shown, as on the board: the old
+    /// Activity switch (`working_agents`) no longer hides it.
     pub(super) fn agents_footer(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.workspace.preferences.working_agents {
-            self.agents_open = false;
-            self.tick_agents(false, cx);
-            return None;
-        }
         let agents = self.open_agents(cx);
         let counts = Counts::of(&agents);
         let open = self.agents_open;
@@ -419,7 +430,7 @@ impl Shell {
             .cursor_pointer()
             .w_full()
             .h(px(FOOTER_HEIGHT))
-            .px(px(10.))
+            .px(px(9.))
             .rounded(px(10.))
             .flex()
             .items_center()
@@ -428,7 +439,7 @@ impl Shell {
             .border_1()
             .border_color(content(0.07))
             .hover(|s| s.bg(content(0.08)))
-            .text_size(px(12.))
+            .text_size(px(11.5))
             .child(status_dot(counts.dot()))
             .child(div().flex_1().min_w_0().truncate().flex().children(
                 parts.into_iter().enumerate().map(|(ix, (text, tone))| {
@@ -460,8 +471,8 @@ impl Shell {
                 .relative()
                 .flex_shrink_0()
                 .px(px(INSET))
-                .pt_1()
-                // Settings sits just below.
+                // `.pill-agents`' 6px above; Settings sits just below.
+                .pt(px(6.))
                 .pb_1()
                 .children(panel)
                 .child(footer)

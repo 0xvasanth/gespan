@@ -571,7 +571,6 @@ impl SettingsView {
                     | "sidebar-automations"
                     | "sidebar-inbox"
                     | "sidebar-pilots"
-                    | "sidebar-activity"
             )
         });
         let stacked = narrow && !toggle_only;
