@@ -92,6 +92,9 @@ pub(crate) enum DiffEvent {
     StageHunk(SharedString, usize),
     /// Text for the active chat's composer.
     Comment(String),
+    /// A comment for a pull request review, on its line (see
+    /// [`DiffView::review_comments`]).
+    LineComment(gespan_core::inbox::LineComment),
 }
 
 #[derive(Clone, PartialEq)]
@@ -301,6 +304,9 @@ pub(crate) struct DiffView {
     focus_id: Option<SharedString>,
     pub(crate) busy_id: Option<SharedString>,
     pub(crate) file_count: Option<usize>,
+    /// A pull request's Files: a line comment joins the review, on its line,
+    /// instead of going to a chat.
+    pub(crate) review_comments: bool,
     pub(crate) totals: Option<(u32, u32)>,
     highlights: HashMap<SharedString, (Arc<Vec<Block>>, Option<Tokens>)>,
     highlighting: Option<Task<()>>,
@@ -355,6 +361,7 @@ impl DiffView {
             focus_id: None,
             busy_id: None,
             file_count: None,
+            review_comments: false,
             totals: None,
             highlights: HashMap::new(),
             highlighting: None,
@@ -833,6 +840,28 @@ impl DiffView {
         let Some(comment) = &self.comment else {
             return;
         };
+        if self.review_comments {
+            let body = comment.input.read(cx).content.trim().to_string();
+            let (side, number) = if comment.line.kind == LineKind::Del {
+                (gespan_core::inbox::Side::Old, comment.line.old_number)
+            } else {
+                (gespan_core::inbox::Side::New, comment.line.new_number)
+            };
+            let Some(line) = number.filter(|_| !body.is_empty()) else {
+                return;
+            };
+            let path = comment.path.to_string();
+            self.comment = None;
+            window.focus(&self.focus, cx);
+            cx.emit(DiffEvent::LineComment(gespan_core::inbox::LineComment {
+                path,
+                line,
+                side,
+                body,
+            }));
+            cx.notify();
+            return;
+        }
         let text = diff::format_comment(
             &comment.path,
             &comment.line,
@@ -1505,6 +1534,11 @@ impl Render for DiffView {
         let comment = self.comment.as_ref().map(|c| {
             let location = diff::comment_location(&c.path, &c.line);
             let can_add = !c.input.read(cx).content.trim().is_empty();
+            let add_label = if self.review_comments {
+                "Add to review"
+            } else {
+                "Add to chat"
+            };
             popover(
                 "diff-comment",
                 crate::popover::Anchor::Slot(c.anchor.clone()),
@@ -1579,7 +1613,8 @@ impl Render for DiffView {
                                 div()
                                     .id("add-comment")
                                     .role(Role::Button)
-                                    .aria_label("Add to chat")
+                                    .debug_selector(|| "diff-add-comment".into())
+                                    .aria_label(add_label)
                                     .h(px(28.))
                                     .flex()
                                     .items_center()
@@ -1596,7 +1631,7 @@ impl Render for DiffView {
                                         icon("comment-add", 14.)
                                             .text_color(crate::theme::background_base()),
                                     )
-                                    .child("Add to chat")
+                                    .child(add_label)
                                     .when(can_add, |d| {
                                         d.on_click(cx.listener(|this, _, window, cx| {
                                             this.add_comment(window, cx)
@@ -1738,6 +1773,93 @@ impl Render for DiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// In a pull request's Files, a line comment is raised for the review on
+    /// its line and side; elsewhere it is still text for the chat.
+    #[gpui::test]
+    fn a_review_diff_raises_line_comments_on_their_line_and_side(cx: &mut gpui::TestAppContext) {
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| {
+                    let mut view = DiffView::new(cx);
+                    view.review_comments = true;
+                    view
+                })
+            })
+            .unwrap()
+        });
+        let mut model = file("docs.md", "a\nb\nc\n", "a\nB\nc\n");
+        model.path = "docs/hackathon.md".into();
+        window
+            .update(cx, |view, _, cx| view.set_files(vec![model], cx))
+            .unwrap();
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = events.clone();
+        let view = window.root(cx).unwrap();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &DiffEvent, _| match event {
+                DiffEvent::LineComment(comment) => sink.borrow_mut().push(Ok(comment.clone())),
+                DiffEvent::Comment(text) => sink.borrow_mut().push(Err(text.clone())),
+                _ => {}
+            })
+        });
+        let line = |kind, old: Option<u32>, new: Option<u32>| Line {
+            kind,
+            text: "b".into(),
+            old_number: old,
+            new_number: new,
+            chunk: None,
+        };
+        for (line, text) in [
+            (line(LineKind::Add, None, Some(2)), " use the index "),
+            (line(LineKind::Del, Some(2), None), "why remove b?"),
+            (line(LineKind::Add, None, Some(3)), "   "),
+        ] {
+            window
+                .update(cx, |view, window, cx| {
+                    view.open_comment(0, line, 0, window, cx);
+                    let input = view.comment.as_ref().unwrap().input.clone();
+                    input.update(cx, |input, cx| input.set_text(text.into(), cx));
+                    view.add_comment(window, cx);
+                })
+                .unwrap();
+        }
+        cx.run_until_parked();
+        use gespan_core::inbox::{LineComment, Side};
+        assert_eq!(
+            *events.borrow(),
+            vec![
+                Ok(LineComment {
+                    path: "docs/hackathon.md".into(),
+                    line: 2,
+                    side: Side::New,
+                    body: "use the index".into(),
+                }),
+                Ok(LineComment {
+                    path: "docs/hackathon.md".into(),
+                    line: 2,
+                    side: Side::Old,
+                    body: "why remove b?".into(),
+                }),
+            ],
+            "an empty comment raises nothing"
+        );
+        // Outside a pull request the same comment is chat text.
+        events.borrow_mut().clear();
+        window
+            .update(cx, |view, window, cx| {
+                view.review_comments = false;
+                view.open_comment(0, line(LineKind::Add, None, Some(2)), 0, window, cx);
+                let input = view.comment.as_ref().unwrap().input.clone();
+                input.update(cx, |input, cx| input.set_text("hi".into(), cx));
+                view.add_comment(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(
+            matches!(events.borrow()[0], Err(ref text) if text.contains("docs/hackathon.md:2"))
+        );
+    }
     #[gpui::test]
     fn review_overview_has_no_change_markers_and_supports_scrolling_and_dragging(
         cx: &mut gpui::TestAppContext,

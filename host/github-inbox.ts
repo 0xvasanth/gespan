@@ -147,6 +147,35 @@ type ItemRow = Omit<
   statusCheckRollup?: RollupRow[] | null;
 };
 
+/** Line comments sent with a review, checked: a file inside the repo, a
+ * positive line, a side and words. */
+function lineComments(value: unknown): {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  body: string;
+}[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("Invalid line comments");
+  return value.map((entry) => {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const path = text(row.path);
+    const body = text(row.body);
+    const line = row.line;
+    if (
+      !path ||
+      path.startsWith("/") ||
+      path.split("/").some((part) => part === "..") ||
+      typeof line !== "number" ||
+      !Number.isSafeInteger(line) ||
+      line <= 0 ||
+      !body
+    )
+      throw new Error("Invalid line comment");
+    return { path, line, side: row.side === "old" ? "LEFT" : "RIGHT", body };
+  });
+}
+
 /** A review state the Git page understands, as the Rust side spells it. */
 function reviewState(state = ""): string | undefined {
   return (
@@ -543,6 +572,30 @@ export class GithubInbox {
     )[text(input.verdict)];
     if (!flag) throw new Error("Unknown review verdict");
     const body = text(input.body);
+    const comments = lineComments(input.comments);
+    if (comments.length) {
+      // `gh pr review` takes no line comments: the reviews API does.
+      if (flag === "--request-changes" && !body)
+        throw new Error("GitHub needs a message to request changes or comment");
+      const payload: Record<string, unknown> = {
+        event: { "--approve": "APPROVE", "--request-changes": "REQUEST_CHANGES", "--comment": "COMMENT" }[flag],
+        comments,
+      };
+      if (body) payload.body = body;
+      const dir = await mkdtemp(join(tmpdir(), "gespan-review-"));
+      const path = join(dir, "review.json");
+      try {
+        await writeFile(path, JSON.stringify(payload), { mode: 0o600 });
+        await this.gh(
+          cwd,
+          ["api", "--method", "POST", `repos/${repo}/pulls/${number}/reviews`, "--input", path],
+          true,
+        );
+        return null;
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
     const args = ["pr", "review", number, "--repo", repo, flag];
     if (!body) {
       if (flag !== "--approve")

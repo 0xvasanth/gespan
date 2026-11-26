@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use super::review::{self, CheckSummary, Outcome, Review, TtlCache, Verdict};
+use super::review::{self, CheckSummary, LineComment, Outcome, Review, Side, TtlCache, Verdict};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -932,10 +932,19 @@ pub fn azure_devops_submit_review(
     number: i64,
     verdict: Verdict,
     body: &str,
+    comments: &[LineComment],
 ) -> Result<(), String> {
     let config = require_config(&app)?;
     validate_item("pr", number)?;
     let (project, name) = split_repo(repo)?;
+    let threads = format!(
+        "/{}/_apis/git/repositories/{}/pullrequests/{number}/threads?api-version={API_VERSION}",
+        encode_segment(&project),
+        encode_segment(&name),
+    );
+    for comment in comments {
+        azure_post_json(&config, &threads, azure_line_thread(comment))?;
+    }
     let vote = match verdict {
         Verdict::Approve => Some(10),
         Verdict::RequestChanges => Some(-5),
@@ -953,10 +962,29 @@ pub fn azure_devops_submit_review(
     }
     if !body.trim().is_empty() {
         azure_devops_work_item_comment_for(&config, repo, "pr", number, body)?;
-    } else if vote.is_none() {
+    } else if vote.is_none() && comments.is_empty() {
         return Err("Write a comment before sending it.".into());
     }
     Ok(())
+}
+
+/// A thread on one line of a pull request's diff: the right side for new
+/// lines, the left for deleted ones.
+pub(crate) fn azure_line_thread(comment: &LineComment) -> Value {
+    let point = json!({ "line": comment.line, "offset": 1 });
+    let (start, end) = match comment.side {
+        Side::New => ("rightFileStart", "rightFileEnd"),
+        Side::Old => ("leftFileStart", "leftFileEnd"),
+    };
+    let path = format!("/{}", comment.path.trim_start_matches('/'));
+    let mut context = json!({ "filePath": path });
+    context[start] = point.clone();
+    context[end] = point;
+    json!({
+        "comments": [{ "parentCommentId": 0, "content": comment.body.trim(), "commentType": 1 }],
+        "status": 1,
+        "threadContext": context,
+    })
 }
 
 /// Queues the pull request's failed build validations again.

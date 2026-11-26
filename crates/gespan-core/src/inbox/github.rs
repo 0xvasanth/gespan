@@ -1,5 +1,7 @@
 //! GitHub Inbox models and parsers shared with the original implementation.
-use super::review::{latest_reviews, CheckSummary, Outcome, Review, TtlCache, Verdict};
+use super::review::{
+    latest_reviews, CheckSummary, LineComment, Outcome, Review, Side, TtlCache, Verdict,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -325,14 +327,61 @@ fn github_review_args(
 
 /// `gh pr review`: approve, request changes or comment. GitHub turns down a
 /// request for changes or a comment without a body.
+/// The reviews API's body: the verdict, its summary and each line comment on
+/// its file, line and side.
+pub(super) fn github_review_payload(
+    verdict: Verdict,
+    body: &str,
+    comments: &[LineComment],
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "event": match verdict {
+            Verdict::Approve => "APPROVE",
+            Verdict::RequestChanges => "REQUEST_CHANGES",
+            Verdict::Comment => "COMMENT",
+        },
+        "comments": comments
+            .iter()
+            .map(|c| serde_json::json!({
+                "path": c.path,
+                "line": c.line,
+                "side": if c.side == Side::Old { "LEFT" } else { "RIGHT" },
+                "body": c.body.trim(),
+            }))
+            .collect::<Vec<_>>(),
+    });
+    if !body.trim().is_empty() {
+        payload["body"] = body.trim().into();
+    }
+    payload
+}
+
 pub(super) fn git_github_pr_review_for(
     root: &Path,
     repo: &str,
     number: i64,
     verdict: Verdict,
     body: &str,
+    comments: &[LineComment],
 ) -> Result<(), String> {
     let body = body.trim();
+    if !comments.is_empty() {
+        // `gh pr review` takes no line comments: the reviews API does.
+        let (owner, name) = split_github_repo(repo)?;
+        if number <= 0 {
+            return Err("Invalid GitHub item number".into());
+        }
+        let payload = github_review_payload(verdict, body, comments).to_string();
+        let endpoint = format!("repos/{owner}/{name}/pulls/{number}/reviews");
+        return with_temp_markdown(&payload, |path| {
+            gh_run(
+                root,
+                &["api", "--method", "POST", &endpoint, "--input", path],
+                true,
+            )
+        })
+        .map(drop);
+    }
     if body.is_empty() {
         if verdict != Verdict::Approve {
             return Err("GitHub needs a message to request changes or comment".into());
@@ -2140,7 +2189,8 @@ mod automation_event_tests {
         assert!(github_review_args("not a repo", 5, Verdict::Approve, None).is_err());
         let root = std::env::temp_dir();
         for verdict in [Verdict::RequestChanges, Verdict::Comment] {
-            let error = git_github_pr_review_for(&root, "acme/app", 5, verdict, "  ").unwrap_err();
+            let error =
+                git_github_pr_review_for(&root, "acme/app", 5, verdict, "  ", &[]).unwrap_err();
             assert!(error.contains("needs a message"), "{error}");
         }
     }

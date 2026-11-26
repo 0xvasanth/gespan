@@ -200,7 +200,7 @@ impl Section {
         Some(match self {
             Section::Appearance => (0xf9a8d4, 0xdb2777),
             Section::Services => (0xa5b4fc, 0x4f46e5),
-            Section::Inbox => (0xfdba74, 0xc2620c),
+            Section::Inbox => (0x2dd4bf, 0x0d9488),
             Section::Devices => (0x5eead4, 0x0d9488),
             Section::Chat => (0xc0affc, 0x7c3aed),
             Section::Providers => (0xd97757, 0xc2410c),

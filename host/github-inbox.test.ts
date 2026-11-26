@@ -603,6 +603,66 @@ it("reviews by a temporary body file and needs words for all but approve", async
   expect(raw).toHaveBeenCalledTimes(2);
 });
 
+it("sends line comments with a review through the reviews API", async () => {
+  const payloads: unknown[] = [];
+  const raw = vi.fn(async (_cwd: string, args: string[]) => {
+    const input = args.indexOf("--input");
+    if (input >= 0) payloads.push(JSON.parse(readFileSync(args[input + 1], "utf8")));
+    return "";
+  });
+  const inbox = new GithubInbox(raw);
+  await inbox.run("git_github_pr_review", cwd, {
+    repo,
+    number: 42,
+    verdict: "comment",
+    body: "",
+    comments: [
+      { path: "docs/hackathon.md", line: 100, side: "new", body: " test comment " },
+      { path: "src/old.rs", line: 7, side: "old", body: "why?" },
+    ],
+  });
+  expect(raw.mock.calls[0][1].slice(0, 4)).toEqual([
+    "api",
+    "--method",
+    "POST",
+    "repos/acme/web/pulls/42/reviews",
+  ]);
+  expect(payloads).toEqual([
+    {
+      event: "COMMENT",
+      comments: [
+        { path: "docs/hackathon.md", line: 100, side: "RIGHT", body: "test comment" },
+        { path: "src/old.rs", line: 7, side: "LEFT", body: "why?" },
+      ],
+    },
+  ]);
+  for (const bad of [
+    { path: "../etc/passwd", line: 1, side: "new", body: "x" },
+    { path: "/abs", line: 1, side: "new", body: "x" },
+    { path: "a.rs", line: 0, side: "new", body: "x" },
+    { path: "a.rs", line: 1, side: "new", body: " " },
+  ])
+    await expect(
+      inbox.run("git_github_pr_review", cwd, {
+        repo,
+        number: 42,
+        verdict: "approve",
+        body: "",
+        comments: [bad],
+      }),
+    ).rejects.toThrow("Invalid line comment");
+  await expect(
+    inbox.run("git_github_pr_review", cwd, {
+      repo,
+      number: 42,
+      verdict: "request_changes",
+      body: "",
+      comments: [{ path: "a.rs", line: 1, side: "new", body: "x" }],
+    }),
+  ).rejects.toThrow("needs a message");
+  expect(raw).toHaveBeenCalledTimes(1);
+});
+
 it("answers with the machine's own GitHub login", async () => {
   const raw = vi.fn().mockResolvedValue("remote-user\n");
   const inbox = new GithubInbox(raw);

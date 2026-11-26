@@ -774,7 +774,7 @@ fn the_settings_rail_tints_each_page_as_designed() {
     assert_eq!(dark(Section::Providers), Some(0xd97757));
     assert_eq!(dark(Section::Browser), Some(0x7dd3fc));
     assert_eq!(dark(Section::Skills), Some(0xe8c547));
-    assert_eq!(dark(Section::Inbox), Some(0xfdba74));
+    assert_eq!(dark(Section::Inbox), Some(0x2dd4bf));
     assert_eq!(dark(Section::Worktrees), Some(0x6ee7b7));
     // The rest stay grey, as in the design.
     for quiet in [

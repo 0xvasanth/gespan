@@ -462,11 +462,12 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
     assert_eq!(
         submitted,
         vec![
-            (theirs_key.clone(), Verdict::Approve, String::new()),
+            (theirs_key.clone(), Verdict::Approve, String::new(), vec![]),
             (
                 theirs_key.clone(),
                 Verdict::RequestChanges,
-                "Please add the index".into()
+                "Please add the index".into(),
+                vec![]
             )
         ]
     );
@@ -480,7 +481,7 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
         .unwrap();
     assert!(body.is_empty(), "a sent review clears its draft");
     assert_eq!(notice.as_deref(), Some("Changes requested."));
-    // Your own pull request has no review bar; Files keeps the Ask bar.
+    // Your own pull request can be commented on, never approved.
     window
         .update(&mut visual, |inbox, _, cx| {
             inbox.select(mine_key.clone(), cx);
@@ -489,8 +490,87 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
-    assert!(!shown(&mut visual, "git-review-bar"));
-    assert!(shown(&mut visual, "inbox-ask-bar"));
+    assert!(shown(&mut visual, "git-review-bar"));
+    assert!(shown(&mut visual, "git-review-comment"));
+    assert!(!shown(&mut visual, "git-review-approve"));
+    assert!(!shown(&mut visual, "git-review-request-changes"));
+}
+
+#[gpui::test]
+fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppContext) {
+    use gespan_core::inbox::{LineComment, Side};
+    let theirs = asked("acme/web", 1);
+    let key = theirs.key();
+    let window = open(store(), cx, move |inbox| {
+        inbox.snapshot.items = vec![theirs]
+    });
+    let mut visual = visual(window, cx);
+    let comment = |line, side, body: &str| LineComment {
+        path: "docs/hackathon.md".into(),
+        line,
+        side,
+        body: body.into(),
+    };
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.select(key.clone(), cx);
+            inbox.set_tab(Tab::Code, cx);
+            // What the diff raises on "Add to review".
+            inbox.diff_view.update(cx, |_, cx| {
+                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
+                    100,
+                    Side::New,
+                    "test comment",
+                )));
+                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
+                    7,
+                    Side::Old,
+                    "why?",
+                )));
+                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
+                    9,
+                    Side::New,
+                    "never mind",
+                )));
+            });
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(shown(&mut visual, "git-review-drafts"));
+    assert!(shown(&mut visual, "git-review-draft-2"));
+    click(&mut visual, "git-review-draft-remove-2");
+    assert!(!shown(&mut visual, "git-review-draft-2"));
+    // Line comments alone make a comment review: no summary needed.
+    click(&mut visual, "git-review-comment");
+    let submitted = window
+        .update(&mut visual, |inbox, _, _| {
+            inbox.submitted_reviews.lock().unwrap().clone()
+        })
+        .unwrap();
+    assert_eq!(
+        submitted,
+        vec![(
+            key.clone(),
+            Verdict::Comment,
+            String::new(),
+            vec![
+                comment(100, Side::New, "test comment"),
+                comment(7, Side::Old, "why?")
+            ]
+        )]
+    );
+    assert!(
+        !shown(&mut visual, "git-review-drafts"),
+        "sent drafts are cleared"
+    );
+    // Nothing reaches the general discussion's composer.
+    let discussion = window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.comment.read(cx).content.to_string()
+        })
+        .unwrap();
+    assert!(discussion.is_empty());
 }
 
 #[gpui::test]

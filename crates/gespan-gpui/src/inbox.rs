@@ -163,8 +163,7 @@ pub(crate) struct Inbox {
     waiting_on_you: Option<std::collections::HashSet<String>>,
     /// Reviews a test submitted, instead of reaching a host.
     #[cfg(test)]
-    pub(crate) submitted_reviews:
-        std::sync::Arc<std::sync::Mutex<Vec<(String, gespan_core::inbox::Verdict, String)>>>,
+    pub(crate) submitted_reviews: std::sync::Arc<std::sync::Mutex<Vec<SubmittedReview>>>,
     sessions: Vec<Session>,
     focus: FocusHandle,
     search: Entity<Input>,
@@ -262,6 +261,15 @@ enum Offline {
 }
 
 /// The inbox opens scoped to the project it was opened from.
+/// A review a test sent: item key, verdict, summary and line comments.
+#[cfg(test)]
+pub(crate) type SubmittedReview = (
+    String,
+    gespan_core::inbox::Verdict,
+    String,
+    Vec<gespan_core::inbox::LineComment>,
+);
+
 impl EventEmitter<Event> for Inbox {}
 impl Focusable for Inbox {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -357,7 +365,12 @@ impl Inbox {
             cx.new(|cx| Input::field("Workspace", "Workspace slug", content(0.4), cx));
         let connect_token =
             cx.new(|cx| Input::field("API token", "Personal access token", content(0.4), cx));
-        let diff_view = cx.new(DiffView::new);
+        // A line comment in Files joins the pull request's review.
+        let diff_view = cx.new(|cx| {
+            let mut view = DiffView::new(cx);
+            view.review_comments = true;
+            view
+        });
         let subscriptions = vec![
             cx.subscribe(&search, |this, _, _: &input::Changed, cx| {
                 this.page = 0;
@@ -387,6 +400,10 @@ impl Inbox {
                 this.post_comment(cx)
             }),
             cx.subscribe(&diff_view, |this, _, event: &DiffEvent, cx| {
+                if let DiffEvent::LineComment(comment) = event {
+                    this.add_line_comment(comment.clone(), cx);
+                    return;
+                }
                 if let DiffEvent::Comment(text) = event {
                     // A line picked in Files starts a review comment there.
                     if this.tab == Tab::Code && this.review_open() {
