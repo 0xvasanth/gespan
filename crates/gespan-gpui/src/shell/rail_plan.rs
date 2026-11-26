@@ -77,6 +77,8 @@ pub(super) struct Plan {
     pub now: Vec<(i64, Live)>,
     /// Live sessions left for Now's "N more".
     pub now_more: usize,
+    /// Whether every one of those is running, none waiting on you.
+    pub now_more_running: bool,
     pub folders: Vec<Folder>,
     /// The flat Sessions list, newest first.
     pub sessions: Vec<i64>,
@@ -178,7 +180,11 @@ pub(super) fn plan(
     (plan.sessions, plan.more) = capped(idle, SESSIONS_PREVIEW, expanded.contains(SESSIONS_KEY));
     facts.newest_first(&mut live);
     live.sort_by_key(|id| facts.live(*id));
-    let (now, now_more) = capped(live, NOW_PREVIEW, expanded.contains(NOW_KEY));
+    let (now, now_more) = capped(live.clone(), NOW_PREVIEW, expanded.contains(NOW_KEY));
+    plan.now_more_running = live
+        .iter()
+        .skip(now.len())
+        .all(|id| facts.live(*id) == Some(Live::Running));
     plan.now = now
         .into_iter()
         .filter_map(|id| Some((id, facts.live(id)?)))
@@ -370,6 +376,12 @@ mod tests {
         let capped = run(vec![], &ids, &states);
         assert_eq!(now_ids(&capped), vec![11, 10, 9, 8, 7]);
         assert_eq!(capped.now_more, 6);
+        assert!(capped.now_more_running);
+        // Seven waiting: two of them are past the five, so not "running".
+        let waiting: HashMap<i64, Live> = (1..=7).map(|id| (id, Live::NeedsYou)).collect();
+        let busy = run(vec![], &ids, &waiting);
+        assert_eq!(busy.now_more, 2);
+        assert!(!busy.now_more_running);
         let all = expand(vec![], &ids, &states, &["now"]);
         assert_eq!((all.now.len(), all.now_more), (11, 0));
     }

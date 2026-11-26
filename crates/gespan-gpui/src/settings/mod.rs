@@ -80,9 +80,9 @@ pub(crate) struct SettingsContext {
     /// The pairing code on show.
     pub mobile_invite: Option<gespan_core::mobile::Invite>,
 }
-/// Which sidebar entries the workspace shows. Notes, Board, Pilots and
-/// Activity are the `notes`, `board`, `pilots` and `working_agents`
-/// preferences and travel with the preferences instead.
+/// Which sidebar entries the workspace shows. Notes, Board and Pilots are
+/// the `notes`, `board` and `pilots` preferences and travel with the
+/// preferences instead. The running card is always shown.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct SidebarVisibility {
     pub automations: bool,
@@ -619,7 +619,7 @@ impl SettingsView {
     }
     /// The Sidebar switches in page order, as Settings last drew them.
     #[cfg(test)]
-    pub(crate) fn sidebar_switches(&self) -> [bool; 7] {
+    pub(crate) fn sidebar_switches(&self) -> [bool; 6] {
         let v = self.ctx.sidebar;
         [
             self.prefs.notes,
@@ -627,7 +627,6 @@ impl SettingsView {
             v.automations,
             v.inbox,
             self.prefs.pilots,
-            self.prefs.working_agents,
             v.compact,
         ]
     }

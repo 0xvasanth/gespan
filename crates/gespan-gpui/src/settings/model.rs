@@ -471,12 +471,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "kanban cards columns tasks tickets track sidebar show hide",
     ),
     (
-        "sidebar-activity",
-        Section::Appearance,
-        "Activity",
-        "working agents activity live running sessions card sidebar show hide",
-    ),
-    (
         "sidebar-automations",
         Section::Appearance,
         "Automations",
@@ -893,6 +887,7 @@ mod tests {
             "notes",
             "board",
             "working-agents",
+            "sidebar-activity",
             "search-panel",
         ] {
             assert!(INDEX.iter().all(|e| e.0 != id), "{id} is still indexed");

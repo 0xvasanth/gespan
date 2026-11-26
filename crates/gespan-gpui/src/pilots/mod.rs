@@ -1453,7 +1453,7 @@ impl Pilots {
                         .child(if all {
                             "Fewer".to_owned()
                         } else {
-                            format!("All {total} →")
+                            "All →".to_owned()
                         })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.rail_all = !this.rail_all;
@@ -1559,7 +1559,8 @@ impl Pilots {
                     .gap_2()
                     .text_size(px(12.5))
                     .text_color(content(0.88))
-                    .opacity(if active { 1. } else { 0.65 })
+                    // `.prow.dim`: only an idle Pilot fades.
+                    .opacity(if active || state != "idle" { 1. } else { 0.65 })
                     .map(|d| {
                         let tip = SharedString::from(format!(
                             "{}: {}",
@@ -1594,9 +1595,9 @@ impl Pilots {
                                     .border_1()
                                     .border_color(shell_fill())
                                     .bg(if state == "working" {
-                                        rgb(pilot.color).into()
+                                        rgb(0x459bf7).into()
                                     } else if state == "needs-you" {
-                                        accent_color()
+                                        rgb(0xe8c547).into()
                                     } else {
                                         content(0.3)
                                     }),

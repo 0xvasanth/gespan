@@ -58,12 +58,15 @@ pub(super) struct SidebarList {
     /// Only anchors constructed for the last viewport, including nested rails.
     visible_anchors: RefCell<Vec<AnchorSlot>>,
     visible_rows: RefCell<Vec<usize>>,
-    /// Folders whose "N more" was clicked, until the app quits.
+    /// Lists whose "N more" was clicked, as `project\0key`, until the app
+    /// quits.
     pub(super) expanded: HashSet<String>,
     /// The switcher's counts: folders, then sessions.
     pub(super) summary: (usize, usize),
     /// The live sessions the rows were built for; a change rebuilds them.
     live: Vec<(i64, Live)>,
+    /// Whether Now's "N more" holds only running sessions.
+    now_more_running: bool,
 }
 
 impl SidebarList {
@@ -93,6 +96,7 @@ impl SidebarList {
             expanded: HashSet::new(),
             summary: (0, 0),
             live: Vec::new(),
+            now_more_running: false,
         }
     }
 
@@ -396,7 +400,7 @@ impl Shell {
                 live: Some(&live),
                 updated: Some(&updated),
             },
-            &self.sidebar_list.expanded,
+            &self.expanded_here(),
         );
         let worktrees: HashSet<String> = if self.workspace.preferences.groups_by_worktree() {
             updated
@@ -406,7 +410,8 @@ impl Shell {
         } else {
             plan.folders.iter().map(|f| f.key.clone()).collect()
         };
-        self.sidebar_list.summary = (worktrees.len(), plan.total);
+        self.sidebar_list.summary = (worktrees.len(), plan.total + nested.len());
+        self.sidebar_list.now_more_running = plan.now_more_running;
         let mut body = Vec::new();
         if !plan.now.is_empty() {
             body.push(Row::NowHeading);
@@ -456,6 +461,24 @@ impl Shell {
             rows.extend(machines);
         }
         self.sidebar_list.update(self.sidebar_scope(), rows);
+    }
+
+    /// The lists whose "N more" was clicked in this project: a list opened
+    /// in one project stays closed in the others.
+    fn expanded_here(&self) -> HashSet<String> {
+        let prefix = format!("{}\0", self.workspace.project);
+        self.sidebar_list
+            .expanded
+            .iter()
+            .filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned))
+            .collect()
+    }
+
+    /// Opens the list behind an "N more", in this project only.
+    pub(super) fn expand_rail_list(&mut self, key: &str) {
+        self.sidebar_list
+            .expanded
+            .insert(format!("{}\0{key}", self.workspace.project));
     }
 
     /// The Pilots that launched sessions in this project, so a Pilot that
@@ -563,19 +586,19 @@ impl Shell {
             Row::FolderSession(id) => {
                 self.rail_session_row(id, None, Trailing::Branch, super::rail::KID_INDENT, cx)
             }
-            Row::Child { id, depth } => div()
-                .pl(px(super::rail::KID_INDENT * f32::from(depth)))
-                .child(self.rail_session_row(
-                    id,
-                    None,
-                    Trailing::Branch,
-                    super::rail::KID_INDENT,
-                    cx,
-                ))
-                .into_any_element(),
+            Row::Child { id, depth } => self.rail_session_row(
+                id,
+                None,
+                Trailing::Branch,
+                super::rail::ROW_INSET + super::rail::CHILD_STEP * f32::from(depth),
+                cx,
+            ),
             Row::More { key, more } => {
                 let (indent, label) = match key.as_str() {
-                    rail_plan::NOW_KEY => (super::rail::ROW_INSET, format!("{more} more running")),
+                    rail_plan::NOW_KEY if self.sidebar_list.now_more_running => {
+                        (super::rail::ROW_INSET, format!("{more} more running"))
+                    }
+                    rail_plan::NOW_KEY => (super::rail::ROW_INSET, format!("{more} more")),
                     rail_plan::SESSIONS_KEY => (super::rail::ROW_INSET, format!("{more} more")),
                     _ => (super::rail::KID_INDENT, format!("{more} more")),
                 };
@@ -858,15 +881,11 @@ impl Shell {
             "sidebar-automations" => &mut self.workspace.sidebar_automations_visible,
             "sidebar-inbox" => &mut self.workspace.sidebar_inbox_visible,
             "sidebar-pilots" => &mut self.workspace.preferences.pilots,
-            "sidebar-activity" => &mut self.workspace.preferences.working_agents,
             "compact-session-cards" => &mut self.workspace.compact_session_cards,
             _ => return,
         };
         *value = !*value;
-        if matches!(
-            action,
-            "sidebar-notes" | "sidebar-board" | "sidebar-pilots" | "sidebar-activity"
-        ) {
+        if matches!(action, "sidebar-notes" | "sidebar-board" | "sidebar-pilots") {
             self.apply_preferences(cx);
             self.sync_settings(cx);
         }
@@ -1649,8 +1668,8 @@ mod tests {
                 .debug_bounds("sidebar-navigation-trailing-Settings")
                 .is_some()
         );
-        // With Activity off there is no pill, and Settings still ends the
-        // sidebar.
+        // A saved Activity-off preference from before no longer hides the
+        // card: it is always shown, Settings still last.
         window
             .update(visual, |shell, _, cx| {
                 shell.workspace.preferences.working_agents = false;
@@ -1659,9 +1678,9 @@ mod tests {
             })
             .unwrap();
         visual.run_until_parked();
-        assert!(visual.debug_bounds("agents-footer").is_none());
-        let alone = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
-        assert_eq!(alone.bottom(), settings.bottom());
+        assert!(visual.debug_bounds("agents-footer").is_some());
+        let still = visual.debug_bounds("sidebar-navigation-Settings").unwrap();
+        assert_eq!(still.bottom(), settings.bottom());
     }
 
     #[gpui::test]
@@ -1908,8 +1927,7 @@ mod tests {
         let field = |shell: &Shell, id: &str| match id {
             "sidebar-notes" => shell.workspace.preferences.notes,
             "sidebar-board" => shell.workspace.preferences.board,
-            "sidebar-pilots" => shell.workspace.preferences.pilots,
-            _ => shell.workspace.preferences.working_agents,
+            _ => shell.workspace.preferences.pilots,
         };
         for (id, selector) in [
             ("sidebar-notes", "sidebar-navigation-Notes"),
@@ -1924,10 +1942,20 @@ mod tests {
             assert!(window.update(visual, |s, _, _| field(s, id)).unwrap());
             assert!(visual.debug_bounds(selector).is_some(), "{selector}");
         }
-        // Activity has no entry without running chats; the preference is the feature.
-        flip_in_settings(window, visual, "sidebar-activity");
+        // The running card has no switch: it is always shown.
         window
-            .update(visual, |s, _, _| assert!(!field(s, "sidebar-activity")))
+            .update(visual, |shell, w, cx| {
+                shell.open_settings(crate::settings::Section::Appearance, w, cx)
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert!(
+            visual
+                .debug_bounds("settings-toggle-sidebar-activity")
+                .is_none()
+        );
+        window
+            .update(visual, |shell, w, cx| shell.close_settings(w, cx))
             .unwrap();
     }
 
@@ -1998,7 +2026,6 @@ mod tests {
             "sidebar-pilots",
             "sidebar-board",
             "sidebar-notes",
-            "sidebar-activity",
         ];
         // The sidebar sections are chips that wrap across rows, so each one
         // comes after the last in reading order: on a later row, or further
@@ -2088,7 +2115,7 @@ mod tests {
                 let view = shell.settings.clone().unwrap();
                 assert_eq!(
                     view.read(cx).sidebar_switches(),
-                    [false, true, false, false, false, true, true]
+                    [false, true, false, false, false, true]
                 );
                 shell.close_settings(w, cx);
             })
@@ -2096,13 +2123,15 @@ mod tests {
     }
 
     #[gpui::test]
-    fn activity_visibility_switch_preserves_agents_and_survives_restart(cx: &mut TestAppContext) {
+    fn the_running_card_ignores_a_saved_activity_off_preference(cx: &mut TestAppContext) {
         let (window, a, b) = super::super::tests::window(cx);
         window
             .update(cx, |shell, _, cx| {
                 for id in [a, b] {
                     shell.sessions[&id].update(cx, |session, _| session.busy = true);
                 }
+                // Saved before the card was always shown.
+                shell.workspace.preferences.working_agents = false;
                 shell.invalidate_chrome(cx);
             })
             .unwrap();
@@ -2115,38 +2144,18 @@ mod tests {
                 })
                 .unwrap();
             visual.run_until_parked();
-            assert!(visual.debug_bounds("agents-footer").is_some());
-            flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("agents-footer").is_none());
+            assert!(
+                visual.debug_bounds("agents-footer").is_some(),
+                "boxy {boxy}"
+            );
             window
                 .update(visual, |shell, _, cx| {
-                    assert!(!shell.workspace.preferences.working_agents);
                     for id in [a, b] {
                         assert!(shell.sessions[&id].read(cx).responding());
                     }
-                    let saved = shell.latest_state.lock().unwrap().clone();
-                    let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
-                    assert!(!restored.preferences.working_agents);
-                })
-                .unwrap();
-            flip_in_settings(window, visual, "sidebar-activity");
-            assert!(visual.debug_bounds("agents-footer").is_some());
-            window
-                .update(visual, |shell, _, _| {
-                    let saved = shell.latest_state.lock().unwrap().clone();
-                    let restored = Workspace::restore(Some(&saved), &[], "/work/gespan");
-                    assert!(restored.preferences.working_agents);
                 })
                 .unwrap();
         }
-        window
-            .update(visual, |shell, _, cx| {
-                shell.workspace.preferences.working_agents = false;
-                shell.invalidate_chrome(cx);
-            })
-            .unwrap();
-        visual.run_until_parked();
-        assert!(visual.debug_bounds("agents-footer").is_none());
     }
 
     #[gpui::test]
@@ -2191,10 +2200,7 @@ mod tests {
     /// so the list ends with that folder's last session.
     /// Lists every session: Sessions' "N more" clicked, Pilots hidden.
     fn expand_everything(shell: &mut Shell, _project: &str, cx: &mut Context<Shell>) {
-        shell
-            .sidebar_list
-            .expanded
-            .insert(super::rail_plan::SESSIONS_KEY.into());
+        shell.expand_rail_list(super::rail_plan::SESSIONS_KEY);
         shell.workspace.preferences.pilots = false;
         shell.apply_preferences(cx);
         shell.notify_sidebar(cx);
@@ -3002,7 +3008,7 @@ mod tests {
         fn expand_sessions(window: &WindowHandle<Shell>, cx: &mut TestAppContext) {
             window
                 .update(cx, |shell, _, cx| {
-                    shell.sidebar_list.expanded.insert("sessions".into());
+                    shell.expand_rail_list("sessions");
                     shell.notify_sidebar(cx);
                 })
                 .unwrap();
@@ -3125,6 +3131,24 @@ mod tests {
             let all = rows(&window, visual);
             assert_eq!(sessions(&all), ids);
             assert!(!all.iter().any(|r| matches!(r, Row::More { .. })));
+        }
+
+        #[gpui::test]
+        fn n_more_opens_the_list_in_its_own_project_only(cx: &mut TestAppContext) {
+            let (window, ids) = rail_window(&[None; 5], cx);
+            expand_sessions(&window, cx);
+            assert_eq!(sessions(&rows(&window, cx)), ids);
+            let (here, elsewhere) = window
+                .update(cx, |shell, _, _| {
+                    let here = shell.expanded_here();
+                    shell.workspace.project = "/work/elsewhere".into();
+                    let elsewhere = shell.expanded_here();
+                    shell.workspace.project = PROJECT.into();
+                    (here, elsewhere)
+                })
+                .unwrap();
+            assert!(here.contains("sessions"));
+            assert!(elsewhere.is_empty(), "{elsewhere:?}");
         }
 
         #[gpui::test]

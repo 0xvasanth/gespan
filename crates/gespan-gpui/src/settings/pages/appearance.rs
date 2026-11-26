@@ -47,13 +47,12 @@ const SWATCH_DOT: f32 = 10.;
 
 /// The sidebar entries Layout offers as chips, in the sidebar's own order:
 /// (id for Shell::change_sidebar_option, label).
-const SIDEBAR_CHIPS: [(&str, &str); 6] = [
+const SIDEBAR_CHIPS: [(&str, &str); 5] = [
     ("sidebar-inbox", "Git"),
     ("sidebar-automations", "Automations"),
     ("sidebar-pilots", "Pilots"),
     ("sidebar-board", "Board"),
     ("sidebar-notes", "Notes"),
-    ("sidebar-activity", "Activity"),
 ];
 
 pub(crate) fn parse_hex(text: &str) -> Option<u32> {
@@ -803,8 +802,7 @@ impl SettingsView {
             "sidebar-automations" => v.automations,
             "sidebar-pilots" => p.pilots,
             "sidebar-board" => p.board,
-            "sidebar-notes" => p.notes,
-            _ => p.working_agents,
+            _ => p.notes,
         };
         let chips = div()
             .flex()

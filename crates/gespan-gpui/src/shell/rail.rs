@@ -25,8 +25,10 @@ const ROW_FONT: f32 = 12.5;
 const FOLD_HEIGHT: f32 = 26.;
 /// A row's own left padding in the flat Sessions list.
 pub(super) const ROW_INSET: f32 = 10.;
-/// `.kid`: a session under an open folder.
-pub(super) const KID_INDENT: f32 = 22.;
+/// `.kid`: a session under an open folder, in line with the folder's name.
+pub(super) const KID_INDENT: f32 = 33.;
+/// How much further in each level of started sessions sits.
+pub(super) const CHILD_STEP: f32 = 23.;
 /// `.zone`: a card's padding, inside its 1px border.
 pub(super) const CARD_PAD: f32 = 4.;
 /// The space between the Everywhere and This project cards.
@@ -36,7 +38,7 @@ const MORE_HEIGHT: f32 = 24.;
 /// The time column, right-aligned.
 const TIME_WIDTH: f32 = 26.;
 /// A row's branch label, before it truncates (`.wt`).
-const BRANCH_LABEL_WIDTH: f32 = 84.;
+const BRANCH_LABEL_WIDTH: f32 = 74.;
 const SWITCHER_HEIGHT: f32 = 44.;
 /// The switcher's tooltip: its shortcut moved here to make room for "…".
 const SWITCHER_HINT: &str = if cfg!(target_os = "macos") {
@@ -1083,7 +1085,7 @@ impl Shell {
             .w_full()
             .h(px(FOLD_HEIGHT))
             .mt(px(2.))
-            .px(px(8.))
+            .px(px(10.))
             .rounded(px(7.))
             .flex()
             .items_center()
@@ -1211,7 +1213,7 @@ impl Shell {
             .hover(|s| s.bg(content(0.06)).text_color(content(1.)))
             .child(label)
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.sidebar_list.expanded.insert(expand.clone());
+                this.expand_rail_list(&expand);
                 this.notify_sidebar(cx);
             }))
             .into_any()
