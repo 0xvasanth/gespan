@@ -1,0 +1,89 @@
+crates/gespan-gpui/src/automations/review_setup.rs
+  s_7100e0ee5489e7::t_f0168ca73fea77 210-211
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_7100e0ee5489e7::t_fab78dfaa7f2c8 58-60,95,185
+crates/gespan-gpui/src/shell/sidebar_list.rs
+  s_7100e0ee5489e7::t_388ca05b1e2ae0 1360-1361,1363
+crates/gespan-gpui/src/runs/row.rs
+  s_7100e0ee5489e7::t_ec643e2a04975f 327-329
+  s_7100e0ee5489e7::t_79f487caf73deb 1-326,330-445
+crates/gespan-gpui/src/shell/app_views.rs
+  s_7100e0ee5489e7::t_fab78dfaa7f2c8 150-151,153,210,678-680,721-723,737,742-744,748-749,752,757,763,768-797
+crates/gespan-gpui/src/shell/surface_tests.rs
+  s_7100e0ee5489e7::t_ec643e2a04975f 51-53
+crates/gespan-gpui/src/shell/automation_runs_tests.rs
+  s_7100e0ee5489e7::t_7ed9251fc89b61 1200-1201
+  s_7100e0ee5489e7::t_53a81da29892dd 1067-1086,1091,1110-1111,1117,1133-1134,1158-1159,1168-1177,1183-1184,1188,1204-1226,1228-1241,1243-1269,1271-1274,1276-1281,1284-1291
+  s_7100e0ee5489e7::t_ec643e2a04975f 1148-1151,1194,1242
+  s_7100e0ee5489e7::t_f87c998599b9df 1202-1203,1227
+crates/gespan-gpui/src/automations/review_setup_tests.rs
+  s_7100e0ee5489e7::t_77ec9090bd3c97 532-534
+crates/gespan-gpui/src/theme.rs
+  s_7100e0ee5489e7::t_668243a4e1ab5d 1058
+crates/gespan-gpui/src/automations/layout.rs
+  s_7100e0ee5489e7::t_0e0e68d64173b2 75-110,127-144,164-168,176-178,180-254,256-299,324-326
+  s_7100e0ee5489e7::t_56ce5389231ddd 179
+  s_7100e0ee5489e7::t_199d818bc72784 255
+crates/gespan-gpui/src/quick_open.rs
+  s_7100e0ee5489e7::t_1731bdf27d9895 71
+crates/gespan-gpui/src/automations/editor.rs
+  s_7100e0ee5489e7::t_b1e9c3393d3239 1519-1537
+  s_7100e0ee5489e7::t_ec643e2a04975f 1421-1424,1444
+  s_7100e0ee5489e7::t_f0168ca73fea77 1417-1420,1425-1430,1432-1434,1442,1445-1478,1480-1482,1487,1497,1501-1509
+crates/gespan-gpui/src/home.rs
+  s_7100e0ee5489e7::t_1731bdf27d9895 1317
+crates/gespan-gpui/src/workspace.rs
+  s_7100e0ee5489e7::t_668243a4e1ab5d 67,72
+  s_7100e0ee5489e7::t_57f532bb361336 1899,1904-1907
+  s_7100e0ee5489e7::t_52509c892e5f59 1896-1898,1902-1903,1908-1911,1914-1916,1919-1920
+crates/gespan-gpui/src/runs.rs
+  s_7100e0ee5489e7::t_b1b81e761c6a14 569
+  s_7100e0ee5489e7::t_787e57ff3ce27a 385,388,392-399,401-418,420-426
+  s_7100e0ee5489e7::t_48403f79803a58 29
+  s_7100e0ee5489e7::t_ec643e2a04975f 120,644-646,710-712,728-730,745-747,815
+  s_7100e0ee5489e7::t_ba47e828ed83f8 1-6,14,20,25,30,54-57,60-70,73-76,78-79,81-85,103,116-119,121-127,130-136,587-614,616-643,653-656,658-659,661-664,666,668-669,673-676,679,681-683,685,689-690,692,694-709,713-727,731-744,751-766,797,816-843,852-856,871-872,884-897,946
+crates/gespan-gpui/src/automations.rs
+  s_7100e0ee5489e7::t_062ce8a5d48d1a 31
+  s_7100e0ee5489e7::t_baa771a9a1061f 416-417,419-421
+  s_7100e0ee5489e7::t_bba3ae546d9fa6 207-208,214-218,236,240-242,245-246,297,300-302,304,410-415,422-447,453-485,487-488,505,572-573,722-723,979,981-986,990,1346,1379-1380,1417-1423
+  s_7100e0ee5489e7::t_0e0e68d64173b2 209-213,298-299,518,522,540-548,555,557-558
+  s_7100e0ee5489e7::t_ec643e2a04975f 237-239,243-244,418,448-452
+  s_7100e0ee5489e7::t_bfd8ea96fef9b3 30
+crates/gespan-gpui/src/automations/all_runs_tests.rs
+  s_7100e0ee5489e7::t_c2284f4909e4ef 1-67,71-148,154-171,175-253,258-374
+  s_7100e0ee5489e7::t_ec643e2a04975f 68-70,150-152,172-174,254-257
+  s_7100e0ee5489e7::t_77ec9090bd3c97 149,153
+crates/gespan-gpui/src/shell/agents_panel.rs
+  s_7100e0ee5489e7::t_1731bdf27d9895 643
+crates/gespan-gpui/src/automations/layout_tests.rs
+  s_7100e0ee5489e7::t_77ec9090bd3c97 1640-1641,1645-1647
+  s_7100e0ee5489e7::t_062ce8a5d48d1a 414-417
+  s_7100e0ee5489e7::t_ec643e2a04975f 1642-1644
+crates/gespan-gpui/src/shell/home_tests.rs
+  s_7100e0ee5489e7::t_baa771a9a1061f 103-104,111-113
+  s_7100e0ee5489e7::t_062ce8a5d48d1a 102,137
+  s_7100e0ee5489e7::t_ec643e2a04975f 105-110
+crates/gespan-gpui/src/shell/rail.rs
+  s_7100e0ee5489e7::t_ec643e2a04975f 698-699
+  s_7100e0ee5489e7::t_668243a4e1ab5d 266
+  s_7100e0ee5489e7::t_56ce5389231ddd 252-264,666,696-697,700,705,759-795
+crates/gespan-gpui/src/runs/tests.rs
+  s_7100e0ee5489e7::t_7457631cd09930 1
+  s_7100e0ee5489e7::t_062ce8a5d48d1a 265,516,526
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2fb70acd853e3b4de5b58f099de03e39c8ab4bb0",
+  "prompts": {},
+  "sessions": {
+    "s_7100e0ee5489e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "70bd87f1-6f57-44c0-8409-dea29f25dd44",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
