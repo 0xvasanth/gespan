@@ -1414,10 +1414,24 @@ impl Automations {
             .child(frame(advanced))
             .into_any_element()
     }
+    /// Recent runs: the automation's runs as the All runs feed draws them,
+    /// grouped by day, without its own name and project on every row.
+    pub(super) fn history_rows(&self) -> Vec<crate::runs::RunRow> {
+        let now = gespan_core::time::now_ms() as i64;
+        let owner = self
+            .editor
+            .as_ref()
+            .map(|e| (e.draft.name.as_str(), e.draft.cwd.as_str()));
+        self.runs
+            .iter()
+            .take(100)
+            .map(|run| crate::runs::RunRow::new(run, owner, now))
+            .collect()
+    }
     fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut table = panel().mt(px(12.));
-        if self.runs.is_empty() {
-            table = table.child(
+        let rows = self.history_rows();
+        let table = if rows.is_empty() {
+            panel().mt(px(12.)).child(
                 div()
                     .px(px(16.))
                     .py(px(64.))
@@ -1425,157 +1439,52 @@ impl Automations {
                     .text_size(px(12.))
                     .text_color(content(0.4))
                     .child("This automation has not run yet."),
-            );
+            )
         } else {
-            table = table.child(
-                div()
-                    .h(px(40.))
-                    .px(px(16.))
-                    .flex()
-                    .items_center()
-                    .gap(px(16.))
-                    .text_size(px(11.))
-                    .text_color(content(0.4))
-                    .child(div().flex_1().child("Trigger"))
-                    .child(div().w(px(152.)).child("Triggered"))
-                    .child(div().w(px(108.)).child("Status"))
-                    .child(div().w(px(56.)).text_right().child("Duration")),
-            );
-            for (index, run) in self.runs.iter().take(100).enumerate() {
-                let session = run.session_id.clone();
-                let trigger = if run.trigger == "manual" {
-                    "Test run".into()
-                } else if run.trigger == "event" {
-                    automations::event_label(
-                        run.event_kind.as_deref().unwrap_or(""),
-                        run.event.as_deref().unwrap_or(""),
-                    )
-                } else {
-                    self.editor
-                        .as_ref()
-                        .and_then(|e| e.draft.triggers.as_ref())
-                        .and_then(|ts| ts.iter().find(|t| t.kind == "time"))
-                        .map(|t| format!("Scheduled · {}", t.label()))
-                        .unwrap_or_else(|| "Scheduled".into())
-                };
-                let (label, color, fill): (&str, gpui::Hsla, gpui::Hsla) = match run.status.as_str()
-                {
-                    "succeeded" => (
-                        "Succeeded",
-                        rgb(0x34d399).into(),
-                        rgb(0x10b981).alpha(0.12).into(),
-                    ),
-                    "failed" => (
-                        "Failed",
-                        rgb(0xfb7185).into(),
-                        rgb(0xf43f5e).alpha(0.12).into(),
-                    ),
-                    "skipped" => (
-                        "Skipped",
-                        rgb(0xfbbf24).into(),
-                        rgb(0xf59e0b).alpha(0.12).into(),
-                    ),
-                    "cancelled" => ("Cancelled", content(0.5), content(0.08)),
-                    "running" => (
-                        "Running",
-                        rgb(0x60a5fa).into(),
-                        rgb(0x3b82f6).alpha(0.12).into(),
-                    ),
-                    _ => (
-                        "Pending",
-                        rgb(0x60a5fa).into(),
-                        rgb(0x3b82f6).alpha(0.12).into(),
-                    ),
-                };
-                table = table.child(
-                    div()
-                        .id(("automation-run", index))
-                        .debug_selector(move || format!("automation-run-row-{index}"))
-                        .role(Role::Button)
-                        .aria_label(format!("{trigger}, {label}"))
-                        .h(px(44.))
-                        .px(px(16.))
-                        .border_t_1()
-                        .border_color(glass::hairline())
-                        .flex()
-                        .items_center()
-                        .gap(px(16.))
-                        .text_size(px(13.))
-                        .when(session.is_some(), |d| d.hover(|s| s.bg(content(0.05))))
-                        .child(div().flex_1().min_w_0().truncate().child(trigger))
-                        .child(div().w(px(152.)).text_color(content(0.7)).child(at(
-                            if run.scheduled_for == 0 {
-                                run.created_at
-                            } else {
-                                run.scheduled_for
-                            },
-                        )))
-                        .child(
-                            div().w(px(108.)).flex().items_center().child(
-                                div()
-                                    .h(px(20.))
-                                    .max_w_full()
-                                    .flex_shrink_0()
-                                    .px(px(8.))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .rounded_full()
-                                    .text_size(px(11.))
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(color)
-                                    .bg(fill)
-                                    .when(run.status == "running", |d| {
-                                        d.child(crate::pulse::looping(
-                                            SharedString::from(format!(
-                                                "automation-run-spinner-{index}"
-                                            )),
-                                            std::time::Duration::from_secs(1),
-                                            crate::pulse::Rate::Smooth,
-                                            move |delta| {
-                                                icon("loader", 10.)
-                                                    .text_color(color)
-                                                    .with_transformation(
-                                                        gpui::Transformation::rotate(
-                                                            gpui::percentage(delta),
-                                                        ),
-                                                    )
-                                            },
-                                        ))
-                                    })
-                                    .child(label),
-                            ),
+            let today_start = crate::runs::local_day_start(gespan_core::time::now_ms() as i64);
+            div().mt(px(12.)).flex().flex_col().gap(px(20.)).children(
+                crate::runs::group_by_day(rows, today_start)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (label, rows))| {
+                        let count = rows.len();
+                        let cards = rows
+                            .iter()
+                            .enumerate()
+                            .map(|(i, row)| {
+                                let session = row.session.clone();
+                                crate::runs::run_row(
+                                    row,
+                                    &self.text,
+                                    crate::runs::Look {
+                                        first: i == 0,
+                                        last: i + 1 == count,
+                                        automation: false,
+                                        project: false,
+                                    },
+                                    cx.listener(move |_, _, _, cx| {
+                                        if let Some(id) = &session {
+                                            cx.emit(Event::OpenSession(id.clone()));
+                                        }
+                                    }),
+                                )
+                                .into_any_element()
+                            })
+                            .collect();
+                        crate::runs::section(
+                            format!("automation-history-day-{index}"),
+                            label,
+                            content(0.92),
+                            cards,
                         )
-                        .child(
-                            div()
-                                .w(px(56.))
-                                .text_right()
-                                .text_color(content(0.55))
-                                .child(duration(run)),
-                        )
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            if let Some(id) = &session {
-                                cx.emit(Event::OpenSession(id.clone()));
-                            }
-                        })),
-                );
-                if let Some(error) = &run.error {
-                    table = table.child(
-                        div()
-                            .px(px(16.))
-                            .pb(px(8.))
-                            .text_size(px(11.))
-                            .text_color(content(0.5))
-                            .child(error.clone()),
-                    );
-                }
-            }
-        }
+                    }),
+            )
+        };
         let see_all = div()
             .id("automation-see-all-runs")
             .debug_selector(|| "automation-see-all-runs".into())
             .role(Role::Link)
-            .aria_label("See all in Runs")
+            .aria_label("See all runs")
             .h(px(24.))
             .px(px(6.))
             .rounded(px(6.))
@@ -1585,11 +1494,19 @@ impl Automations {
             .text_size(px(12.))
             .text_color(content(0.6))
             .hover(|s| s.bg(content(0.05)).text_color(content(1.)))
-            .child("See all in Runs")
+            .child("See all runs")
             .child(icon("chevron-right", 12.))
             .on_click(cx.listener(|this, _, _, cx| {
                 if let Some(automation) = this.selected.clone() {
-                    cx.emit(OpenRuns { automation });
+                    let automation_name = this.automation_name(&automation);
+                    this.show_all_runs(
+                        crate::runs::RunsFilter {
+                            automation: Some(automation),
+                            automation_name,
+                            ..Default::default()
+                        },
+                        cx,
+                    );
                 }
             }));
         div()
@@ -1599,22 +1516,25 @@ impl Automations {
             .min_h_0()
             .overflow_y_scroll()
             .child(
-                div()
-                    .w_full()
-                    .max_w(px(1024.))
-                    .mx_auto()
-                    .px(px(32.))
-                    .pt(px(20.))
-                    .pb(px(40.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(section("Recent runs"))
-                            .child(see_all),
-                    )
-                    .child(table),
+                self.text.region(
+                    "automation-history-text",
+                    div()
+                        .w_full()
+                        .max_w(px(1024.))
+                        .mx_auto()
+                        .px(px(32.))
+                        .pt(px(20.))
+                        .pb(px(40.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(section("Recent runs"))
+                                .child(see_all),
+                        )
+                        .child(table),
+                ),
             )
             .into_any_element()
     }
@@ -1711,39 +1631,4 @@ pub(super) fn next_run_preview(timestamp: i64) -> String {
         }
     }
     format!("Next run {} {zone}", date.format("%a %-d %b, %H:%M"))
-}
-fn at(timestamp: i64) -> String {
-    if timestamp <= 0 {
-        return "—".into();
-    }
-    Local
-        .timestamp_millis_opt(timestamp)
-        .single()
-        .map(|d| d.format("%-d %b, %H:%M").to_string())
-        .unwrap_or_else(|| "—".into())
-}
-fn duration(run: &AutomationRun) -> String {
-    let live = matches!(run.status.as_str(), "pending" | "running");
-    let start = run
-        .started_at
-        .or_else(|| (run.status != "pending").then_some(run.created_at));
-    let end = run
-        .completed_at
-        .or_else(|| (live && start.is_some()).then(|| gespan_core::time::now_ms() as i64));
-    let (Some(start), Some(end)) = (start, end) else {
-        return "—".into();
-    };
-    if end < start {
-        return "—".into();
-    }
-    let minutes = end.saturating_sub(start) / 60_000;
-    if minutes < 1 {
-        "< 1m".into()
-    } else if minutes < 60 {
-        format!("{minutes}m")
-    } else if minutes % 60 == 0 {
-        format!("{}h", minutes / 60)
-    } else {
-        format!("{}h {}m", minutes / 60, minutes % 60)
-    }
 }

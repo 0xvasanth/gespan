@@ -1,3 +1,4 @@
+use super::row::*;
 use super::*;
 use gespan_core::automations::{AutomationTrigger, AutomationUpsert};
 use gpui::TestAppContext;
@@ -261,6 +262,7 @@ fn open_thread_emits_open_session(cx: &mut TestAppContext) {
     let _subscription = cx.update(|_, cx| {
         cx.subscribe(&view, move |_, event: &Event, _| match event {
             Event::OpenSession(id) => seen.borrow_mut().push(id.clone()),
+            Event::EditAutomation(_) | Event::RunNow(_) => {}
         })
     });
     let mut with_session = run("with", "gone", "succeeded", 2_000);
@@ -511,6 +513,7 @@ fn rows_group_into_one_day_each_in_newest_first_order() {
     let today = local_day_start(chrono::Local::now().timestamp_millis());
     let row = |id: &str, at: i64| RunRow {
         id: id.into(),
+        automation_id: "triage".into(),
         created_at: at,
         trigger: "Scheduled".into(),
         item: None,
@@ -520,6 +523,7 @@ fn rows_group_into_one_day_each_in_newest_first_order() {
         error: None,
         session: None,
         duration: None,
+        elapsed: None,
     };
     let rows = vec![
         row("late-today", today + 5 * HOUR),

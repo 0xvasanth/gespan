@@ -1357,9 +1357,10 @@ mod tests {
         let flows = window
             .update(visual, |_, _, cx| crate::flows::visible(cx))
             .unwrap();
-        let mut expected = vec!["Home", "My tasks", "Inbox", "Runs", "Automations", "Search"];
+        // Runs is a pane of Automations now, so it has no icon of its own.
+        let mut expected = vec!["Home", "My tasks", "Inbox", "Automations", "Search"];
         if flows {
-            expected.insert(5, "Flows");
+            expected.insert(4, "Flows");
         }
         assert_eq!(page_order(visual), expected);
         // The board's 42x32 buttons: six fit the rail without shrinking much.
