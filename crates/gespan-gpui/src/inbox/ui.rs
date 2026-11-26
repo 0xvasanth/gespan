@@ -2,75 +2,14 @@ use super::*;
 use crate::glass;
 use crate::popover::{Align, Anchor, popover};
 use gpui::{
-    AnyElement, ClipboardItem, CursorStyle, Div, FontWeight, Hsla, MouseButton, Pixels, Role,
-    SharedString, Stateful, Window, canvas, div, list, prelude::*, px, rgb,
+    AnyElement, ClipboardItem, Div, FontWeight, Hsla, MouseButton, Pixels, Role, SharedString,
+    Stateful, Window, canvas, div, list, prelude::*, px, rgb,
 };
 
 pub(super) fn action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
     plain_action(id, label).hover(|s| s.bg(content(0.07)).text_color(content(1.)))
 }
 /// An [`action`] without its hover, for callers that set their own.
-impl Inbox {
-    /// InboxView's "Diff context" group: Hunks or Full file.
-    fn diff_context_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let option = |full: bool, label: &'static str| {
-            let on = self.full_file == full;
-            div()
-                .id(if full {
-                    "inbox-diff-full"
-                } else {
-                    "inbox-diff-hunks"
-                })
-                .debug_selector(move || {
-                    if full {
-                        "inbox-diff-full"
-                    } else {
-                        "inbox-diff-hunks"
-                    }
-                    .into()
-                })
-                .role(Role::Button)
-                .aria_label(label)
-                .aria_toggled(if on {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
-                })
-                .cursor_pointer()
-                .px(px(10.))
-                .py_1()
-                .rounded(px(4.))
-                .text_size(px(11.))
-                .line_height(px(11.))
-                .when(on, |d| {
-                    d.bg(crate::right_panel::selection())
-                        .text_color(content(1.))
-                })
-                .when(!on, |d| {
-                    d.text_color(content(0.45))
-                        .hover(|s| s.text_color(content(0.7)))
-                })
-                .on_click(cx.listener(move |this, _, _, cx| this.set_full_file(full, cx)))
-                .child(label)
-        };
-        div()
-            .id("inbox-diff-context")
-            .role(Role::Group)
-            .aria_label("Diff context")
-            .ml_auto()
-            .self_center()
-            .flex()
-            .items_center()
-            .p(px(2.))
-            .rounded_md()
-            .border_1()
-            .border_color(content(0.1))
-            .bg(content(0.03))
-            .child(option(false, "Hunks"))
-            .child(option(true, "Full file"))
-    }
-}
-
 fn plain_action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
     let id: SharedString = id.into();
     let label = label.into();
@@ -231,7 +170,7 @@ fn timeline_event(name: &str, action: &str, time: &str) -> Div {
             d.child("·").child(relative_time(time))
         })
 }
-fn menu_row(
+pub(super) fn menu_row(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
     checked: bool,
@@ -259,13 +198,14 @@ fn menu_row(
         )
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
-/// A one-shot command in a menu: an icon and a label.
-fn menu_action(id: &'static str, label: &'static str, path: &'static str) -> Stateful<Div> {
+/// [`menu_action`] with a label and id made at run time.
+pub(super) fn menu_action_owned(id: String, label: String, path: &'static str) -> Stateful<Div> {
+    let selector = id.clone();
     div()
-        .id(id)
-        .debug_selector(move || id.into())
+        .id(SharedString::from(id))
+        .debug_selector(move || selector.clone())
         .role(Role::MenuItem)
-        .aria_label(label)
+        .aria_label(label.clone())
         .h(px(28.))
         .px(px(8.))
         .flex()
@@ -279,10 +219,10 @@ fn menu_action(id: &'static str, label: &'static str, path: &'static str) -> Sta
         .child(icon(path, 14.).text_color(content(0.6)))
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
-fn divider() -> Div {
+pub(super) fn divider() -> Div {
     div().mx(px(8.)).my(px(6.)).h(px(1.)).bg(content(0.08))
 }
-fn caption(text: impl Into<SharedString>) -> Div {
+pub(super) fn caption(text: impl Into<SharedString>) -> Div {
     div()
         .px(px(8.))
         .pt(px(10.))
@@ -339,7 +279,7 @@ pub(super) fn loading_panel(id: &'static str, label: &'static str) -> Div {
 pub(super) fn error(text: impl Into<SharedString>) -> Div {
     message(text).text_color(rgb(0xf87171))
 }
-fn provider_mark(provider: &str) -> gpui::Svg {
+pub(super) fn provider_mark(provider: &str) -> gpui::Svg {
     let (path, color) = match provider {
         "linear" => ("inbox-linear", content(0.8)),
         "jira" => ("inbox-jira", rgb(0x2684ff).into()),
@@ -350,14 +290,6 @@ fn provider_mark(provider: &str) -> gpui::Svg {
     };
     icon(path, 14.).text_color(color)
 }
-fn status_color(item: &Item) -> Hsla {
-    match item.status() {
-        "Merged" => rgb(0xa78bfa).into(),
-        "Closed" => rgb(0xf87171).into(),
-        "Draft" => content(0.4),
-        _ => rgb(0x4ade80).into(),
-    }
-}
 fn status_icon(item: &Item) -> &'static str {
     if item.kind == "pr" {
         "git-pull-request"
@@ -367,131 +299,15 @@ fn status_icon(item: &Item) -> &'static str {
         "circle-dot"
     }
 }
-fn attention_label(reason: &str) -> String {
-    let reason = reason.trim().to_lowercase();
-    match reason.as_str() {
-        "assigned" => "Assigned to you",
-        "mentioned" | "directly_addressed" => "Mentioned you",
-        "review_requested" => "Review requested",
-        "review_submitted" => "Review submitted",
-        "approval_required" => "Approval required",
-        "build_failed" => "Pipeline failed",
-        "unmergeable" => "Cannot be merged",
-        "merge_train_removed" => "Removed from merge train",
-        "member_access_requested" => "Access requested",
-        "marked" => "Added to your to-dos",
-        _ => {
-            return reason
-                .split('_')
-                .filter(|word| !word.is_empty())
-                .enumerate()
-                .map(|(ix, word)| {
-                    if ix == 0 {
-                        let mut chars = word.chars();
-                        chars
-                            .next()
-                            .map(|c| c.to_uppercase().to_string() + chars.as_str())
-                            .unwrap_or_default()
-                    } else {
-                        word.to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-        }
-    }
-    .into()
-}
-fn toggle(list: &mut Vec<String>, key: String) {
+pub(super) fn toggle(list: &mut Vec<String>, key: String) {
     if list.contains(&key) {
         list.retain(|value| value != &key);
     } else {
         list.push(key);
     }
 }
-/// The list's view: everything, pull requests asking for your review
-/// (GitHub), or what is assigned to you.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum View {
-    All,
-    ReviewRequested,
-    Assigned,
-}
-impl View {
-    fn id(self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::ReviewRequested => "review-requested",
-            Self::Assigned => "assigned",
-        }
-    }
-}
-/// The views a source offers: only GitHub can search for review requests.
-fn view_options(source: &str) -> Vec<(View, &'static str)> {
-    let mut views = vec![(View::All, "All")];
-    if source == "github" {
-        // "Reviews" keeps the three tabs inside the list; the row meta and the
-        // tab's accessible name still say "Review requested".
-        views.push((View::ReviewRequested, "Reviews"));
-    }
-    views.push((
-        View::Assigned,
-        if matches!(source, "gitlab" | "azuredevops") {
-            "Needs my attention"
-        } else {
-            "Assigned"
-        },
-    ));
-    views
-}
-fn current_view(state: &ViewState) -> View {
-    if state.filters.review_requested && state.source == "github" {
-        View::ReviewRequested
-    } else if state.filters.assigned_to_me {
-        View::Assigned
-    } else {
-        View::All
-    }
-}
-/// Rows under their group label, groups in the order their first row comes,
-/// rows in list order within each group.
-fn group_rows(rows: Vec<(String, Item)>) -> Vec<(String, Vec<Item>)> {
-    let mut groups: Vec<(String, Vec<Item>)> = Vec::new();
-    for (label, item) in rows {
-        match groups.iter_mut().find(|(group, _)| *group == label) {
-            Some((_, items)) => items.push(item),
-            None => groups.push((label, vec![item])),
-        }
-    }
-    groups
-}
-/// A row's pill: how its checks stand once they are loaded, else the
-/// item's own status.
-fn row_status(item: &Item, checks: Option<&Checks>) -> (String, glass::Tone) {
-    if let Some(checks) = checks.filter(|checks| !checks.checks.is_empty()) {
-        let counts = model::ci_repair::Counts::checks(&checks.checks);
-        let total = checks.checks.len();
-        if counts.fail > 0 {
-            return (format!("{} failed", counts.fail), glass::Tone::Bad);
-        }
-        if counts.pending > 0 {
-            return (
-                format!("{}/{total}", total - counts.pending),
-                glass::Tone::Running,
-            );
-        }
-        if counts.pass + counts.skipping == total {
-            return ("Passing".into(), glass::Tone::Ok);
-        }
-    }
-    let tone = match item.status() {
-        "Merged" => glass::Tone::Ok,
-        _ => glass::Tone::Muted,
-    };
-    (item.status().into(), tone)
-}
 /// A row's age in its shortest form: "now", "14m", "2h", "3d", "5w", "1y".
-fn short_age(iso: &str) -> String {
+pub(super) fn short_age(iso: &str) -> String {
     let at = model::timestamp_ms(iso);
     if at == 0 {
         return String::new();
@@ -560,21 +376,6 @@ fn card_order(checks: &[model::Check]) -> Vec<model::Check> {
     let mut rows = checks.to_vec();
     rows.sort_by_key(|check| !failed_check(&check.state));
     rows
-}
-/// A row's second line: its reference, then why it is here, else who
-/// opened it; issues say so.
-fn row_meta(item: &Item) -> String {
-    let mut parts = vec![item.reference()];
-    if item.kind != "pr" && !model::is_tracker(&item.provider) {
-        parts.push("issue".into());
-    }
-    let attention = attention_label(&item.attention_reason);
-    if !attention.is_empty() {
-        parts.push(attention);
-    } else if !item.author.is_empty() {
-        parts.push(item.author.clone());
-    }
-    parts.join(" · ")
 }
 /// The checks card's heading pill: failures counted, else running or passing.
 fn checks_overall(checks: &Checks) -> (String, glass::Tone) {
@@ -649,7 +450,7 @@ enum CommentStyle {
 }
 
 impl Inbox {
-    fn project_label(&self, path: &str) -> String {
+    pub(super) fn project_label(&self, path: &str) -> String {
         self.appearances.get(path).map_or_else(
             || project_name(std::path::Path::new(path)),
             |appearance| appearance.label(path),
@@ -661,434 +462,6 @@ impl Inbox {
             path,
             side,
         )
-    }
-
-    /// The label a row is grouped under: the tracker team, else the
-    /// repository, else the project the item came from.
-    fn group_label(&self, item: &Item) -> String {
-        if model::is_tracker(&item.provider) && !item.team_name.is_empty() {
-            item.team_name.clone()
-        } else if !item.repo.is_empty() {
-            item.repo.clone()
-        } else {
-            self.project_label(&item.project_path)
-        }
-    }
-
-    fn list_view(&self, cx: &mut Context<Self>) -> AnyElement {
-        let connected = model::PROVIDERS
-            .into_iter()
-            .filter(|provider| {
-                self.snapshot
-                    .connections
-                    .get(*provider)
-                    .is_some_and(|s| s.connected)
-            })
-            .collect::<Vec<_>>();
-        let items = self.visible_items(cx);
-        let add_connection = div()
-            .id("inbox-add-connection")
-            .debug_selector(|| "inbox-add-connection".into())
-            .role(Role::Button)
-            .aria_label("Add connection")
-            .relative()
-            .flex_none()
-            .size(px(30.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded(px(9.))
-            .bg(glass::fill())
-            .border_1()
-            .border_color(glass::edge())
-            .text_color(content(0.75))
-            .cursor_pointer()
-            .hover(|s| s.bg(glass::hover_fill()).text_color(content(1.)))
-            .child(self.connection_anchor.probe())
-            .child(icon("plus", 14.))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.filters_open = false;
-                cx.emit(super::Event::OpenConnections);
-            }));
-        let header = div()
-            .flex()
-            .items_start()
-            .gap(px(8.))
-            .child(
-                glass::page_header(
-                    "Inbox",
-                    "Pull requests, issues and reviews from your connections.",
-                )
-                .flex_1()
-                .min_w_0(),
-            )
-            .child(add_connection);
-        let view = current_view(&self.state);
-        let review_count = self
-            .snapshot
-            .items
-            .iter()
-            .filter(|item| {
-                item.provider == self.state.source
-                    && item
-                        .attention_reason
-                        .eq_ignore_ascii_case("review_requested")
-            })
-            .count();
-        let views =
-            (!connected.is_empty()).then(|| {
-                let shown = self
-                    .snapshot
-                    .items
-                    .iter()
-                    .filter(|item| item.provider == self.state.source)
-                    .count();
-                glass::segmented()
-                    .id("inbox-views")
-                    .debug_selector(|| "inbox-views".into())
-                    .role(Role::TabList)
-                    .aria_label("Inbox view")
-                    .self_start()
-                    // Never wider than the list: the tabs shrink and their
-                    // labels truncate instead of running into the detail pane.
-                    .max_w_full()
-                    .min_w_0()
-                    .children(view_options(&self.state.source).into_iter().map(
-                        |(option, label)| {
-                            let selected = view == option;
-                            let count = match option {
-                                View::All if selected => Some((shown, false)),
-                                View::ReviewRequested => Some((review_count, true)),
-                                _ => None,
-                            };
-                            glass::segment(
-                                SharedString::from(format!("inbox-view-{}", option.id())),
-                                label,
-                                selected,
-                            )
-                            .debug_selector(move || format!("inbox-view-{}", option.id()))
-                            .role(Role::Tab)
-                            .aria_label(match option {
-                                View::ReviewRequested => "Review requested",
-                                _ => label,
-                            })
-                            .aria_selected(selected)
-                            .px(px(9.))
-                            .gap(px(4.))
-                            .min_w_0()
-                            .when_some(count.filter(|(n, _)| *n > 0), |d, (n, hot)| {
-                                d.child(glass::count(n, hot).flex_none())
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| this.set_view(option, cx)))
-                        },
-                    ))
-            });
-        let source_pill = (!connected.is_empty()).then(|| {
-            let next = connected
-                .iter()
-                .skip_while(|provider| **provider != self.state.source)
-                .nth(1)
-                .or(connected.first())
-                .map(|provider| provider.to_string());
-            let many = connected.len() > 1;
-            div()
-                .id("inbox-source")
-                .debug_selector(|| "inbox-source".into())
-                .role(Role::Button)
-                .aria_label(format!(
-                    "Source: {}",
-                    model::provider_label(&self.state.source)
-                ))
-                .flex_none()
-                .h(px(20.))
-                .px(px(8.))
-                .flex()
-                .items_center()
-                .gap(px(4.))
-                .rounded_full()
-                .bg(glass::fill())
-                .border_1()
-                .border_color(glass::edge())
-                .text_size(px(11.))
-                .text_color(content(0.75))
-                .when(many, |d| {
-                    d.cursor_pointer()
-                        .hover(|s| s.text_color(content(1.)))
-                        .child(icon("chevron-down", 10.))
-                })
-                .child(model::provider_label(&self.state.source))
-                .when(many, |d| d.flex_row_reverse())
-                .when_some(next.filter(|_| many), |d, next| {
-                    d.on_click(
-                        cx.listener(move |this, _, _, cx| this.change_source(next.clone(), cx)),
-                    )
-                })
-        });
-        // The header holds only the title and "+", as in the design; the
-        // filter sits at the end of the search field, and its menu also
-        // carries Mark all as read and Refresh. The search glyph turns into
-        // the loader while a refresh runs.
-        let filter = icon_button("inbox-filter", "Filter inbox", "filter")
-            .debug_selector(|| "inbox-filter".into())
-            .relative()
-            .child(self.filter_anchor.probe())
-            .when(self.filters_open || self.filters_active(), |d| {
-                d.bg(content(0.1)).text_color(content(1.))
-            })
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.filters_open = !this.filters_open;
-                this.connections_open = false;
-                cx.notify();
-            }));
-        let search = (!connected.is_empty()).then(|| {
-            glass::field()
-                .debug_selector(|| "inbox-search".into())
-                .pr(px(4.))
-                .child(
-                    icon(if self.loading { "loader" } else { "search" }, 14.)
-                        .text_color(content(0.55)),
-                )
-                .child(div().flex_1().min_w_0().child(self.search.clone()))
-                .children(source_pill)
-                .child(filter)
-        });
-        let no_connection = connected.is_empty() && !self.loading;
-        let empty = if no_connection {
-            "Add a connection to start using the Inbox.".into()
-        } else if self.loading && self.snapshot.items.is_empty() {
-            "Loading inbox…".into()
-        } else if let Some(error) = self.snapshot.errors.get(&self.state.source) {
-            error.clone()
-        } else if self.projects.is_empty() && !model::is_tracker(&self.state.source) {
-            "Open a project to fill the inbox".into()
-        } else if self.filters_active() || !self.search.read(cx).content.is_empty() {
-            "No items match these filters".into()
-        } else if model::is_tracker(&self.state.source) {
-            format!("No {} issues", model::provider_label(&self.state.source))
-        } else {
-            "No matching issues or pull requests".into()
-        };
-        let groups = group_rows(
-            items
-                .into_iter()
-                .map(|item| (self.group_label(&item), item))
-                .collect(),
-        );
-        let mut rows = Vec::new();
-        for (ix, (label, items)) in groups.into_iter().enumerate() {
-            rows.push(
-                // The rows are flex_none, so in a list long enough to scroll
-                // the label was the one child left to shrink, and truncate's
-                // overflow let it fall to its padding, under the first row.
-                glass::eyebrow(label.clone())
-                    .debug_selector(move || format!("inbox-group-{label}"))
-                    .flex_none()
-                    .px(px(10.))
-                    .pt(px(if ix == 0 { 4. } else { 12. }))
-                    .pb(px(6.))
-                    .truncate()
-                    .into_any_element(),
-            );
-            rows.extend(items.into_iter().map(|item| self.list_row(item, cx)));
-        }
-        div()
-            .debug_selector(|| "inbox-list".into())
-            .relative()
-            .w(px(self.state.list_width.clamp(240., 420.)))
-            .h_full()
-            .flex_shrink_0()
-            .border_r_1()
-            .border_color(content(0.06))
-            .bg(if is_light() {
-                content(0.03)
-            } else {
-                black(0.12)
-            })
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .px(px(18.))
-                    .pt(px(22.))
-                    .pb(px(12.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .child(header)
-                    .children(views)
-                    .children(search),
-            )
-            .child(
-                div()
-                    .id("inbox-list-scroll")
-                    .role(Role::ListBox)
-                    .aria_label("Inbox items")
-                    .min_h_0()
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .px(px(10.))
-                    .pb(px(10.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .when(rows.is_empty(), |d| {
-                        d.child(if no_connection {
-                            glass::empty_state(
-                                "inbox",
-                                "Add a connection to start using the Inbox.",
-                                "Connect GitHub, GitLab or a tracker with the + above.",
-                            )
-                            .debug_selector(|| "inbox-empty-list".into())
-                            .py(px(48.))
-                            .px(px(12.))
-                            .into_any_element()
-                        } else {
-                            message(empty)
-                                .debug_selector(|| "inbox-empty-list".into())
-                                .into_any_element()
-                        })
-                    })
-                    .children(rows),
-            )
-            .child(
-                div()
-                    .id("inbox-list-resize")
-                    .role(Role::Splitter)
-                    .aria_label("Resize inbox list")
-                    .absolute()
-                    .right(px(-3.))
-                    .top_0()
-                    .bottom_0()
-                    .w(px(6.))
-                    .cursor(CursorStyle::ResizeLeftRight)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                            this.resize_start =
-                                Some((f32::from(event.position.x), this.state.list_width));
-                            cx.stop_propagation();
-                        }),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    /// One inbox row: what it is, its title (bold while unread), its
-    /// reference and why it is here, its age, and a status pill.
-    fn list_row(&self, item: Item, cx: &mut Context<Self>) -> AnyElement {
-        let key = item.key();
-        let active = self.selected.as_ref() == Some(&key);
-        let unread = self.state.seen.unseen(&item);
-        let checks = if active { self.checks.as_ref() } else { None };
-        let (status, tone) = row_status(&item, checks);
-        let ink = status_color(&item);
-        div()
-            .id(SharedString::from(format!("inbox-item-{key}")))
-            .debug_selector({
-                let key = key.clone();
-                move || format!("inbox-item-{key}")
-            })
-            .role(Role::Button)
-            .aria_label(item.title.clone())
-            .aria_selected(active)
-            .relative()
-            .flex_none()
-            .px(px(12.))
-            .py(px(11.))
-            .flex()
-            .items_center()
-            .gap(px(11.))
-            .rounded(px(12.))
-            .border_1()
-            .cursor_pointer()
-            .when(active, |d| {
-                d.bg(glass::selected_fill())
-                    .border_color(glass::edge())
-                    .shadow(vec![
-                        gpui::BoxShadow::new(px(0.), px(1.), white(0.08)).inset(),
-                    ])
-            })
-            .when(!active, |d| {
-                d.border_color(gpui::transparent_black())
-                    .hover(|s| s.bg(glass::hover_fill()))
-            })
-            .when(unread, |d| {
-                d.child(
-                    div()
-                        .debug_selector({
-                            let key = key.clone();
-                            move || format!("inbox-unread-{key}")
-                        })
-                        .absolute()
-                        .left(px(-2.))
-                        .top(px(18.))
-                        .size(px(6.))
-                        .rounded_full()
-                        .bg(accent_color()),
-                )
-            })
-            .child(if item.author.is_empty() {
-                let mark = format!("inbox-mark-{key}");
-                div()
-                    .debug_selector(move || mark)
-                    .flex_none()
-                    .size(px(22.))
-                    .rounded_full()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(ink.opacity(0.16))
-                    .child(provider_mark(&item.provider).size(px(12.)))
-                    .into_any_element()
-            } else {
-                let initials = format!("inbox-initials-{key}");
-                div()
-                    .debug_selector(move || initials)
-                    .child(super::menu::initials_avatar(&item.author))
-                    .into_any_element()
-            })
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(13.))
-                            .line_height(px(18.))
-                            .font_weight(if unread {
-                                FontWeight::SEMIBOLD
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(content(if unread { 1. } else { 0.62 }))
-                            .child(item.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .text_size(px(11.5))
-                            .text_color(content(0.5))
-                            .child(div().min_w_0().flex_1().truncate().child(row_meta(&item)))
-                            .child(div().flex_none().child(short_age(&item.updated_at))),
-                    ),
-            )
-            .child(
-                glass::status(status, tone)
-                    .h(px(20.))
-                    .debug_selector(move || format!("inbox-row-status-{key}")),
-            )
-            .on_click({
-                let key = item.key();
-                cx.listener(move |this, _, _, cx| this.select(key.clone(), cx))
-            })
-            .into_any_element()
     }
 
     fn related_sessions(&self, item: &Item) -> Vec<Session> {
@@ -1112,6 +485,13 @@ impl Inbox {
 
     fn detail_view(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(item) = self.item() else {
+            if self.visible_items(cx).is_empty() {
+                return div()
+                    .debug_selector(|| "inbox-empty-detail".into())
+                    .size_full()
+                    .child(self.hosts_card(cx))
+                    .into_any_element();
+            }
             return div()
                 .size_full()
                 .flex()
@@ -1120,9 +500,9 @@ impl Inbox {
                 .justify_center()
                 .child(
                     glass::empty_state(
-                        "inbox",
-                        "Select an inbox item",
-                        "Its description, discussion, code and checks open here.",
+                        "git-pull-request",
+                        "Select a pull request",
+                        "Its overview, checks and files open here.",
                     )
                     .debug_selector(|| "inbox-empty-detail".into()),
                 )
@@ -1299,55 +679,46 @@ impl Inbox {
             })
             .unwrap_or(0);
         let tabs = is_pr.then(|| {
-            div()
-                .mt(px(4.))
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .child(
-                    glass::segmented()
-                        .id("inbox-pr-tabs")
-                        .role(Role::TabList)
-                        .aria_label("Pull request view")
-                        .children(
-                            [
-                                (Tab::Summary, "Overview"),
-                                (Tab::Checks, "Checks"),
-                                (Tab::Code, "Files"),
-                            ]
-                            .into_iter()
-                            .filter(|(tab, _)| *tab != Tab::Checks || item.provider == "github")
-                            .map(|(tab, label)| {
-                                let count = match tab {
-                                    Tab::Summary => None,
-                                    Tab::Code => {
-                                        self.diff.as_ref().map(|diff| (diff.files.len(), false))
-                                    }
-                                    Tab::Checks => self
-                                        .checks
-                                        .as_ref()
-                                        .map(|checks| (checks.checks.len(), failed > 0)),
-                                };
-                                glass::segment(
-                                    SharedString::from(format!("inbox-tab-{label}")),
-                                    label,
-                                    self.tab == tab,
-                                )
-                                .debug_selector(move || format!("inbox-tab-{label}"))
-                                .role(Role::Tab)
-                                .aria_label(label)
-                                .aria_selected(self.tab == tab)
-                                .when_some(count.filter(|(n, _)| *n > 0), |d, (n, hot)| {
-                                    d.child(glass::count(n, hot))
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| this.set_tab(tab, cx)))
-                            }),
-                        ),
-                )
-                .when(
-                    self.tab == Tab::Code && super::shows_full_file(&item),
-                    |d| d.child(self.diff_context_switch(cx)),
-                )
+            div().mt(px(4.)).flex().items_center().gap(px(10.)).child(
+                glass::segmented()
+                    .id("inbox-pr-tabs")
+                    .role(Role::TabList)
+                    .aria_label("Pull request view")
+                    .children(
+                        [
+                            (Tab::Summary, "Overview"),
+                            (Tab::Checks, "Checks"),
+                            (Tab::Code, "Files"),
+                        ]
+                        .into_iter()
+                        .filter(|(tab, _)| *tab != Tab::Checks || item.provider == "github")
+                        .map(|(tab, label)| {
+                            let count = match tab {
+                                Tab::Summary => None,
+                                Tab::Code => {
+                                    self.diff.as_ref().map(|diff| (diff.files.len(), false))
+                                }
+                                Tab::Checks => self
+                                    .checks
+                                    .as_ref()
+                                    .map(|checks| (checks.checks.len(), failed > 0)),
+                            };
+                            glass::segment(
+                                SharedString::from(format!("inbox-tab-{label}")),
+                                label,
+                                self.tab == tab,
+                            )
+                            .debug_selector(move || format!("inbox-tab-{label}"))
+                            .role(Role::Tab)
+                            .aria_label(label)
+                            .aria_selected(self.tab == tab)
+                            .when_some(count.filter(|(n, _)| *n > 0), |d, (n, hot)| {
+                                d.child(glass::count(n, hot))
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_tab(tab, cx)))
+                        }),
+                    ),
+            )
         });
         let author = if details.author.is_empty() {
             item.author.clone()
@@ -1532,6 +903,11 @@ impl Inbox {
                     .debug_selector(|| "inbox-ask".into())
                     .on_click(cx.listener(|this, _, _, cx| this.open_ask(cx))),
             );
+        // Files is where a review is written: its bar takes the Ask bar's
+        // place there.
+        let review_bar = (self.tab == Tab::Code)
+            .then(|| self.review_bar_view(cx))
+            .flatten();
         div()
             .size_full()
             .min_w_0()
@@ -1541,14 +917,17 @@ impl Inbox {
             .child(title)
             .when_some(self.detail_error.clone(), |d, text| d.child(error(text)))
             .child(body)
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .px(px(28.))
-                    .pt(px(10.))
-                    .pb(px(22.))
-                    .child(ask),
-            )
+            .map(|d| match review_bar {
+                Some(bar) => d.child(bar),
+                None => d.child(
+                    div()
+                        .flex_shrink_0()
+                        .px(px(28.))
+                        .pt(px(10.))
+                        .pb(px(22.))
+                        .child(ask),
+                ),
+            })
             .into_any_element()
     }
 
@@ -2556,31 +1935,9 @@ impl Inbox {
             .into_any_element()
     }
 
-    fn filters_active(&self) -> bool {
-        let f = &self.state.filters;
-        f.assigned_to_me
-            || !f.hidden_projects.is_empty()
-            || !f.hidden_linear_projects.is_empty()
-            || !f.hidden_kinds.is_empty()
-            || f.time != "all"
-            || f.status.open
-            || f.status.draft
-            || f.status.closed
-            || f.status.merged
-            || (self.state.source == "linear" && !self.state.hidden_linear_teams.is_empty())
-            || (self.state.source == "jira" && !self.state.hidden_jira_projects.is_empty())
-    }
     /// Settings' team list: the same choice as the Inbox's Teams filter.
     pub(crate) fn toggle_linear_team(&mut self, id: String, cx: &mut Context<Self>) {
-        toggle(&mut self.state.hidden_linear_teams, id);
-        self.filters_changed(true, cx);
-    }
-    fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
-        if current_view(&self.state) == view {
-            return;
-        }
-        self.state.filters.review_requested = view == View::ReviewRequested;
-        self.state.filters.assigned_to_me = view == View::Assigned;
+        toggle(&mut self.state.feed.hidden_linear_teams, id);
         self.filters_changed(true, cx);
     }
     fn filters_changed(&mut self, refetch: bool, cx: &mut Context<Self>) {
@@ -2595,263 +1952,6 @@ impl Inbox {
         }
         cx.notify();
     }
-    /// Marks every item from the current source as read.
-    fn mark_source_read(&mut self, cx: &mut Context<Self>) {
-        for item in &self.snapshot.items {
-            if item.provider == self.state.source {
-                self.state.seen.mark(item);
-            }
-        }
-        self.save();
-        cx.notify();
-    }
-    fn filters_menu(&self, cx: &mut Context<Self>) -> AnyElement {
-        let weak = cx.entity().downgrade();
-        let f = &self.state.filters;
-        let tracker = model::is_tracker(&self.state.source);
-        let mut rows = vec![
-            caption("FILTER INBOX").into_any_element(),
-            menu_row(
-                "inbox-assigned",
-                if matches!(self.state.source.as_str(), "gitlab" | "azuredevops") {
-                    "Needs my attention"
-                } else {
-                    "Assigned to me"
-                },
-                f.assigned_to_me,
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.state.filters.assigned_to_me = !this.state.filters.assigned_to_me;
-                this.state.filters.review_requested = false;
-                this.filters_changed(true, cx);
-            }))
-            .into_any_element(),
-            caption("UPDATED").into_any_element(),
-        ];
-        for (time, label) in [
-            ("all", "Any time"),
-            ("today", "Today"),
-            ("7d", "Last 7 days"),
-            ("30d", "Last 30 days"),
-        ] {
-            rows.push(
-                menu_row(format!("inbox-time-{time}"), label, f.time == time)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.state.filters.time = time.into();
-                        this.filters_changed(false, cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
-        rows.push(caption("STATUS").into_any_element());
-        for status in ["Open", "Draft", "Closed", "Merged"]
-            .into_iter()
-            .filter(|s| !tracker || matches!(*s, "Open" | "Closed"))
-        {
-            let checked = match status {
-                "Open" => f.status.open,
-                "Draft" => f.status.draft,
-                "Closed" => f.status.closed,
-                _ => f.status.merged,
-            };
-            rows.push(
-                menu_row(format!("inbox-status-{status}"), status, checked)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let s = &mut this.state.filters.status;
-                        match status {
-                            "Open" => s.open = !s.open,
-                            "Draft" => s.draft = !s.draft,
-                            "Closed" => s.closed = !s.closed,
-                            _ => s.merged = !s.merged,
-                        }
-                        this.filters_changed(true, cx);
-                    }))
-                    .into_any_element(),
-            );
-        }
-        if !tracker {
-            rows.push(caption("TYPE").into_any_element());
-            for (kind, label) in [
-                ("issue", "Issues"),
-                (
-                    "pr",
-                    if self.state.source == "gitlab" {
-                        "Merge requests"
-                    } else {
-                        "Pull requests"
-                    },
-                ),
-            ] {
-                rows.push(
-                    menu_row(
-                        format!("inbox-kind-{kind}"),
-                        label,
-                        !f.hidden_kinds.iter().any(|k| k == kind),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        toggle(&mut this.state.filters.hidden_kinds, kind.into());
-                        this.filters_changed(false, cx);
-                    }))
-                    .into_any_element(),
-                );
-            }
-            rows.push(caption("PROJECTS").into_any_element());
-            for (ix, project) in self.projects.iter().enumerate() {
-                let key = project.to_string_lossy().into_owned();
-                rows.push(
-                    menu_row(
-                        format!("inbox-project-filter-{ix}"),
-                        self.project_label(&key),
-                        !f.hidden_projects.contains(&key),
-                    )
-                    .child(self.project_mark(&key, 12.))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        toggle(&mut this.state.filters.hidden_projects, key.clone());
-                        this.filters_changed(false, cx);
-                    }))
-                    .into_any_element(),
-                );
-            }
-        }
-        let provider_options = if self.state.source == "linear" {
-            &self.snapshot.linear_teams
-        } else {
-            &self.snapshot.jira_projects
-        };
-        if tracker && !provider_options.is_empty() {
-            rows.push(
-                caption(if self.state.source == "linear" {
-                    "TEAMS"
-                } else {
-                    "PROJECTS"
-                })
-                .into_any_element(),
-            );
-            for (ix, option) in provider_options.iter().enumerate() {
-                let id = option.id.clone();
-                let hidden = if self.state.source == "linear" {
-                    &self.state.hidden_linear_teams
-                } else {
-                    &self.state.hidden_jira_projects
-                };
-                rows.push(
-                    menu_row(
-                        format!("inbox-tracker-filter-{ix}"),
-                        option.name.clone(),
-                        !hidden.contains(&id),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.state.source == "linear" {
-                            toggle(&mut this.state.hidden_linear_teams, id.clone());
-                        } else {
-                            toggle(&mut this.state.hidden_jira_projects, id.clone());
-                        }
-                        this.filters_changed(true, cx);
-                    }))
-                    .into_any_element(),
-                );
-            }
-        }
-        if self.state.source == "linear" {
-            let mut projects = std::collections::BTreeMap::new();
-            for item in self
-                .snapshot
-                .items
-                .iter()
-                .filter(|i| i.provider == "linear")
-            {
-                projects
-                    .entry(if item.project_id.is_empty() {
-                        "~none".into()
-                    } else {
-                        item.project_id.clone()
-                    })
-                    .or_insert_with(|| {
-                        if item.project_name.is_empty() {
-                            "No project".into()
-                        } else {
-                            item.project_name.clone()
-                        }
-                    });
-            }
-            rows.push(caption("LINEAR PROJECTS").into_any_element());
-            for (ix, (id, name)) in projects.into_iter().enumerate() {
-                rows.push(
-                    menu_row(
-                        format!("inbox-linear-project-{ix}"),
-                        name,
-                        !f.hidden_linear_projects.contains(&id),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        toggle(&mut this.state.filters.hidden_linear_projects, id.clone());
-                        this.filters_changed(false, cx);
-                    }))
-                    .into_any_element(),
-                );
-            }
-        }
-        rows.push(
-            action("inbox-clear-filters", "Clear filters")
-                .w_full()
-                .justify_start()
-                .mt(px(8.))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.state.filters = model::Filters::default();
-                    this.state.hidden_linear_teams.clear();
-                    this.state.hidden_jira_projects.clear();
-                    this.filters_changed(true, cx);
-                }))
-                .into_any_element(),
-        );
-        rows.push(divider().into_any_element());
-        rows.push(
-            menu_action("inbox-read-all", "Mark all as read", "check-2")
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.filters_open = false;
-                    this.mark_source_read(cx);
-                }))
-                .into_any_element(),
-        );
-        rows.push(
-            menu_action(
-                "inbox-refresh",
-                if self.loading {
-                    "Refreshing…"
-                } else {
-                    "Refresh"
-                },
-                if self.loading { "loader" } else { "refresh-cw" },
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.filters_open = false;
-                this.refresh(cx);
-                this.load_detail(false, cx);
-            }))
-            .into_any_element(),
-        );
-        popover(
-            "inbox-filter-menu",
-            Anchor::Slot(self.filter_anchor.clone()),
-        )
-        .align(Align::End)
-        .width(252.)
-        .max_height(620.)
-        .padding(4.)
-        .on_dismiss(move |_, cx| {
-            let _ = weak.update(cx, |this, cx| {
-                this.filters_open = false;
-                cx.notify();
-            });
-        })
-        .child(
-            div()
-                .id("inbox-filter-scroll")
-                .overflow_y_scroll()
-                .children(rows),
-        )
-        .into_any_element()
-    }
-
     fn connection_menu(&self, cx: &mut Context<Self>) -> AnyElement {
         let weak = cx.entity().downgrade();
         popover(
@@ -3267,13 +2367,18 @@ impl gpui::Render for Inbox {
             self.focus_comment = false;
             window.focus(&self.comment.focus_handle(cx), cx);
         }
+        if self.focus_review {
+            self.focus_review = false;
+            window.focus(&self.review_body.focus_handle(cx), cx);
+        }
+        self.sync_arrivals(cx);
         let list = self.list_view(cx);
         let detail = self.detail_view(window, cx);
         let ask = self.ask_panel(window, cx);
         div()
             .id("inbox-view")
             .role(Role::Group)
-            .aria_label("Inbox")
+            .aria_label("Git")
             .track_focus(&self.focus)
             .relative()
             .size_full()
@@ -3286,11 +2391,13 @@ impl gpui::Render for Inbox {
                     } else if this.confirm_action.is_some() && !this.acting {
                         this.confirm_action = None;
                     } else if this.filters_open
+                        || this.add_repo_open
                         || this.connections_open
                         || this.project_picker
                         || this.action_menu
                     {
                         this.filters_open = false;
+                        this.add_repo_open = false;
                         this.connections_open = false;
                         this.project_picker = false;
                         this.action_menu = false;
@@ -3304,9 +2411,9 @@ impl gpui::Render for Inbox {
             .on_mouse_move(
                 cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
                     if let Some((start, width)) = this.resize_start {
-                        let max = (f32::from(window.viewport_size().width) * 0.5).clamp(240., 420.);
-                        this.state.list_width =
-                            (width + f32::from(event.position.x) - start).clamp(240., max);
+                        let max = (f32::from(window.viewport_size().width) * 0.5).clamp(300., 480.);
+                        this.state.feed.list_width =
+                            (width + f32::from(event.position.x) - start).clamp(300., max);
                         cx.notify();
                     }
                 }),
@@ -3347,7 +2454,8 @@ impl gpui::Render for Inbox {
                     .children(ask),
             )
             .when_some(self.error.clone(), |d, text| d.child(error(text)))
-            .when(self.filters_open, |d| d.child(self.filters_menu(cx)))
+            .when(self.filters_open, |d| d.child(self.git_filters_menu(cx)))
+            .when(self.add_repo_open, |d| d.child(self.add_repo_menu(cx)))
             .when(self.connections_open, |d| d.child(self.connection_menu(cx)))
             .when(self.project_picker, |d| d.child(self.project_menu(cx)))
             .when(self.action_menu, |d| d.child(self.action_menu_view(cx)))
@@ -3420,19 +2528,11 @@ mod tests {
         cx.run_until_parked();
     }
     #[gpui::test]
-    fn the_inbox_opens_scoped_to_its_project_and_labels_projects_by_appearance(
-        cx: &mut TestAppContext,
-    ) {
+    fn projects_are_labelled_by_their_appearance(cx: &mut TestAppContext) {
         let window = fixture(cx);
         window
             .update(cx, |fixture, _, cx| {
                 fixture.inbox.update(cx, |inbox, _| {
-                    let home = PathBuf::from("/work/home");
-                    let other = PathBuf::from("/work/other");
-                    assert_eq!(
-                        super::super::other_projects(&[home.clone(), other.clone()], &home),
-                        vec!["/work/other".to_string()]
-                    );
                     assert_eq!(inbox.project_label("/work/other"), "other");
                     inbox.appearances.insert(
                         "/work/other".into(),
@@ -3446,10 +2546,10 @@ mod tests {
             })
             .unwrap();
     }
+    /// Git lists every open project's pull requests, so switching the active
+    /// project keeps the selection and both projects' rows.
     #[gpui::test]
-    fn switching_projects_drops_the_previous_projects_selection_and_detail(
-        cx: &mut TestAppContext,
-    ) {
+    fn switching_the_active_project_keeps_every_projects_pull_requests(cx: &mut TestAppContext) {
         let window = fixture(cx);
         window
             .update(cx, |fixture, _, cx| {
@@ -3466,36 +2566,20 @@ mod tests {
                     };
                     // Keep the list fetch queued instead of reaching real providers.
                     inbox.loading = true;
+                    inbox.state.prefs.set_view("all");
                     inbox.snapshot.items = vec![item(1, &a), item(2, &b)];
                     inbox.set_context(vec![a.clone(), b.clone()], a.clone(), cx);
                     inbox.selected = Some(item(1, &a).key());
-                    inbox.details = Some(Details {
-                        body: "From project A".into(),
-                        ..Default::default()
-                    });
-                    inbox.detail_loading = true;
-                    let request = inbox.detail_generation;
                     let scope = inbox.fetch_scope();
 
                     inbox.set_context(vec![a.clone(), b.clone()], b.clone(), cx);
 
-                    assert_eq!(inbox.selected, None);
-                    assert!(inbox.details.is_none() && inbox.thread.is_none());
-                    assert!(inbox.document.is_none() && inbox.comments.is_empty());
-                    assert!(!inbox.detail_loading);
-                    assert_ne!(
-                        inbox.detail_generation, request,
-                        "project A's detail request must be discarded"
-                    );
+                    assert_eq!(inbox.selected, Some(item(1, &a).key()));
                     assert_ne!(inbox.fetch_scope(), scope, "a fetch made for A is stale");
-                    assert_eq!(
-                        inbox
-                            .visible_items(cx)
-                            .iter()
-                            .map(Item::key)
-                            .collect::<Vec<_>>(),
-                        vec![item(2, &b).key()]
-                    );
+                    let mut shown: Vec<String> =
+                        inbox.visible_items(cx).iter().map(Item::key).collect();
+                    shown.sort();
+                    assert_eq!(shown, vec![item(1, &a).key(), item(2, &b).key()]);
                 });
             })
             .unwrap();
@@ -3598,49 +2682,6 @@ mod tests {
                     assert_eq!(first.id, id);
                     assert_eq!(inbox.summary_scroll.logical_scroll_top().item_ix, 0);
                 })
-            })
-            .unwrap();
-    }
-    #[gpui::test]
-    fn linear_team_filters_hide_cached_issues_before_refresh(cx: &mut TestAppContext) {
-        let window = fixture(cx);
-        window
-            .update(cx, |fixture, _, cx| {
-                fixture.inbox.update(cx, |inbox, cx| {
-                    inbox.state.source = "linear".into();
-                    inbox.state.filters = model::Filters::default();
-                    inbox.snapshot.items = ["web", "mobile"]
-                        .into_iter()
-                        .map(|team| Item {
-                            provider: "linear".into(),
-                            identifier: format!("{team}-1"),
-                            team_id: team.into(),
-                            ..Default::default()
-                        })
-                        .collect();
-                    let visible_teams = |inbox: &Inbox, cx: &App| {
-                        inbox
-                            .visible_items(cx)
-                            .into_iter()
-                            .map(|item| item.team_id)
-                            .collect::<Vec<_>>()
-                    };
-                    assert_eq!(visible_teams(inbox, cx), ["web", "mobile"]);
-                    toggle(&mut inbox.state.hidden_linear_teams, "web".into());
-                    assert_eq!(visible_teams(inbox, cx), ["mobile"]);
-                    let mobile = inbox.visible_items(cx).remove(0);
-                    inbox.selected = Some(mobile.key());
-                    inbox.filters_changed(false, cx);
-                    assert_eq!(inbox.item().map(|item| item.team_id), Some("mobile".into()));
-                    toggle(&mut inbox.state.hidden_linear_teams, "mobile".into());
-                    assert!(inbox.visible_items(cx).is_empty());
-                    inbox.filters_changed(false, cx);
-                    assert!(inbox.item().is_none());
-                    toggle(&mut inbox.state.hidden_linear_teams, "web".into());
-                    assert_eq!(visible_teams(inbox, cx), ["web"]);
-                    inbox.state.hidden_linear_teams.clear();
-                    assert_eq!(visible_teams(inbox, cx), ["web", "mobile"]);
-                });
             })
             .unwrap();
     }
@@ -3775,6 +2816,7 @@ mod glass_view_tests {
             state: "open".into(),
             title: title.into(),
             updated_at: "2026-11-12T10:00:00Z".into(),
+            viewer: "me".into(),
             ..Default::default()
         }
     }
@@ -3794,109 +2836,6 @@ mod glass_view_tests {
                 .map(|(ix, state)| check(&format!("job {ix}"), state))
                 .collect(),
         }
-    }
-
-    #[test]
-    fn rows_group_under_their_label_in_first_seen_order() {
-        let rows = vec![
-            ("acme/web".to_string(), pr("acme/web", 1, "one")),
-            ("acme/api".to_string(), pr("acme/api", 2, "two")),
-            ("acme/web".to_string(), pr("acme/web", 3, "three")),
-            ("acme/api".to_string(), pr("acme/api", 4, "four")),
-        ];
-        let groups = group_rows(rows)
-            .into_iter()
-            .map(|(label, items)| (label, items.iter().map(|i| i.number).collect::<Vec<_>>()))
-            .collect::<Vec<_>>();
-        // A later row joins its group instead of starting a second one, and
-        // the list's own order holds inside each group.
-        assert_eq!(
-            groups,
-            vec![
-                ("acme/web".to_string(), vec![1, 3]),
-                ("acme/api".to_string(), vec![2, 4]),
-            ]
-        );
-        assert!(group_rows(vec![]).is_empty());
-    }
-
-    #[test]
-    fn the_row_pill_says_how_checks_stand_and_falls_back_to_the_status() {
-        let item = pr("acme/web", 1, "one");
-        let pill = |states: &[&str]| row_status(&item, Some(&checks(states)));
-        // Any failure wins, counted.
-        assert_eq!(
-            pill(&["pass", "fail", "pending", "fail"]),
-            ("2 failed".to_string(), glass::Tone::Bad)
-        );
-        // Running counts every settled check as done, skipped and cancelled too.
-        assert_eq!(
-            pill(&["pass", "pending", "skipping", "pending", "cancel"]),
-            ("3/5".to_string(), glass::Tone::Running)
-        );
-        // Passed and skipped only: passing.
-        assert_eq!(
-            pill(&["pass", "skipping"]),
-            ("Passing".to_string(), glass::Tone::Ok)
-        );
-        // A cancelled run is not passing: the item's status shows instead.
-        assert_eq!(
-            pill(&["pass", "cancel"]),
-            ("Open".to_string(), glass::Tone::Muted)
-        );
-        // No checks loaded, or none reported: the item's status.
-        assert_eq!(
-            row_status(&item, None),
-            ("Open".to_string(), glass::Tone::Muted)
-        );
-        assert_eq!(pill(&[]), ("Open".to_string(), glass::Tone::Muted));
-        let merged = Item {
-            state: "merged".into(),
-            ..item.clone()
-        };
-        assert_eq!(
-            row_status(&merged, None),
-            ("Merged".to_string(), glass::Tone::Ok)
-        );
-        let draft = Item {
-            draft: true,
-            ..item
-        };
-        assert_eq!(
-            row_status(&draft, None),
-            ("Draft".to_string(), glass::Tone::Muted)
-        );
-    }
-
-    #[test]
-    fn only_github_offers_the_review_requested_view() {
-        let ids = |source: &str| {
-            view_options(source)
-                .into_iter()
-                .map(|(view, label)| (view.id(), label))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            ids("github"),
-            [
-                ("all", "All"),
-                ("review-requested", "Reviews"),
-                ("assigned", "Assigned")
-            ]
-        );
-        assert_eq!(ids("linear"), [("all", "All"), ("assigned", "Assigned")]);
-        assert_eq!(
-            ids("gitlab"),
-            [("all", "All"), ("assigned", "Needs my attention")]
-        );
-        // A review view saved on GitHub reads as All on a source without it.
-        let mut state = ViewState::default();
-        state.filters.review_requested = true;
-        assert_eq!(current_view(&state), View::ReviewRequested);
-        state.source = "linear".into();
-        assert_eq!(current_view(&state), View::All);
-        state.filters.assigned_to_me = true;
-        assert_eq!(current_view(&state), View::Assigned);
     }
 
     #[test]
@@ -3926,43 +2865,6 @@ mod glass_view_tests {
             tone("REVIEW_REQUIRED"),
             Some(("Review required".into(), glass::Tone::Waiting))
         );
-    }
-
-    #[test]
-    fn rows_say_why_they_are_here_else_who_opened_them() {
-        let base = pr("acme/web", 470, "Bump");
-        assert_eq!(row_meta(&base), "#470");
-        let by = Item {
-            author: "dependabot".into(),
-            ..base.clone()
-        };
-        assert_eq!(row_meta(&by), "#470 · dependabot");
-        // A reason wins over the author.
-        let asked = Item {
-            attention_reason: "review_requested".into(),
-            ..by.clone()
-        };
-        assert_eq!(row_meta(&asked), "#470 · Review requested");
-        let issue = Item {
-            kind: "issue".into(),
-            attention_reason: "assigned".into(),
-            ..base.clone()
-        };
-        assert_eq!(row_meta(&issue), "#470 · issue · Assigned to you");
-        // A tracker's issue needs no "issue".
-        let linear = Item {
-            provider: "linear".into(),
-            kind: "issue".into(),
-            identifier: "ENG-7".into(),
-            ..Default::default()
-        };
-        assert_eq!(row_meta(&linear), "ENG-7");
-        // The checks card keeps arrival order behind any failure.
-        let order = card_order(&checks(&["pass", "pending", "fail", "pass"]).checks)
-            .into_iter()
-            .map(|check| check.state)
-            .collect::<Vec<_>>();
-        assert_eq!(order, ["fail", "pass", "pending", "pass"]);
     }
 
     #[test]
@@ -4070,10 +2972,10 @@ mod glass_view_tests {
         // was drawn over the text. Short lists, selected or not, narrow or
         // wide, must keep the label whole too.
         for (count, select, width) in [
-            (40, true, 240.),
-            (40, false, 420.),
-            (2, true, 420.),
-            (2, false, 240.),
+            (40, true, 300.),
+            (40, false, 480.),
+            (2, true, 480.),
+            (2, false, 300.),
         ] {
             let items: Vec<Item> = (1..=count)
                 .map(|n| {
@@ -4088,7 +2990,8 @@ mod glass_view_tests {
             let first = first_key.clone();
             let window = open(cx, move |inbox| {
                 connect(inbox);
-                inbox.state.list_width = width;
+                inbox.state.prefs.set_view("all");
+                inbox.state.feed.list_width = width;
                 inbox.snapshot.items = items;
                 if select {
                     inbox.selected = Some(first.clone());
@@ -4096,7 +2999,7 @@ mod glass_view_tests {
             });
             let mut visual = visual(window, cx);
             let label = visual
-                .debug_bounds("inbox-group-langfuse/langfuse")
+                .debug_bounds("git-group-others")
                 .expect("the group label is on screen");
             let row = visual
                 .debug_bounds(Box::leak(
@@ -4104,9 +3007,8 @@ mod glass_view_tests {
                 ))
                 .expect("the first row is on screen");
             let case = format!("{count} rows, selected {select}, width {width}");
-            // The 11px text needs its line, plus the label's padding.
             assert!(
-                f32::from(label.size.height) >= 4. + 11. + 6.,
+                f32::from(label.size.height) >= 12. + 11. + 6.,
                 "label squeezed to {:?} ({case})",
                 label.size.height
             );
@@ -4118,25 +3020,25 @@ mod glass_view_tests {
             );
         }
     }
-
     #[gpui::test]
-    fn the_view_tabs_stay_inside_the_list_at_every_width(cx: &mut TestAppContext) {
-        // A big inbox made "All 972 · Review requested · Assigned" wider than
-        // the list, so the tabs ran over the list's edge into the detail pane.
-        // Every tab must stay inside the list's padding, at the narrowest and
-        // the widest list, and with or without a review count.
-        for (width, reviews) in [(240., true), (280., true), (280., false), (420., true)] {
+    fn the_view_tabs_and_filters_share_one_line_inside_the_list_at_every_width(
+        cx: &mut TestAppContext,
+    ) {
+        // Needs me · Mine · All open with big counts, then Filters, must
+        // stay on one line inside the list's padding at the narrowest and
+        // the widest list.
+        for (width, reviews) in [(300., true), (340., false), (480., true)] {
             let mut items: Vec<Item> = (1..=972)
                 .map(|n| pr("0xvasanth/gespan", n, &format!("Change {n}")))
                 .collect();
             if reviews {
-                for item in items.iter_mut().take(12) {
-                    item.attention_reason = "review_requested".into();
+                for item in items.iter_mut().take(120) {
+                    item.requested_reviewers = vec!["me".into()];
                 }
             }
             let window = open(cx, move |inbox| {
                 connect(inbox);
-                inbox.state.list_width = width;
+                inbox.state.feed.list_width = width;
                 inbox.snapshot.items = items;
             });
             let mut visual = visual(window, cx);
@@ -4144,51 +3046,85 @@ mod glass_view_tests {
                 .debug_bounds("inbox-list")
                 .expect("the list is on screen");
             let tabs = visual
-                .debug_bounds("inbox-views")
+                .debug_bounds("git-views")
                 .expect("the view tabs show");
+            let filters = visual.debug_bounds("git-filters").expect("Filters shows");
+            let search = visual.debug_bounds("git-search").expect("search shows");
             let case = format!("width {width}, reviews {reviews}");
-            // The header pads the list by 18px on each side.
             assert!(
-                tabs.right() <= list.right() - px(18.) + px(0.5),
-                "tabs end at {:?}, past the list's padding at {:?} ({case})",
-                tabs.right(),
-                list.right() - px(18.)
+                filters.right() <= list.right() - px(14.) + px(0.5),
+                "Filters ends at {:?}, past the list's padding ({case})",
+                filters.right()
             );
-            for id in [
-                "inbox-view-all",
-                "inbox-view-review-requested",
-                "inbox-view-assigned",
-            ] {
+            assert!(
+                tabs.right() <= filters.left() + px(0.5),
+                "tabs run into Filters ({case})"
+            );
+            assert!(
+                (tabs.center().y - filters.center().y).abs() < px(2.),
+                "tabs and Filters are one line ({case})"
+            );
+            assert!(
+                search.top() >= filters.bottom(),
+                "search sits under them ({case})"
+            );
+            for id in ["git-view-needs_me", "git-view-mine", "git-view-all"] {
                 let tab = visual.debug_bounds(id).expect("each tab shows");
                 assert!(
                     tab.right() <= tabs.right() + px(0.5) && tab.left() >= tabs.left() - px(0.5),
-                    "{id} at {:?}..{:?} spills out of the tabs {:?}..{:?} ({case})",
-                    tab.left(),
-                    tab.right(),
-                    tabs.left(),
-                    tabs.right()
+                    "{id} spills out of the tabs ({case})"
                 );
             }
         }
     }
-
     #[gpui::test]
-    fn connected_rows_sit_under_their_repository_in_order(cx: &mut TestAppContext) {
-        let web1 = Item {
-            author: "vasanth".into(),
-            ..pr("acme/web", 1, "First web change")
+    fn rows_sit_under_who_they_wait_on_and_say_why(cx: &mut TestAppContext) {
+        let mine_failing = Item {
+            author: "me".into(),
+            check_summary: model::CheckSummary {
+                total: 3,
+                passed: 2,
+                failed: 1,
+                failed_names: vec!["Rust tests (Windows)".into()],
+                ..Default::default()
+            },
+            reviews: vec![model::Review {
+                login: "mira".into(),
+                state: "changes_requested".into(),
+            }],
+            ..pr("acme/web", 1, "Rail: Git takes Inbox's place")
         };
-        let api = pr("acme/api", 2, "An api change");
-        let web3 = pr("acme/web", 3, "Second web change");
-        let keys = [web1.key(), api.key(), web3.key()];
-        let unread_key = web3.key();
+        let asked = Item {
+            author: "devon".into(),
+            requested_reviewers: vec!["me".into()],
+            additions: 318,
+            deletions: 204,
+            ..pr("acme/api", 2, "Toasty: typed seen-state")
+        };
+        let waiting = Item {
+            author: "me".into(),
+            requested_reviewers: vec!["sam".into()],
+            ..pr("acme/web", 3, "Datasets keep the pinned version")
+        };
+        let ready = Item {
+            author: "lena".into(),
+            review_decision: "approved".into(),
+            reviews: vec![model::Review {
+                login: "me".into(),
+                state: "approved".into(),
+            }],
+            ..pr("acme/web", 4, "Pair a phone")
+        };
+        let keys = [mine_failing.key(), asked.key(), waiting.key(), ready.key()];
+        let unread_key = asked.key();
         let window = open(cx, move |inbox| {
             connect(inbox);
-            inbox.snapshot.items = vec![web1.clone(), api, web3];
-            // Seen once at its current update, except the last, which moved on.
-            inbox.state.seen.seeded = true;
-            for item in &inbox.snapshot.items[..2] {
-                inbox.state.seen.mark(item);
+            inbox.snapshot.items = vec![mine_failing, asked, waiting, ready];
+            inbox.state.feed.seen.seeded = true;
+            for (ix, item) in inbox.snapshot.items.iter().enumerate() {
+                if ix != 1 {
+                    inbox.state.feed.seen.mark(item);
+                }
             }
         });
         let mut visual = visual(window, cx);
@@ -4200,16 +3136,45 @@ mod glass_view_tests {
                 .origin
                 .y
         };
-        let web = top(&mut visual, "inbox-group-acme/web");
-        let api_group = top(&mut visual, "inbox-group-acme/api");
+        let you = top(&mut visual, "git-group-you");
+        let others = top(&mut visual, "git-group-others");
+        let ready_group = top(&mut visual, "git-group-ready");
         let rows = keys
             .clone()
             .map(|key| top(&mut visual, leak(format!("inbox-item-{key}"))));
-        // acme/web first (its first row came first), holding #1 then #3;
-        // acme/api after it, holding #2.
-        assert!(web < rows[0] && rows[0] < rows[2] && rows[2] < api_group);
-        assert!(api_group < rows[1]);
-        // Only the item updated since it was seen carries the unread dot.
+        assert!(you < rows[0] && you < rows[1] && rows[0].max(rows[1]) < others);
+        assert!(others < rows[2] && rows[2] < ready_group && ready_group < rows[3]);
+        // Each row's second line says why it is there.
+        let why = |visual: &mut VisualTestContext, key: &str| {
+            window
+                .update(visual, |inbox, _, _| {
+                    let item = inbox
+                        .snapshot
+                        .items
+                        .iter()
+                        .find(|i| i.key() == key)
+                        .unwrap();
+                    gespan_core::inbox::queue::waiting(item).why
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            why(&mut visual, &keys[0]),
+            "mira requested changes · Rust tests (Windows) failed"
+        );
+        assert_eq!(why(&mut visual, &keys[1]), "devon asked for your review");
+        assert_eq!(why(&mut visual, &keys[2]), "waiting on sam");
+        assert_eq!(
+            why(&mut visual, &keys[3]),
+            "approved by you · ready to merge"
+        );
+        for key in &keys {
+            assert!(
+                visual
+                    .debug_bounds(leak(format!("git-why-{key}")))
+                    .is_some()
+            );
+        }
         assert!(
             visual
                 .debug_bounds(leak(format!("inbox-unread-{unread_key}")))
@@ -4221,29 +3186,20 @@ mod glass_view_tests {
                 .is_none()
         );
         assert!(visual.debug_bounds("inbox-empty-list").is_none());
-        // An author shows as initials; without one, the provider's mark.
-        assert!(
-            visual
-                .debug_bounds(leak(format!("inbox-initials-{}", keys[0])))
-                .is_some()
-        );
-        assert!(
-            visual
-                .debug_bounds(leak(format!("inbox-mark-{}", keys[1])))
-                .is_some()
-        );
-        assert!(
-            visual
-                .debug_bounds(leak(format!("inbox-initials-{}", keys[1])))
-                .is_none()
-        );
-        // With nothing selected, the document side asks for a selection.
-        assert!(visual.debug_bounds("inbox-empty-detail").is_some());
     }
-
     #[gpui::test]
     fn a_selected_pull_request_shows_its_checks_beside_the_description(cx: &mut TestAppContext) {
-        let item = pr("acme/web", 9, "Change");
+        let item = Item {
+            requested_reviewers: vec!["me".into()],
+            check_summary: model::CheckSummary {
+                total: 6,
+                passed: 4,
+                failed: 1,
+                pending: 1,
+                ..Default::default()
+            },
+            ..pr("acme/web", 9, "Change")
+        };
         let key = item.key();
         let window = open(cx, move |inbox| {
             connect(inbox);
@@ -4265,7 +3221,7 @@ mod glass_view_tests {
         let card = visual.debug_bounds("inbox-checks-card").unwrap();
         // Two columns: the checks card to the right of the description.
         assert!(card.origin.x >= description.origin.x + description.size.width);
-        // The selected row's pill reads its checks once they are loaded.
+        // The row's pill reads its checks from the list.
         let row_pill = Box::leak(format!("inbox-row-status-{key}").into_boxed_str());
         assert!(visual.debug_bounds(row_pill).is_some());
         assert!(visual.debug_bounds("inbox-reviewers-card").is_none());
@@ -4397,61 +3353,49 @@ mod glass_view_tests {
     }
 
     #[gpui::test]
-    fn the_header_holds_only_add_connection_and_filter_sits_in_search(cx: &mut TestAppContext) {
+    fn the_header_reads_git_with_its_sync_and_no_source_picker(cx: &mut TestAppContext) {
         let window = open(cx, |inbox| {
             connect(inbox);
+            inbox.synced_ms = Some(gespan_core::time::now_ms() as i64 - 120_000);
             inbox.snapshot.items = vec![pr("acme/web", 1, "one")];
         });
         let mut visual = visual(window, cx);
-        let plus = visual.debug_bounds("inbox-add-connection").unwrap();
-        let search = visual.debug_bounds("inbox-search").unwrap();
-        let filter = visual.debug_bounds("inbox-filter").unwrap();
-        // The filter is inside the search field, at its trailing end, and
-        // the header row above holds nothing else beside "+".
-        assert!(search.contains(&filter.origin) && search.contains(&filter.bottom_right()));
-        assert!(filter.right() > search.center().x);
-        assert!(plus.bottom() < search.top());
-        // Mark all as read and Refresh are no longer header buttons.
-        assert!(visual.debug_bounds("inbox-read-all").is_none());
-        assert!(visual.debug_bounds("inbox-refresh").is_none());
+        assert!(visual.debug_bounds("git-refresh").is_some());
+        assert!(visual.debug_bounds("git-synced").is_some());
+        // The Inbox's source pill, "+" and filter-in-search are gone.
+        for gone in [
+            "inbox-source",
+            "inbox-add-connection",
+            "inbox-filter",
+            "inbox-diff-full",
+        ] {
+            assert!(visual.debug_bounds(gone).is_none(), "{gone} is still drawn");
+        }
+        assert_eq!(super::git_list::ago(0, 120_000), "2m ago");
+        assert_eq!(super::git_list::ago(0, 10_000), "just now");
+        assert_eq!(super::git_list::ago(0, 3 * 3_600_000), "3h ago");
     }
-
     #[gpui::test]
-    fn the_filter_menu_marks_only_this_source_read_and_closes(cx: &mut TestAppContext) {
+    fn mark_all_as_read_sits_in_the_filters_dropdown_and_closes_it(cx: &mut TestAppContext) {
         let one = pr("acme/web", 1, "one");
         let two = pr("acme/web", 2, "two");
-        let linear = Item {
-            provider: "linear".into(),
-            kind: "issue".into(),
-            ..pr("", 3, "tracker issue")
-        };
-        let items = vec![one.clone(), two.clone(), linear.clone()];
+        let items = vec![one.clone(), two.clone()];
         let window = open(cx, move |inbox| {
             connect(inbox);
             inbox.snapshot.items = items;
             // Seeded with nothing seen yet: every item reads as unread.
-            inbox.state.seen.seeded = true;
+            inbox.state.feed.seen.seeded = true;
         });
         let mut visual = visual(window, cx);
         let unseen = |visual: &mut VisualTestContext| {
             window
-                .update(visual, |inbox, _, _| {
-                    inbox
-                        .snapshot
-                        .items
-                        .iter()
-                        .filter(|item| inbox.state.seen.unseen(item))
-                        .map(|item| item.number)
-                        .collect::<Vec<_>>()
-                })
+                .update(visual, |inbox, _, _| inbox.unread_count())
                 .unwrap()
         };
-        assert_eq!(unseen(&mut visual), vec![1, 2, 3]);
-        click(&mut visual, "inbox-filter");
-        assert!(visual.debug_bounds("inbox-refresh").is_some());
+        assert_eq!(unseen(&mut visual), 2);
+        click(&mut visual, "git-filters");
         click(&mut visual, "inbox-read-all");
-        // GitHub's items are read; the Linear issue, another source, is not.
-        assert_eq!(unseen(&mut visual), vec![3]);
+        assert_eq!(unseen(&mut visual), 0);
         assert!(
             !window
                 .update(&mut visual, |inbox, _, _| inbox.filters_open)
@@ -4459,7 +3403,6 @@ mod glass_view_tests {
         );
         assert!(visual.debug_bounds("inbox-read-all").is_none());
     }
-
     /// The detail pane's title, byline and description select and copy,
     /// while its buttons keep the pointer.
     #[gpui::test]

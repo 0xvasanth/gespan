@@ -118,7 +118,7 @@ pub(crate) fn menus(prefs: &crate::settings::Preferences, mac: bool) -> Vec<Menu
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Session Sidebar", ToggleRightPanel),
             MenuItem::action("Toggle Workspace Style", ToggleWorkspaceStyle),
-            MenuItem::action("Inbox", OpenInbox),
+            MenuItem::action("Git", OpenInbox),
             MenuItem::action("Notes", OpenNotes),
             MenuItem::action("Toggle Terminal", ToggleTerminal),
             MenuItem::action("Switch Model…", SwitchModel),

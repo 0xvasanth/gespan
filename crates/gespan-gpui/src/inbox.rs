@@ -1,11 +1,18 @@
-//! Inbox: the original provider rail and work-item detail surface, backed by
-//! the native adapters and the desktop app's existing credential files.
+//! Git: the review queue for pull and merge requests from every connected
+//! host, with the selected one's detail beside it. The module keeps its old
+//! name (`inbox`) because automations and Home read the same feed; everything
+//! a user sees says Git.
 mod ask_panel;
 mod avatar;
 mod checks;
 mod diff;
 mod document;
+mod git_list;
+mod git_settings;
+#[cfg(test)]
+mod git_tests;
 mod menu;
+mod review_bar;
 mod ui;
 pub(crate) use avatar::image as avatar_image;
 pub(crate) use menu::{ItemAutomation, ItemRun, new_automation_event};
@@ -19,7 +26,7 @@ use crate::{
     theme::*,
 };
 use gespan_core::{
-    inbox::{self as model, Checks, Details, Diff, Item, Service, Snapshot, Thread, ViewState},
+    inbox::{self as model, Checks, Details, Diff, Item, Service, Snapshot, Thread, queue},
     store::Session,
 };
 use gpui::{
@@ -91,6 +98,12 @@ pub(crate) enum Event {
     ConnectionsChanged,
     /// Add connection: Settings › Connections holds the catalogue.
     OpenConnections,
+    /// A pull request started waiting on you: tell the user, per Settings ›
+    /// Git › Notify me.
+    ReviewNotice {
+        item: Box<Item>,
+        body: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,11 +111,6 @@ enum Tab {
     Summary,
     Code,
     Checks,
-}
-
-/// Only a GitHub pull request diff can widen to whole files.
-pub(crate) fn shows_full_file(item: &gespan_core::inbox::Item) -> bool {
-    item.provider == "github" && item.kind == "pr"
 }
 
 #[cfg(test)]
@@ -120,8 +128,43 @@ pub(crate) struct Inbox {
     projects: Vec<PathBuf>,
     appearances:
         std::collections::HashMap<String, gespan_core::project_appearance::ProjectAppearance>,
-    state: ViewState,
+    state: queue::State,
     snapshot: Snapshot,
+    /// Pull requests that arrived while the list was open, held behind the
+    /// "N new since" banner.
+    arrivals: queue::Arrivals,
+    /// The list's page, from 0.
+    page: usize,
+    /// Review requests from other repos are unfolded.
+    others_open: bool,
+    /// The "Add repo" menu on the other-repos row.
+    add_repo_open: bool,
+    add_repo_anchor: AnchorSlot,
+    /// The Filters dropdown row whose choices are open.
+    filter_row: Option<git_list::FilterRow>,
+    /// "+ Add filter" lists the filters left to add.
+    adding_filter: bool,
+    /// "Save as view…" is asking for a name.
+    naming_view: bool,
+    view_name: Entity<Input>,
+    /// The review bar: its comment, tone, Polish and submission.
+    review: review_bar::ReviewBar,
+    review_body: Entity<Input>,
+    /// Settings › Git's "Add a repo" field and what it found.
+    repo_search_input: Entity<Input>,
+    repo_search: git_settings::RepoSearch,
+    /// What a test's repository search finds.
+    #[cfg(test)]
+    pub(crate) canned_repo_hits: Option<Vec<gespan_core::inbox::RepoHit>>,
+    /// When the last refresh landed.
+    synced_ms: Option<i64>,
+    /// What waited on you after the last refresh, so only newcomers notify.
+    /// `None` until the first refresh, which never notifies.
+    waiting_on_you: Option<std::collections::HashSet<String>>,
+    /// Reviews a test submitted, instead of reaching a host.
+    #[cfg(test)]
+    pub(crate) submitted_reviews:
+        std::sync::Arc<std::sync::Mutex<Vec<(String, gespan_core::inbox::Verdict, String)>>>,
     sessions: Vec<Session>,
     focus: FocusHandle,
     search: Entity<Input>,
@@ -132,6 +175,7 @@ pub(crate) struct Inbox {
     activity_revision: u64,
     summary_rows: std::cell::RefCell<ui::SummaryRows>,
     focus_comment: bool,
+    focus_review: bool,
     selected: Option<String>,
     /// The address last copied and the press that copied it, until the tick fades.
     copied_link: Option<(String, u64)>,
@@ -140,8 +184,6 @@ pub(crate) struct Inbox {
     document: Option<Entity<document::InboxDocument>>,
     comments: Vec<(model::Comment, Entity<document::InboxDocument>)>,
     diff: Option<Diff>,
-    /// The Code tab's Hunks / Full file switch, for GitHub pull requests.
-    full_file: bool,
     /// Comments and actions made here, whose update must not read as unread.
     self_activity: gespan_core::inbox::SelfActivity,
     diff_view: Entity<DiffView>,
@@ -220,14 +262,6 @@ enum Offline {
 }
 
 /// The inbox opens scoped to the project it was opened from.
-fn other_projects(projects: &[PathBuf], cwd: &PathBuf) -> Vec<String> {
-    projects
-        .iter()
-        .filter(|project| *project != cwd)
-        .map(|project| project.to_string_lossy().into_owned())
-        .collect()
-}
-
 impl EventEmitter<Event> for Inbox {}
 impl Focusable for Inbox {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -279,20 +313,44 @@ impl Inbox {
         if !projects.contains(&cwd) {
             projects.push(cwd.clone());
         }
-        let (mut state, data_dir) = locked(&store)
+        let (state, data_dir) = locked(&store)
             .map(|db| {
                 (
-                    ViewState::load(&db),
+                    queue::State::load(&db),
                     db.data_dir()
                         .map(PathBuf::from)
                         .unwrap_or_else(|| cwd.clone()),
                 )
             })
-            .unwrap_or_else(|_| (ViewState::default(), cwd.clone()));
-        state.filters.hidden_projects = other_projects(&projects, &cwd);
-        let search =
-            cx.new(|cx| Input::field("Search the inbox", "Search the inbox", content(0.4), cx));
+            .unwrap_or_else(|_| {
+                (
+                    queue::State {
+                        feed: Default::default(),
+                        prefs: Default::default(),
+                    },
+                    cwd.clone(),
+                )
+            });
+        let search = cx.new(|cx| {
+            Input::field(
+                "Search pull requests",
+                "Search pull requests",
+                content(0.4),
+                cx,
+            )
+        });
         let comment = cx.new(Input::inbox_comment);
+        let view_name = cx.new(|cx| Input::field("View name", "Name this view", content(0.4), cx));
+        let repo_search_input = cx.new(|cx| {
+            Input::field(
+                "Add a repo",
+                "Add a repo: search the repos you can reach",
+                content(0.4),
+                cx,
+            )
+        });
+        let review_body =
+            cx.new(|cx| Input::multiline_field("Review comment", "Leave a review comment…", cx));
         let connect_url = cx.new(|cx| Input::field("Instance URL", "https://", content(0.4), cx));
         let connect_email = cx.new(|cx| Input::field("Email", "you@example.com", content(0.4), cx));
         let connect_workspace =
@@ -301,7 +359,24 @@ impl Inbox {
             cx.new(|cx| Input::field("API token", "Personal access token", content(0.4), cx));
         let diff_view = cx.new(DiffView::new);
         let subscriptions = vec![
-            cx.subscribe(&search, |_, _, _: &input::Changed, cx| cx.notify()),
+            cx.subscribe(&search, |this, _, _: &input::Changed, cx| {
+                this.page = 0;
+                cx.notify()
+            }),
+            cx.subscribe(&repo_search_input, |this, _, _: &input::Changed, cx| {
+                this.search_repos(cx)
+            }),
+            cx.subscribe(&view_name, |this, _, _: &input::Submitted, cx| {
+                this.save_view(cx)
+            }),
+            cx.subscribe(&review_body, |this, body, _: &input::Changed, cx| {
+                // Typing clears the last notice; the draft clearing itself
+                // after a sent review keeps it.
+                if !body.read(cx).content.is_empty() {
+                    this.review.draft_changed();
+                }
+                cx.notify()
+            }),
             cx.subscribe(&comment, |this, _, _: &input::Changed, cx| {
                 let count = this.summary_scroll.item_count();
                 this.summary_scroll
@@ -313,6 +388,15 @@ impl Inbox {
             }),
             cx.subscribe(&diff_view, |this, _, event: &DiffEvent, cx| {
                 if let DiffEvent::Comment(text) = event {
+                    // A line picked in Files starts a review comment there.
+                    if this.tab == Tab::Code && this.review_open() {
+                        this.review_body
+                            .update(cx, |input, cx| input.set_text(text.clone(), cx));
+                        this.review.draft_changed();
+                        this.focus_review = true;
+                        cx.notify();
+                        return;
+                    }
                     this.comment
                         .update(cx, |input, cx| input.set_text(text.clone(), cx));
                     this.tab = Tab::Summary;
@@ -376,6 +460,26 @@ impl Inbox {
             appearances: Default::default(),
             state,
             snapshot: Snapshot::default(),
+            arrivals: Default::default(),
+            page: 0,
+            others_open: false,
+            add_repo_open: false,
+            add_repo_anchor: AnchorSlot::default(),
+            filter_row: None,
+            adding_filter: false,
+            naming_view: false,
+            view_name,
+            review: Default::default(),
+            review_body,
+            focus_review: false,
+            repo_search_input,
+            repo_search: Default::default(),
+            #[cfg(test)]
+            canned_repo_hits: None,
+            synced_ms: None,
+            waiting_on_you: None,
+            #[cfg(test)]
+            submitted_reviews: Default::default(),
             sessions: vec![],
             focus: cx.focus_handle(),
             search,
@@ -393,7 +497,6 @@ impl Inbox {
             document: None,
             comments: vec![],
             diff: None,
-            full_file: false,
             self_activity: Default::default(),
             diff_view,
             checks: None,
@@ -464,10 +567,6 @@ impl Inbox {
         }
         if self.projects != projects || self.service.cwd != cwd {
             let switched = self.service.cwd != cwd;
-            if switched {
-                self.state.filters.hidden_projects = other_projects(&projects, &cwd);
-                self.save();
-            }
             self.projects = projects;
             self.service.cwd = cwd.clone();
             self.start_project = cwd;
@@ -511,7 +610,7 @@ impl Inbox {
         self.active = active;
         if active {
             if let Some(item) = self.item() {
-                self.state.seen.mark(&item);
+                self.state.feed.seen.mark(&item);
                 self.save();
             } else if let Some(item) = self.visible_items(cx).first() {
                 self.select(item.key(), cx);
@@ -530,9 +629,6 @@ impl Inbox {
     ) -> Self {
         let mut inbox = Self::new_inner(store, vec![], cwd, false, cx);
         inbox.offline = Offline::Instant;
-        inbox.state.source = items
-            .first()
-            .map_or_else(String::new, |i| i.provider.clone());
         inbox.selected = items.first().map(Item::key);
         inbox.snapshot.items = items;
         inbox.load_detail(true, cx);
@@ -555,14 +651,14 @@ impl Inbox {
     /// Items that arrived since the inbox first loaded, so they are unread.
     #[cfg(test)]
     pub(crate) fn receive_unread(&mut self, items: Vec<Item>) {
-        self.state.seen.seeded = true;
+        self.state.feed.seen.seeded = true;
         self.snapshot.items = items;
     }
     /// An update our own comment or action caused is not unread.
     fn skip_own_updates(&mut self, items: &[Item], now: u64) {
         for item in items {
-            if self.state.seen.unseen(item) && self.self_activity.consume(item, now) {
-                self.state.seen.mark(item);
+            if self.state.feed.seen.unseen(item) && self.self_activity.consume(item, now) {
+                self.state.feed.seen.mark(item);
             }
         }
     }
@@ -570,7 +666,7 @@ impl Inbox {
     pub(crate) fn mark_all_read(&mut self, cx: &mut Context<Self>) {
         let items = std::mem::take(&mut self.snapshot.items);
         for item in &items {
-            self.state.seen.mark(item);
+            self.state.feed.seen.mark(item);
         }
         self.snapshot.items = items;
         self.save();
@@ -582,19 +678,26 @@ impl Inbox {
         if self.loading && self.snapshot.items.is_empty() {
             return None;
         }
-        let items = &self.snapshot.items;
-        let reason = |item: &&Item, want: &str| item.attention_reason.eq_ignore_ascii_case(want);
+        let items: Vec<&Item> = self
+            .snapshot
+            .items
+            .iter()
+            .filter(|item| queue::listed(item))
+            .collect();
+        let asked = |item: &&&Item| queue::review_requested_from_me(item) && !queue::is_mine(item);
         Some(crate::home::InboxCounts {
             total: items.len(),
             unread: self.unread_count(),
-            review: items
+            review: items.iter().filter(asked).count(),
+            blocked: items
                 .iter()
-                .filter(|i| reason(i, "review_requested"))
+                .filter(|item| {
+                    queue::is_mine(item) && queue::waiting(item).group == queue::Group::You
+                })
                 .count(),
-            assigned: items.iter().filter(|i| reason(i, "assigned")).count(),
             reviews: items
                 .iter()
-                .filter(|i| reason(i, "review_requested"))
+                .filter(asked)
                 .filter_map(|item| {
                     let at = chrono::DateTime::parse_from_rfc3339(&item.updated_at).ok()?;
                     Some((crate::home::item_reference(item), at.timestamp_millis()))
@@ -602,11 +705,14 @@ impl Inbox {
                 .collect(),
         })
     }
+    /// Unread pull requests in the lists the user sees, for the rail badge.
     pub(crate) fn unread_count(&self) -> usize {
         self.snapshot
             .items
             .iter()
-            .filter(|item| self.state.seen.unseen(item))
+            .filter(|item| queue::listed(item))
+            .filter(|item| !queue::is_bot(&item.author) || !self.state.prefs.fold_bots)
+            .filter(|item| self.state.feed.seen.unseen(item))
             .count()
     }
 
@@ -648,7 +754,15 @@ impl Inbox {
         self.generation += 1;
         let generation = self.generation;
         let service = self.service.clone();
-        let state = self.state.clone();
+        let state = self.state.feed.clone();
+        let added: Vec<(String, String)> = self
+            .state
+            .prefs
+            .added_repos
+            .iter()
+            .map(|repo| (repo.provider.clone(), repo.repo.clone()))
+            .collect();
+        let other_repos = self.state.prefs.other_repos;
         let projects = self.projects.clone();
         let scope = self.fetch_scope();
         let store = self.store.clone();
@@ -662,7 +776,7 @@ impl Inbox {
         let fetched = self.fetched.clone();
         let task = cx.background_executor().spawn(async move {
             let snapshot = if live {
-                service.list(&projects, &state)
+                service.list_git(&projects, &state, &added, other_repos)
             } else {
                 fetched
             };
@@ -710,35 +824,19 @@ impl Inbox {
                     .items
                     .sort_by_key(|item| std::cmp::Reverse(item.updated_ms()));
                 this.skip_own_updates(&snapshot.items, gespan_core::time::now_ms());
-                this.state.seen.seed(&snapshot.items);
+                this.state.feed.seen.seed(&snapshot.items);
                 this.snapshot = snapshot;
                 this.sessions = sessions;
+                this.synced_ms = Some(gespan_core::time::now_ms() as i64);
                 if this.active
                     && let Some(item) = this.item()
                 {
-                    this.state.seen.mark(&item);
-                }
-                if !this
-                    .snapshot
-                    .connections
-                    .get(&this.state.source)
-                    .is_some_and(|s| s.connected)
-                    && let Some(source) = model::PROVIDERS.into_iter().find(|p| {
-                        this.snapshot
-                            .connections
-                            .get(*p)
-                            .is_some_and(|s| s.connected)
-                    })
-                {
-                    this.state.source = source.into();
+                    this.state.feed.seen.mark(&item);
                 }
                 this.save();
+                this.notify_review_queue(cx);
                 cx.emit(Event::ItemsChanged(candidates));
-                if this.selected.is_some()
-                    && this
-                        .item()
-                        .is_none_or(|item| item.provider != this.state.source)
-                {
+                if this.selected.is_some() && this.item().is_none() {
                     this.deselect(cx);
                 }
                 if this.active
@@ -761,27 +859,84 @@ impl Inbox {
     /// one is stale even when the project list is the same.
     fn fetch_scope(&self) -> String {
         format!(
-            "{}:{}",
-            self.state.fetch_scope(&self.projects),
-            gespan_core::files::path_key(&self.service.cwd.to_string_lossy())
+            "{}:{}:{}",
+            self.state.feed.fetch_scope(&self.projects),
+            gespan_core::files::path_key(&self.service.cwd.to_string_lossy()),
+            serde_json::to_string(&(&self.state.prefs.added_repos, self.state.prefs.other_repos))
+                .unwrap_or_default()
         )
+    }
+    /// Tells the user about pull requests that started waiting on them since
+    /// the last refresh: a review asked of them, or their own one blocked.
+    fn notify_review_queue(&mut self, cx: &mut Context<Self>) {
+        let now: std::collections::HashSet<String> = self
+            .snapshot
+            .items
+            .iter()
+            .filter(|item| queue::open_pr(item))
+            .filter(|item| !queue::is_bot(&item.author) || !self.state.prefs.fold_bots)
+            .filter(|item| queue::waiting(item).group == queue::Group::You)
+            .map(Item::key)
+            .collect();
+        let previous = self.waiting_on_you.replace(now.clone());
+        let Some(previous) = previous else {
+            return;
+        };
+        if !self.state.prefs.notify {
+            return;
+        }
+        for item in self.snapshot.items.iter().filter(|item| {
+            now.contains(&item.key())
+                && !previous.contains(&item.key())
+                && self.state.feed.seen.unseen(item)
+        }) {
+            cx.emit(Event::ReviewNotice {
+                item: Box::new(item.clone()),
+                body: queue::waiting(item).why,
+            });
+        }
     }
     fn save(&mut self) {
         if let Err(error) = locked(&self.store).and_then(|db| self.state.save(&db)) {
             self.error = Some(error);
         }
     }
+    /// What the list holds back behind "N new since" is tied to this: the
+    /// view, its filters and the search.
+    fn view_scope(&self, cx: &App) -> String {
+        format!(
+            "{}|{}|{}",
+            self.state.prefs.view,
+            serde_json::to_string(&self.state.prefs.filters()).unwrap_or_default(),
+            self.search.read(cx).content.as_ref()
+        )
+    }
+    /// The pull requests the list shows, in list order across every page,
+    /// without those held behind the new-arrivals banner.
     fn visible_items(&self, cx: &App) -> Vec<Item> {
-        let search = self.search.read(cx).content.as_ref();
-        self.snapshot
-            .items
-            .iter()
-            .filter(|item| self.state.filters.matches(item, &self.state.source, search))
-            .filter(|item| {
-                item.provider != "linear" || !self.state.hidden_linear_teams.contains(&item.team_id)
-            })
-            .cloned()
+        let rows = self
+            .state
+            .prefs
+            .visible(&self.snapshot.items, self.search.read(cx).content.as_ref());
+        let (shown, _) = self.arrivals.split(&self.view_scope(cx), rows);
+        queue::grouped(&shown)
+            .into_iter()
+            .flat_map(|(_, rows)| rows.into_iter().cloned())
             .collect()
+    }
+    /// Seeds the held-back set when the view changes, before a render reads it.
+    fn sync_arrivals(&mut self, cx: &App) {
+        let scope = self.view_scope(cx);
+        let rows = self
+            .state
+            .prefs
+            .visible(&self.snapshot.items, self.search.read(cx).content.as_ref());
+        if self
+            .arrivals
+            .seed(&scope, &rows, gespan_core::time::now_ms() as i64)
+        {
+            self.page = 0;
+        }
     }
     fn item(&self) -> Option<Item> {
         self.snapshot
@@ -796,9 +951,18 @@ impl Inbox {
         }
         self.selected = Some(key);
         self.reset_detail(cx);
+        // Your pull request with failing checks opens on them.
+        if let Some(item) = self.item()
+            && item.provider == "github"
+            && item.kind == "pr"
+            && item.check_summary.failed > 0
+            && queue::is_mine(&item)
+        {
+            self.set_tab(Tab::Checks, cx);
+        }
         if let Some(item) = self.item() {
             if self.active {
-                self.state.seen.mark(&item);
+                self.state.feed.seen.mark(&item);
                 self.save();
             }
             if !item.project_path.is_empty() {
@@ -826,7 +990,9 @@ impl Inbox {
         self.focus_comment = false;
         self.tab = Tab::Summary;
         self.diff = None;
-        self.full_file = false;
+        self.review.reset();
+        self.review_body
+            .update(cx, |input, cx| input.set_text(String::new(), cx));
         self.extra_request += 1;
         self.diff_view
             .update(cx, |view, cx| view.set_files(vec![], cx));
@@ -848,20 +1014,6 @@ impl Inbox {
         self.action_menu = false;
         self.comment
             .update(cx, |input, cx| input.set_text(String::new(), cx));
-    }
-    fn change_source(&mut self, source: String, cx: &mut Context<Self>) {
-        self.state.source = source;
-        self.selected = None;
-        self.details = None;
-        self.document = None;
-        self.comments.clear();
-        self.search
-            .update(cx, |input, cx| input.set_text(String::new(), cx));
-        if let Some(item) = self.visible_items(cx).first() {
-            self.select(item.key(), cx);
-        }
-        self.save();
-        cx.notify();
     }
     fn load_detail(&mut self, clear: bool, cx: &mut Context<Self>) {
         let Some(item) = self.item() else {
@@ -968,17 +1120,6 @@ impl Inbox {
         })
         .detach();
     }
-    /// Hunks or the whole file around each change: reloads the Code tab.
-    pub(crate) fn set_full_file(&mut self, full: bool, cx: &mut Context<Self>) {
-        if self.full_file == full {
-            return;
-        }
-        self.full_file = full;
-        self.diff = None;
-        self.diff_view
-            .update(cx, |view, cx| view.set_files(vec![], cx));
-        self.set_tab(Tab::Code, cx);
-    }
     fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.extra_error = None;
@@ -998,10 +1139,9 @@ impl Inbox {
         let request = self.extra_request;
         let key = item.key();
         let service = self.service.clone();
-        let full = self.full_file && shows_full_file(&item);
         let task = cx.background_executor().spawn(async move {
             if tab == Tab::Code {
-                service.diff_context(&item, full).map(|diff| {
+                service.diff(&item).map(|diff| {
                     let files = diff::models(&diff);
                     (Some((diff, files)), None)
                 })
@@ -1034,6 +1174,11 @@ impl Inbox {
                         }
                         if let Some(checks) = checks {
                             this.checks = Some(checks);
+                            // A failing pull request of yours opens on the
+                            // failed job's log.
+                            if this.item().is_some_and(|item| queue::is_mine(&item)) {
+                                this.open_first_failure(cx);
+                            }
                         }
                     }
                     Err(error) => this.extra_error = Some(error),
@@ -1182,14 +1327,14 @@ impl Inbox {
     }
     #[cfg(test)]
     pub(crate) fn hidden_linear_teams(&self) -> &[String] {
-        &self.state.hidden_linear_teams
+        &self.state.feed.hidden_linear_teams
     }
     pub(crate) fn linear_teams(&self) -> Vec<(gespan_core::inbox::OptionRow, bool)> {
         self.snapshot
             .linear_teams
             .iter()
             .map(|team| {
-                let shown = !self.state.hidden_linear_teams.contains(&team.id);
+                let shown = !self.state.feed.hidden_linear_teams.contains(&team.id);
                 (team.clone(), shown)
             })
             .collect()
@@ -1278,7 +1423,6 @@ impl Inbox {
                         this.connect_token.update(cx, |input, cx| input.set_text(String::new(), cx));
                         if connected || disconnect {
                             this.connect_provider = None;
-                            if connected && !this.connect_in_settings { this.change_source(provider, cx); }
                             this.refresh(cx);
                         } else { this.connect_error = Some("GitHub is not connected. Run gh auth login in a terminal, then check again.".into()); }
                     }
@@ -1371,56 +1515,28 @@ mod tests {
         (window, keys)
     }
 
+    /// Files shows hunks only: the Hunks / Full file switch is gone, and the
+    /// diff loads once per pull request, on every host.
     #[gpui::test]
-    fn a_github_pull_request_switches_between_hunks_and_full_files(cx: &mut TestAppContext) {
+    fn files_show_hunks_only_with_no_full_file_switch(cx: &mut TestAppContext) {
         let (window, [github, gitlab]) = inbox(cx);
-        window
-            .update(cx, |inbox, _, cx| {
-                inbox.select(github.clone(), cx);
-                inbox.set_tab(Tab::Code, cx);
-            })
-            .unwrap();
-        let visual = &mut VisualTestContext::from_window(window.into(), cx);
-        visual.run_until_parked();
-        visual.refresh().unwrap();
-        assert!(visual.debug_bounds("inbox-diff-hunks").is_some());
-        let request = window
-            .update(visual, |inbox, _, _| inbox.extra_request)
-            .unwrap();
-        let full = visual.debug_bounds("inbox-diff-full").unwrap();
-        visual.simulate_click(full.center(), Default::default());
-        window
-            .update(visual, |inbox, _, _| {
-                assert!(inbox.full_file);
-                assert!(inbox.diff.is_none(), "the hunk diff is dropped");
-                assert_eq!(
-                    inbox.extra_request,
-                    request + 1,
-                    "and the full one requested"
-                );
-            })
-            .unwrap();
-        // Picking the shown mode again loads nothing.
-        window
-            .update(visual, |inbox, _, cx| inbox.set_full_file(true, cx))
-            .unwrap();
-        assert_eq!(
+        for key in [github, gitlab] {
             window
-                .update(visual, |inbox, _, _| inbox.extra_request)
-                .unwrap(),
-            request + 1
-        );
-        // Another item starts on Hunks; GitLab has no full-file diff.
-        window
-            .update(visual, |inbox, _, cx| {
-                inbox.select(gitlab.clone(), cx);
-                assert!(!inbox.full_file);
-                inbox.set_tab(Tab::Code, cx);
-            })
-            .unwrap();
-        visual.run_until_parked();
-        visual.refresh().unwrap();
-        assert!(visual.debug_bounds("inbox-diff-hunks").is_none());
+                .update(cx, |inbox, _, cx| {
+                    inbox.select(key.clone(), cx);
+                    inbox.set_tab(Tab::Code, cx);
+                })
+                .unwrap();
+            let visual = &mut VisualTestContext::from_window(window.into(), cx);
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+            for gone in ["inbox-diff-context", "inbox-diff-hunks", "inbox-diff-full"] {
+                assert!(visual.debug_bounds(gone).is_none(), "{gone} is still drawn");
+            }
+            // Someone else's pull request: the review bar takes the Ask bar's place.
+            assert!(visual.debug_bounds("git-review-bar").is_some());
+            assert!(visual.debug_bounds("inbox-ask-bar").is_none());
+        }
     }
 
     #[gpui::test]
@@ -1430,7 +1546,7 @@ mod tests {
             .update(cx, |inbox, _, _| {
                 let mut ours = item("github", 1);
                 let mut theirs = item("github", 2);
-                inbox.state.seen.seed(&[ours.clone(), theirs.clone()]);
+                inbox.state.feed.seen.seed(&[ours.clone(), theirs.clone()]);
                 inbox.self_activity.record(
                     gespan_core::inbox::SelfTarget::of(&ours),
                     gespan_core::time::now_ms(),
@@ -1445,7 +1561,7 @@ mod tests {
                 // Its next revision is announced as usual.
                 ours.updated_at = "2031-01-01T00:00:00Z".into();
                 inbox.skip_own_updates(std::slice::from_ref(&ours), now);
-                assert!(inbox.state.seen.unseen(&ours));
+                assert!(inbox.state.feed.seen.unseen(&ours));
             })
             .unwrap();
     }

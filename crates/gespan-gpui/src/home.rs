@@ -205,7 +205,8 @@ pub(crate) struct InboxCounts {
     pub total: usize,
     pub unread: usize,
     pub review: usize,
-    pub assigned: usize,
+    /// Your own pull requests waiting on you: changes requested or checks failing.
+    pub blocked: usize,
     /// Review requests with their last update, in milliseconds.
     pub reviews: Vec<(String, i64)>,
 }
@@ -419,10 +420,10 @@ pub(crate) fn origins_line(working: &[Working]) -> String {
         .join(" · ")
 }
 
-/// "3 reviews requested · 2 assigned", leaving out what is zero.
+/// "3 reviews requested · 2 of yours blocked", leaving out what is zero.
 pub(crate) fn inbox_line(inbox: Option<&InboxCounts>) -> String {
     let Some(inbox) = inbox else {
-        return "Loading the Inbox".into();
+        return "Loading Git".into();
     };
     let mut parts = Vec::new();
     if inbox.review > 0 {
@@ -432,14 +433,14 @@ pub(crate) fn inbox_line(inbox: Option<&InboxCounts>) -> String {
             "reviews requested",
         ));
     }
-    if inbox.assigned > 0 {
-        parts.push(format!("{} assigned", inbox.assigned));
+    if inbox.blocked > 0 {
+        parts.push(format!("{} of yours blocked", inbox.blocked));
     }
     if parts.is_empty() {
         if inbox.total == 0 {
-            "Nothing in the Inbox".into()
+            "No open pull requests".into()
         } else {
-            "No reviews or assignments".into()
+            "Nothing needs you".into()
         }
     } else {
         parts.join(" · ")
@@ -988,7 +989,7 @@ impl Home {
         let inbox_tile = self.tile(
             Tile {
                 page: Page::Inbox,
-                label: "Inbox",
+                label: "Git",
                 pill: inbox
                     .filter(|inbox| inbox.unread > 0)
                     .map(|inbox| (format!("{} unread", inbox.unread), Tone::Muted)),

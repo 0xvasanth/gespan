@@ -321,7 +321,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
         // Close an inactive tab through its button, then the selected tabs
         // through Cmd-W, preserving the underlying conversation.
         visual.refresh().unwrap();
-        let close = visual.debug_bounds("close-app-tab-Inbox").unwrap();
+        let close = visual.debug_bounds("close-app-tab-Git").unwrap();
         visual.simulate_click(close.center(), Default::default());
         visual.run_until_parked();
         for _ in 0..5 {
@@ -789,7 +789,7 @@ mod inbox_settings {
     }
 
     #[gpui::test]
-    fn the_inbox_add_connection_button_opens_settings_connections(cx: &mut TestAppContext) {
+    fn git_without_a_host_opens_settings_connections(cx: &mut TestAppContext) {
         cx.update(crate::shell::bind_keys);
         cx.update(|cx| cx.set_reduce_motion(true));
         let (window, _, _) = crate::shell::tests::window(cx);
@@ -800,7 +800,7 @@ mod inbox_settings {
             .update(visual, |shell, w, cx| shell.open_inbox(w, cx))
             .unwrap();
         visual.run_until_parked();
-        click(visual, "inbox-add-connection".into());
+        click(visual, "git-open-connections".into());
         window
             .update(visual, |shell, _, cx| {
                 let settings = shell.settings.as_ref().expect("Settings opens");

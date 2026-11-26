@@ -6157,7 +6157,7 @@ impl Shell {
         };
         match target {
             MenuTarget::InboxNav => (
-                "Inbox actions".into(),
+                "Git actions".into(),
                 self.inbox_nav_menu_items(cx),
                 272.,
                 MenuStyle::Explorer,
@@ -12194,7 +12194,7 @@ mod tests {
             root.read_with(cx, |s, cx| s.sessions[&active].read(cx).transcript.clone());
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
         let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
         let before = transcript.read_with(visual, |t, _| t.render_passes);
         // Hovering the rail's page icons repaints the rail only.

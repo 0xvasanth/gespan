@@ -26,6 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod git_polish_tests;
 mod hello_tests;
 mod message_tests;
 mod pilot_live_tests;

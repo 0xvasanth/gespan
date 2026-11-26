@@ -316,9 +316,9 @@ impl CheckSelection {
 /// The fix button's label for the current picks.
 pub fn fix_label(selected: usize) -> String {
     if selected == 0 {
-        "Fix all failed".into()
+        "Fix with an agent".into()
     } else {
-        format!("Fix {selected} selected")
+        format!("Fix {selected} with an agent")
     }
 }
 
@@ -1327,9 +1327,9 @@ mod tests {
             2,
             "nothing picked fixes all failed"
         );
-        assert_eq!(fix_label(selection.len()), "Fix all failed");
+        assert_eq!(fix_label(selection.len()), "Fix with an agent");
         selection.toggle("aaa", &unit);
-        assert_eq!(fix_label(selection.len()), "Fix 1 selected");
+        assert_eq!(fix_label(selection.len()), "Fix 1 with an agent");
         assert_eq!(selection.targets(&current), vec![unit.clone()]);
         selection.toggle("aaa", &unit);
         assert!(selection.is_empty(), "toggling again unpicks");

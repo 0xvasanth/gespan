@@ -80,7 +80,7 @@ fn my_tasks_is_the_first_sidebar_entry_and_shows_the_open_count(cx: &mut TestApp
         .debug_bounds("sidebar-navigation-My tasks")
         .expect("My tasks is in the sidebar");
     let inbox = visual
-        .debug_bounds("sidebar-navigation-Inbox")
+        .debug_bounds("sidebar-navigation-Git")
         .expect("Inbox is in the sidebar");
     // The rail's icon row: My tasks comes just before Inbox, on one line.
     assert_eq!(entry.origin.y, inbox.origin.y);
