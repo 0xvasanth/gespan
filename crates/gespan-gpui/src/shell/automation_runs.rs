@@ -55,6 +55,9 @@ pub(super) struct State {
     pub open_requested: Option<u64>,
     /// Runs asked for before the service opened, at this navigation.
     pub runs_requested: Option<(u64, crate::runs::RunsFilter)>,
+    /// What the rail's bolt shows: runs going (queued included), and
+    /// automations whose latest run failed.
+    pub rail_runs: (usize, usize),
     opening: bool,
     pub(super) polling: bool,
     recovered: bool,
@@ -89,6 +92,7 @@ impl Default for State {
             service: None,
             open_requested: None,
             runs_requested: None,
+            rail_runs: (0, 0),
             opening: false,
             polling: false,
             recovered: false,
@@ -178,6 +182,7 @@ impl Shell {
                         }
                         this.poll_automations(cx);
                         this.load_review_drafts(cx);
+                        this.refresh_rail_runs(cx);
                         let runs = this
                             .automation_state
                             .runs_requested

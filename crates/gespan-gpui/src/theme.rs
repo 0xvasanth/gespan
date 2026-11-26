@@ -505,7 +505,6 @@ pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
         "Search" => (0x5AA9FF, 0x1F6FD6),
         "Automations" => (0xF5B544, 0xC77C0A),
         "Board" => (0xD08CFF, 0xA13FD6),
-        "Runs" => (0x3CCFCF, 0x0E8A8A),
         "Settings" => (0xFF7A5C, 0xD6452A),
         _ => return None,
     };
@@ -1056,14 +1055,13 @@ mod nav_tint_tests {
 
     /// Every row the sidebar can list, plus Search. Flows is hidden from
     /// the UI and keeps plain ink.
-    const TINTED: [&str; 8] = [
+    const TINTED: [&str; 7] = [
         "New thread",
         "Inbox",
         "Notes",
         "Search",
         "Automations",
         "Board",
-        "Runs",
         "Settings",
     ];
 
@@ -1116,7 +1114,6 @@ mod nav_tint_tests {
                 AppView::Notes,
                 AppView::Automations,
                 AppView::Board,
-                AppView::Runs,
             ] {
                 let tint = nav_tint(view.label()).expect("page has a tint");
                 assert_eq!(nav_tile_ink(view.label()), tint, "{theme}: {view:?}");

@@ -640,7 +640,7 @@ impl Shell {
                     .child(hold)
                     .child(div().flex_1())
                     .child(
-                        ghost_button("agents-open-runs", "Open Runs").on_click(cx.listener(
+                        ghost_button("agents-open-runs", "All runs").on_click(cx.listener(
                             |this, _, window, cx| {
                                 this.agents_open = false;
                                 this.show_runs(window, cx);

@@ -68,7 +68,6 @@ pub(super) fn rail_tint(label: &str) -> Option<Hsla> {
         "New thread" => 0x6ee7b7,
         "My tasks" => WAIT,
         "Inbox" => 0xa5b4fc,
-        "Runs" => 0x5eead4,
         "Automations" => 0xfbbf24,
         _ => return nav_tint(label).filter(|_| label != "Home" && label != "Search"),
     };
@@ -250,12 +249,24 @@ fn anchor_cover(probe: impl IntoElement) -> AnyElement {
         .into_any_element()
 }
 
+/// What the bolt says to a screen reader: the page, then what its badge
+/// shows.
+pub(super) fn automations_aria(going: usize, failing: usize) -> String {
+    let mut parts = vec!["Automations".to_string()];
+    if going > 0 {
+        parts.push(format!("{going} running"));
+    }
+    if failing > 0 {
+        parts.push(format!("{failing} failing"));
+    }
+    parts.join(", ")
+}
+
 /// The pages in the icon row, in order, with their glyphs.
-const PAGES: [(&str, &str); 9] = [
+const PAGES: [(&str, &str); 8] = [
     ("Home", "home"),
     ("My tasks", "circle-alert"),
     ("Inbox", "inbox"),
-    ("Runs", "clock"),
     ("Automations", "zap"),
     ("Flows", "git-merge"),
     ("Board", "kanban"),
@@ -652,6 +663,7 @@ impl Shell {
             .as_ref()
             .map_or(0, |inbox| inbox.read(cx).unread_count());
         let searching = self.app_search.is_some();
+        let (runs_going, runs_failing) = self.automation_state.rail_runs;
         div()
             .debug_selector(|| "sidebar-pages".into())
             .w_full()
@@ -681,10 +693,16 @@ impl Shell {
                             "Inbox" if unread > 0 => Some((unread, false)),
                             _ => None,
                         };
+                        // The bolt: a rose count while automations are
+                        // failing, else a blue dot while a run is going.
+                        let failing =
+                            (label == "Automations" && runs_failing > 0).then_some(runs_failing);
+                        let going = label == "Automations" && runs_going > 0 && failing.is_none();
                         let aria: SharedString = match (label, badge) {
                             ("My tasks", Some((n, _))) => format!("My tasks, {n} waiting").into(),
                             ("Inbox", Some((n, _))) => format!("Inbox, {n} new").into(),
                             ("Search", _) => "Search sessions".into(),
+                            ("Automations", _) => automations_aria(runs_going, runs_failing).into(),
                             _ => label.into(),
                         };
                         let ink =
@@ -738,6 +756,43 @@ impl Shell {
                                         .child(n.to_string()),
                                 )
                             })
+                            .when_some(failing, |d, n| {
+                                d.child(
+                                    div()
+                                        .debug_selector(|| {
+                                            "sidebar-navigation-failing-Automations".into()
+                                        })
+                                        .absolute()
+                                        .top(px(2.))
+                                        .right(px(3.))
+                                        .h(px(14.))
+                                        .min_w(px(14.))
+                                        .px(px(4.))
+                                        .rounded_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .bg(crate::glass::Tone::Bad.ink())
+                                        .text_size(px(9.5))
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_color(black(0.93))
+                                        .child(n.to_string()),
+                                )
+                            })
+                            .when(going, |d| {
+                                d.child(
+                                    div()
+                                        .debug_selector(|| {
+                                            "sidebar-navigation-running-Automations".into()
+                                        })
+                                        .absolute()
+                                        .top(px(5.))
+                                        .right(px(7.))
+                                        .size(px(7.))
+                                        .rounded_full()
+                                        .bg(crate::glass::Tone::Running.ink()),
+                                )
+                            })
                             .when(label == "Inbox", |d| {
                                 d.on_mouse_down(
                                     MouseButton::Right,
@@ -756,7 +811,6 @@ impl Shell {
                                 "Home" => this.open_home(window, cx),
                                 "My tasks" => this.open_my_tasks(window, cx),
                                 "Inbox" => this.open_inbox(window, cx),
-                                "Runs" => this.show_runs(window, cx),
                                 "Notes" => this.open_notes(window, cx),
                                 "Automations" => this.open_automations(window, cx),
                                 "Flows" => this.open_flows(window, cx),

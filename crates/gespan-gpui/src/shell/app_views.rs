@@ -20,7 +20,6 @@ impl Shell {
             AppView::Automations => "Automations",
             AppView::Flows => "Flows",
             AppView::Board => "Board",
-            AppView::Runs => "Runs",
         })
     }
 
@@ -148,10 +147,10 @@ impl Shell {
         {
             board.update(cx, |board, cx| board.hidden(cx));
         }
-        if self.active_app_view == Some(AppView::Runs)
-            && let Some(runs) = &self.runs
+        if self.active_app_view == Some(AppView::Automations)
+            && let Some(automations) = &self.automations
         {
-            runs.update(cx, |runs, _| runs.hidden());
+            automations.update(cx, |automations, cx| automations.hidden(cx));
         }
         if self.active_app_view == Some(AppView::Home)
             && let Some(home) = &self.home
@@ -208,7 +207,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         // These run work on a schedule, which the first window owns.
-        if self.secondary && matches!(view, AppView::Automations | AppView::Flows | AppView::Runs) {
+        if self.secondary && matches!(view, AppView::Automations | AppView::Flows) {
             crate::windows::on_primary(cx, move |shell, window, cx| {
                 shell.set_window_visible(window, true, cx);
                 shell.show_app_view(view, window, cx);
@@ -244,7 +243,6 @@ impl Shell {
             AppView::Automations => self.automations.clone().map(IntoElement::into_any_element),
             AppView::Flows => self.flows.clone().map(IntoElement::into_any_element),
             AppView::Board => self.board.clone().map(IntoElement::into_any_element),
-            AppView::Runs => self.runs.clone().map(IntoElement::into_any_element),
         }
     }
 
@@ -259,7 +257,6 @@ impl Shell {
             }
             Some(AppView::Flows) => self.flows.as_ref().map(|view| view.focus_handle(cx)),
             Some(AppView::Board) => self.board.as_ref().map(|view| view.focus_handle(cx)),
-            Some(AppView::Runs) => self.runs.as_ref().map(|view| view.focus_handle(cx)),
             None => return false,
         };
         if let Some(focus) = focus {
@@ -655,22 +652,6 @@ impl Shell {
                     }
                 },
             ));
-            self.app_view_events.push(cx.subscribe_in(
-                &view,
-                window,
-                |this, view, event: &automations::OpenRuns, window, cx| {
-                    let automation_name = view.read(cx).automation_name(&event.automation);
-                    this.open_runs(
-                        runs::RunsFilter {
-                            automation: Some(event.automation.clone()),
-                            automation_name,
-                            ..Default::default()
-                        },
-                        window,
-                        cx,
-                    );
-                },
-            ));
             self.automations = Some(view);
         }
         if let Some(view) = &self.automations {
@@ -694,6 +675,9 @@ impl Shell {
             });
         }
         self.show_app_view(AppView::Automations, window, cx);
+        if let Some(view) = &self.automations {
+            view.update(cx, |view, cx| view.shown(cx));
+        }
     }
 
     /// The review setup sheet's "Sign in": the Automations page covers the
@@ -734,8 +718,9 @@ impl Shell {
             .detach();
     }
 
-    /// Opens Runs on `filter`. It reads the automation service, which the
-    /// first window owns, so further windows open it there.
+    /// Opens Automations on "All runs" with `filter`. It reads the
+    /// automation service, which the first window owns, so further windows
+    /// open it there.
     pub(super) fn open_runs(
         &mut self,
         filter: runs::RunsFilter,
@@ -749,63 +734,67 @@ impl Shell {
             });
             return;
         }
-        let Some(service) = self.automation_state.service.clone() else {
+        if self.automation_state.service.is_none() {
             self.automation_state.runs_requested = Some((self.navigation_revision, filter));
             self.initialize_automations(cx);
             return;
-        };
-        self.prepare_app_view(window, cx);
-        if self.runs.is_none() {
-            let view = cx.new(|cx| runs::Runs::new(service, cx));
-            self.app_view_events.push(cx.subscribe_in(
-                &view,
-                window,
-                |this, _, event: &runs::Event, window, cx| match event {
-                    // The same route as the Automations run history.
-                    runs::Event::OpenSession(id) => {
-                        let native = locked(&this.store)
-                            .ok()
-                            .and_then(|store| store.resolve_existing_session_id(id));
-                        if let Some(id) = native {
-                            this.open(id, window, cx);
-                        }
-                    }
-                },
-            ));
-            self.runs = Some(view);
         }
-        if let Some(view) = &self.runs {
-            view.update(cx, |view, cx| view.set_filter(filter, cx));
-        }
-        self.show_app_view(AppView::Runs, window, cx);
-        if let Some(view) = &self.runs {
-            view.update(cx, |view, cx| view.shown(cx));
+        self.open_automations(window, cx);
+        if let Some(view) = &self.automations {
+            view.update(cx, |view, cx| view.show_all_runs(filter, cx));
         }
     }
 
-    /// Opens Runs keeping the project and status it last showed; one
-    /// automation's filter belongs to "See all in Runs" and is dropped.
+    /// Opens "All runs" keeping the project and status it last showed; one
+    /// automation's filter belongs to "See all runs" and is dropped.
     pub(super) fn show_runs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let filter = self
-            .runs
+            .automations
             .as_ref()
             .map(|view| runs::RunsFilter {
                 automation: None,
                 automation_name: None,
-                ..view.read(cx).filter().clone()
+                ..view.read(cx).feed().read(cx).filter().clone()
             })
             .unwrap_or_default();
         self.open_runs(filter, window, cx);
     }
 
-    /// Runs changed: reload the views that list them.
+    /// Runs changed: reload the views that list them and the rail's bolt.
     pub(super) fn refresh_run_views(&mut self, cx: &mut Context<Self>) {
         if let Some(view) = &self.automations {
             view.update(cx, |view, cx| view.refresh(cx));
         }
-        if let Some(view) = &self.runs {
-            view.update(cx, |view, cx| view.refresh(cx));
-        }
+        self.refresh_rail_runs(cx);
+    }
+
+    /// Reloads what the rail's bolt shows: a dot while a run is going, a
+    /// count of automations whose latest run failed.
+    pub(super) fn refresh_rail_runs(&mut self, cx: &mut Context<Self>) {
+        let Some(service) = self.automation_state.service.clone() else {
+            return;
+        };
+        let work = cx.background_executor().spawn(async move {
+            let runs = service
+                .lock()
+                .map_err(|_| "Automations are unavailable".to_string())?
+                .recent_runs(runs::LIMIT)?;
+            Ok::<_, String>(runs::rail_counts(&runs))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(counts) => {
+                    if this.automation_state.rail_runs != counts {
+                        this.automation_state.rail_runs = counts;
+                        this.invalidate_chrome(cx);
+                        cx.notify();
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "the rail's run counts failed to load"),
+            });
+        })
+        .detach();
     }
 
     pub(super) fn open_flows(&mut self, window: &mut Window, cx: &mut Context<Self>) {

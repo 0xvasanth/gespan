@@ -1,6 +1,9 @@
-//! Runs: every automation run across all projects, newest first, grouped by
-//! day. A run is listed the moment it is claimed (`pending`, shown as
-//! Queued), and runs whose automation is gone stay listed.
+//! All runs: every automation run across all projects, newest first,
+//! grouped by day, as the Automations page's default pane. Runs still going
+//! sit in "Running now" on top, and an automation whose latest run failed is
+//! pinned above them until it succeeds again. A run is listed the moment it
+//! is claimed (`pending`, shown as Queued), and runs whose automation is
+//! gone stay listed.
 use crate::{
     glass,
     input::{self, Input},
@@ -8,19 +11,22 @@ use crate::{
     theme::*,
 };
 use chrono::{Local, TimeZone};
-use gespan_core::automations::{self, Automation, AutomationRun, Service};
+use gespan_core::automations::{Automation, AutomationRun, Service};
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Role, SharedString,
     Subscription, Task, Window, div, prelude::*, px,
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
+pub(crate) mod row;
 #[cfg(test)]
 mod tests;
+
+pub(crate) use row::{Look, RunRow, clock, item_label, run_row, section};
 
 /// Enough for every automation's kept history to be paged in later.
 pub(crate) const LIMIT: usize = 200;
@@ -45,116 +51,38 @@ pub(crate) enum Event {
     /// The run's persisted session id, resolved by the shell the same way
     /// the Automations run history opens a run.
     OpenSession(String),
+    /// A pinned failure's "Edit automation".
+    EditAutomation(String),
+    /// A pinned failure's "Run now".
+    RunNow(String),
 }
 
-/// One listed run, ready to draw.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct RunRow {
-    pub id: String,
-    pub created_at: i64,
-    /// What fired it: an event label, "Scheduled" or "Test run".
-    pub trigger: String,
-    /// The item an event was about, or its key when the title is unknown.
-    pub item: Option<String>,
-    pub automation: String,
-    /// The automation's project, unknown once the automation is gone.
-    pub project: Option<String>,
-    pub status: &'static str,
-    pub error: Option<String>,
-    pub session: Option<String>,
-    /// How long a finished run took, such as `6m 02s`.
-    pub duration: Option<String>,
+/// Local midnight of the day holding `at`.
+pub(crate) fn local_day_start(at: i64) -> i64 {
+    let Some(time) = Local.timestamp_millis_opt(at).single() else {
+        return at - at.rem_euclid(DAY_MS);
+    };
+    time.date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|midnight| midnight.and_local_timezone(Local).earliest())
+        .map_or(at - at.rem_euclid(DAY_MS), |midnight| {
+            midnight.timestamp_millis()
+        })
 }
 
-impl RunRow {
-    pub(crate) fn can_open(&self) -> bool {
-        self.session.is_some()
+/// The day heading a run sits under.
+pub(crate) fn day_label(at: i64, today_start: i64) -> String {
+    if at >= today_start {
+        return "Today".into();
     }
-
-    /// Whether the search text appears, ignoring case, in what the row
-    /// shows: its trigger, item, automation, project or error.
-    fn matches(&self, query: &str) -> bool {
-        let query = query.trim().to_lowercase();
-        if query.is_empty() {
-            return true;
-        }
-        let project = self.project.as_deref().map(crate::workspace::project_name);
-        [
-            Some(self.trigger.as_str()),
-            self.item.as_deref(),
-            Some(self.automation.as_str()),
-            project.as_deref(),
-            self.error.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .any(|text| text.to_lowercase().contains(&query))
+    if at >= local_day_start(today_start - 1) {
+        return "Yesterday".into();
     }
-}
-
-/// What a row names its item by: the event's title, else its key, with a
-/// repository named by its own name only, as `langfuse#20110 bug: …`.
-/// A title starting `owner/repo#12` loses `owner/`; a key such as
-/// `github:issue:owner/repo:12` reads `repo#12`, and a tracker key such as
-/// `linear:issue:ENG-4` reads `ENG-4`. Anything else is shown as it is.
-pub(crate) fn item_label(title: Option<&str>, key: Option<&str>) -> Option<String> {
-    if let Some(title) = title.map(str::trim).filter(|title| !title.is_empty()) {
-        let (head, rest) = title.split_once(char::is_whitespace).unwrap_or((title, ""));
-        let short = head
-            .split_once('#')
-            .filter(|(path, number)| {
-                path.contains('/')
-                    && !number.is_empty()
-                    && number.bytes().all(|b| b.is_ascii_digit())
-            })
-            .and_then(|(path, number)| {
-                let repo = path.rsplit('/').next().filter(|repo| !repo.is_empty())?;
-                Some(format!("{repo}#{number}"))
-            });
-        return Some(match short {
-            Some(short) if rest.trim().is_empty() => short,
-            Some(short) => format!("{short} {}", rest.trim_start()),
-            None => title.to_string(),
-        });
-    }
-    let key = key.map(str::trim).filter(|key| !key.is_empty())?;
-    let parts: Vec<&str> = key.split(':').collect();
-    Some(match parts.as_slice() {
-        [_, _, path, number, ..]
-            if path.contains('/')
-                && !number.is_empty()
-                && number.bytes().all(|b| b.is_ascii_digit()) =>
-        {
-            let repo = path.rsplit('/').next().unwrap_or(path);
-            format!("{repo}#{number}")
-        }
-        [_, _, id] if !id.is_empty() => id.to_string(),
-        _ => key.to_string(),
-    })
-}
-
-/// How long a run took from start to finish: `45s`, `6m 02s`, `1h 03m`.
-/// Runs that never started or have not finished have none.
-pub(crate) fn duration(run: &AutomationRun) -> Option<String> {
-    let ms = run.completed_at? - run.started_at?;
-    if ms < 0 {
-        return None;
-    }
-    let secs = ms / 1000;
-    Some(match secs {
-        0..60 => format!("{secs}s"),
-        60..3600 => format!("{}m {:02}s", secs / 60, secs % 60),
-        _ => format!("{}h {:02}m", secs / 3600, secs % 3600 / 60),
-    })
-}
-
-/// The heading over one day's card: `1 run` or `N runs`.
-pub(crate) fn run_count(count: usize) -> String {
-    if count == 1 {
-        "1 run".to_string()
-    } else {
-        format!("{count} runs")
-    }
+    Local
+        .timestamp_millis_opt(at)
+        .single()
+        .map(|time| time.format("%A, %-d %B").to_string())
+        .unwrap_or_else(|| "Earlier".into())
 }
 
 /// Rows grouped under their day label, keeping their order. Rows arrive
@@ -171,21 +99,8 @@ pub(crate) fn group_by_day(rows: Vec<RunRow>, today_start: i64) -> Vec<(String, 
     days
 }
 
-/// The chip a run's recorded status shows.
-pub(crate) fn status_chip(run: &AutomationRun) -> &'static str {
-    match run.status.as_str() {
-        "pending" => "Queued",
-        "running" => "Running",
-        "succeeded" => "Succeeded",
-        "failed" => "Failed",
-        "cancelled" => "Cancelled",
-        "skipped" => "Skipped",
-        _ => "Queued",
-    }
-}
-
 /// Running or queued. An unknown status shows as Queued, so it counts too.
-fn live(status: &str) -> bool {
+pub(crate) fn live(status: &str) -> bool {
     !matches!(status, "succeeded" | "failed" | "cancelled" | "skipped")
 }
 
@@ -198,51 +113,27 @@ pub(crate) fn counts(runs: &[AutomationRun], today_start: i64) -> (usize, usize,
     (running, today.count(), failed)
 }
 
-/// Local midnight of the day holding `at`.
-fn local_day_start(at: i64) -> i64 {
-    let Some(time) = Local.timestamp_millis_opt(at).single() else {
-        return at - at.rem_euclid(DAY_MS);
-    };
-    time.date_naive()
-        .and_hms_opt(0, 0, 0)
-        .and_then(|midnight| midnight.and_local_timezone(Local).earliest())
-        .map_or(at - at.rem_euclid(DAY_MS), |midnight| {
-            midnight.timestamp_millis()
-        })
+/// The runs that keep an automation failing: per automation, its newest
+/// finished run when that run failed, newest first. A later success, a
+/// skip or a cancel clears it; a run still going does not.
+pub(crate) fn failing(runs: &[AutomationRun]) -> Vec<&AutomationRun> {
+    let mut finished: Vec<&AutomationRun> = runs.iter().filter(|run| !live(&run.status)).collect();
+    finished.sort_by_key(|run| std::cmp::Reverse(run.created_at));
+    let mut seen = HashSet::new();
+    finished
+        .into_iter()
+        .filter(|run| seen.insert(run.automation_id.as_str()))
+        .filter(|run| run.status == "failed")
+        .collect()
 }
 
-/// The day heading a run sits under.
-fn day_label(at: i64, today_start: i64) -> String {
-    if at >= today_start {
-        return "Today".into();
-    }
-    if at >= local_day_start(today_start - 1) {
-        return "Yesterday".into();
-    }
-    Local
-        .timestamp_millis_opt(at)
-        .single()
-        .map(|time| time.format("%A, %-d %B").to_string())
-        .unwrap_or_else(|| "Earlier".into())
-}
-
-fn clock(at: i64) -> String {
-    Local
-        .timestamp_millis_opt(at)
-        .single()
-        .map(|time| time.format("%H:%M").to_string())
-        .unwrap_or_else(|| "—".into())
-}
-
-fn trigger_label(run: &AutomationRun) -> String {
-    match run.trigger.as_str() {
-        "manual" => "Test run".into(),
-        "event" => automations::event_label(
-            run.event_kind.as_deref().unwrap_or(""),
-            run.event.as_deref().unwrap_or(""),
-        ),
-        _ => "Scheduled".into(),
-    }
+/// What the rail's bolt shows: how many runs are going (queued included)
+/// and how many automations are failing.
+pub(crate) fn rail_counts(runs: &[AutomationRun]) -> (usize, usize) {
+    (
+        runs.iter().filter(|run| live(&run.status)).count(),
+        failing(runs).len(),
+    )
 }
 
 struct Owner {
@@ -491,64 +382,48 @@ impl Runs {
 
     /// The runs the filter keeps, newest first.
     pub(crate) fn rows(&self) -> Vec<RunRow> {
+        let now = gespan_core::time::now_ms() as i64;
         self.runs
             .iter()
-            .filter_map(|run| {
-                let owner = self.owners.get(&run.automation_id);
-                let filter = &self.filter;
-                if let Some(project) = &filter.project
-                    && owner.is_none_or(|owner| {
-                        gespan_core::files::path_key(&owner.cwd)
-                            != gespan_core::files::path_key(project)
-                    })
-                {
-                    return None;
-                }
-                if filter
-                    .automation
-                    .as_ref()
-                    .is_some_and(|id| *id != run.automation_id)
-                {
-                    return None;
-                }
-                if let Some(status) = filter.status {
-                    let keep = if status == "running" {
-                        live(&run.status)
-                    } else {
-                        run.status == status
-                    };
-                    if !keep {
-                        return None;
-                    }
-                }
-                Some(RunRow {
-                    id: run.id.clone(),
-                    created_at: run.created_at,
-                    trigger: trigger_label(run),
-                    item: item_label(run.event_title.as_deref(), run.event_key.as_deref()),
-                    automation: owner
-                        .map_or_else(|| "Deleted automation".into(), |owner| owner.name.clone()),
-                    project: owner.map(|owner| owner.cwd.clone()),
-                    status: status_chip(run),
-                    error: run.error.clone().filter(|error| !error.trim().is_empty()),
-                    session: run.session_id.clone(),
-                    duration: duration(run),
-                })
-            })
-            .filter(|row| row.matches(&self.query))
+            .filter_map(|run| self.row_of(run, now))
             .collect()
     }
 
-    /// Opens the run's thread; a run without a session has none to open.
-    pub(crate) fn open_thread(&mut self, run_id: &str, cx: &mut Context<Self>) {
-        if let Some(session) = self
-            .runs
-            .iter()
-            .find(|run| run.id == run_id)
-            .and_then(|run| run.session_id.clone())
+    /// `run` as a row, or `None` when the filter or search leaves it out.
+    fn row_of(&self, run: &AutomationRun, now: i64) -> Option<RunRow> {
+        let owner = self.owners.get(&run.automation_id);
+        let filter = &self.filter;
+        if let Some(project) = &filter.project
+            && owner.is_none_or(|owner| {
+                gespan_core::files::path_key(&owner.cwd) != gespan_core::files::path_key(project)
+            })
         {
-            cx.emit(Event::OpenSession(session));
+            return None;
         }
+        if filter
+            .automation
+            .as_ref()
+            .is_some_and(|id| *id != run.automation_id)
+        {
+            return None;
+        }
+        if let Some(status) = filter.status {
+            let keep = if status == "running" {
+                live(&run.status)
+            } else {
+                run.status == status
+            };
+            if !keep {
+                return None;
+            }
+        }
+        let owner = owner.map(|owner| (owner.name.as_str(), owner.cwd.as_str()));
+        Some(RunRow::new(run, owner, now)).filter(|row| row.matches(&self.query))
+    }
+
+    /// Whether the "More" status menu is open, so Escape closes it first.
+    pub(crate) fn menu_open(&self) -> bool {
+        self.more_menu.is_some()
     }
 
     /// A filter option: one segment of the project or status control. A
@@ -691,13 +566,13 @@ impl Runs {
             .flex_wrap()
             .items_center()
             .gap(px(10.))
+            .child(glass::segmented().flex_wrap().children(statuses))
             // One automation lives in one project, so while its chip shows
             // the project control would change nothing.
             .when(automation.is_none(), |d| {
                 d.child(glass::segmented().flex_wrap().children(projects))
             })
             .children(automation)
-            .child(glass::segmented().flex_wrap().children(statuses))
             .child(
                 glass::field()
                     .debug_selector(|| "runs-search".into())
@@ -709,162 +584,186 @@ impl Runs {
             .into_any_element()
     }
 
-    fn row(&self, row: RunRow, first: bool, last: bool, cx: &mut Context<Self>) -> AnyElement {
-        const GROUP: &str = "runs-row";
-        let tone = glass::Tone::of_status(row.status);
-        let open = row.can_open();
+    /// The runs pinned as failing, as rows, under the current filter. Runs
+    /// of a deleted automation are not pinned: there is nothing to edit or
+    /// run again.
+    pub(crate) fn pinned(&self) -> Vec<RunRow> {
+        if !matches!(self.filter.status, None | Some("failed")) {
+            return Vec::new();
+        }
+        let now = gespan_core::time::now_ms() as i64;
+        failing(&self.runs)
+            .into_iter()
+            .filter(|run| self.owners.contains_key(&run.automation_id))
+            .filter_map(|run| self.row_of(run, now))
+            .collect()
+    }
+
+    /// Opens the run's thread; a run without a session has none to open.
+    pub(crate) fn open_thread(&mut self, run_id: &str, cx: &mut Context<Self>) {
+        if let Some(session) = self
+            .runs
+            .iter()
+            .find(|run| run.id == run_id)
+            .and_then(|run| run.session_id.clone())
+        {
+            cx.emit(Event::OpenSession(session));
+        }
+    }
+
+    fn row(&self, row: &RunRow, first: bool, last: bool, cx: &mut Context<Self>) -> AnyElement {
         let run_id = row.id.clone();
-        let open_id = format!("runs-open-{}", row.id);
-        let what = match &row.item {
-            Some(item) => format!("{} · {item}", row.trigger),
-            None => row.trigger.clone(),
-        };
-        let owner = [
-            Some(row.automation.clone()),
+        // One automation's runs all share its name and project.
+        let one = self.filter.automation.is_some();
+        run_row(
+            row,
+            &self.text,
+            Look {
+                first,
+                last,
+                automation: !one,
+                project: !one,
+            },
+            cx.listener(move |this, _, _, cx| this.open_thread(&run_id, cx)),
+        )
+        .into_any_element()
+    }
+
+    /// A failing automation, pinned: its last run's error and the ways to
+    /// fix it.
+    fn failure(&self, row: RunRow, today_start: i64, cx: &mut Context<Self>) -> AnyElement {
+        let id = row.id.clone();
+        let automation = row.automation_id.clone();
+        let edit = automation.clone();
+        let when = format!(
+            "{} {}",
+            day_label(row.created_at, today_start),
+            clock(row.created_at)
+        );
+        let ran = [
+            row.duration
+                .as_ref()
+                .map(|duration| format!("ran {duration}")),
             row.project.as_deref().map(crate::workspace::project_name),
-            row.duration.clone(),
         ]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
         .join(" · ");
-        // The trigger reads quieter than the item it fired for.
-        let title = div()
-            .min_w_0()
+        let open = row.can_open();
+        let bad = glass::Tone::Bad.ink();
+        glass::card()
+            .id(SharedString::from(format!("runs-failing-{id}")))
+            .debug_selector({
+                let id = id.clone();
+                move || format!("runs-failing-{id}")
+            })
+            .role(Role::Alert)
+            .aria_label(format!("{} failed {when}", row.automation))
+            .border_color(bad.opacity(0.30))
+            .bg(bad.opacity(0.05))
+            .px(px(16.))
+            .py(px(14.))
             .flex()
-            .gap(px(4.))
-            .text_size(px(13.))
-            .line_height(px(18.))
-            .map(|d| match &row.item {
-                Some(item) => d
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_color(content(0.62))
-                            .child(self.text.text(format!("{} ·", row.trigger))),
-                    )
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(glass::status("Failed", glass::Tone::Bad))
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
-                            .text_color(content(1.))
-                            .child(self.text.text(item.clone())),
-                    ),
-                None => d.child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(content(1.))
-                        .child(self.text.text(row.trigger.clone())),
-                ),
-            });
-        let button = if open {
-            glass::button(
-                SharedString::from(open_id.clone()),
-                "Open thread",
-                glass::Button::Glass,
-            )
-            .h(px(28.))
-            .child(icon("arrow-up-right", 12.).text_color(content(0.9)))
-            .aria_label("Open thread")
-        } else {
-            div()
-                .id(SharedString::from(open_id.clone()))
-                .h(px(28.))
-                .px(px(14.))
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(7.))
-                .rounded(px(9.))
-                .text_size(px(13.))
-                .whitespace_nowrap()
-                .text_color(content(0.3))
-                .child("Open thread")
-                .aria_label("Open thread, unavailable: this run has no thread")
-        };
-        div()
-            .id(SharedString::from(format!("runs-row-{}", row.id)))
-            .group(GROUP)
-            .debug_selector({
-                let id = row.id.clone();
-                move || format!("runs-row-{id}")
-            })
-            .role(Role::ListItem)
-            .aria_label(format!("{what}, {}", row.status))
-            .px(px(16.))
-            .py(px(11.))
-            .when(!first, |d| d.border_t_1().border_color(glass::hairline()))
-            // The card clips square, so the end rows round their own hover
-            // fill to the card's inner corner.
-            .when(first, |d| d.rounded_t(px(13.)))
-            .when(last, |d| d.rounded_b(px(13.)))
-            .hover(|s| s.bg(glass::hover_fill()))
-            .flex()
-            .items_center()
-            .gap(px(14.))
-            .child(
-                div()
-                    .w(px(52.))
-                    .flex_shrink_0()
-                    .font_family(crate::fonts::monospace())
-                    .text_size(px(12.))
-                    .line_height(px(17.))
-                    .text_color(content(0.62))
-                    .child(clock(row.created_at)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(title)
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(11.5))
-                            .line_height(px(16.))
-                            .text_color(content(0.55))
-                            .child(self.text.text(owner)),
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(self.text.text(format!("{} · {when}", row.automation))),
                     )
-                    .when_some(row.error.clone(), |d, error| {
+                    .when(!ran.is_empty(), |d| {
                         d.child(
                             div()
                                 .text_size(px(11.5))
-                                .line_height(px(16.))
-                                .text_color(glass::Tone::Bad.ink().opacity(0.85))
-                                .line_clamp(2)
-                                .text_ellipsis()
-                                .child(self.text.text(error)),
+                                .text_color(content(0.55))
+                                .child(self.text.text(ran)),
                         )
-                    }),
-            )
-            .child(
-                div()
-                    .w(px(120.))
-                    .flex_shrink_0()
-                    .flex()
-                    .child(glass::status(row.status, tone)),
-            )
-            .child(
-                div()
-                    .w(px(110.))
-                    .flex_shrink_0()
-                    .flex()
-                    .justify_end()
-                    // Shown on the row under the pointer, like the mock.
-                    .opacity(0.)
-                    .group_hover(GROUP, |s| s.opacity(1.))
+                    })
                     .child(
-                        button
-                            .debug_selector(move || open_id.clone())
-                            .role(Role::Button)
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.open_thread(&run_id, cx)),
+                        div()
+                            .ml_auto()
+                            .flex()
+                            .gap(px(6.))
+                            .child(
+                                glass::button(
+                                    SharedString::from(format!("runs-failing-edit-{id}")),
+                                    "Edit automation",
+                                    glass::Button::Ghost,
+                                )
+                                .debug_selector({
+                                    let id = id.clone();
+                                    move || format!("runs-failing-edit-{id}")
+                                })
+                                .role(Role::Button)
+                                .h(px(28.))
+                                .on_click(cx.listener(
+                                    move |_, _, _, cx| cx.emit(Event::EditAutomation(edit.clone())),
+                                )),
+                            )
+                            .when(open, |d| {
+                                let run_id = id.clone();
+                                d.child(
+                                    glass::button(
+                                        SharedString::from(format!("runs-failing-open-{id}")),
+                                        "Open thread",
+                                        glass::Button::Glass,
+                                    )
+                                    .debug_selector({
+                                        let id = id.clone();
+                                        move || format!("runs-failing-open-{id}")
+                                    })
+                                    .role(Role::Button)
+                                    .h(px(28.))
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| this.open_thread(&run_id, cx),
+                                    )),
+                                )
+                            })
+                            .child(
+                                glass::button(
+                                    SharedString::from(format!("runs-failing-run-{id}")),
+                                    "Run now",
+                                    glass::Button::Primary,
+                                )
+                                .debug_selector({
+                                    let id = id.clone();
+                                    move || format!("runs-failing-run-{id}")
+                                })
+                                .role(Role::Button)
+                                .h(px(28.))
+                                .on_click(cx.listener(
+                                    move |_, _, _, cx| cx.emit(Event::RunNow(automation.clone())),
+                                )),
                             ),
                     ),
             )
+            .when_some(row.error.clone(), |d, error| {
+                d.child(
+                    div()
+                        .rounded(px(10.))
+                        .bg(black(0.25))
+                        .border_1()
+                        .border_color(glass::hairline())
+                        .px(px(12.))
+                        .py(px(8.))
+                        .font_family(crate::fonts::monospace())
+                        .text_size(px(11.5))
+                        .line_height(px(18.))
+                        .text_color(bad)
+                        .child(self.text.text(error)),
+                )
+            })
             .into_any_element()
     }
 
@@ -895,7 +794,7 @@ impl Runs {
         })
     }
 
-    /// Runs grouped by day, one glass card per day under its label.
+    /// "Running now" on top, then the rest by day, one glass card each.
     fn panel(&self, rows: Vec<RunRow>, today_start: i64, cx: &mut Context<Self>) -> AnyElement {
         let column = div()
             .debug_selector(|| "runs-panel".into())
@@ -913,46 +812,35 @@ impl Runs {
                 )
                 .into_any_element();
         }
-        column
-            .children(group_by_day(rows, today_start).into_iter().enumerate().map(
-                |(index, (label, rows))| {
-                    let count = rows.len();
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .px(px(4.))
-                                .flex()
-                                .items_center()
-                                .gap(px(10.))
-                                .child(
-                                    glass::eyebrow(label)
-                                        .line_height(px(16.))
-                                        .text_color(content(0.92)),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(11.5))
-                                        .line_height(px(16.))
-                                        .text_color(content(0.55))
-                                        .child(run_count(count)),
-                                ),
-                        )
-                        .child(
-                            glass::card()
-                                .debug_selector(move || format!("runs-day-{index}"))
-                                .overflow_hidden()
-                                .children(
-                                    rows.into_iter()
-                                        .enumerate()
-                                        .map(|(i, row)| self.row(row, i == 0, i + 1 == count, cx)),
-                                ),
-                        )
-                },
-            ))
-            .into_any_element()
+        let (running, rest): (Vec<RunRow>, Vec<RunRow>) = rows.into_iter().partition(RunRow::live);
+        let cards = |rows: &[RunRow], cx: &mut Context<Self>| {
+            let count = rows.len();
+            rows.iter()
+                .enumerate()
+                .map(|(i, row)| self.row(row, i == 0, i + 1 == count, cx))
+                .collect::<Vec<_>>()
+        };
+        let running = (!running.is_empty()).then(|| {
+            section(
+                "runs-running".into(),
+                "Running now",
+                glass::Tone::Running.ink(),
+                cards(&running, cx),
+            )
+        });
+        let days = group_by_day(rest, today_start)
+            .into_iter()
+            .enumerate()
+            .map(|(index, (label, rows))| {
+                section(
+                    format!("runs-day-{index}"),
+                    label,
+                    content(0.92),
+                    cards(&rows, cx),
+                )
+            })
+            .collect::<Vec<_>>();
+        column.children(running).children(days).into_any_element()
     }
 }
 
@@ -961,6 +849,11 @@ impl Render for Runs {
         let today_start = local_day_start(gespan_core::time::now_ms() as i64);
         let (running, today, failed) = counts(&self.runs, today_start);
         let rows = self.rows();
+        let pinned = self
+            .pinned()
+            .into_iter()
+            .map(|row| self.failure(row, today_start, cx))
+            .collect::<Vec<_>>();
         div()
             .id("runs")
             .track_focus(&self.focus)
@@ -975,8 +868,8 @@ impl Render for Runs {
                         .w_full()
                         .max_w(px(1040.))
                         .mx_auto()
-                        .px(px(40.))
-                        .pt(px(26.))
+                        .px(px(32.))
+                        .pt(px(24.))
                         .pb(px(40.))
                         .flex()
                         .flex_col()
@@ -988,12 +881,20 @@ impl Render for Runs {
                                 .items_end()
                                 .gap(px(16.))
                                 .child(
-                                    glass::page_header(
-                                        "Runs",
-                                        "Every automation run across your projects, newest first.",
-                                    )
-                                    .flex_1()
-                                    .min_w(px(260.)),
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(220.))
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(6.))
+                                        .child(glass::eyebrow("Every automation"))
+                                        .child(
+                                            div()
+                                                .text_size(px(22.))
+                                                .line_height(px(28.))
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .child("All runs"),
+                                        ),
                                 )
                                 .child(
                                     div()
@@ -1042,6 +943,7 @@ impl Render for Runs {
                             },
                         )
                         .child(self.filters(cx))
+                        .children(pinned)
                         .child(self.panel(rows, today_start, cx)),
                 ),
             )

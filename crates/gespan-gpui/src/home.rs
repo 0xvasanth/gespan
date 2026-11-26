@@ -1314,7 +1314,7 @@ impl Home {
             .flex_none()
             .child(panel_head(title).child(Self::link(
                 "home-open-runs",
-                "Open Runs",
+                "All runs",
                 Page::Runs,
                 cx,
             )))

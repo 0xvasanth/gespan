@@ -68,7 +68,7 @@ const COMMANDS: &[(Command, &str, &str)] = &[
     (Command::CreateCard, "Create card", ""),
     (Command::GoToBoard, "Go to board", ""),
     (Command::SwitchBoard, "Switch board…", ""),
-    (Command::GoToRuns, "Go to runs", ""),
+    (Command::GoToRuns, "Go to all runs", ""),
     (Command::OpenLogs, "Open logs folder", ""),
     (Command::CopyDiagnostics, "Copy diagnostics", ""),
     (Command::ReportIssue, "Report an issue", ""),

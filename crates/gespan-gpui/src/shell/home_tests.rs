@@ -99,7 +99,18 @@ fn each_tile_opens_its_page(cx: &mut TestAppContext) {
 
     open_home(window, visual);
     click(visual, "home-tile-runs");
-    assert_eq!(view(window, visual), Some(AppView::Runs));
+    assert_eq!(view(window, visual), Some(AppView::Automations));
+    let on_all_runs = window
+        .read_with(visual, |shell, cx| {
+            shell
+                .automations
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .all_runs_chosen()
+        })
+        .unwrap();
+    assert!(on_all_runs, "the tile lands on All runs");
 
     open_home(window, visual);
     click(visual, "home-tile-inbox");
@@ -123,7 +134,7 @@ fn the_panel_links_open_the_same_pages(cx: &mut TestAppContext) {
     assert_eq!(view(window, visual), Some(AppView::MyTasks));
     open_home(window, visual);
     click(visual, "home-open-runs");
-    assert_eq!(view(window, visual), Some(AppView::Runs));
+    assert_eq!(view(window, visual), Some(AppView::Automations));
     open_home(window, visual);
     click(visual, "home-all-agents");
     assert!(drawn(visual, "agents-panel"));

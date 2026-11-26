@@ -912,7 +912,6 @@ pub(crate) struct Shell {
     automations: Option<Entity<crate::automations::Automations>>,
     flows: Option<Entity<crate::flows::FlowsView>>,
     board: Option<Entity<crate::board::BoardView>>,
-    runs: Option<Entity<crate::runs::Runs>>,
     home: Option<Entity<crate::home::Home>>,
     my_tasks: Option<Entity<crate::my_tasks::MyTasks>>,
     /// When each open task was first seen, by key, in milliseconds.
@@ -1392,7 +1391,6 @@ impl Shell {
             automations: None,
             flows: None,
             board: None,
-            runs: None,
             home: None,
             my_tasks: None,
             my_task_records: HashMap::new(),

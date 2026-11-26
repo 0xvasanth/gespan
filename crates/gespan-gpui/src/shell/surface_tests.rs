@@ -10,7 +10,6 @@ enum Surface {
     Automations,
     Flows,
     Board,
-    Runs,
     Pilot,
 }
 
@@ -33,13 +32,6 @@ impl Surface {
                 shell.workspace.preferences.board = true;
                 shell.open_board(window, cx);
             }
-            Self::Runs => {
-                shell.automation_state.service = Some(Arc::new(Mutex::new(
-                    gespan_core::automations::Service::open(std::path::Path::new(":memory:"))
-                        .unwrap(),
-                )));
-                shell.open_runs(Default::default(), window, cx);
-            }
             Self::Pilot => {
                 let project = shell.workspace.project.clone();
                 let session = shell.workspace.active;
@@ -56,12 +48,9 @@ impl Surface {
 
     fn close(self, shell: &mut Shell, session: i64, window: &mut Window, cx: &mut Context<Shell>) {
         match self {
-            Self::Inbox
-            | Self::Notes
-            | Self::Automations
-            | Self::Flows
-            | Self::Board
-            | Self::Runs => shell.close_app_view(window, cx),
+            Self::Inbox | Self::Notes | Self::Automations | Self::Flows | Self::Board => {
+                shell.close_app_view(window, cx)
+            }
             // Returning to a conversation is the same route used by opening
             // a Pilot's launched session.
             Self::Pilot => shell.open(session, window, cx),
@@ -214,7 +203,6 @@ fn app_surfaces_stay_tabbed_in_both_workspace_styles(cx: &mut TestAppContext) {
             Surface::Automations,
             Surface::Flows,
             Surface::Board,
-            Surface::Runs,
             Surface::Pilot,
         ] {
             window
@@ -236,7 +224,6 @@ fn app_surfaces_stay_tabbed_in_both_workspace_styles(cx: &mut TestAppContext) {
                 Surface::Automations => Some(app_views::AppView::Automations),
                 Surface::Flows => Some(app_views::AppView::Flows),
                 Surface::Board => Some(app_views::AppView::Board),
-                Surface::Runs => Some(app_views::AppView::Runs),
                 _ => None,
             };
             if let Some(app) = app {
@@ -280,7 +267,6 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             Surface::Automations,
             Surface::Flows,
             Surface::Board,
-            Surface::Runs,
         ] {
             window
                 .update(visual, |shell, window, cx| surface.open(shell, window, cx))
@@ -295,7 +281,6 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
                     app_views::AppView::Automations,
                     app_views::AppView::Flows,
                     app_views::AppView::Board,
-                    app_views::AppView::Runs,
                 ] {
                     assert_eq!(
                         shell
@@ -321,7 +306,6 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
             app_views::AppView::Automations,
             app_views::AppView::Flows,
             app_views::AppView::Board,
-            app_views::AppView::Runs,
         ] {
             let selector = Box::leak(format!("app-title-tab-{}", app.label()).into_boxed_str());
             let tab = visual.debug_bounds(selector).unwrap();
