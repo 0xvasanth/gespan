@@ -2,6 +2,7 @@
 use image::{imageops, ImageReader, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     hash::{DefaultHasher, Hash, Hasher},
     io::Cursor,
     path::{Path, PathBuf},
@@ -38,12 +39,9 @@ impl ProjectAppearance {
         }
     }
     pub fn color(&self, project: &str) -> u32 {
-        self.color.filter(|c| *c <= 0xffffff).unwrap_or_else(|| {
-            let hash = project
-                .encode_utf16()
-                .fold(0u32, |h, c| h.wrapping_mul(31).wrapping_add(c.into()));
-            COLORS[(hash as usize % (COLORS.len() - 1)) + 1]
-        })
+        self.color
+            .filter(|c| *c <= 0xffffff)
+            .unwrap_or_else(|| COLORS[hash_slot(project)])
     }
     pub fn mascot(&self, project: &str) -> usize {
         self.mascot
@@ -68,6 +66,64 @@ impl ProjectAppearance {
             theme.normalize();
         }
     }
+}
+
+/// The palette slot `project`'s path hashes to: never 0, the grey that
+/// means "no colour".
+fn hash_slot(project: &str) -> usize {
+    let hash = project
+        .encode_utf16()
+        .fold(0u32, |h, c| h.wrapping_mul(31).wrapping_add(c.into()));
+    (hash as usize % (COLORS.len() - 1)) + 1
+}
+
+/// The colour a project with none of its own takes, given the colours the
+/// other projects use: one the fewest of them use. Its hash colour if that is
+/// one, else the next such one after it in palette order. Grey is never
+/// picked, and a custom colour off the palette takes no slot.
+pub fn pick_color(project: &str, taken: impl IntoIterator<Item = u32>) -> u32 {
+    let mut uses = [0usize; COLORS.len()];
+    for color in taken {
+        if let Some(slot) = COLORS.iter().position(|c| *c == color) {
+            uses[slot] += 1;
+        }
+    }
+    let fewest = uses[1..].iter().copied().min().unwrap_or(0);
+    let start = hash_slot(project);
+    let slots = COLORS.len() - 1;
+    (0..slots)
+        .map(|step| (start - 1 + step) % slots + 1)
+        .find(|slot| uses[*slot] == fewest)
+        .map_or(COLORS[start], |slot| COLORS[slot])
+}
+
+/// Saves a colour on every project in `projects` that has none, in order,
+/// from [`pick_color`]: open projects only share a colour once all eight are
+/// used, and a project keeps its colour after that. Returns whether any
+/// project got one.
+pub fn assign_colors(
+    appearances: &mut HashMap<String, ProjectAppearance>,
+    projects: &[String],
+) -> bool {
+    let mut changed = false;
+    for (ix, project) in projects.iter().enumerate() {
+        if appearances
+            .get(project)
+            .is_some_and(|a| a.color.is_some_and(|c| c <= 0xffffff))
+        {
+            continue;
+        }
+        let taken: Vec<u32> = projects
+            .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != ix)
+            .filter_map(|(_, other)| appearances.get(other)?.color)
+            .collect();
+        let color = pick_color(project, taken);
+        appearances.entry(project.clone()).or_default().color = Some(color);
+        changed = true;
+    }
+    changed
 }
 
 /// A project's own copy of the Appearance page's color settings.
@@ -644,5 +700,117 @@ mod tests {
         let bad = directory.path().join("bad.png");
         std::fs::write(&bad, b"not an image").unwrap();
         assert!(import_image(&bad, &directory.path().join("assets"), "/project", false).is_err());
+    }
+
+    fn paths(names: &[&str]) -> Vec<String> {
+        names
+            .iter()
+            .map(|n| format!("/Users/me/work/{n}"))
+            .collect()
+    }
+
+    #[test]
+    fn a_first_project_keeps_its_hash_colour() {
+        let project = "/Users/me/work/gespan";
+        assert_eq!(
+            pick_color(project, []),
+            ProjectAppearance::default().color(project)
+        );
+    }
+
+    #[test]
+    fn a_project_whose_hash_colour_is_taken_gets_a_free_one() {
+        // These two paths hash to the same orange.
+        let [site, mobile] = ["/Users/me/work/gespan-site", "/Users/me/work/mobile"];
+        let orange = ProjectAppearance::default().color(site);
+        assert_eq!(ProjectAppearance::default().color(mobile), orange);
+        let picked = pick_color(mobile, [orange]);
+        assert_ne!(picked, orange);
+        assert_ne!(picked, COLORS[0], "never grey");
+        assert!(COLORS.contains(&picked));
+    }
+
+    #[test]
+    fn once_every_colour_is_used_the_hash_colour_wins_the_tie() {
+        let project = "/Users/me/work/ninth";
+        let all = COLORS[1..].to_vec();
+        assert_eq!(pick_color(project, all.clone()), COLORS[hash_slot(project)]);
+        // A colour used twice is not picked while others are used once.
+        let mut uneven = all;
+        uneven.push(COLORS[hash_slot(project)]);
+        assert_ne!(pick_color(project, uneven), COLORS[hash_slot(project)]);
+    }
+
+    #[test]
+    fn a_custom_colour_takes_no_palette_slot() {
+        let project = "/Users/me/work/gespan";
+        assert_eq!(pick_color(project, [0x123456]), pick_color(project, []));
+    }
+
+    #[test]
+    fn eight_projects_get_eight_distinct_saved_colours() {
+        let projects = paths(&[
+            "gespan",
+            "gespan-site",
+            "pilot-kit",
+            "mobile",
+            "docs",
+            "api",
+            "infra",
+            "blog",
+        ]);
+        let mut appearances = HashMap::new();
+        assert!(assign_colors(&mut appearances, &projects));
+        let colors: Vec<u32> = projects
+            .iter()
+            .map(|p| appearances[p].color.unwrap())
+            .collect();
+        let distinct: std::collections::HashSet<_> = colors.iter().collect();
+        assert_eq!(distinct.len(), 8, "{colors:x?}");
+        assert!(!colors.contains(&COLORS[0]));
+        // Saved: a second pass changes nothing, and color() reads them back.
+        assert!(!assign_colors(&mut appearances, &projects));
+        for (project, color) in projects.iter().zip(&colors) {
+            assert_eq!(appearances[project].color(project), *color);
+        }
+    }
+
+    #[test]
+    fn colours_stay_put_as_projects_come_and_go() {
+        let mut projects = paths(&["gespan", "gespan-site", "mobile"]);
+        let mut appearances = HashMap::new();
+        assign_colors(&mut appearances, &projects);
+        let before: Vec<_> = projects.iter().map(|p| appearances[p].color).collect();
+        // A new project, and one leaving, move no one else's colour.
+        projects.push(paths(&["api"]).remove(0));
+        projects.remove(0);
+        assert!(assign_colors(&mut appearances, &projects));
+        for (ix, project) in paths(&["gespan", "gespan-site", "mobile"])
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(appearances[project].color, before[ix]);
+        }
+        let api = &paths(&["api"])[0];
+        let others: Vec<_> = projects[..2].iter().map(|p| appearances[p].color).collect();
+        assert!(!others.contains(&appearances[api].color));
+    }
+
+    #[test]
+    fn a_colour_the_user_picked_is_kept_and_avoided() {
+        let projects = paths(&["gespan", "mobile"]);
+        let gespan_hash = ProjectAppearance::default().color(&projects[0]);
+        let mut appearances = HashMap::new();
+        // The user gave mobile gespan's hash colour.
+        appearances.insert(
+            projects[1].clone(),
+            ProjectAppearance {
+                color: Some(gespan_hash),
+                ..Default::default()
+            },
+        );
+        assign_colors(&mut appearances, &projects);
+        assert_eq!(appearances[&projects[1]].color, Some(gespan_hash));
+        assert_ne!(appearances[&projects[0]].color, Some(gespan_hash));
     }
 }

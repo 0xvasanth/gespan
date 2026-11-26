@@ -299,6 +299,26 @@ fn the_general_page_no_longer_holds_editor_rows(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn appearance_no_longer_offers_a_top_bar_tabs_choice(cx: &mut TestAppContext) {
+    let window = window(Section::Appearance, cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(size(px(1200.), px(2400.)));
+    // Even with the old grouped choice saved, there is nothing to switch back.
+    appearance_prefs(window, visual, |p| p.title_tabs = "grouped".into());
+    assert!(
+        visual.debug_bounds("settings-row-tab-animations").is_some(),
+        "the page drew its tab rows"
+    );
+    for selector in [
+        "settings-row-title-tabs",
+        "settings-segmented-title-tabs",
+        "settings-title-tabs-grouped",
+    ] {
+        assert!(visual.debug_bounds(selector).is_none(), "{selector}");
+    }
+}
+
+#[gpui::test]
 fn blur_radius_is_only_offered_where_the_platform_honors_it(cx: &mut TestAppContext) {
     let window = window(Section::Appearance, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);

@@ -3,11 +3,23 @@
 //! only the current project's tabs.
 use super::*;
 use crate::conversation::SessionChanged;
+use crate::settings::TabLayout;
 use crate::shell::tab_groups::PEEK_DELAY;
-use crate::shell::tests::window;
 use crate::strip_groups::StripEntry;
 use crate::workspace::TitleTab;
 use gpui::TestAppContext;
+
+/// The shell's test window, its strip grouped as these tests need: the app
+/// no longer offers the grouped strip, but its code stays.
+fn window(cx: &mut TestAppContext) -> (gpui::WindowHandle<Shell>, i64, i64) {
+    let (window, other, here) = crate::shell::tests::window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.set_tab_layout_override(Some(TabLayout::Grouped), cx)
+        })
+        .unwrap();
+    (window, other, here)
+}
 
 fn add_session(shell: &mut Shell, window: &mut Window, cx: &mut Context<Shell>) -> i64 {
     let summary = locked(&shell.store)

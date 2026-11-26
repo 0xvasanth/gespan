@@ -94,6 +94,9 @@ mod sidebar_list;
 mod sidebar_peek;
 #[cfg(test)]
 mod surface_tests;
+mod tab_colors;
+#[cfg(test)]
+mod tab_colors_tests;
 mod tab_groups;
 #[cfg(test)]
 mod tab_groups_tests;
@@ -954,6 +957,10 @@ pub(crate) struct Shell {
     /// The collapsed project group shown open while the pointer is on it:
     /// its project folder.
     strip_peek: Option<String>,
+    /// The strip layout a test drives instead of the app's ungrouped one,
+    /// so the grouped and this-project strips stay covered.
+    #[cfg(test)]
+    tab_layout_override: Option<crate::settings::TabLayout>,
     /// A chip the pointer rests on, peeking once its wait runs out.
     peek_pending: Option<(String, gpui::Task<()>)>,
     /// The strip's direct children as last drawn: loose tabs and group boxes.
@@ -1420,6 +1427,8 @@ impl Shell {
             pin_deck: Default::default(),
             pin_card_hover: None,
             strip_peek: None,
+            #[cfg(test)]
+            tab_layout_override: None,
             peek_pending: None,
             strip_children: Vec::new(),
             group_tab_bounds: Default::default(),
@@ -7671,14 +7680,17 @@ impl Shell {
                 crate::tab_motion::Slot::Live { .. } => None,
             })
             .collect();
-        // Tabs of groups other than the current project's, open while they
-        // peek or easing shut, take no share of the strip.
+        // Grouped, tabs of groups other than the current project's, open
+        // while they peek or easing shut, take no share of the strip. Flat,
+        // every tab shares it.
+        let grouped = self.tab_layout() == crate::settings::TabLayout::Grouped;
         let away: HashSet<TitleTab> = slots
             .iter()
             .map(|s| match s {
                 crate::tab_motion::Slot::Live { key, .. }
                 | crate::tab_motion::Slot::Closing { key, .. } => key,
             })
+            .filter(|_| grouped)
             .filter(|key| {
                 self.frame_project(&projects, key, cx)
                     .is_some_and(|project| {
@@ -7950,6 +7962,26 @@ impl Shell {
                     .into_iter()
                     .filter(|pane| self.session_summaries.contains_key(pane))
                     .any(|pane| self.session_metadata(pane, cx).has_saved_draft());
+                // Its project's icon in the project's colour leads the tab;
+                // the active or hovered one names the project too. Too narrow
+                // for both, the project's mark stands in for the tile.
+                let width = tab_width(&TitleTab::Session(id));
+                let narrow = width < NARROW_TAB;
+                let project = self.frame_project(&projects, &TitleTab::Session(id), cx);
+                let mark = project
+                    .as_deref()
+                    .map(|p| self.tab_project_mark(p, id.to_string()));
+                let name = project
+                    .as_deref()
+                    .filter(|_| {
+                        (active || hovered) && width >= tab_colors::TAB_PROJECT_NAME_MIN_WIDTH
+                    })
+                    .map(|p| self.tab_project_name(p, id.to_string()));
+                let lead = if narrow && mark.is_some() {
+                    tab_colors::TAB_PROJECT_MARK
+                } else {
+                    TAB_TILE.w
+                };
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -7977,11 +8009,7 @@ impl Shell {
                                 |d| d.pr_7(),
                             )
                             // Too narrow for the plate's padding: the mark sits centred.
-                            .when(tab_width(&TitleTab::Session(id)) < NARROW_TAB, |d| {
-                                d.px(px(
-                                    ((tab_width(&TitleTab::Session(id)) - TAB_TILE.w) / 2.).max(0.)
-                                ))
-                            })
+                            .when(narrow, |d| d.px(px(((width - lead) / 2.).max(0.))))
                             .gap(px(TAB_TILE_GAP))
                             .group_hover("title-tab", |s| s.bg(title_tab_fill(active, true)))
                             // Overlaid so the dashes take no room from the content.
@@ -7999,7 +8027,20 @@ impl Shell {
                                         .border_color(content(if active { 0.3 } else { 0.25 })),
                                 )
                             })
-                            .child(self.pane_tile_stack(&copy, leaving, shuffle))
+                            .map(|d| match mark {
+                                Some(mark) if narrow => d.child(mark),
+                                Some(mark) => d.child(
+                                    div()
+                                        .flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap(px(tab_colors::TAB_PROJECT_GAP))
+                                        .child(mark)
+                                        .child(self.pane_tile_stack(&copy, leaving, shuffle)),
+                                ),
+                                None => d.child(self.pane_tile_stack(&copy, leaving, shuffle)),
+                            })
+                            .children(name)
                             .child(self.pane_headline(
                                 &copy,
                                 (leaving, dir, progress),
@@ -8136,10 +8177,14 @@ impl Shell {
                         element.into_any_element()
                     })
                 }
-                TitleTab::Pilot { id, .. } => {
+                TitleTab::Pilot { id, project, .. } => {
                     let manager = self.pilots.clone()?;
                     let w = tab_width(tab);
-                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, cx))?;
+                    let key = format!("pilot-{id}");
+                    let mark = Some(self.tab_project_mark(project, key.clone()));
+                    let name = (w >= tab_colors::TAB_PROJECT_NAME_MIN_WIDTH)
+                        .then(|| self.tab_project_name(project, key));
+                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, mark, name, cx))?;
                     let drag_id = tab.clone();
                     let menu_id = id.clone();
                     let dragging = dragged.as_ref() == Some(tab);
@@ -10375,11 +10420,14 @@ mod tests {
                     path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets/gespan.png").into(),
                     ..Default::default()
                 });
-                assert!(
-                    !shell
-                        .workspace
-                        .project_appearance
-                        .contains_key("/work/another-project")
+                // The other project holds only the colour it was given.
+                let other = &shell.workspace.project_appearance["/work/another-project"];
+                assert_eq!(
+                    *other,
+                    gespan_core::project_appearance::ProjectAppearance {
+                        color: other.color,
+                        ..Default::default()
+                    }
                 );
                 shell.open_menu(
                     MenuTarget::Project {
@@ -11265,15 +11313,13 @@ mod tests {
         let last = cx
             .debug_bounds(Box::leak(format!("title-tab-{last}").into_boxed_str()))
             .unwrap();
-        // The last tab sits inside its project's group, which ends one inset
-        // past it.
-        let group = cx.debug_bounds("tab-group-gespan").unwrap();
-        assert!(group.right() >= last.right());
+        // The strip is flat: no group box, the last tab ends the strip.
+        assert!(cx.debug_bounds("tab-group-gespan").is_none());
         // The strip's 2px gap and the button's 2px margin, as when it has room.
         assert!(
-            settled.left() - group.right() <= px(4.5),
+            settled.left() - last.right() <= px(4.5),
             "a full strip keeps the usual gap before the new-tab button: {:?}",
-            settled.left() - group.right()
+            settled.left() - last.right()
         );
         let (selected, other) = window
             .update(cx, |shell, _, cx| {
