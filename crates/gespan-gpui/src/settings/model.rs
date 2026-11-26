@@ -368,12 +368,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "files editor long lines horizontal scroll wrapping",
     ),
     (
-        "title-tabs",
-        Section::Appearance,
-        "Top bar tabs",
-        "tab strip title bar group grouping projects all this project chips",
-    ),
-    (
         "tab-animations",
         Section::Appearance,
         "Tab animations",
@@ -854,7 +848,6 @@ mod tests {
             ("word wrap", "file-word-wrap", Section::Chat),
             ("show excluded files", "show-excluded-files", Section::Chat),
             ("tab animations", "tab-animations", Section::Appearance),
-            ("top bar tabs", "title-tabs", Section::Appearance),
         ] {
             let hit = search(query, "")
                 .into_iter()
@@ -865,6 +858,20 @@ mod tests {
             let entries: Vec<_> = INDEX.iter().filter(|e| e.0 == id).collect();
             assert_eq!(entries.len(), 1, "{id} is indexed once");
             assert_eq!(entries[0].1, Section::Chat, "{id}");
+        }
+    }
+
+    #[test]
+    fn the_top_bar_tabs_choice_is_gone_from_search() {
+        // The strip is always ungrouped now; nothing to find or jump to.
+        assert!(INDEX.iter().all(|e| e.0 != "title-tabs"));
+        for query in ["top bar tabs", "grouping projects"] {
+            assert!(
+                search(query, "")
+                    .iter()
+                    .all(|r| r.setting != Some("title-tabs")),
+                "{query}"
+            );
         }
     }
 

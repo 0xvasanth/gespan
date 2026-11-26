@@ -658,6 +658,7 @@ impl Workspace {
         for appearance in state.project_appearance.values_mut() {
             appearance.normalize();
         }
+        state.assign_project_colors();
         let mut known: HashSet<_> = sessions.iter().map(|s| s.0).collect();
         state.review_owners.retain(|id, owner| {
             *id < 0
@@ -817,6 +818,13 @@ impl Workspace {
         if !self.projects.iter().any(|p| p == path) {
             self.projects.push(path.into());
         }
+        self.assign_project_colors();
+    }
+    /// Saves a distinct colour on each project that has none, so its tabs,
+    /// switcher icon and sidebar card match and two projects only share a
+    /// colour once all eight are used. Returns whether any project got one.
+    pub fn assign_project_colors(&mut self) -> bool {
+        gespan_core::project_appearance::assign_colors(&mut self.project_appearance, &self.projects)
     }
     /// Moves a project to `to` in the saved order. Returns whether it moved.
     pub fn move_project(&mut self, path: &str, to: usize) -> bool {

@@ -1738,8 +1738,17 @@ impl Pilots {
             })
             .into_any_element()
     }
-    /// The Pilot's title tab.
-    pub(crate) fn title_tab(&self, id: &str, width: f32, cx: &Context<Self>) -> Option<AnyElement> {
+    /// The Pilot's title tab. `mark` is its project's icon in the project's
+    /// colour, leading the tab in place of the Pilot's own mascot; `name`, the
+    /// project's name, shows while the tab is active.
+    pub(crate) fn title_tab(
+        &self,
+        id: &str,
+        width: f32,
+        mark: Option<AnyElement>,
+        name: Option<AnyElement>,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
         self.roster.get(id).map(|pilot| {
             let id = pilot.id.clone();
             let close = id.clone();
@@ -1768,11 +1777,15 @@ impl Pilots {
                         .group_hover(group.clone(), move |s| {
                             s.opacity(1.).bg(title_tab_fill(active, true))
                         })
-                        .child(crate::tab_tile::mark_tile(
-                            &crate::tab_tile::TAB_TILE,
-                            crate::tab_tile::Face::Neutral,
-                            avatar::avatar(&pilot.mascot, pilot.color, "idle", 14., true),
-                        ))
+                        .map(|d| match mark {
+                            Some(mark) => d.child(mark),
+                            None => d.child(crate::tab_tile::mark_tile(
+                                &crate::tab_tile::TAB_TILE,
+                                crate::tab_tile::Face::Neutral,
+                                avatar::avatar(&pilot.mascot, pilot.color, "idle", 14., true),
+                            )),
+                        })
+                        .children(name.filter(|_| active))
                         .child(
                             div()
                                 .flex_1()

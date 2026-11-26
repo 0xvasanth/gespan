@@ -14,9 +14,10 @@ pub(crate) struct Preferences {
     pub file_word_wrap: bool,
     pub file_view_mode: String,
     pub tab_animations: bool,
-    /// What the top bar's tabs show: "project" (the current project's
-    /// only), "all" (every project's, side by side) or "grouped" (every
-    /// project's, each project's together). See [`TabLayout`].
+    /// What the top bar's tabs showed when Settings could choose: "project",
+    /// "all" or "grouped". The choice is gone and the strip is always every
+    /// project's tabs, ungrouped; a saved value is kept but not read. See
+    /// [`Preferences::tab_layout`].
     pub title_tabs: String,
     /// How the sidebar's Folders section groups sessions: "worktree" (by
     /// the worktree each runs in) or "folders" (the user's own folders).
@@ -153,7 +154,7 @@ impl Default for Preferences {
             file_word_wrap: true,
             file_view_mode: "preview".into(),
             tab_animations: false,
-            title_tabs: "grouped".into(),
+            title_tabs: "all".into(),
             sidebar_group_by: "worktree".into(),
             notes: true,
             board: true,
@@ -229,14 +230,18 @@ impl Default for Preferences {
     }
 }
 
-/// What the top bar's tabs show.
+/// What the top bar's tabs show. The app always shows [`TabLayout::All`];
+/// the other layouts stay for the strip code that draws them, which tests
+/// still drive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TabLayout {
     /// The current project's tabs only; switching project swaps them.
+    #[cfg_attr(not(test), allow(dead_code))]
     Project,
-    /// Every project's tabs, side by side.
+    /// Every project's tabs, side by side, each in its project's colour.
     All,
     /// Every project's tabs, each project's together behind its chip.
+    #[cfg_attr(not(test), allow(dead_code))]
     Grouped,
 }
 
@@ -245,12 +250,10 @@ impl Preferences {
     pub(crate) fn groups_by_worktree(&self) -> bool {
         self.sidebar_group_by != "folders"
     }
+    /// Always every project's tabs, ungrouped, whatever `title_tabs` holds:
+    /// a "grouped" or "project" saved before the setting went is ignored.
     pub(crate) fn tab_layout(&self) -> TabLayout {
-        match self.title_tabs.as_str() {
-            "project" => TabLayout::Project,
-            "all" => TabLayout::All,
-            _ => TabLayout::Grouped,
-        }
+        TabLayout::All
     }
     /// Whether deleting a worktree of `project` starts with its merged branch
     /// ticked. The dialog can still change it, for that one deletion.
