@@ -50,6 +50,12 @@ impl Shell {
         self.refresh_sidebar_structure(cx);
         self.sidebar_list.child_rows()
     }
+    /// The project card's session rows as drawn, Now's then Sessions',
+    /// each with whether it is live.
+    pub(crate) fn e2e_rail(&mut self, cx: &mut Context<Self>) -> Vec<(i64, bool)> {
+        self.refresh_sidebar_structure(cx);
+        self.sidebar_list.session_rows()
+    }
     /// Delivers wake reports saved in the store, as a starting app does.
     pub(crate) fn e2e_resume_wake_reports(&mut self, cx: &mut Context<Self>) {
         self.resume_mail(cx);

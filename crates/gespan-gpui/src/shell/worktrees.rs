@@ -31,22 +31,6 @@ impl Shell {
             .map_or_else(|| self.session_working_copy(id, cx), String::as_str);
         path_key(scope) == path_key(self.working_copy())
     }
-    /// The heading a worktree's group takes in the sidebar: its branch, or
-    /// its folder's name when the branch is not known yet.
-    pub(super) fn worktree_label(&self, path: &str) -> String {
-        self.worktree_label_in(&self.workspace.project, path)
-    }
-    /// [`Self::worktree_label`] for a worktree of `project`, whichever
-    /// project is current.
-    pub(super) fn worktree_label_in(&self, project: &str, path: &str) -> String {
-        if let Some(branch) = crate::git_cache::worktree_branch(project, path) {
-            return branch;
-        }
-        if path_key(path) == path_key(project) {
-            return "Project folder".into();
-        }
-        crate::workspace::project_name(path)
-    }
     /// A chat that made its own worktree takes its tab there, and the window
     /// follows it when it is the chat on screen, so it is never shown under
     /// the worktree it was started from.

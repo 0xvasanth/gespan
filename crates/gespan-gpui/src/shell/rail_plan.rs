@@ -1,55 +1,60 @@
-//! What the Rail F1 sidebar lists for one project, decided apart from
-//! drawing: the sessions that need you, the ones running, and every other
-//! session once, under a collapsible folder.
+//! What the "Two zones" left nav lists inside its "This project" card,
+//! decided apart from drawing (design: glass canvas, Source of truth ›
+//! SoTSidebar).
 //!
-//! A live session is listed in its section only, never again in its folder,
-//! but its folder still counts it and shows its dot while closed. An open
-//! folder shows its [`FOLDER_PREVIEW`] most recent sessions, then "N more".
+//! Under New thread and the Pilots come two lists. **Now** holds the live
+//! sessions, the ones waiting on you first, then the running ones, each
+//! with its age. **Sessions** is one flat list of everything else, newest
+//! first, each row with its branch as a small label: no per-branch folders.
+//!
+//! Every session shows exactly once: in Now, in one of the user's own
+//! folders (when Settings groups by folders), or in Sessions.
 use std::collections::{HashMap, HashSet};
 
-/// An open folder's rows before "N more".
+/// Now's rows before "N more".
+pub(super) const NOW_PREVIEW: usize = 5;
+/// Sessions' rows before "N more".
+pub(super) const SESSIONS_PREVIEW: usize = 3;
+/// An open user folder's rows before "N more".
 pub(super) const FOLDER_PREVIEW: usize = 2;
+/// The keys `expanded` holds once a list's "N more" is clicked.
+pub(super) const NOW_KEY: &str = "now";
+pub(super) const SESSIONS_KEY: &str = "sessions";
+/// A branch label's longest length, in characters, before it truncates in
+/// the middle.
+pub(super) const BRANCH_LABEL_MAX: usize = 16;
 
-/// Work that wants attention. Ordered so the stronger state wins a folder's
-/// dot: waiting on you before running.
+/// Work that wants attention. Ordered so the stronger state sorts first:
+/// waiting on you before running.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum Live {
     NeedsYou,
     Running,
 }
 
-/// What a folder header shows before its name.
+/// What a user folder header shows before its name.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum FolderKind {
-    /// A worktree, or the project folder: a branch.
-    Branch,
-    /// A worktree or folder that holds automation runs: a bolt.
+    /// A folder that holds automation runs: a bolt.
     Automation,
-    /// A Pilot's folder, by Pilot id: its mascot.
-    Pilot(String),
     /// One of the user's own folders.
     Folder,
     Reminders,
     Pinned,
-    /// Sessions in no folder of their own.
-    Loose,
 }
 
-/// A folder as the grouping hands it over, sessions most recent first.
+/// One of the user's folders, sessions in any order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FolderInput {
     pub key: String,
     pub label: String,
     pub kind: FolderKind,
     pub sessions: Vec<i64>,
-    /// Whether the user opened (`Some(true)`) or closed it; `None` follows
-    /// the default.
-    pub stored_open: Option<bool>,
-    /// Open unless the user closed it: the folder the project is working in.
-    pub open_by_default: bool,
+    /// Whether the user left it open.
+    pub open: bool,
 }
 
-/// A folder as the rail draws it.
+/// A user folder as the rail draws it. Its live sessions are in Now.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Folder {
     pub key: String,
@@ -68,25 +73,69 @@ pub(super) struct Folder {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct Plan {
-    pub needs_you: Vec<i64>,
-    pub running: Vec<i64>,
+    /// Live sessions: needs you first, then running, newest first in each.
+    pub now: Vec<(i64, Live)>,
+    /// Live sessions left for Now's "N more".
+    pub now_more: usize,
     pub folders: Vec<Folder>,
+    /// The flat Sessions list, newest first.
+    pub sessions: Vec<i64>,
+    /// Sessions left for Sessions' "N more".
+    pub more: usize,
     /// Sessions listed anywhere in the rail.
-    pub sessions: usize,
+    pub total: usize,
 }
 
-/// Lays out the rail. `live` holds only sessions that need you or run;
-/// `expanded` the folders whose "N more" was clicked. A session in two
-/// inputs is listed under the first.
+/// Every input the planner reads about a session.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Facts<'a> {
+    /// Only sessions that need you or run.
+    pub live: Option<&'a HashMap<i64, Live>>,
+    /// When each session last changed; missing reads as never.
+    pub updated: Option<&'a HashMap<i64, u64>>,
+}
+
+impl Facts<'_> {
+    fn live(&self, id: i64) -> Option<Live> {
+        self.live.and_then(|live| live.get(&id).copied())
+    }
+    fn updated(&self, id: i64) -> u64 {
+        self.updated
+            .and_then(|at| at.get(&id).copied())
+            .unwrap_or_default()
+    }
+    /// Newest first; the id breaks ties.
+    fn newest_first(&self, ids: &mut [i64]) {
+        ids.sort_by_key(|id| std::cmp::Reverse((self.updated(*id), *id)));
+    }
+}
+
+/// The first `preview` of `ids` and how many are left, or all of them.
+fn capped(mut ids: Vec<i64>, preview: usize, all: bool) -> (Vec<i64>, usize) {
+    let keep = if all {
+        ids.len()
+    } else {
+        preview.min(ids.len())
+    };
+    let more = ids.len() - keep;
+    ids.truncate(keep);
+    (ids, more)
+}
+
+/// Lays out the project card's lists. `loose` holds every session in no
+/// user folder; `expanded` the keys whose "N more" was clicked. A session
+/// in two inputs is listed under the first.
 pub(super) fn plan(
-    inputs: Vec<FolderInput>,
-    live: &HashMap<i64, Live>,
+    folders: Vec<FolderInput>,
+    loose: Vec<i64>,
+    facts: Facts,
     expanded: &HashSet<String>,
 ) -> Plan {
     let mut seen = HashSet::new();
     let mut plan = Plan::default();
-    for input in inputs {
-        let sessions: Vec<i64> = input
+    let mut live = Vec::new();
+    for folder in folders {
+        let mut sessions: Vec<i64> = folder
             .sessions
             .into_iter()
             .filter(|id| seen.insert(*id))
@@ -94,43 +143,79 @@ pub(super) fn plan(
         if sessions.is_empty() {
             continue;
         }
-        let mut idle = Vec::new();
-        let mut strongest: Option<Live> = None;
-        for id in &sessions {
-            match live.get(id) {
-                Some(state) => {
-                    strongest = Some(strongest.map_or(*state, |s| s.min(*state)));
-                    match state {
-                        Live::NeedsYou => plan.needs_you.push(*id),
-                        Live::Running => plan.running.push(*id),
-                    }
-                }
-                None => idle.push(*id),
-            }
-        }
-        let open = input.stored_open.unwrap_or(input.open_by_default);
-        let (shown, more) = if !open {
-            (Vec::new(), 0)
-        } else if expanded.contains(&input.key) || idle.len() <= FOLDER_PREVIEW {
-            (idle, 0)
+        plan.total += sessions.len();
+        let count = sessions.len();
+        let strongest = sessions.iter().filter_map(|id| facts.live(*id)).min();
+        live.extend(
+            sessions
+                .iter()
+                .copied()
+                .filter(|id| facts.live(*id).is_some()),
+        );
+        sessions.retain(|id| facts.live(*id).is_none());
+        facts.newest_first(&mut sessions);
+        let (shown, more) = if folder.open {
+            capped(sessions, FOLDER_PREVIEW, expanded.contains(&folder.key))
         } else {
-            let more = idle.len() - FOLDER_PREVIEW;
-            idle.truncate(FOLDER_PREVIEW);
-            (idle, more)
+            (Vec::new(), 0)
         };
-        plan.sessions += sessions.len();
         plan.folders.push(Folder {
-            key: input.key,
-            label: input.label,
-            kind: input.kind,
-            count: sessions.len(),
+            key: folder.key,
+            label: folder.label,
+            kind: folder.kind,
+            count,
             live: strongest,
-            open,
+            open: folder.open,
             shown,
             more,
         });
     }
+    let mut idle: Vec<i64> = loose.into_iter().filter(|id| seen.insert(*id)).collect();
+    plan.total += idle.len();
+    live.extend(idle.iter().copied().filter(|id| facts.live(*id).is_some()));
+    idle.retain(|id| facts.live(*id).is_none());
+    facts.newest_first(&mut idle);
+    (plan.sessions, plan.more) = capped(idle, SESSIONS_PREVIEW, expanded.contains(SESSIONS_KEY));
+    facts.newest_first(&mut live);
+    live.sort_by_key(|id| facts.live(*id));
+    let (now, now_more) = capped(live, NOW_PREVIEW, expanded.contains(NOW_KEY));
+    plan.now = now
+        .into_iter()
+        .filter_map(|id| Some((id, facts.live(id)?)))
+        .collect();
+    plan.now_more = now_more;
     plan
+}
+
+/// A branch as a row's trailing label: without the `claude/` an agent's
+/// worktree branch starts with or the 6-hex suffix its worktree name ends
+/// with, then cut in the middle to [`BRANCH_LABEL_MAX`] characters, so both
+/// the start and the end that tell branches apart stay readable.
+pub(super) fn branch_label(branch: &str) -> String {
+    let name = branch.strip_prefix("claude/").unwrap_or(branch);
+    let name = match name.rsplit_once('-') {
+        Some((stem, tail))
+            if !stem.is_empty()
+                && tail.len() == 6
+                && tail.bytes().all(|b| b.is_ascii_hexdigit())
+                && tail.bytes().any(|b| b.is_ascii_digit()) =>
+        {
+            stem
+        }
+        _ => name,
+    };
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= BRANCH_LABEL_MAX {
+        return name.to_owned();
+    }
+    // One character goes to the ellipsis; the start keeps the larger half.
+    let room = BRANCH_LABEL_MAX - 1;
+    let tail = room / 2;
+    let head = room - tail;
+    let mut out: String = chars.iter().take(head).collect();
+    out.push('…');
+    out.extend(chars.iter().skip(chars.len() - tail));
+    out
 }
 
 /// A session's age in the rail's narrow time column: "now", "9m", "2h",
@@ -169,14 +254,13 @@ pub(super) fn switcher_summary(folders: usize, sessions: usize, by_worktree: boo
 mod tests {
     use super::*;
 
-    fn folder(key: &str, sessions: &[i64]) -> FolderInput {
+    fn folder(key: &str, sessions: &[i64], open: bool) -> FolderInput {
         FolderInput {
             key: key.into(),
             label: key.into(),
-            kind: FolderKind::Branch,
+            kind: FolderKind::Folder,
             sessions: sessions.to_vec(),
-            stored_open: None,
-            open_by_default: false,
+            open,
         }
     }
 
@@ -184,156 +268,188 @@ mod tests {
         pairs.iter().copied().collect()
     }
 
-    #[test]
-    fn live_sessions_leave_their_folder_but_still_count_and_mark_it() {
-        let mut main = folder("main", &[1, 2, 3]);
-        main.open_by_default = true;
-        let plan = plan(
-            vec![main, folder("glass-home", &[4, 5, 6])],
-            &live(&[(2, Live::NeedsYou), (4, Live::Running)]),
-            &HashSet::new(),
-        );
-        assert_eq!(plan.needs_you, vec![2]);
-        assert_eq!(plan.running, vec![4]);
-        let [main, glass] = &plan.folders[..] else {
-            panic!("two folders: {:?}", plan.folders)
-        };
-        // The waiting session is only under Needs you, yet main counts it
-        // and wears its yellow dot.
-        assert_eq!(
-            (main.count, main.live, &main.shown[..]),
-            (3, Some(Live::NeedsYou), &[1, 3][..])
-        );
-        // Closed, with a running session inside: the dot shows anyway.
-        assert!(!glass.open);
-        assert_eq!(
-            (glass.count, glass.live, glass.shown.len()),
-            (3, Some(Live::Running), 0)
-        );
-        assert_eq!(plan.sessions, 6);
+    /// Session `id` last changed at `id` minutes, so higher ids are newer.
+    fn by_id(ids: impl IntoIterator<Item = i64>) -> HashMap<i64, u64> {
+        ids.into_iter().map(|id| (id, id as u64 * 60_000)).collect()
+    }
+
+    fn run(folders: Vec<FolderInput>, loose: &[i64], live: &HashMap<i64, Live>) -> Plan {
+        expand(folders, loose, live, &[])
+    }
+
+    fn expand(
+        folders: Vec<FolderInput>,
+        loose: &[i64],
+        live: &HashMap<i64, Live>,
+        expanded: &[&str],
+    ) -> Plan {
+        let updated = by_id(0..100);
+        plan(
+            folders,
+            loose.to_vec(),
+            Facts {
+                live: Some(live),
+                updated: Some(&updated),
+            },
+            &expanded.iter().map(|k| (*k).to_owned()).collect(),
+        )
+    }
+
+    fn now_ids(plan: &Plan) -> Vec<i64> {
+        plan.now.iter().map(|(id, _)| *id).collect()
+    }
+
+    /// Every session the plan lists, wherever it sits.
+    fn listed(plan: &Plan) -> Vec<i64> {
+        let mut ids: Vec<i64> = now_ids(plan)
+            .into_iter()
+            .chain(plan.folders.iter().flat_map(|f| f.shown.clone()))
+            .chain(plan.sessions.clone())
+            .collect();
+        ids.sort_unstable();
+        ids
     }
 
     #[test]
-    fn needs_you_outranks_running_for_a_folders_dot() {
-        let plan = plan(
-            vec![folder("a", &[1, 2])],
-            &live(&[(1, Live::Running), (2, Live::NeedsYou)]),
-            &HashSet::new(),
+    fn each_session_is_listed_exactly_once_whichever_inputs_repeat_it() {
+        // 5 sits in a folder and is also loose; 3 is live.
+        let plan = expand(
+            vec![folder("folder:docs", &[5], true)],
+            &[1, 2, 3, 4, 5, 2],
+            &live(&[(3, Live::Running)]),
+            &["sessions"],
         );
-        assert_eq!(plan.folders[0].live, Some(Live::NeedsYou));
+        assert_eq!(listed(&plan), vec![1, 2, 3, 4, 5]);
+        assert_eq!(now_ids(&plan), vec![3]);
+        assert_eq!(plan.folders[0].shown, vec![5]);
+        assert_eq!(plan.sessions, vec![4, 2, 1]);
+        assert_eq!(plan.total, 5);
     }
 
     #[test]
-    fn a_session_going_idle_returns_to_its_folder() {
-        let mut a = folder("a", &[1, 2]);
-        a.open_by_default = true;
-        let waiting = plan(
-            vec![a.clone()],
-            &live(&[(1, Live::NeedsYou)]),
-            &HashSet::new(),
+    fn now_lists_needs_you_first_then_running_each_newest_first() {
+        let plan = run(
+            vec![],
+            &[1, 2, 3, 4, 5],
+            &live(&[
+                (1, Live::Running),
+                (2, Live::NeedsYou),
+                (4, Live::Running),
+                (3, Live::NeedsYou),
+            ]),
         );
         assert_eq!(
-            (waiting.needs_you, waiting.folders[0].shown.clone()),
-            (vec![1], vec![2])
+            plan.now,
+            vec![
+                (3, Live::NeedsYou),
+                (2, Live::NeedsYou),
+                (4, Live::Running),
+                (1, Live::Running)
+            ]
         );
-        let idle = plan(vec![a], &HashMap::new(), &HashSet::new());
-        assert!(idle.needs_you.is_empty());
-        assert_eq!(idle.folders[0].shown, vec![1, 2]);
-        assert_eq!(idle.folders[0].live, None);
+        assert_eq!(plan.sessions, vec![5]);
     }
 
     #[test]
-    fn an_open_folder_shows_two_then_n_more_until_expanded() {
-        let mut main = folder("main", &[10, 11, 12, 13, 14, 15]);
-        main.open_by_default = true;
-        let capped = plan(vec![main.clone()], &HashMap::new(), &HashSet::new());
-        assert_eq!(capped.folders[0].shown, vec![10, 11]);
-        assert_eq!(capped.folders[0].more, 4);
-        let all = plan(
-            vec![main],
-            &HashMap::new(),
-            &HashSet::from(["main".to_owned()]),
-        );
-        assert_eq!(all.folders[0].shown.len(), 6);
-        assert_eq!(all.folders[0].more, 0);
+    fn a_session_moves_to_now_when_it_goes_live_and_back_when_idle() {
+        let ids = [1, 2, 3, 4];
+        let idle = expand(vec![], &ids, &HashMap::new(), &["sessions"]);
+        assert!(idle.now.is_empty());
+        assert_eq!(idle.sessions, vec![4, 3, 2, 1]);
+        let busy = expand(vec![], &ids, &live(&[(2, Live::Running)]), &["sessions"]);
+        assert_eq!(busy.now, vec![(2, Live::Running)]);
+        assert_eq!(busy.sessions, vec![4, 3, 1], "out of Sessions while live");
+        let back = expand(vec![], &ids, &HashMap::new(), &["sessions"]);
+        assert_eq!(back, idle);
+    }
+
+    #[test]
+    fn now_shows_five_then_n_more_until_expanded() {
+        let ids: Vec<i64> = (1..=11).collect();
+        let states: HashMap<i64, Live> = ids.iter().map(|id| (*id, Live::Running)).collect();
+        let capped = run(vec![], &ids, &states);
+        assert_eq!(now_ids(&capped), vec![11, 10, 9, 8, 7]);
+        assert_eq!(capped.now_more, 6);
+        let all = expand(vec![], &ids, &states, &["now"]);
+        assert_eq!((all.now.len(), all.now_more), (11, 0));
+    }
+
+    #[test]
+    fn sessions_show_three_then_n_more_until_expanded() {
+        let ids: Vec<i64> = (1..=15).collect();
+        let capped = run(vec![], &ids, &HashMap::new());
+        assert_eq!(capped.sessions, vec![15, 14, 13]);
+        assert_eq!(capped.more, 12);
+        let all = expand(vec![], &ids, &HashMap::new(), &["sessions"]);
+        assert_eq!((all.sessions.len(), all.more), (15, 0));
     }
 
     #[test]
     fn exactly_the_preview_needs_no_more_row() {
-        let mut a = folder("a", &[1, 2]);
-        a.open_by_default = true;
-        let plan = plan(vec![a], &HashMap::new(), &HashSet::new());
-        assert_eq!((plan.folders[0].shown.len(), plan.folders[0].more), (2, 0));
+        let plan = run(vec![], &[1, 2, 3], &HashMap::new());
+        assert_eq!((plan.sessions.len(), plan.more), (3, 0));
+        let states: HashMap<i64, Live> = (1..=5).map(|id| (id, Live::NeedsYou)).collect();
+        let now = run(vec![], &[1, 2, 3, 4, 5], &states);
+        assert_eq!((now.now.len(), now.now_more), (5, 0));
     }
 
     #[test]
-    fn idle_folders_start_closed_and_the_users_choice_wins_either_way() {
-        let mut closed_by_user = folder("main", &[1]);
-        closed_by_user.open_by_default = true;
-        closed_by_user.stored_open = Some(false);
-        let mut opened_by_user = folder("old", &[2]);
-        opened_by_user.stored_open = Some(true);
-        let plan = plan(
-            vec![closed_by_user, opened_by_user, folder("idle", &[3])],
-            &HashMap::new(),
-            &HashSet::new(),
-        );
-        let open: Vec<_> = plan
-            .folders
-            .iter()
-            .map(|f| (f.key.as_str(), f.open))
-            .collect();
-        assert_eq!(open, [("main", false), ("old", true), ("idle", false)]);
-        assert!(plan.folders[0].shown.is_empty());
-        assert_eq!(plan.folders[1].shown, vec![2]);
-    }
-
-    #[test]
-    fn every_session_is_listed_once_and_empty_folders_drop_out() {
-        let plan = plan(
+    fn a_folders_live_sessions_go_to_now_but_still_count_and_mark_it() {
+        let plan = run(
             vec![
-                folder("pinned", &[1, 2]),
-                folder("loose", &[2, 3]),
-                folder("none", &[]),
+                folder("folder:open", &[1, 2, 3, 4], true),
+                folder("folder:closed", &[5, 6], false),
             ],
-            &HashMap::new(),
-            &HashSet::new(),
+            &[],
+            &live(&[(1, Live::Running), (6, Live::NeedsYou)]),
         );
-        let keys: Vec<_> = plan
-            .folders
-            .iter()
-            .map(|f| (f.key.as_str(), f.count))
-            .collect();
-        assert_eq!(keys, [("pinned", 2), ("loose", 1)]);
-        assert_eq!(plan.sessions, 3);
+        assert_eq!(plan.now, vec![(6, Live::NeedsYou), (1, Live::Running)]);
+        let [open, closed] = &plan.folders[..] else {
+            panic!("two folders: {:?}", plan.folders)
+        };
+        assert_eq!(
+            (open.count, open.live, open.shown.clone(), open.more),
+            (4, Some(Live::Running), vec![4, 3], 1)
+        );
+        assert_eq!(
+            (closed.count, closed.live, closed.shown.len()),
+            (2, Some(Live::NeedsYou), 0)
+        );
     }
 
     #[test]
-    fn the_rail_stays_bounded_at_scale() {
-        // 20 sessions over 6 folders, every folder open: no folder lists
-        // more than its preview, so the rail stays short.
-        let inputs: Vec<_> = (0..6)
-            .map(|f| {
-                let mut input = folder(
-                    &format!("wt{f}"),
-                    &(0..20)
-                        .filter(|s| s % 6 == f)
-                        .map(i64::from)
-                        .collect::<Vec<_>>(),
-                );
-                input.stored_open = Some(true);
-                input
-            })
-            .collect();
-        let plan = plan(inputs, &live(&[(0, Live::Running)]), &HashSet::new());
-        assert_eq!(plan.sessions, 20);
-        let rows: usize = plan
-            .folders
-            .iter()
-            .map(|f| 1 + f.shown.len() + usize::from(f.more > 0))
-            .sum();
-        assert!(plan.folders.iter().all(|f| f.shown.len() <= FOLDER_PREVIEW));
-        assert!(rows <= 6 * (2 + FOLDER_PREVIEW), "{rows} rows");
+    fn empty_folders_drop_out() {
+        let plan = run(
+            vec![folder("folder:none", &[], true)],
+            &[1],
+            &HashMap::new(),
+        );
+        assert!(plan.folders.is_empty());
+        assert_eq!(plan.sessions, vec![1]);
+    }
+
+    #[test]
+    fn branch_labels_drop_agent_noise_and_truncate_in_the_middle() {
+        assert_eq!(branch_label("main"), "main");
+        assert_eq!(branch_label("auto/langfuse"), "auto/langfuse");
+        assert_eq!(
+            branch_label("claude/pilot-live-turn-e83707"),
+            "pilot-live-turn"
+        );
+        // A word that happens to be six hex letters is not a suffix.
+        assert_eq!(branch_label("fix-facade"), "fix-facade");
+        assert_eq!(branch_label("claude/-abc123"), "-abc123");
+        // Exactly the limit stays whole; one more cuts in the middle and
+        // keeps both ends.
+        assert_eq!(branch_label("glassy-ui-core-p1"), "glassy-u…core-p1");
+        assert_eq!(branch_label("glassy-ui-core-p").chars().count(), 16);
+        assert_eq!(branch_label("glassy-ui-core-p"), "glassy-ui-core-p");
+        let long = branch_label("feature/very-long-branch-name-for-the-rail");
+        assert_eq!(long.chars().count(), BRANCH_LABEL_MAX);
+        assert_eq!(long, "feature/…he-rail");
+        // Characters, not bytes: no panic on a multi-byte name.
+        let wide = branch_label("ブランチ名がとても長いブランチの名前です");
+        assert_eq!(wide.chars().count(), BRANCH_LABEL_MAX);
     }
 
     #[test]

@@ -6900,7 +6900,7 @@ impl Shell {
                         .flex()
                         .flex_col()
                         .child(self.rail_top(cx))
-                        .child(self.virtual_sidebar(cx))
+                        .child(self.rail_project_card(cx))
                         .child(self.app_update_footer(cx))
                         .children(agents)
                         .child(self.sidebar_settings_row(cx)),
@@ -11760,6 +11760,7 @@ mod tests {
                 let clip = visual.debug_bounds("sidebar-frame").unwrap();
                 let content = visual.debug_bounds("sidebar-content").unwrap();
                 let main = visual.debug_bounds("main-pane-frame").unwrap();
+                let visual_list = visual.debug_bounds("sidebar-sessions").unwrap();
                 assert_eq!(
                     visual.debug_bounds("toggle-sidebar").unwrap().origin,
                     toggle.origin
@@ -11787,11 +11788,14 @@ mod tests {
                             (alpha - 0.11 * fraction).abs() < 0.0001,
                             "painted alpha {alpha} follows {fraction}"
                         );
+                        // Clipped where the main pane covers it, or at the
+                        // project card's list edge when that comes first.
+                        let list = visual_list.right().as_f32().min(main.left().as_f32());
                         assert!(
-                            (quad.content_mask.bounds.right().0
-                                - main.left().as_f32() * w.scale_factor())
-                            .abs()
-                                < w.scale_factor()
+                            (quad.content_mask.bounds.right().0 - list * w.scale_factor()).abs()
+                                < w.scale_factor(),
+                            "{:?} vs {list}",
+                            quad.content_mask.bounds
                         );
                     })
                     .unwrap();

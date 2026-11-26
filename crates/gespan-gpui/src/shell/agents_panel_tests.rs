@@ -27,7 +27,25 @@ fn counts(needs_you: usize, running: usize, idle: usize) -> Counts {
         needs_you,
         running,
         idle,
+        projects: 1,
     }
+}
+
+#[test]
+fn the_card_names_the_projects_once_live_work_spans_them() {
+    let across = Counts {
+        projects: 6,
+        ..counts(4, 7, 3)
+    };
+    assert_eq!(across.footer_text(), "7 running · 4 needs you · 6 projects");
+    // One project: the rail is already scoped to it.
+    assert_eq!(counts(4, 7, 3).footer_text(), "7 running · 4 needs you");
+    // Idle agents alone never claim projects.
+    let idle = Counts {
+        projects: 0,
+        ..counts(0, 0, 5)
+    };
+    assert_eq!(idle.footer_text(), "5 agents idle");
 }
 
 #[test]

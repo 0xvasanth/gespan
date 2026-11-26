@@ -77,10 +77,12 @@ fn home_is_the_first_page_icon_and_opens_the_page(cx: &mut TestAppContext) {
     };
     let home = bounds(visual, "sidebar-navigation-Home");
     let tasks = bounds(visual, "sidebar-navigation-My tasks");
-    // Under the project switcher, Home leads the icon row.
-    assert!(bounds(visual, "sidebar-project-button").bottom() <= home.top());
-    assert_eq!(home.top(), tasks.top());
-    assert!(home.right() <= tasks.left(), "Home comes before My tasks");
+    // In the Everywhere card, above the project card, Home leads the pages
+    // as a labelled row, under Search.
+    assert!(home.bottom() <= bounds(visual, "sidebar-project-button").top());
+    assert!(bounds(visual, "sidebar-navigation-Search").bottom() <= home.top());
+    assert_eq!(home.left(), tasks.left());
+    assert!(home.bottom() <= tasks.top(), "Home comes before My tasks");
     click(visual, "sidebar-navigation-Home");
     assert_eq!(view(window, visual), Some(AppView::Home));
     assert!(drawn(visual, "home-greeting"));

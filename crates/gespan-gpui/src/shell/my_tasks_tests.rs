@@ -81,10 +81,10 @@ fn my_tasks_is_the_first_sidebar_entry_and_shows_the_open_count(cx: &mut TestApp
         .expect("My tasks is in the sidebar");
     let inbox = visual
         .debug_bounds("sidebar-navigation-Git")
-        .expect("Inbox is in the sidebar");
-    // The rail's icon row: My tasks comes just before Inbox, on one line.
-    assert_eq!(entry.origin.y, inbox.origin.y);
-    assert!(entry.right() <= inbox.left(), "My tasks sits before Inbox");
+        .expect("Git is in the sidebar");
+    // The Everywhere card's rows: My tasks just above Git, on one gutter.
+    assert_eq!(entry.left(), inbox.left());
+    assert!(entry.bottom() <= inbox.top(), "My tasks sits above Git");
     assert!(
         visual
             .debug_bounds("sidebar-navigation-count-My tasks")

@@ -90,6 +90,8 @@ pub(super) struct Counts {
     pub needs_you: usize,
     pub running: usize,
     pub idle: usize,
+    /// The projects running or waiting agents are in.
+    pub projects: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,10 +111,16 @@ pub(super) enum Dot {
 impl Counts {
     pub(super) fn of(agents: &[Agent]) -> Self {
         let count = |state| agents.iter().filter(|a| a.state == state).count();
+        let projects: HashSet<String> = agents
+            .iter()
+            .filter(|a| a.state != AgentState::Idle)
+            .map(|a| gespan_core::files::path_key(&a.cwd))
+            .collect();
         Self {
             needs_you: count(AgentState::NeedsYou),
             running: count(AgentState::Running),
             idle: count(AgentState::Idle),
+            projects: projects.len(),
         }
     }
     /// The collapsed footer's words, each in its tone. With nothing
@@ -134,6 +142,11 @@ impl Counts {
             parts.push((idle, Tone::Dim));
         } else if self.needs_you == 0 && self.idle > 0 {
             parts.push((format!("{} idle", self.idle), Tone::Dim));
+        }
+        // The card is the rail's one cross-project element: say so once
+        // live work spans projects, as on the board.
+        if self.projects > 1 && self.running + self.needs_you > 0 {
+            parts.push((format!("{} projects", self.projects), Tone::Dim));
         }
         parts
     }
