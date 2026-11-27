@@ -297,6 +297,10 @@ pub struct Comment {
     pub state: String,
     pub path: String,
     pub line: Option<i64>,
+    /// A review comment's side of the diff, `RIGHT` (new file) or `LEFT`
+    /// (old), when it still sits on the current diff. Empty for comments
+    /// that aren't on a line, or whose line is outdated.
+    pub side: String,
     pub resolved: bool,
     pub thread_id: String,
     pub replies: Vec<Comment>,

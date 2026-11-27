@@ -417,10 +417,11 @@ fn nothing_needs_you_shows_its_way_out_and_the_connected_hosts(cx: &mut TestAppC
     );
 }
 
+/// The bar under Files stays slim, with what is drafted and "Submit review".
+/// The panel it opens takes an optional summary and the verdict; only
+/// requesting changes needs words.
 #[gpui::test]
-fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
-    cx: &mut TestAppContext,
-) {
+fn submit_review_opens_a_panel_with_an_optional_summary_and_the_verdict(cx: &mut TestAppContext) {
     let theirs = asked("acme/web", 1);
     let mine = pr("acme/web", 2, "me");
     let (theirs_key, mine_key) = (theirs.key(), mine.key());
@@ -436,16 +437,48 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    // Closed: no summary box, no tone, just the count and Submit review.
     assert!(shown(&mut visual, "git-review-bar"));
-    click(&mut visual, "git-review-request-changes");
+    assert!(shown(&mut visual, "git-review-drafted"));
+    for gone in [
+        "git-review-body",
+        "git-review-tone",
+        "git-polish",
+        "git-review-submit",
+    ] {
+        assert!(
+            !shown(&mut visual, gone),
+            "{gone} shows before Submit review"
+        );
+    }
+    click(&mut visual, "git-review-open");
+    assert!(shown(&mut visual, "git-review-panel"));
+    assert!(shown(&mut visual, "git-review-body"));
+    assert!(shown(&mut visual, "git-review-tone"));
+    // Request changes with nothing said is refused.
+    click(&mut visual, "git-review-verdict-request-changes");
+    click(&mut visual, "git-review-submit");
     let error = window
         .update(&mut visual, |inbox, _, _| inbox.review.error.clone())
         .unwrap();
     assert_eq!(
         error.as_deref(),
-        Some("Write a comment to request changes.")
+        Some("Say in the summary what needs to change.")
     );
-    click(&mut visual, "git-review-approve");
+    // Approve needs no summary, and sending closes the panel.
+    click(&mut visual, "git-review-verdict-approve");
+    click(&mut visual, "git-review-submit");
+    assert!(
+        !shown(&mut visual, "git-review-panel"),
+        "a sent review closes the panel"
+    );
+    assert!(
+        shown(&mut visual, "git-review-status"),
+        "and says what was sent"
+    );
+    // Request changes with a summary.
+    click(&mut visual, "git-review-open");
+    click(&mut visual, "git-review-verdict-request-changes");
     window
         .update(&mut visual, |inbox, _, cx| {
             inbox.review_body.update(cx, |input, cx| {
@@ -453,7 +486,7 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
             })
         })
         .unwrap();
-    click(&mut visual, "git-review-request-changes");
+    click(&mut visual, "git-review-submit");
     let submitted = window
         .update(&mut visual, |inbox, _, _| {
             inbox.submitted_reviews.lock().unwrap().clone()
@@ -479,8 +512,12 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
             )
         })
         .unwrap();
-    assert!(body.is_empty(), "a sent review clears its draft");
+    assert!(body.is_empty(), "a sent review clears its summary");
     assert_eq!(notice.as_deref(), Some("Changes requested."));
+    // Cancel closes without sending.
+    click(&mut visual, "git-review-open");
+    click(&mut visual, "git-review-cancel");
+    assert!(!shown(&mut visual, "git-review-panel"));
     // Your own pull request can be commented on, never approved.
     window
         .update(&mut visual, |inbox, _, cx| {
@@ -490,10 +527,10 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
-    assert!(shown(&mut visual, "git-review-bar"));
-    assert!(shown(&mut visual, "git-review-comment"));
-    assert!(!shown(&mut visual, "git-review-approve"));
-    assert!(!shown(&mut visual, "git-review-request-changes"));
+    click(&mut visual, "git-review-open");
+    assert!(shown(&mut visual, "git-review-verdict-comment"));
+    assert!(!shown(&mut visual, "git-review-verdict-approve"));
+    assert!(!shown(&mut visual, "git-review-verdict-request-changes"));
 }
 
 #[gpui::test]
@@ -532,12 +569,17 @@ fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppCont
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    assert!(
+        shown(&mut visual, "git-review-drafted"),
+        "the closed bar counts them"
+    );
+    click(&mut visual, "git-review-open");
     assert!(shown(&mut visual, "git-review-drafts"));
     assert!(shown(&mut visual, "git-review-draft-2"));
     click(&mut visual, "git-review-draft-remove-2");
     assert!(!shown(&mut visual, "git-review-draft-2"));
     // Line comments alone make a comment review: no summary needed.
-    click(&mut visual, "git-review-comment");
+    click(&mut visual, "git-review-submit");
     let submitted = window
         .update(&mut visual, |inbox, _, _| {
             inbox.submitted_reviews.lock().unwrap().clone()
@@ -602,6 +644,7 @@ fn a_polished_comment_is_offered_to_use_or_keep(cx: &mut TestAppContext) {
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    click(&mut visual, "git-review-open");
     click(&mut visual, "git-tone-friendly");
     assert_eq!(
         window

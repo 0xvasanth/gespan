@@ -19,6 +19,7 @@ use gpui::{
     Subscription, Task, Window, actions, canvas, div, list, prelude::*, px, rgb,
 };
 mod review_threads;
+pub(crate) use review_threads::{RemoteComment, RemoteThread};
 
 use std::{
     borrow::Cow,
@@ -97,6 +98,14 @@ pub(crate) enum DiffEvent {
     /// A pull request's review drafts were added, edited or deleted (see
     /// [`DiffView::drafts`]).
     DraftsChanged,
+    /// Polish on a review comment box: rewrite `text` in `tone` (see
+    /// [`DiffView::polish_result`]).
+    Polish {
+        text: String,
+        tone: gespan_core::inbox::polish::Tone,
+    },
+    /// The Files toolbar's refresh: load the diff and its comments again.
+    Refresh,
 }
 
 #[derive(Clone, PartialEq)]
@@ -924,6 +933,13 @@ impl DiffView {
                     }),
             )
             .child(diff_counts(additions, deletions))
+            .when(self.review_comments, |d| {
+                d.child(
+                    tool_button("diff-refresh", "Sync with GitHub", "refresh-cw", true)
+                        .debug_selector(|| "diff-refresh".into())
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffEvent::Refresh))),
+                )
+            })
             .child(
                 div()
                     .ml_auto()
@@ -1809,6 +1825,264 @@ impl Render for DiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A review diff with "a/B/C/d/e", B and C added, and its events.
+    fn review_window(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        gpui::WindowHandle<DiffView>,
+        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        gpui::Subscription,
+    ) {
+        let mut model = file("CHANGELOG.md", "a\nb\nc\nd\ne\n", "a\nB\nC\nd\ne\n");
+        model.path = "CHANGELOG.md".into();
+        let window = cx.update(|cx| {
+            cx.open_window(
+                gpui::WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::new(
+                        gpui::point(px(0.), px(0.)),
+                        gpui::size(px(1100.), px(800.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| {
+                    cx.new(|cx| {
+                        let mut view = DiffView::new(cx);
+                        view.review_comments = true;
+                        view
+                    })
+                },
+            )
+            .unwrap()
+        });
+        window
+            .update(cx, |view, _, cx| view.set_files(vec![model], cx))
+            .unwrap();
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = events.clone();
+        let view = window.root(cx).unwrap();
+        let subscription = cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &DiffEvent, _| {
+                sink.borrow_mut().push(match event {
+                    DiffEvent::Polish { text, tone } => format!("polish {tone:?} {text}"),
+                    DiffEvent::Refresh => "refresh".into(),
+                    DiffEvent::DraftsChanged => "drafts".into(),
+                    _ => "other".into(),
+                })
+            })
+        });
+        (window, events, subscription)
+    }
+    /// The added line `text` in the review window.
+    fn added(view: &DiffView, text: &str) -> (usize, usize) {
+        view.files[0]
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(b, block)| {
+                block
+                    .lines()
+                    .iter()
+                    .position(|l| l.text == text && l.kind == LineKind::Add)
+                    .map(|i| (b, i))
+            })
+            .unwrap()
+    }
+
+    /// Each comment box has its own tone and Polish: the owner gets the
+    /// words and tone, and its rewrite is offered to Use or Keep mine.
+    #[gpui::test]
+    fn each_comment_box_polishes_its_own_words_in_its_tone(cx: &mut gpui::TestAppContext) {
+        use gespan_core::inbox::polish::Tone;
+        let (window, events, _subscription) = review_window(cx);
+        window
+            .update(cx, |view, window, cx| {
+                let b = added(view, "B");
+                view.press_line(0, b, false, cx);
+                view.release_pick(window, cx);
+                let input = view.review.editor.as_ref().unwrap().input.clone();
+                input.update(cx, |input, cx| input.set_text("this is wrong".into(), cx));
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        for selector in ["diff-review-tone", "diff-polish", "diff-tone-friendly"] {
+            assert!(
+                visual.debug_bounds(selector).is_some(),
+                "{selector} is in the box"
+            );
+        }
+        let friendly = visual.debug_bounds("diff-tone-friendly").unwrap();
+        visual.simulate_click(friendly.center(), Default::default());
+        visual.run_until_parked();
+        let polish = visual.debug_bounds("diff-polish").unwrap();
+        visual.simulate_click(polish.center(), Default::default());
+        visual.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            vec!["polish Friendly this is wrong".to_string()]
+        );
+        // While one is on its way, Polish doesn't ask again.
+        window
+            .update(visual, |view, _, cx| view.polish_editor(cx))
+            .unwrap();
+        assert_eq!(events.borrow().len(), 1);
+        window
+            .update(visual, |view, _, cx| {
+                view.polish_result(
+                    Ok((Tone::Friendly, "Good catch, could you fix this?".into())),
+                    cx,
+                )
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-polished").is_some());
+        let height = |visual: &mut gpui::VisualTestContext| {
+            window
+                .update(visual, |view, _, _| {
+                    view.rows
+                        .iter()
+                        .find(|r| matches!(r.kind, RowKind::Thread { .. }))
+                        .map(|r| r.height)
+                })
+                .unwrap()
+        };
+        assert!(
+            height(visual).unwrap() > 160.,
+            "the card makes room for itself"
+        );
+        let use_it = visual.debug_bounds("diff-polish-use").unwrap();
+        visual.simulate_click(use_it.center(), Default::default());
+        visual.run_until_parked();
+        let text = window
+            .update(visual, |view, _, cx| {
+                view.review
+                    .editor
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .read(cx)
+                    .content
+                    .to_string()
+            })
+            .unwrap();
+        assert_eq!(text, "Good catch, could you fix this?");
+        assert!(visual.debug_bounds("diff-polished").is_none());
+        // A failed rewrite says why; Keep mine clears it and keeps the words.
+        window
+            .update(visual, |view, _, cx| {
+                view.polish_result(
+                    Err("The agent did not return a rewrite. Try again.".into()),
+                    cx,
+                )
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-polish-error").is_some());
+        window
+            .update(visual, |view, _, cx| view.keep_mine(cx))
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-polish-error").is_none());
+    }
+
+    /// The pull request's own threads show under their lines, by side, and
+    /// the toolbar's refresh asks the owner to sync.
+    #[gpui::test]
+    fn existing_threads_show_on_their_lines_and_refresh_asks_to_sync(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gespan_core::inbox::Side;
+        let (window, events, _subscription) = review_window(cx);
+        let thread = |line, side, resolved| RemoteThread {
+            path: "CHANGELOG.md".into(),
+            line,
+            side,
+            resolved,
+            comments: vec![
+                RemoteComment {
+                    author: "cubic".into(),
+                    when: "2h ago".into(),
+                    body: "Missing an index".into(),
+                },
+                RemoteComment {
+                    author: "me".into(),
+                    when: "1h ago".into(),
+                    body: "Added".into(),
+                },
+            ],
+        };
+        window
+            .update(cx, |view, _, cx| {
+                view.set_threads(
+                    vec![
+                        thread(3, Side::New, false),
+                        thread(2, Side::Old, true),
+                        // Another file's thread, or a line not in this diff.
+                        RemoteThread {
+                            path: "other.rs".into(),
+                            ..thread(3, Side::New, false)
+                        },
+                        thread(99, Side::New, false),
+                    ],
+                    cx,
+                )
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let placed = window
+            .update(visual, |view, _, _| {
+                let c = added(view, "C");
+                let old_b = view.files[0]
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .find_map(|(bi, block)| {
+                        block
+                            .lines()
+                            .iter()
+                            .position(|l| l.text == "b" && l.kind == LineKind::Del)
+                            .map(|i| (bi, i))
+                    })
+                    .unwrap();
+                (view.remote_at(0, c), view.remote_at(0, old_b))
+            })
+            .unwrap();
+        assert_eq!(
+            placed,
+            (vec![0], vec![1]),
+            "new side by new number, old by old"
+        );
+        assert!(visual.debug_bounds("diff-remote-thread-0").is_some());
+        assert!(visual.debug_bounds("diff-remote-thread-1").is_some());
+        assert!(
+            visual.debug_bounds("diff-remote-thread-2").is_none(),
+            "another file's"
+        );
+        assert!(
+            visual.debug_bounds("diff-remote-thread-3").is_none(),
+            "off the diff"
+        );
+        let refresh = visual
+            .debug_bounds("diff-refresh")
+            .expect("Files has a refresh");
+        visual.simulate_click(refresh.center(), Default::default());
+        visual.run_until_parked();
+        assert_eq!(*events.borrow(), vec!["refresh".to_string()]);
+        // Outside a pull request there is no refresh.
+        window
+            .update(visual, |view, _, cx| {
+                view.review_comments = false;
+                cx.notify();
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-refresh").is_none());
+    }
 
     /// In a pull request's Files, dragging from a line's "+" across lines
     /// opens the comment box inline under the range; a saved draft stays

@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another line's "+", to comment on a range. Saved comments stay under their
   lines as pending cards with Edit and Delete until the review is sent, and
   ranges reach GitHub, GitLab and Azure DevOps.
+- **Tone and Polish on every review comment:** each comment box in Files has
+  its own Direct / Friendly / Suggestion tone and Polish, and the rewrite
+  shows in that box to Use, Try again or Keep mine.
+- **Submit review, as on GitHub:** the bar under Files is a slim line with
+  what's drafted and Submit review. Its panel takes an optional summary
+  (with tone and Polish) and the verdict: Comment, Approve or Request
+  changes.
+- **Existing review comments show on their lines:** the pull request's own
+  review threads appear in Files under the lines they're on, with their
+  replies, and a refresh button syncs the diff and comments with GitHub.
 
 ### Fixed
 

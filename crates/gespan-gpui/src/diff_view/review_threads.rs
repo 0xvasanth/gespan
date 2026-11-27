@@ -7,7 +7,7 @@
 //! Only a pull request's Files turns this on ([`DiffView::review_comments`]);
 //! elsewhere a line comment is text for the chat.
 use super::*;
-use gespan_core::inbox::{LineComment, LineRef};
+use gespan_core::inbox::{LineComment, LineRef, polish::Tone};
 use gpui::Entity;
 
 /// A line by where it sits in its file's diff: block, then line.
@@ -39,20 +39,83 @@ pub(super) struct Editor {
     /// The draft being edited, or `None` for a new one.
     pub editing: Option<usize>,
     pub input: Entity<Input>,
+    /// Polish: the tone asked for, a rewrite on its way, the one offered, or
+    /// why there is none.
+    pub tone: Tone,
+    pub polishing: bool,
+    pub polished: Option<(Tone, String)>,
+    pub polish_error: Option<String>,
     _events: Vec<Subscription>,
+}
+
+impl Editor {
+    /// The box grows by the rewrite card or the error line.
+    fn height(&self) -> f32 {
+        EDITOR
+            + self
+                .polished
+                .as_ref()
+                .map_or(0., |(_, text)| POLISHED + card_height(text) - CARD)
+            + if self.polish_error.is_some() { 20. } else { 0. }
+    }
 }
 
 #[derive(Default)]
 pub(super) struct Review {
     pub drafts: Vec<LineComment>,
+    /// The pull request's own review threads, shown on their lines.
+    pub threads: Vec<RemoteThread>,
     /// A drag from a "+" in progress.
     pub picking: Option<Pick>,
     pub editor: Option<Editor>,
 }
 
+/// A review thread already on the pull request, read-only in the diff.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteThread {
+    pub path: String,
+    pub line: u32,
+    pub side: gespan_core::inbox::Side,
+    pub resolved: bool,
+    pub comments: Vec<RemoteComment>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteComment {
+    pub author: String,
+    /// "12m ago": how long ago, already worded.
+    pub when: String,
+    pub body: String,
+}
+
+/// A thread card's height: its header and each comment's lines.
+fn remote_height(thread: &RemoteThread) -> f32 {
+    20. + thread
+        .comments
+        .iter()
+        .map(|c| CARD_LINE + card_height(&c.body) - CARD + CARD_LINE + 6.)
+        .sum::<f32>()
+        + 16.
+}
+
+/// The line a `side`/`line` pair sits on in a file's diff.
+fn line_at(blocks: &[Block], side: gespan_core::inbox::Side, number: u32) -> Option<At> {
+    blocks.iter().enumerate().find_map(|(b, block)| {
+        block.lines().iter().enumerate().find_map(|(i, line)| {
+            let here = match side {
+                gespan_core::inbox::Side::New => line.new_number,
+                gespan_core::inbox::Side::Old if line.kind == LineKind::Del => line.old_number,
+                gespan_core::inbox::Side::Old => None,
+            };
+            (here == Some(number)).then_some((b, i))
+        })
+    })
+}
+
 const PAD: f32 = 8.;
 const GAP: f32 = 6.;
-const EDITOR: f32 = 150.;
+const EDITOR: f32 = 160.;
+/// The rewrite card above the box's field, for one line of text.
+const POLISHED: f32 = 98.;
 const CARD: f32 = 58.;
 const CARD_LINE: f32 = 18.;
 /// Characters a card's line holds before it wraps, for its height.
@@ -146,7 +209,35 @@ impl DiffView {
         (drafts, editor)
     }
     /// A thread row's height, or `None` when nothing sits under the line.
+    /// The pull request's review threads on `file`'s line `at`.
+    pub(super) fn remote_at(&self, file: usize, at: At) -> Vec<usize> {
+        let Some(diff) = self.files.get(file) else {
+            return vec![];
+        };
+        self.review
+            .threads
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| {
+                t.path == diff.path && line_at(&diff.blocks, t.side, t.line) == Some(at)
+            })
+            .map(|(ix, _)| ix)
+            .collect()
+    }
+    /// Shows the pull request's review threads on their lines.
+    pub(crate) fn set_threads(&mut self, threads: Vec<RemoteThread>, cx: &mut Context<Self>) {
+        if self.review.threads != threads {
+            self.review.threads = threads;
+            self.rebuild(cx);
+        }
+    }
+
     pub(super) fn thread_height(&self, file: usize, at: At) -> Option<f32> {
+        let remote: f32 = self
+            .remote_at(file, at)
+            .iter()
+            .map(|ix| remote_height(&self.review.threads[*ix]) + GAP)
+            .sum();
         let (drafts, editor) = self.thread_at(file, at);
         let editing = self.review.editor.as_ref().and_then(|e| e.editing);
         let cards: Vec<f32> = drafts
@@ -155,13 +246,18 @@ impl DiffView {
             .map(|ix| card_height(&self.review.drafts[*ix].body))
             .collect();
         let blocks = cards.len() + usize::from(editor);
-        if blocks == 0 {
+        if blocks == 0 && remote == 0. {
             return None;
         }
         Some(
-            cards.iter().sum::<f32>()
-                + if editor { EDITOR } else { 0. }
-                + GAP * (blocks - 1) as f32
+            remote
+                + cards.iter().sum::<f32>()
+                + if editor {
+                    self.review.editor.as_ref().map_or(EDITOR, Editor::height)
+                } else {
+                    0.
+                }
+                + GAP * blocks.saturating_sub(1) as f32
                 + PAD * 2.,
         )
     }
@@ -261,10 +357,19 @@ impl DiffView {
                 |this, _, _: &input::Submitted, window, cx| this.save_editor(window, cx),
             ),
         ];
+        let tone = self
+            .review
+            .editor
+            .as_ref()
+            .map_or(Tone::default(), |e| e.tone);
         self.review.editor = Some(Editor {
             pick,
             editing,
             input,
+            tone,
+            polishing: false,
+            polished: None,
+            polish_error: None,
             _events: events,
         });
         self.rebuild(cx);
@@ -298,6 +403,65 @@ impl DiffView {
         };
         self.open_editor(pick, Some(ix), draft.body, window, cx);
     }
+    /// Polish on the open box: its words and tone go to the pull request's
+    /// Ask agent (the owner runs it and answers with `polish_result`).
+    pub(super) fn polish_editor(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.review.editor.as_mut() else {
+            return;
+        };
+        let text = editor.input.read(cx).content.trim().to_string();
+        if text.is_empty() || editor.polishing {
+            return;
+        }
+        editor.polishing = true;
+        editor.polished = None;
+        editor.polish_error = None;
+        let tone = editor.tone;
+        cx.emit(DiffEvent::Polish { text, tone });
+        self.rebuild(cx);
+    }
+    /// The rewrite for the open box, or why there is none.
+    pub(crate) fn polish_result(
+        &mut self,
+        result: Result<(Tone, String), String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = self.review.editor.as_mut() else {
+            return;
+        };
+        editor.polishing = false;
+        match result {
+            Ok(polished) => editor.polished = Some(polished),
+            Err(error) => editor.polish_error = Some(error),
+        }
+        self.rebuild(cx);
+    }
+    /// "Use": the rewrite replaces the box's words.
+    pub(super) fn use_polished(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = self.review.editor.as_mut() else {
+            return;
+        };
+        if let Some((_, text)) = editor.polished.take() {
+            editor
+                .input
+                .update(cx, |input, cx| input.set_text(text, cx));
+        }
+        self.rebuild(cx);
+    }
+    pub(super) fn keep_mine(&mut self, cx: &mut Context<Self>) {
+        if let Some(editor) = self.review.editor.as_mut() {
+            editor.polished = None;
+            editor.polish_error = None;
+        }
+        self.rebuild(cx);
+    }
+    pub(super) fn set_editor_tone(&mut self, tone: Tone, cx: &mut Context<Self>) {
+        if let Some(editor) = self.review.editor.as_mut() {
+            editor.tone = tone;
+        }
+        cx.notify();
+    }
+
     pub(crate) fn delete_draft(&mut self, ix: usize, cx: &mut Context<Self>) {
         if ix < self.review.drafts.len() {
             self.review.drafts.remove(ix);
@@ -373,6 +537,80 @@ impl DiffView {
             .pl(px(gutter + 12.))
             .pr(px(24.))
             .max_w(px(gutter + 760.));
+        for ix in self.remote_at(file, at) {
+            let thread = &self.review.threads[ix];
+            column = column.child(
+                div()
+                    .debug_selector(move || format!("diff-remote-thread-{ix}"))
+                    .h(px(remote_height(thread)))
+                    .flex_none()
+                    .overflow_hidden()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .rounded(px(10.))
+                    .bg(content(0.035))
+                    .border_1()
+                    .border_color(content(0.08))
+                    .when(thread.resolved, |d| d.opacity(0.7))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .text_size(px(11.))
+                            .text_color(content(0.5))
+                            .child(icon("message-square", 11.).text_color(content(0.5)))
+                            .child(format!(
+                                "{} comment{} on line {}",
+                                thread.comments.len(),
+                                if thread.comments.len() == 1 { "" } else { "s" },
+                                thread.line
+                            ))
+                            .when(thread.resolved, |d| {
+                                d.child(
+                                    div()
+                                        .px(px(6.))
+                                        .rounded_full()
+                                        .bg(content(0.08))
+                                        .text_color(content(0.65))
+                                        .child("Resolved"),
+                                )
+                            }),
+                    )
+                    .children(thread.comments.iter().map(|comment| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .text_size(px(11.5))
+                                    .line_height(px(CARD_LINE))
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(content(0.9))
+                                            .child(comment.author.clone()),
+                                    )
+                                    .child(
+                                        div().text_color(content(0.45)).child(comment.when.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .line_height(px(CARD_LINE))
+                                    .text_color(content(0.88))
+                                    .child(comment.body.clone()),
+                            )
+                    })),
+            );
+        }
         for ix in drafts {
             if Some(ix) == editing {
                 continue;
@@ -460,10 +698,127 @@ impl DiffView {
             };
             let can_save = !editor.input.read(cx).content.trim().is_empty();
             let editing = editor.editing.is_some();
+            let box_height = editor.height();
+            let tone = editor.tone;
+            let polishing = editor.polishing;
+            let violet: Hsla = gpui::rgb(0xc0affc).into();
+            let polished = editor.polished.clone().map(|(tone, text)| {
+                div()
+                    .debug_selector(|| "diff-polished".into())
+                    .flex_none()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(violet.opacity(0.35))
+                    .bg(violet.opacity(0.08))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(violet)
+                            .child(icon("sparkles", 12.).text_color(violet))
+                            .child(format!("Polished · {}", tone.label().to_lowercase())),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "diff-polished-text".into())
+                            .text_size(px(13.))
+                            .line_height(px(CARD_LINE))
+                            .text_color(content(0.95))
+                            .child(text),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(6.))
+                            .child(
+                                small_button("diff-polish-keep", "Keep mine", false)
+                                    .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx))),
+                            )
+                            .child(
+                                small_button("diff-polish-again", "Try again", false)
+                                    .on_click(cx.listener(|this, _, _, cx| this.polish_editor(cx))),
+                            )
+                            .child(
+                                small_button("diff-polish-use", "Use", true)
+                                    .on_click(cx.listener(|this, _, _, cx| this.use_polished(cx))),
+                            ),
+                    )
+            });
+            let polish_error = editor.polish_error.clone();
+            let tones = div()
+                .id("diff-review-tone")
+                .debug_selector(|| "diff-review-tone".into())
+                .role(Role::RadioGroup)
+                .aria_label("Tone")
+                .flex()
+                .items_center()
+                .p(px(2.))
+                .gap(px(2.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(content(0.1))
+                .bg(content(0.03))
+                .children(Tone::ALL.into_iter().map(|option| {
+                    let on = option == tone;
+                    let id = format!("diff-tone-{}", option.label().to_lowercase());
+                    let selector = id.clone();
+                    div()
+                        .id(SharedString::from(id))
+                        .debug_selector(move || selector.clone())
+                        .role(Role::RadioButton)
+                        .aria_label(option.label())
+                        .aria_selected(on)
+                        .h(px(22.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .text_size(px(11.5))
+                        .cursor_pointer()
+                        .text_color(content(if on { 1. } else { 0.6 }))
+                        .when(on, |d| d.bg(content(0.12)))
+                        .when(!on, |d| d.hover(|s| s.text_color(content(1.))))
+                        .child(option.label())
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.set_editor_tone(option, cx)),
+                        )
+                }));
+            let polish_button = div()
+                .id("diff-polish")
+                .debug_selector(|| "diff-polish".into())
+                .role(Role::Button)
+                .aria_label("Polish")
+                .h(px(26.))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .rounded(px(7.))
+                .border_1()
+                .border_color(content(0.1))
+                .text_size(px(12.))
+                .text_color(content(0.85))
+                .when(!can_save || polishing, |d| d.opacity(0.45))
+                .when(can_save && !polishing, |d| {
+                    d.cursor_pointer()
+                        .hover(|s| s.bg(content(0.08)))
+                        .on_click(cx.listener(|this, _, _, cx| this.polish_editor(cx)))
+                })
+                .child(if polishing { "Polishing…" } else { "Polish" })
+                .child(icon("sparkles", 12.).text_color(violet));
             column = column.child(
                 div()
                     .debug_selector(|| "diff-review-editor".into())
-                    .h(px(EDITOR))
+                    .h(px(box_height))
                     .flex_none()
                     .px(px(12.))
                     .py(px(10.))
@@ -482,11 +837,32 @@ impl DiffView {
                     }))
                     .child(
                         div()
-                            .font_family(crate::fonts::monospace())
-                            .text_size(px(11.))
-                            .text_color(content(0.55))
-                            .child(format!("{} · {label}", diff.path)),
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_family(crate::fonts::monospace())
+                                    .text_size(px(11.))
+                                    .text_color(content(0.55))
+                                    .child(format!("{} · {label}", diff.path)),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(px(10.5))
+                                    .text_color(content(0.4))
+                                    .child(if cfg!(target_os = "macos") {
+                                        "⌘↩ to save · Esc to cancel"
+                                    } else {
+                                        "Ctrl+↩ to save · Esc to cancel"
+                                    }),
+                            ),
                     )
+                    .children(polished)
                     .child(
                         div()
                             .flex_1()
@@ -507,15 +883,13 @@ impl DiffView {
                             .gap(px(8.))
                             .child(
                                 div()
-                                    .flex_1()
-                                    .text_size(px(10.5))
-                                    .text_color(content(0.4))
-                                    .child(if cfg!(target_os = "macos") {
-                                        "⌘↩ to save · Esc to cancel"
-                                    } else {
-                                        "Ctrl+↩ to save · Esc to cancel"
-                                    }),
+                                    .text_size(px(11.5))
+                                    .text_color(content(0.5))
+                                    .child("Tone"),
                             )
+                            .child(tones)
+                            .child(polish_button)
+                            .child(div().flex_1())
                             .child(
                                 div()
                                     .id("diff-review-cancel")
@@ -572,7 +946,16 @@ impl DiffView {
                                         ))
                                     }),
                             ),
-                    ),
+                    )
+                    .when_some(polish_error, |d, error| {
+                        d.child(
+                            div()
+                                .debug_selector(|| "diff-polish-error".into())
+                                .text_size(px(11.5))
+                                .text_color(gpui::rgb(0xfda4af))
+                                .child(error),
+                        )
+                    }),
             );
         }
         div()
@@ -588,6 +971,32 @@ impl DiffView {
             .child(column)
             .into_any_element()
     }
+}
+
+/// A small text button: the rewrite card's Keep mine, Try again and Use.
+fn small_button(id: &'static str, label: &'static str, primary: bool) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .role(Role::Button)
+        .aria_label(label)
+        .h(px(26.))
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .rounded_md()
+        .text_size(px(12.))
+        .cursor_pointer()
+        .map(|d| {
+            if primary {
+                d.bg(content(1.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(crate::theme::background_base())
+            } else {
+                d.text_color(content(0.75)).hover(|s| s.bg(content(0.08)))
+            }
+        })
+        .child(label)
 }
 
 /// A small icon button with an id made at run time.
