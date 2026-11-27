@@ -184,20 +184,74 @@ fn a_long_line_is_capped_at_2000_chars() {
     assert!(report.output[0].chars().all(|c| c == 'é'));
 }
 
+/// How long a run gets to print its child's pid. On Windows it comes from
+/// PowerShell, whose cold start on a CI runner busy with the whole suite has
+/// taken longer than `LONG`; the child it starts lives 60s, so this stays under.
+const PID_WAIT: Duration = Duration::from_secs(50);
+
+/// The first line of a run's output that is a pid.
+fn pid_in(report: &Report) -> Option<u32> {
+    report.output.iter().find_map(|l| l.trim().parse().ok())
+}
+
 /// The pid a run prints, from what `start` returned or, if it wasn't there
-/// yet, from its output as it arrives.
+/// yet, from its output as it arrives. A run that ends without printing one
+/// fails at once, with what it did print.
 fn printed_pid(started: &Report) -> u32 {
-    let parse = |report: &Report| report.output.iter().find_map(|l| l.trim().parse().ok());
-    if let Some(pid) = parse(started) {
+    if let Some(pid) = pid_in(started) {
         return pid;
     }
-    let deadline = Instant::now() + LONG;
+    let deadline = Instant::now() + PID_WAIT;
+    let mut report = started.clone();
     while Instant::now() < deadline {
-        if let Some(pid) = parse(&output(&started.run_id, Duration::from_millis(100)).unwrap()) {
+        report = output(&started.run_id, Duration::from_millis(100)).unwrap();
+        if let Some(pid) = pid_in(&report) {
             return pid;
         }
+        if report.status != Status::Running {
+            break;
+        }
     }
-    panic!("no pid printed");
+    panic!(
+        "no pid printed within {PID_WAIT:?}: status {:?}, exit {:?}, output {:?}",
+        report.status, report.exit_code, report.output
+    );
+}
+
+#[test]
+fn printed_pid_waits_for_a_pid_that_comes_late() {
+    let dir = tempfile::tempdir().unwrap();
+    let command = if cfg!(windows) {
+        "ping -n 3 127.0.0.1 >nul & echo 4242".to_owned()
+    } else {
+        format!("{}; echo 4242", sleeper(2))
+    };
+    let run = start(
+        "p",
+        &action("test:late-pid", &command, dir.path()),
+        Duration::ZERO,
+    );
+    assert_eq!(printed_pid(&run), 4242);
+}
+
+#[test]
+fn printed_pid_fails_at_once_with_the_output_of_a_run_that_printed_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = start(
+        "p",
+        &action("test:no-pid", "echo no pid here", dir.path()),
+        Duration::ZERO,
+    );
+    let began = Instant::now();
+    let panic = std::panic::catch_unwind(|| printed_pid(&run)).unwrap_err();
+    let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
+    assert!(
+        began.elapsed() < PID_WAIT / 2,
+        "waited {:?}",
+        began.elapsed()
+    );
+    assert!(message.contains("status Exited"), "{message}");
+    assert!(message.contains("no pid here"), "{message}");
 }
 
 /// Stops a run and waits for it to end, however busy the machine is.
