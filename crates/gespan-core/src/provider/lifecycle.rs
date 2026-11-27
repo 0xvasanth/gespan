@@ -382,11 +382,7 @@ impl Protocol {
             reviewer = "user";
             sandbox_policy = json!({"type":"readOnly","networkAccess":true});
         }
-        if (self.request.settings.operator
-            || self.request.settings.operator_enabled
-            || self.request.settings.orchestrator)
-            && sandbox_policy["type"] != "dangerFullAccess"
-        {
+        if self.request.settings.orchestrator && sandbox_policy["type"] != "dangerFullAccess" {
             sandbox_policy["networkAccess"] = true.into();
         }
         (policy, sandbox, sandbox_policy, reviewer)

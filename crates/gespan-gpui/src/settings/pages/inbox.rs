@@ -3,6 +3,7 @@ use crate::{
     theme::*,
 };
 use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+
 impl SettingsView {
     /// Which teams' issues reach the inbox, the Inbox's Teams filter here.
     pub(super) fn linear_teams(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -64,55 +65,321 @@ impl SettingsView {
             .into_any_element()
     }
 
+    /// Settings › Git: which repositories Git lists, review requests from
+    /// other repos, how it opens, Notify me and bot folding. Hosts are
+    /// connected in Connections.
     pub(super) fn inbox_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        // Services moved to Connections; say where, once, above the projects.
-        let pointer = crate::glass::card()
-            .debug_selector(|| "settings-inbox-services-moved".into())
-            .px(px(14.))
-            .py(px(10.))
+        let Some(inbox) = self.ctx.inbox.clone() else {
+            return vec![
+                div()
+                    .debug_selector(|| "settings-git-loading".into())
+                    .px_4()
+                    .py_3()
+                    .text_size(px(12.))
+                    .text_color(content(0.55))
+                    .child("Loading your repos…")
+                    .into_any_element(),
+            ];
+        };
+        let git = inbox.read(cx).git_settings();
+        let search_input = inbox.read(cx).repo_search_input();
+        let pointer = div()
+            .debug_selector(|| "settings-git-connections".into())
+            .px(px(4.))
             .flex()
             .items_center()
-            .gap(px(12.))
-            .child(icon("link-01", 15.).text_color(content(0.7)))
+            .gap(px(4.))
+            .text_size(px(12.5))
+            .text_color(content(0.62))
+            .child("What the Git page lists and how it opens. Hosts are connected in")
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(12.))
-                    .line_height(px(17.))
-                    .text_color(content(0.62))
-                    .child(
-                        gpui::StyledText::new(
-                            "Services moved to Connections. GitHub, GitLab, Azure DevOps, Jira, Plane and Linear are set up there.",
-                        )
-                        .with_highlights([(
-                            0.."Services moved to Connections.".len(),
-                            gpui::HighlightStyle {
-                                color: Some(content(1.)),
-                                font_weight: Some(gpui::FontWeight::MEDIUM),
-                                ..Default::default()
-                            },
-                        )]),
-                    ),
-            )
-            .child(
-                crate::glass::button(
-                    "open-connections",
-                    "Open Connections",
-                    crate::glass::Button::Ghost,
-                )
-                .debug_selector(|| "settings-open-connections".into())
-                .role(gpui::Role::Button)
-                .aria_label("Open Connections")
-                .h(px(28.))
-                .text_color(accent_color())
-                .child(icon("chevron-right", 12.).text_color(accent_color()))
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.select_section(Section::Services, cx);
-                    cx.emit(SettingsEvent::Section(Section::Services));
-                })),
+                    .id("settings-open-connections")
+                    .debug_selector(|| "settings-open-connections".into())
+                    .role(gpui::Role::Link)
+                    .aria_label("Open Connections")
+                    .cursor_pointer()
+                    .text_color(accent_color())
+                    .child("Connections.")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.select_section(Section::Services, cx);
+                        cx.emit(SettingsEvent::Section(Section::Services));
+                    })),
             )
             .into_any_element();
-        vec![pointer, self.project_notification_settings(cx)]
+
+        let mut repo_rows: Vec<AnyElement> = Vec::new();
+        if git.repos.is_empty() {
+            repo_rows.push(
+                div()
+                    .debug_selector(|| "settings-git-no-repos".into())
+                    .px_4()
+                    .py_3()
+                    .text_size(px(12.))
+                    .text_color(content(0.55))
+                    .child(if git.loading {
+                        "Finding your projects\u{2019} repos…"
+                    } else {
+                        "Open a project with a GitHub, GitLab or Azure DevOps remote, or add a repo below."
+                    })
+                    .into_any_element(),
+            );
+        }
+        for (ix, row) in git.repos.iter().enumerate() {
+            let host = gespan_core::inbox::provider_label(&row.provider);
+            let control = if row.added {
+                let (provider, repo) = (row.provider.clone(), row.repo.clone());
+                let inbox = inbox.clone();
+                crate::glass::button(
+                    SharedString::from(format!("settings-git-remove-{ix}")),
+                    "Remove",
+                    crate::glass::Button::Ghost,
+                )
+                .debug_selector(move || format!("settings-git-remove-{ix}"))
+                .role(gpui::Role::Button)
+                .aria_label(format!("Remove {}", row.repo))
+                .h(px(28.))
+                .on_click(move |_, _, cx| {
+                    inbox.update(cx, |inbox, cx| {
+                        inbox.remove_added_repo(&provider, &repo, cx)
+                    })
+                })
+                .into_any_element()
+            } else {
+                let on = !row.hidden;
+                let (provider, repo) = (row.provider.clone(), row.repo.clone());
+                let inbox = inbox.clone();
+                div()
+                    .id(SharedString::from(format!("settings-git-repo-{ix}")))
+                    .debug_selector(move || format!("settings-git-repo-{ix}"))
+                    .role(gpui::Role::Switch)
+                    .aria_label(format!("Show {} in Git", row.repo))
+                    .aria_toggled(if on {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .relative()
+                    .flex_shrink_0()
+                    .rounded_full()
+                    .h(px(18.))
+                    .w(px(30.))
+                    .cursor_pointer()
+                    .bg(if on { accent_color() } else { content(0.16) })
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(2.))
+                            .left(px(if on { 14. } else { 2. }))
+                            .size(px(14.))
+                            .rounded_full()
+                            .bg(gpui::rgb(0xffffff)),
+                    )
+                    .on_click(move |_, _, cx| {
+                        inbox.update(cx, |inbox, cx| {
+                            inbox.set_repo_hidden(&provider, &repo, on, cx)
+                        })
+                    })
+                    .into_any_element()
+            };
+            repo_rows.push(self.row(
+                None,
+                ix == 0,
+                row.repo.clone(),
+                Some(format!("{} · {host}", row.source).into()),
+                vec![control],
+            ));
+        }
+        let hits = git.hits.iter().enumerate().map(|(ix, hit)| {
+            let inbox = inbox.clone();
+            let chosen = hit.clone();
+            div()
+                .id(SharedString::from(format!("settings-git-hit-{ix}")))
+                .debug_selector(move || format!("settings-git-hit-{ix}"))
+                .role(gpui::Role::Button)
+                .aria_label(format!("Add {}", hit.repo))
+                .h(px(30.))
+                .px_2()
+                .rounded_md()
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|s| s.bg(content(0.05)))
+                .text_size(px(12.5))
+                .child(icon("plus", 13.).text_color(accent_color()))
+                .child(div().flex_1().min_w_0().truncate().child(hit.repo.clone()))
+                .child(
+                    div()
+                        .text_color(content(0.45))
+                        .child(gespan_core::inbox::provider_label(&hit.provider)),
+                )
+                .on_click(move |_, _, cx| {
+                    let hit = chosen.clone();
+                    inbox.update(cx, |inbox, cx| inbox.add_searched_repo(hit, cx))
+                })
+                .into_any_element()
+        });
+        repo_rows.push(
+            div()
+                .debug_selector(|| "settings-git-add-repo".into())
+                .px(px(16.))
+                .py(px(12.))
+                .border_t_1()
+                .border_color(content(0.06))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(
+                    crate::glass::field()
+                        .child(
+                            icon(if git.searching { "loader" } else { "search" }, 14.)
+                                .text_color(content(0.55)),
+                        )
+                        .child(div().flex_1().min_w_0().child(search_input)),
+                )
+                .children(hits)
+                .when_some(git.search_error.clone(), |d, error| {
+                    d.child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(crate::glass::Tone::Bad.ink())
+                            .child(error),
+                    )
+                })
+                .into_any_element(),
+        );
+        let repos = self.glass_group(
+            Some("git-repos"),
+            "Your repos",
+            Some("Git lists only these: the remotes of the projects you have open in Gespan, plus any you add. The rest of your org is never fetched.".into()),
+            None,
+            None,
+            repo_rows,
+        );
+
+        let pref_toggle =
+            |this: &Self,
+             id: &'static str,
+             label: &'static str,
+             on: bool,
+             cx: &mut Context<Self>,
+             change: fn(&mut gespan_core::inbox::queue::Prefs, bool)| {
+                let inbox = inbox.clone();
+                this.toggle(id, label, on, false, cx, move |_, on, cx| {
+                    inbox.update(cx, |inbox, cx| {
+                        inbox.change_git_prefs(|p| change(p, on), cx)
+                    })
+                })
+            };
+        let other = self.glass_group(
+            Some("git-other-repos"),
+            "Other repos",
+            None,
+            None,
+            None,
+            vec![self.row(
+                Some("git-other-repos-row"),
+                true,
+                "Show review requests from other repos",
+                Some("One search for reviews asked of you anywhere you have access. They show folded under the list, with Add repo.".into()),
+                vec![pref_toggle(self, "git-other-repos", "Show review requests from other repos", git.other_repos, cx, |p, on| p.other_repos = on)],
+            )],
+        );
+        let opens = {
+            use gespan_core::inbox::queue::View;
+            let inbox = inbox.clone();
+            self.select(
+                "git-opens-on",
+                "Opens on",
+                git.opens_on.id(),
+                View::TABS
+                    .into_iter()
+                    .map(|view| {
+                        (
+                            view.id().to_string(),
+                            SharedString::from(view.label()),
+                            None,
+                        )
+                    })
+                    .collect(),
+                Some(160.),
+                cx,
+                move |_, value, cx| {
+                    let view = View::TABS
+                        .into_iter()
+                        .find(|view| view.id() == value)
+                        .unwrap_or_default();
+                    inbox.update(cx, |inbox, cx| {
+                        inbox.change_git_prefs(|p| p.opens_on = view, cx)
+                    })
+                },
+            )
+        };
+        let opening = self.glass_group(
+            Some("git-opening"),
+            "Opening Git",
+            None,
+            None,
+            None,
+            vec![
+                self.row(
+                    Some("git-opens-on-row"),
+                    true,
+                    "Opens on",
+                    Some("The view Git shows first, 25 per page.".into()),
+                    vec![opens],
+                ),
+                self.row(
+                    Some("git-keep-filters-row"),
+                    false,
+                    "Keep filters for each view",
+                    Some("The filters you last used in a view come back after a restart.".into()),
+                    vec![pref_toggle(
+                        self,
+                        "git-keep-filters",
+                        "Keep filters for each view",
+                        git.keep_filters,
+                        cx,
+                        |p, on| p.keep_filters = on,
+                    )],
+                ),
+                self.row(
+                    Some("git-notify-row"),
+                    false,
+                    "Notify me",
+                    Some("When my review is requested, or checks fail on my pull request.".into()),
+                    vec![pref_toggle(
+                        self,
+                        "git-notify",
+                        "Notify me",
+                        git.notify,
+                        cx,
+                        |p, on| p.notify = on,
+                    )],
+                ),
+                self.row(
+                    Some("git-fold-bots-row"),
+                    false,
+                    "Fold bot pull requests",
+                    Some("dependabot and renovate go to the Bots view.".into()),
+                    vec![pref_toggle(
+                        self,
+                        "git-fold-bots",
+                        "Fold bot pull requests",
+                        git.fold_bots,
+                        cx,
+                        |p, on| p.fold_bots = on,
+                    )],
+                ),
+            ],
+        );
+        vec![
+            pointer,
+            repos,
+            other,
+            opening,
+            self.project_notification_settings(cx),
+        ]
     }
 }

@@ -108,7 +108,7 @@ impl Section {
             Section::Mcp => "MCP",
             Section::Browser => "Browser",
             Section::Skills => "Skills",
-            Section::Inbox => "Inbox",
+            Section::Inbox => "Git",
             Section::Archive => "Archive",
             Section::Worktrees => "Worktrees",
         }
@@ -150,7 +150,9 @@ impl Section {
             Section::Skills => {
                 "Discover and manage file skills from project, personal, and harness folders."
             }
-            Section::Inbox => "Notification preferences for each project.",
+            Section::Inbox => {
+                "What the Git page lists and how it opens, and notifications for each project."
+            }
             Section::Archive => "Projects and conversations you have archived.",
             Section::Worktrees => "Manage additional worktrees for each project.",
         }
@@ -185,7 +187,9 @@ impl Section {
                 "browser chrome edge brave chromium web page tabs cdp built-in in-app sign in upload"
             }
             Section::Skills => "skill instructions prompt",
-            Section::Inbox => "notifications mute projects categories",
+            Section::Inbox => {
+                "git inbox pull requests merge requests repos repositories review bots notifications mute projects categories"
+            }
             Section::Archive => "archived restore delete hidden",
             Section::Worktrees => "git branch worktree working copy project create delete",
         }
@@ -195,7 +199,8 @@ impl Section {
     pub(crate) fn tint(self) -> Option<(u32, u32)> {
         Some(match self {
             Section::Appearance => (0xf9a8d4, 0xdb2777),
-            Section::Services | Section::Inbox => (0xa5b4fc, 0x4f46e5),
+            Section::Services => (0xa5b4fc, 0x4f46e5),
+            Section::Inbox => (0x2dd4bf, 0x0d9488),
             Section::Devices => (0x5eead4, 0x0d9488),
             Section::Chat => (0xc0affc, 0x7c3aed),
             Section::Providers => (0xd97757, 0xc2410c),
@@ -219,7 +224,7 @@ impl Section {
             Section::Mcp => "globe",
             Section::Browser => "app-window",
             Section::Skills => "sparkles",
-            Section::Inbox => "inbox-hi",
+            Section::Inbox => "git-pull-request",
             Section::Archive => "archive",
             Section::Worktrees => "folder-tree",
         }
@@ -363,12 +368,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "files editor long lines horizontal scroll wrapping",
     ),
     (
-        "title-tabs",
-        Section::Appearance,
-        "Top bar tabs",
-        "tab strip title bar group grouping projects all this project chips",
-    ),
-    (
         "tab-animations",
         Section::Appearance,
         "Tab animations",
@@ -466,12 +465,6 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
         "kanban cards columns tasks tickets track sidebar show hide",
     ),
     (
-        "sidebar-activity",
-        Section::Appearance,
-        "Activity",
-        "working agents activity live running sessions card sidebar show hide",
-    ),
-    (
         "sidebar-automations",
         Section::Appearance,
         "Automations",
@@ -480,7 +473,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     (
         "sidebar-inbox",
         Section::Appearance,
-        "Inbox",
+        "Git",
         "sidebar entries show hide",
     ),
     (
@@ -855,7 +848,6 @@ mod tests {
             ("word wrap", "file-word-wrap", Section::Chat),
             ("show excluded files", "show-excluded-files", Section::Chat),
             ("tab animations", "tab-animations", Section::Appearance),
-            ("top bar tabs", "title-tabs", Section::Appearance),
         ] {
             let hit = search(query, "")
                 .into_iter()
@@ -866,6 +858,20 @@ mod tests {
             let entries: Vec<_> = INDEX.iter().filter(|e| e.0 == id).collect();
             assert_eq!(entries.len(), 1, "{id} is indexed once");
             assert_eq!(entries[0].1, Section::Chat, "{id}");
+        }
+    }
+
+    #[test]
+    fn the_top_bar_tabs_choice_is_gone_from_search() {
+        // The strip is always ungrouped now; nothing to find or jump to.
+        assert!(INDEX.iter().all(|e| e.0 != "title-tabs"));
+        for query in ["top bar tabs", "grouping projects"] {
+            assert!(
+                search(query, "")
+                    .iter()
+                    .all(|r| r.setting != Some("title-tabs")),
+                "{query}"
+            );
         }
     }
 
@@ -888,6 +894,7 @@ mod tests {
             "notes",
             "board",
             "working-agents",
+            "sidebar-activity",
             "search-panel",
         ] {
             assert!(INDEX.iter().all(|e| e.0 != id), "{id} is still indexed");

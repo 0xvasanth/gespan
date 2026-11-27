@@ -72,7 +72,42 @@ impl Automations {
             .flex()
             .flex_col()
             .gap(px(8.));
-        if visible.is_empty() {
+        let draft = self.draft_card(cx);
+        if !self.automations.is_empty() {
+            list = list.child(self.all_runs_row(cx));
+        } else if !self.loading && draft.is_none() {
+            return list.child(
+                div()
+                    .debug_selector(|| "automations-none".into())
+                    .mt(px(4.))
+                    .px(px(14.))
+                    .py(px(18.))
+                    .rounded(px(CARD_RADIUS))
+                    .border_1()
+                    .border_dashed()
+                    .border_color(content(0.14))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child("Nothing set up yet"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .line_height(px(18.))
+                            .text_color(content(0.62))
+                            .child(
+                                "An automation starts an agent on a schedule or when \
+                                 something happens in a repo. Its runs show up here.",
+                            ),
+                    ),
+            );
+        }
+        if visible.is_empty() && draft.is_none() {
             return list.child(
                 div()
                     .px(px(6.))
@@ -89,7 +124,24 @@ impl Automations {
             );
         }
         let now = gespan_core::time::now_ms() as i64;
-        for (index, (cwd, items)) in self.project_groups(visible).into_iter().enumerate() {
+        let mut groups = self.project_groups(visible);
+        // A new automation sits first in its project's group, which it
+        // starts when the project has none yet.
+        let mut draft = draft;
+        let draft_key = self
+            .editor
+            .as_ref()
+            .map(|e| gespan_core::files::path_key(&e.draft.cwd));
+        if let Some(key) = &draft_key
+            && draft.is_some()
+            && !groups
+                .iter()
+                .any(|(cwd, _)| gespan_core::files::path_key(cwd) == *key)
+            && let Some(editor) = &self.editor
+        {
+            groups.insert(0, (editor.draft.cwd.clone(), Vec::new()));
+        }
+        for (index, (cwd, items)) in groups.into_iter().enumerate() {
             let selector = format!("automation-group-{index}");
             list = list.child(
                 div()
@@ -109,11 +161,140 @@ impl Automations {
                             .truncate(),
                     ),
             );
+            if draft_key.as_ref() == Some(&gespan_core::files::path_key(&cwd))
+                && let Some(card) = draft.take()
+            {
+                list = list.child(card);
+            }
             for automation in items {
                 list = list.child(self.render_card(automation, now, cx));
             }
         }
         list
+    }
+
+    /// The list's first row: every automation's runs. It says how many are
+    /// going and failing, and how many started today.
+    fn all_runs_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let selected = self.showing_runs();
+        let (running, failing, today) = self.totals;
+        let mut aria = vec!["All runs".to_string()];
+        if running > 0 {
+            aria.push(format!("{running} running"));
+        }
+        if failing > 0 {
+            aria.push(format!("{failing} failed"));
+        }
+        aria.push(format!("{today} today"));
+        let pill = |label: String, tone: glass::Tone| {
+            glass::status(label, tone).h(px(18.)).text_size(px(11.))
+        };
+        div()
+            .id("automations-all-runs")
+            .debug_selector(|| "automations-all-runs".into())
+            .role(Role::Button)
+            .aria_label(aria.join(", "))
+            .aria_selected(selected)
+            .flex_shrink_0()
+            .h(px(40.))
+            .px(px(12.))
+            .rounded(px(10.))
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .text_size(px(13.))
+            .text_color(content(if selected { 1. } else { 0.84 }))
+            .when(selected, |d| d.bg(content(0.10)))
+            .when(!selected, |d| d.hover(|s| s.bg(glass::hover_fill())))
+            .child(icon("clock", 14.).text_color(content(0.72)))
+            .child("All runs")
+            .child(
+                div()
+                    .ml_auto()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .when(running > 0, |d| {
+                        d.child(pill(format!("{running} running"), glass::Tone::Running))
+                    })
+                    .when(failing > 0, |d| {
+                        d.child(pill(format!("{failing} failed"), glass::Tone::Bad))
+                    })
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(content(0.55))
+                            .child(format!("{today} today")),
+                    ),
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.show_every_run(cx)))
+            .into_any_element()
+    }
+
+    /// A new automation not saved yet, as a dashed card in the list while
+    /// its editor is open.
+    fn draft_card(&self, cx: &App) -> Option<AnyElement> {
+        let editor = self
+            .editor
+            .as_ref()
+            .filter(|e| !e.saved && !self.gallery && self.review_setup.is_none())?;
+        let name = editor.name.read(cx).content.trim().to_string();
+        let name = if name.is_empty() {
+            "New automation".to_string()
+        } else {
+            name
+        };
+        let glyph = editor
+            .draft
+            .triggers
+            .as_ref()
+            .and_then(|triggers| triggers.first())
+            .map_or("clock", |t| trigger_glyph(&t.kind, &t.event));
+        Some(
+            glass::card()
+                .id("automation-draft-card")
+                .debug_selector(|| "automation-draft-card".into())
+                .role(Role::Note)
+                .aria_label(format!("{name}, new, not saved yet"))
+                .flex_shrink_0()
+                .rounded(px(CARD_RADIUS))
+                .border_dashed()
+                .border_color(accent_color().opacity(0.45))
+                .bg(accent_color().opacity(0.08))
+                .p(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(tile(
+                    30.,
+                    icon(glyph, 14.)
+                        .text_color(content(0.92))
+                        .into_any_element(),
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(13.))
+                                .line_height(px(18.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(name),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.5))
+                                .line_height(px(16.))
+                                .text_color(content(0.55))
+                                .child("New · not saved yet"),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_card(&self, automation: &Automation, now: i64, cx: &mut Context<Self>) -> AnyElement {
@@ -140,6 +321,9 @@ impl Automations {
             .relative()
             .flex_shrink_0()
             .rounded(px(CARD_RADIUS))
+            .when(!selected && self.failing.contains(&id), |d| {
+                d.border_color(glass::Tone::Bad.ink().opacity(0.35))
+            })
             .when(selected, |d| {
                 d.border_color(accent_color().opacity(0.45))
                     .bg(accent_color().opacity(0.08))

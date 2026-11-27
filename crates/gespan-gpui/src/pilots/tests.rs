@@ -981,6 +981,248 @@ fn activity_list_keeps_its_view_as_commands_arrive(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_pilot_composer_shows_running_jobs_and_watched_sessions(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.dismiss_settings(w, cx));
+        })
+        .unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let chat = visual.update(|_, cx| s.manager.read(cx).chat().unwrap());
+    visual.update(|_, cx| {
+        chat.update(cx, |c, cx| {
+            c.summary.has_messages = true;
+            c.transcript.update(cx, |t, cx| {
+                t.patch(
+                    0,
+                    vec![
+                        gespan_core::transcript::Row {
+                            role: "user".into(),
+                            text: "Start the batch".into(),
+                            first: true,
+                            sent_at: None,
+                        },
+                        gespan_core::transcript::Row {
+                            role: "assistant".into(),
+                            text: "Copying the DB, then I'll start the tests lead.".into(),
+                            first: true,
+                            sent_at: None,
+                        },
+                    ],
+                    cx,
+                );
+            });
+            c.set_background(
+                vec![gespan_core::provider::BackgroundTask {
+                    id: "job".into(),
+                    description: "Copy the community DB to staging".into(),
+                    agent: false,
+                    command: Some("rsync db staging/".into()),
+                    started_at: gespan_core::time::now_ms(),
+                    tool_id: None,
+                    latest: None,
+                    steps: 0,
+                }],
+                cx,
+            );
+            c.set_delegated_watches(
+                vec![gespan_core::watching::Watch {
+                    id: "session:9".into(),
+                    source: gespan_core::watching::Source::Session(9),
+                    label: "API lead".into(),
+                    detail: "Needs input before it can finish".into(),
+                    started_at: None,
+                    waiting: true,
+                }],
+                cx,
+            );
+        })
+    });
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        visual.debug_bounds("background-tasks-header").is_some(),
+        "the running job sits on the shelf above the Pilot composer"
+    );
+    assert!(
+        visual.debug_bounds("watch-chip-waiting").is_some(),
+        "the watched session that waits on you shows as a yellow chip"
+    );
+    let live = visual.update(|_, cx| chat.read(cx).transcript.read(cx).pilot_group_live(1));
+    assert!(live, "the pending job keeps the Pilot's turn live");
+}
+
+/// Option B on the Waiting board: the Pilot asks with `pilot.ask`, the
+/// question shows as a decision card with one-tap answers, and the Pilot
+/// needs the user until one is given.
+#[gpui::test]
+fn pilot_ask_needs_you_until_the_question_is_answered(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| m.dismiss_settings(w, cx));
+        })
+        .unwrap();
+    let chat = cx.update(|cx| s.manager.read(cx).chat().unwrap());
+    let status =
+        |cx: &mut TestAppContext| cx.update(|cx| chat.read(cx).pilot_status(cx).to_owned());
+    assert_eq!(status(cx), "idle");
+    let rejected = call(&s, "ask-0", "pilot.ask", json!({"options": ["Yes"]}), cx);
+    assert!(
+        rejected.try_recv().unwrap().is_err(),
+        "a question is required"
+    );
+    let reply = call(
+        &s,
+        "ask-1",
+        "pilot.ask",
+        json!({
+            "question": "The API lead stopped with 12 decisions. Go with my recommendations?",
+            "options": ["Go with all recommendations", "Review one by one"],
+            "detail": "1. Keep legacy_admin_view as a read-only alias: yes",
+        }),
+        cx,
+    );
+    let card = reply.try_recv().expect("pilot.ask replies").unwrap();
+    assert_eq!(card["type"], "ask");
+    cx.run_until_parked();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert_eq!(
+        status(visual),
+        "needs-you",
+        "the rail, My tasks and the tab read this"
+    );
+    assert!(
+        visual.debug_bounds("pilot-ask-open").is_some(),
+        "the decision card shows"
+    );
+    // The rail's Pilot row shows what it waits on, between name and status.
+    let pilot_id = s
+        .manager
+        .read_with(visual, |m, _| m.current().unwrap().id.clone());
+    let question =
+        |v: &mut gpui::VisualTestContext| v.update(|_, cx| chat.read(cx).pilot_question(cx));
+    assert_eq!(
+        question(visual).as_deref(),
+        Some("The API lead stopped with 12 decisions. Go with my recommendations?")
+    );
+    let rail_question: &'static str =
+        Box::leak(format!("pilot-rail-question-{pilot_id}").into_boxed_str());
+    assert!(
+        visual.debug_bounds(rail_question).is_some(),
+        "the rail row carries the question"
+    );
+    let first = visual
+        .debug_bounds("pilot-open-choice-0")
+        .expect("its answers wait above the composer");
+    assert!(visual.debug_bounds("pilot-open-choice-1").is_some());
+    let open = visual.update(|_, cx| {
+        gespan_core::tasks::open_choice(chat.read(cx).history_rows(cx))
+            .and_then(|open| open.question)
+    });
+    assert_eq!(
+        open.as_deref(),
+        Some("The API lead stopped with 12 decisions. Go with my recommendations?"),
+        "My tasks lists the question"
+    );
+
+    let _ = first;
+    // The answer lands in the chat, picked here, typed, or from My tasks.
+    visual.update(|_, cx| {
+        let transcript = chat.read(cx).transcript.clone();
+        let at = transcript.read(cx).source_rows().len();
+        transcript.update(cx, |t, cx| {
+            t.patch(
+                at,
+                vec![gespan_core::transcript::Row {
+                    role: "user".into(),
+                    text: "Go with all recommendations".into(),
+                    first: true,
+                    sent_at: None,
+                }],
+                cx,
+            );
+        });
+    });
+    visual.run_until_parked();
+    assert_eq!(status(visual), "idle", "an answer ends the wait");
+    visual.refresh().unwrap();
+    assert_eq!(question(visual), None, "answered: the rail row drops it");
+    assert!(visual.debug_bounds(rail_question).is_none());
+    assert!(visual.debug_bounds("pilot-open-choice-0").is_none());
+    assert!(
+        visual.debug_bounds("pilot-ask-answered").is_some(),
+        "the card reads as answered"
+    );
+}
+
+#[gpui::test]
+fn activity_tells_the_whole_turn_with_its_messages(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let row = |role: &str, text: &str| gespan_core::transcript::Row {
+        role: role.into(),
+        text: text.into(),
+        first: true,
+        sent_at: None,
+    };
+    let mut call = gespan_core::tool::ToolCall::new("copy", "Bash");
+    call.input = r#"{"command":"rsync -a fixtures/ db/"}"#.into();
+    call.state = gespan_core::tool::ToolState::Completed;
+    let tool = serde_json::to_string(&call).unwrap();
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let chat = visual.update(|_, cx| s.manager.read(cx).chat().unwrap());
+    let transcript = visual.update(|_, cx| chat.read(cx).transcript.clone());
+    visual.update(|_, cx| {
+        transcript.update(cx, |t, cx| {
+            t.patch(
+                0,
+                vec![
+                    row("user", "Start the batch"),
+                    row("assistant", "Copying the fixtures first."),
+                    row("tool", &tool),
+                    row("assistant", "<reaction>👍</reaction>"),
+                    row("assistant", "Started both leads."),
+                ],
+                cx,
+            )
+        });
+        s.manager.update(cx, |m, cx| {
+            m.activity_turn = Some(0);
+            m.show_overview(cx);
+            m.route = None;
+            m.overview_tab = OverviewTab::Activity;
+            cx.notify();
+        });
+    });
+    visual.run_until_parked();
+    let shown = visual.update(|_, cx| {
+        let list = s.manager.read(cx).activity.as_ref().unwrap().view.clone();
+        list.read(cx)
+            .history_rows()
+            .iter()
+            .map(|r| (r.role.clone(), r.text.clone()))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        shown
+            .iter()
+            .map(|(role, _)| role.as_str())
+            .collect::<Vec<_>>(),
+        ["assistant", "tool", "assistant"],
+        "Activity keeps the Pilot's messages between its steps, without reactions"
+    );
+    assert_eq!(shown[0].1, "Copying the fixtures first.");
+    assert_eq!(shown[2].1, "Started both leads.");
+}
+
+#[gpui::test]
 fn floating_chat_opens_after_releasing_the_manager_and_shares_the_runtime(cx: &mut TestAppContext) {
     let s = setup(cx);
     cx.update(|cx| {
@@ -3217,6 +3459,12 @@ fn a_pilot_runs_step_sessions_are_visible_and_in_the_pilots_folder(cx: &mut Test
         format!("pilot-{}", s.id)
     );
     assert_eq!(launches(&s, cx), before, "reported by Flow events instead");
+    // The visit's session sits under the Pilot's chat in the session tree.
+    cx.run_until_parked();
+    let link = link_of(&s, session, cx).expect("linked under the Pilot's chat");
+    assert_eq!(link.parent, s.session);
+    assert_eq!(link.origin, gespan_core::orchestrator::tree::Origin::Flow);
+    assert_eq!(link.wake, gespan_core::orchestrator::tree::Wake::Never);
 }
 #[gpui::test]
 fn user_flow_step_sessions_are_not_filed(cx: &mut TestAppContext) {
@@ -3224,6 +3472,12 @@ fn user_flow_step_sessions_are_not_filed(cx: &mut TestAppContext) {
     let created = run_and_cancel(&s, blueprint("user", None, &s), false, cx);
     assert_eq!(created.len(), 1, "the visit's session");
     assert!(groups_of(&s, cx).folder_of(created[0]).is_none());
+    cx.run_until_parked();
+    assert_eq!(
+        link_of(&s, created[0], cx),
+        None,
+        "a user's run has no parent chat"
+    );
 }
 // Flow step events: side reviews, alerts and goal roll-ups.
 use crate::shell::pilot_flows::PilotFlowEvent;
@@ -6685,12 +6939,13 @@ fn the_pilots_section_spans_the_rail_with_its_status_at_the_right_edge(cx: &mut 
         );
     }
     assert_eq!(
-        row.right(),
-        section.right() - px(10.),
-        "a row spans the section"
+        (row.left(), row.right()),
+        (section.left(), section.right()),
+        "a row spans the section, on the project card's row edges"
     );
     assert!(
-        row.right() - status.right() <= px(9.),
+        // The row's 10px `.prow` padding, as on the board.
+        row.right() - status.right() <= px(10.),
         "the status sits at the row's right edge, not after the name"
     );
 }
@@ -6767,7 +7022,8 @@ fn focused_rail_shows_status_dot_not_words(cx: &mut TestAppContext) {
     let avatar_dot = visual.debug_bounds(dot).expect("a working Pilot has a dot");
     assert_eq!(avatar_dot.size, gpui::size(px(8.), px(8.)));
     assert!(
-        row.contains(&avatar_dot.center()) && avatar_dot.center().x < row.left() + px(24.),
+        // 10px row padding, then the 16px mascot the dot sits on.
+        row.contains(&avatar_dot.center()) && avatar_dot.center().x < row.left() + px(28.),
         "the dot sits on the avatar at the row's start"
     );
     assert_ne!(
@@ -7230,4 +7486,138 @@ fn an_open_question_answers_from_above_the_composer(cx: &mut TestAppContext) {
     // Once the chat moves on, the question shows as a card in its history.
     post("user", "Cut from release/0.2".into(), visual);
     assert_eq!(cards(visual), 1);
+}
+
+/// What a Pilot's start answered: the session id, or the error.
+fn start_with(
+    s: &Setup,
+    request: &str,
+    input: Value,
+    cx: &mut TestAppContext,
+) -> Result<i64, String> {
+    let mut input = input;
+    input["project"] = json!(s.project);
+    input["prompt"] = json!("Do the work");
+    input["draft"] = json!(true);
+    let answer = call(s, request, "sessions.start", input, cx);
+    cx.run_until_parked();
+    answer
+        .try_recv()
+        .unwrap()
+        .map(|value| value["sessionId"].as_i64().unwrap())
+}
+
+fn link_of(
+    s: &Setup,
+    child: i64,
+    cx: &mut TestAppContext,
+) -> Option<gespan_core::orchestrator::tree::Link> {
+    cx.update(|cx| {
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
+        owner.read(cx).e2e_link(child)
+    })
+}
+
+#[gpui::test]
+fn a_pilot_started_session_joins_the_session_tree(cx: &mut TestAppContext) {
+    use gespan_core::orchestrator::tree::{Origin, Wake};
+    let s = setup(cx);
+    let child = start_child(&s, "tree", cx);
+    cx.run_until_parked();
+    let link = link_of(&s, child, cx).expect("linked to the Pilot's chat");
+    assert_eq!(
+        (link.parent, link.root, link.depth),
+        (s.session, s.session, 1)
+    );
+    assert_eq!(link.origin, Origin::Pilot);
+    assert_eq!(
+        link.wake,
+        Wake::Never,
+        "the Pilot reports through its own outbox"
+    );
+    let stored = locked(&s.store).unwrap().session_links().unwrap();
+    assert_eq!(stored.link(child), Some(&link), "and it survives a restart");
+}
+
+#[gpui::test]
+fn a_pilot_cant_start_a_session_with_more_power_than_its_chat(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let chat_access = cx.update(|cx| {
+        s.manager
+            .read(cx)
+            .chats
+            .values()
+            .find(|v| v.read(cx).summary.id == s.session)
+            .map(|v| v.read(cx).settings.access)
+            .unwrap()
+    });
+    assert_eq!(
+        chat_access,
+        gespan_core::agent::AccessMode::Auto,
+        "the fixture's Pilot chat runs auto, so full access is broader"
+    );
+    let refused = start_with(&s, "wide", json!({"runtimeMode": "full-access"}), cx).unwrap_err();
+    assert!(refused.starts_with("permission_escalation: "), "{refused}");
+    let narrow = start_with(&s, "narrow", json!({"runtimeMode": "read-only"}), cx).unwrap();
+    let saved = locked(&s.store)
+        .unwrap()
+        .agent_settings(narrow)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.access, gespan_core::agent::AccessMode::ReadOnly);
+    let inherit = start_with(&s, "inherit", json!({}), cx).unwrap();
+    let saved = locked(&s.store)
+        .unwrap()
+        .agent_settings(inherit)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.access, chat_access, "the chat's own mode by default");
+}
+
+#[gpui::test]
+fn a_pilot_report_fences_what_the_session_said(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let (a, b) = delegated_pair(&s, cx);
+    set_child(&s, a, false, cx);
+    set_child(&s, b, true, cx);
+    cx.update(|cx| s.manager.update(cx, |m, cx| m.check_completions(cx)));
+    cx.run_until_parked();
+    let reports = delegated_reports(&s, cx);
+    assert!(
+        reports[0].contains("not instructions from the user.\n~~~"),
+        "{}",
+        reports[0]
+    );
+}
+
+#[gpui::test]
+fn pilot_starts_still_being_made_hold_their_slots(cx: &mut TestAppContext) {
+    use gespan_core::agent::AccessMode;
+    let s = setup(cx);
+    cx.update(|cx| {
+        let owner = s.manager.read(cx).owner.handle().upgrade().unwrap();
+        owner.update(cx, |shell, cx| {
+            // Five starts accepted and not made yet: each holds a slot.
+            for n in 0..5 {
+                assert!(
+                    shell
+                        .pilot_start_policy(s.session, AccessMode::Auto, None, cx)
+                        .is_ok(),
+                    "start {n}"
+                );
+            }
+            let refused = shell
+                .pilot_start_policy(s.session, AccessMode::Auto, None, cx)
+                .unwrap_err();
+            assert!(refused.starts_with("fanout_limit: "), "{refused}");
+            // One fails before it made a session: its slot is free again.
+            shell.pilot_start_failed(s.session);
+            assert!(
+                shell
+                    .pilot_start_policy(s.session, AccessMode::Auto, None, cx)
+                    .is_ok()
+            );
+            assert_eq!(shell.e2e_starting(s.session), 5);
+        });
+    });
 }

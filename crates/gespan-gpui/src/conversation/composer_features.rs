@@ -21,11 +21,53 @@ impl Conversation {
                 .update(cx, |input, cx| input.set_text(format!("{text} "), cx));
         }
     }
-    pub(crate) fn set_app_environment(
-        &mut self,
-        environment: std::collections::HashMap<String, String>,
-    ) {
-        self.app_environment = environment;
+    pub(crate) fn set_roster(&mut self, roster: Option<String>) {
+        self.roster = roster;
+    }
+    /// The roster this turn should carry: only when it differs from what
+    /// the agent was last told, never for a remote chat or a raw slash
+    /// command. It counts as told once the turn succeeds.
+    pub(crate) fn pending_roster(&mut self, prompt: &str) -> Option<String> {
+        self.roster_in_flight = None;
+        if self.is_remote() {
+            return None;
+        }
+        let Some(roster) = self.roster.clone() else {
+            // Siblings that come back are news again.
+            self.last_roster = None;
+            return None;
+        };
+        let raw = gespan_core::provider::Kind::parse(&self.summary.provider)
+            .is_some_and(|kind| gespan_core::provider::is_raw_command(kind, prompt));
+        let fingerprint = gespan_core::orchestrator::roster::fingerprint(&roster);
+        if raw || self.last_roster == Some(fingerprint) {
+            return None;
+        }
+        self.roster_in_flight = Some(fingerprint);
+        Some(roster)
+    }
+    /// A turn that failed or was stopped may never have reached the agent:
+    /// its roster is sent again next time.
+    pub(crate) fn roster_turn_ended(&mut self, succeeded: bool) {
+        if let Some(fingerprint) = self.roster_in_flight.take()
+            && succeeded
+        {
+            self.last_roster = Some(fingerprint);
+        }
+    }
+    pub(crate) fn record_turn_end(&mut self, succeeded: bool, stopping: bool) {
+        use gespan_core::orchestrator::tree::Outcome;
+        self.turn_ends += 1;
+        self.last_turn = Some(if stopping {
+            Outcome::Cancelled
+        } else if succeeded {
+            Outcome::Finished
+        } else {
+            Outcome::Failed
+        });
+    }
+    pub(crate) fn forget_roster_sent(&mut self) {
+        self.last_roster = None;
     }
     /// A lead's control capability, for as long as its run is live. Worker
     /// sessions never get it: only a lead's turns carry these variables.
@@ -47,7 +89,6 @@ impl Conversation {
         let enabled = match id {
             "draft" => self.follow_ups.draft_selected,
             "plan" => self.settings.plan,
-            "operator" => self.settings.operator,
             "orchestrator" => self.settings.orchestrator,
             _ => true,
         };
@@ -59,7 +100,6 @@ impl Conversation {
         let enabled = match id {
             "draft" => &mut self.follow_ups.draft_selected,
             "plan" => &mut self.settings.plan,
-            "operator" => &mut self.settings.operator,
             "orchestrator" => &mut self.settings.orchestrator,
             _ => return,
         };
@@ -75,7 +115,6 @@ impl Conversation {
         // The accepted turn or queue item already owns its mode. The empty
         // composer starts a fresh draft.
         self.settings.plan = false;
-        self.settings.operator = false;
         self.settings.orchestrator = false;
         self.input
             .update(cx, |input, cx| input.selected_command(None, cx));
@@ -83,7 +122,7 @@ impl Conversation {
         cx.notify();
     }
     pub(crate) fn toggle_mode(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.is_remote() && matches!(id, "operator" | "orchestrator") {
+        if self.is_remote() && id == "orchestrator" {
             self.status = "This mode is not available on remote projects.".into();
             cx.notify();
             return;
@@ -95,23 +134,15 @@ impl Conversation {
             "draft" => {
                 self.follow_ups.draft_selected = !self.follow_ups.draft_selected;
                 self.settings.plan = false;
-                self.settings.operator = false;
                 self.settings.orchestrator = false;
             }
             "plan" => {
                 self.settings.plan = !self.settings.plan;
                 self.settings.orchestrator = false;
-                self.settings.operator = false;
-            }
-            "operator" => {
-                self.settings.operator = !self.settings.operator;
-                self.settings.plan = false;
-                self.settings.orchestrator = false;
             }
             "orchestrator" => {
                 self.settings.orchestrator = !self.settings.orchestrator;
                 self.settings.plan = false;
-                self.settings.operator = false;
             }
             _ => return,
         }
@@ -121,8 +152,6 @@ impl Conversation {
             Some("orchestrator")
         } else if self.settings.plan {
             Some("plan")
-        } else if self.settings.operator {
-            Some("operator")
         } else {
             None
         };
@@ -145,32 +174,21 @@ impl Conversation {
         mut text: String,
         cx: &mut Context<Self>,
     ) -> String {
-        for mode in ["plan", "operator", "orchestrator"] {
+        for mode in ["plan", "orchestrator"] {
             if let Some(rest) = gespan_core::composer::consume_command(&text, mode) {
                 let rest = rest.to_owned();
                 match mode {
                     "plan" => {
                         self.settings.plan = true;
                         self.settings.orchestrator = false;
-                        self.settings.operator = false;
-                    }
-                    "operator" => {
-                        self.settings.operator = true;
-                        self.settings.plan = false;
-                        self.settings.orchestrator = false;
                     }
                     _ => {
                         self.settings.orchestrator = true;
                         self.settings.plan = false;
-                        self.settings.operator = false;
                     }
                 }
                 self.save_settings(cx);
-                text = if rest.is_empty() && mode == "operator" {
-                    "Explain what you can do in Gespan with your app access.".into()
-                } else {
-                    rest
-                };
+                text = rest;
                 break;
             }
         }

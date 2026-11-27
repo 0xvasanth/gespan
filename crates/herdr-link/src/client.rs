@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 
 use crate::transport::{Conn, Transport};
-use crate::{parse_event, Agent, Event, Pong, Workspace};
+use crate::{parse_event, Agent, AgentStatus, Event, NewWorktree, PaneRead, Pong, Workspace};
 
 #[derive(Debug)]
 pub enum Error {
@@ -89,6 +89,117 @@ impl<T: Transport> Client<T> {
 
     pub fn workspaces(&self) -> Result<Vec<Workspace>, Error> {
         self.typed("workspace.list", json!({}), Some("workspaces"))
+    }
+
+    /// A new pane to the right of `target` (the focused pane when `None`),
+    /// in `cwd`, without taking focus. Its pane id.
+    pub fn split_pane(&self, target: Option<&str>, cwd: &str) -> Result<String, Error> {
+        let mut params = json!({"direction": "right", "cwd": cwd, "focus": false});
+        if let Some(target) = target {
+            params["target_pane_id"] = json!(target);
+        }
+        let result = self.call("pane.split", params)?;
+        result["pane"]["pane_id"]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| Error::BadReply("pane.split reply has no pane id".into()))
+    }
+
+    /// Starts agent `kind` named `name` in an idle shell pane. herdr answers
+    /// once the agent is ready for input.
+    pub fn start_agent(
+        &self,
+        name: &str,
+        kind: &str,
+        pane_id: &str,
+        timeout_ms: Option<u64>,
+    ) -> Result<Agent, Error> {
+        let mut params = json!({"name": name, "kind": kind, "pane_id": pane_id, "args": []});
+        if let Some(timeout) = timeout_ms {
+            params["timeout_ms"] = json!(timeout);
+        }
+        self.typed("agent.start", params, Some("agent"))
+    }
+
+    /// The agent `target` (a pane id or agent name) names now, or `None`
+    /// when that pane holds no agent or no longer exists.
+    pub fn get_agent(&self, target: &str) -> Result<Option<Agent>, Error> {
+        match self.typed("agent.get", json!({ "target": target }), Some("agent")) {
+            Ok(agent) => Ok(Some(agent)),
+            Err(Error::Api { code, .. })
+                if matches!(
+                    code.as_str(),
+                    "agent_not_found" | "pane_not_found" | "target_not_found" | "not_found"
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Submits `text` to an agent; with `wait_ms`, also waits for it to
+    /// settle (idle, done or blocked) for at most that long.
+    pub fn prompt_agent(
+        &self,
+        target: &str,
+        text: &str,
+        wait_ms: Option<u64>,
+    ) -> Result<Agent, Error> {
+        let mut params = json!({"target": target, "text": text});
+        if let Some(timeout) = wait_ms {
+            params["wait"] = json!({ "timeout_ms": timeout });
+        }
+        self.typed("agent.prompt", params, Some("agent"))
+    }
+
+    /// Waits until the agent reaches one of `until` (herdr's settled states
+    /// when empty). The matching event.
+    pub fn wait_agent(
+        &self,
+        target: &str,
+        until: &[AgentStatus],
+        timeout_ms: Option<u64>,
+    ) -> Result<Value, Error> {
+        let mut params = json!({"target": target});
+        if !until.is_empty() {
+            params["until"] = json!(until.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+        }
+        if let Some(timeout) = timeout_ms {
+            params["timeout_ms"] = json!(timeout);
+        }
+        let mut result = self.call("agent.wait", params)?;
+        Ok(result
+            .get_mut("event")
+            .map(Value::take)
+            .unwrap_or(Value::Null))
+    }
+
+    /// The agent's recent output, soft wraps joined.
+    pub fn read_agent(&self, target: &str, lines: Option<u32>) -> Result<PaneRead, Error> {
+        let mut params = json!({"target": target, "source": "recent_unwrapped"});
+        if let Some(lines) = lines {
+            params["lines"] = json!(lines);
+        }
+        self.typed("agent.read", params, Some("read"))
+    }
+
+    /// A new git worktree of the checkout at `cwd`, from `base`, opened as a
+    /// workspace of its own without taking focus.
+    pub fn create_worktree(&self, cwd: &str, base: Option<&str>) -> Result<NewWorktree, Error> {
+        let mut params = json!({"cwd": cwd, "focus": false});
+        if let Some(base) = base {
+            params["base"] = json!(base);
+        }
+        let result = self.call("worktree.create", params)?;
+        let text = |value: &Value| value.as_str().map(str::to_owned);
+        Ok(NewWorktree {
+            path: text(&result["worktree"]["path"])
+                .ok_or_else(|| Error::BadReply("worktree.create reply has no path".into()))?,
+            branch: text(&result["worktree"]["branch"]),
+            pane_id: text(&result["root_pane"]["pane_id"])
+                .ok_or_else(|| Error::BadReply("worktree.create reply has no pane".into()))?,
+        })
     }
 
     /// Start an event stream. The connection stays open until `Events` is
@@ -332,5 +443,144 @@ mod tests {
             events.next(),
             Some(Ok(Event::AgentStatusChanged { .. }))
         ));
+    }
+
+    const AGENT: &str = "{\"terminal_id\":\"t9\",\"pane_id\":\"w1:p2\",\"workspace_id\":\"w1\",\"tab_id\":\"w1:t1\",\"name\":\"fixer\",\"agent\":\"claude\",\"agent_status\":\"idle\",\"cwd\":\"/repo\"}";
+
+    #[test]
+    fn a_pane_splits_beside_another_without_taking_focus() {
+        let reply =
+            "{\"id\":\"x\",\"result\":{\"type\":\"pane_info\",\"pane\":{\"pane_id\":\"w1:p2\"}}}\n";
+        let (c, fake) = client(&[reply]);
+        assert_eq!(c.split_pane(Some("w1:p1"), "/repo").unwrap(), "w1:p2");
+        let req = &fake.requests()[0];
+        assert_eq!(req["method"], "pane.split");
+        assert_eq!(
+            req["params"],
+            json!({"target_pane_id": "w1:p1", "direction": "right", "cwd": "/repo", "focus": false})
+        );
+    }
+
+    #[test]
+    fn an_agent_starts_in_a_pane_and_is_returned() {
+        let reply = format!(
+            "{{\"id\":\"x\",\"result\":{{\"type\":\"agent_started\",\"argv\":[\"claude\"],\"agent\":{AGENT}}}}}\n"
+        );
+        let (c, fake) = client(&[&reply]);
+        let agent = c
+            .start_agent("fixer", "claude", "w1:p2", Some(60_000))
+            .unwrap();
+        assert_eq!(agent.name.as_deref(), Some("fixer"));
+        assert_eq!(agent.pane_id, "w1:p2");
+        let req = &fake.requests()[0];
+        assert_eq!(req["method"], "agent.start");
+        assert_eq!(
+            req["params"],
+            json!({"name": "fixer", "kind": "claude", "pane_id": "w1:p2", "args": [], "timeout_ms": 60000})
+        );
+    }
+
+    #[test]
+    fn a_prompt_can_wait_for_the_agent_to_settle() {
+        let reply = format!(
+            "{{\"id\":\"x\",\"result\":{{\"type\":\"agent_prompted\",\"agent\":{AGENT}}}}}\n"
+        );
+        let (c, fake) = client(&[&reply, &reply]);
+        c.prompt_agent("fixer", "Fix the build", None).unwrap();
+        c.prompt_agent("fixer", "Again", Some(120_000)).unwrap();
+        let requests = fake.requests();
+        assert_eq!(requests[0]["method"], "agent.prompt");
+        assert_eq!(
+            requests[0]["params"],
+            json!({"target": "fixer", "text": "Fix the build"})
+        );
+        assert_eq!(
+            requests[1]["params"],
+            json!({"target": "fixer", "text": "Again", "wait": {"timeout_ms": 120000}})
+        );
+    }
+
+    #[test]
+    fn a_wait_names_the_states_and_returns_the_event() {
+        let reply = "{\"id\":\"x\",\"result\":{\"type\":\"wait_matched\",\"event\":{\"event\":\"pane.agent_status_changed\",\"data\":{\"agent_status\":\"done\"}}}}\n";
+        let (c, fake) = client(&[reply]);
+        let event = c
+            .wait_agent(
+                "fixer",
+                &[AgentStatus::Idle, AgentStatus::Done],
+                Some(5_000),
+            )
+            .unwrap();
+        assert_eq!(event["data"]["agent_status"], "done");
+        assert_eq!(
+            fake.requests()[0]["params"],
+            json!({"target": "fixer", "until": ["idle", "done"], "timeout_ms": 5000})
+        );
+    }
+
+    #[test]
+    fn a_read_returns_the_text_unwrapped() {
+        let reply = "{\"id\":\"x\",\"result\":{\"type\":\"pane_read\",\"read\":{\"pane_id\":\"w1:p2\",\"workspace_id\":\"w1\",\"tab_id\":\"w1:t1\",\"source\":\"recent_unwrapped\",\"format\":\"text\",\"text\":\"All green.\",\"revision\":4,\"truncated\":false}}}\n";
+        let (c, fake) = client(&[reply]);
+        let read = c.read_agent("fixer", Some(120)).unwrap();
+        assert_eq!(read.text, "All green.");
+        assert!(!read.truncated);
+        assert_eq!(
+            fake.requests()[0]["params"],
+            json!({"target": "fixer", "source": "recent_unwrapped", "lines": 120})
+        );
+    }
+
+    #[test]
+    fn a_worktree_is_created_with_its_first_pane() {
+        let reply = "{\"id\":\"x\",\"result\":{\"type\":\"worktree_created\",\"worktree\":{\"path\":\"/home/dev/.herdr/worktrees/app/brave-otter\",\"branch\":\"worktree/brave-otter\",\"is_bare\":false,\"is_detached\":false,\"is_prunable\":false,\"is_linked_worktree\":true,\"label\":\"brave-otter\"},\"workspace\":{\"workspace_id\":\"w2\"},\"tab\":{},\"root_pane\":{\"pane_id\":\"w2:p1\"}}}\n";
+        let (c, fake) = client(&[reply]);
+        let made = c.create_worktree("/home/dev/app", Some("main")).unwrap();
+        assert_eq!(made.path, "/home/dev/.herdr/worktrees/app/brave-otter");
+        assert_eq!(made.branch.as_deref(), Some("worktree/brave-otter"));
+        assert_eq!(made.pane_id, "w2:p1");
+        assert_eq!(
+            fake.requests()[0]["params"],
+            json!({"cwd": "/home/dev/app", "base": "main", "focus": false})
+        );
+    }
+
+    #[test]
+    fn a_refused_prompt_keeps_its_code() {
+        let (c, _) = client(&[
+            "{\"id\":\"x\",\"error\":{\"code\":\"agent_blocked\",\"message\":\"waiting for approval\"}}\n",
+        ]);
+        let err = c.prompt_agent("fixer", "go", None).unwrap_err();
+        assert!(
+            matches!(&err, Error::Api { code, .. } if code == "agent_blocked"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn an_agent_is_looked_up_by_its_pane() {
+        let reply =
+            format!("{{\"id\":\"x\",\"result\":{{\"type\":\"agent_info\",\"agent\":{AGENT}}}}}\n");
+        let (c, fake) = client(&[&reply]);
+        let agent = c.get_agent("w1:p2").unwrap().expect("an agent is there");
+        assert_eq!(agent.name.as_deref(), Some("fixer"));
+        assert_eq!(fake.requests()[0]["method"], "agent.get");
+        assert_eq!(fake.requests()[0]["params"], json!({"target": "w1:p2"}));
+    }
+
+    #[test]
+    fn a_pane_with_no_agent_is_none_and_other_errors_stay_errors() {
+        let (c, _) = client(&[
+            "{\"id\":\"x\",\"error\":{\"code\":\"agent_not_found\",\"message\":\"no agent\"}}\n",
+            "{\"id\":\"x\",\"error\":{\"code\":\"pane_not_found\",\"message\":\"gone\"}}\n",
+            "{\"id\":\"x\",\"error\":{\"code\":\"internal\",\"message\":\"boom\"}}\n",
+        ]);
+        assert_eq!(c.get_agent("w1:p2").unwrap(), None);
+        assert_eq!(
+            c.get_agent("w1:p9").unwrap(),
+            None,
+            "a closed pane holds no agent"
+        );
+        assert!(matches!(c.get_agent("w1:p2"), Err(Error::Api { .. })));
     }
 }

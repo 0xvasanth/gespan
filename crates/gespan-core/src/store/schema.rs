@@ -140,31 +140,6 @@ pub(crate) struct PilotBlock {
     is_draft: bool,
 }
 
-#[derive(Debug, toasty::Model)]
-#[table = "orchestration_runs"]
-pub(crate) struct OrchestrationRun {
-    #[key]
-    lead_id: String,
-    state: String,
-}
-
-#[derive(Debug, toasty::Model)]
-#[table = "orchestration_sidebar"]
-pub(crate) struct OrchestrationSidebar {
-    #[key]
-    lead_id: String,
-    summary: String,
-}
-
-/// A session an orchestration lead started; the sidebar lists it under the lead.
-#[derive(Debug, toasty::Model)]
-#[table = "orchestration_workers"]
-pub(crate) struct OrchestrationWorker {
-    #[key]
-    session_id: String,
-    lead_id: String,
-}
-
 /// One native setting in `gespan.db.gpui.sqlite3`, the Settings database.
 #[derive(Debug, toasty::Model)]
 #[table = "settings"]

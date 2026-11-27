@@ -17,7 +17,7 @@ pub(super) struct BackgroundTasks {
 }
 
 impl Conversation {
-    pub(super) fn set_background(&mut self, tasks: Vec<BackgroundTask>, cx: &mut Context<Self>) {
+    pub(crate) fn set_background(&mut self, tasks: Vec<BackgroundTask>, cx: &mut Context<Self>) {
         let animate = !cx.reduce_motion();
         for task in &tasks {
             if !self.background.tasks.iter().any(|old| old.id == task.id) {
@@ -28,12 +28,22 @@ impl Conversation {
         }
         self.background.tasks = tasks;
         self.close_empty_watch_list();
+        if self.settings.pilot.is_some() {
+            // A pending job keeps the Pilot turn that started it live.
+            let tasks = self.background.tasks.clone();
+            self.transcript
+                .update(cx, |t, cx| t.set_background(tasks, cx));
+        }
         cx.notify();
     }
 
-    pub(super) fn clear_background(&mut self) {
+    pub(super) fn clear_background(&mut self, cx: &mut Context<Self>) {
         self.background.tasks.clear();
         self.close_empty_watch_list();
+        if self.settings.pilot.is_some() {
+            self.transcript
+                .update(cx, |t, cx| t.set_background(Vec::new(), cx));
+        }
     }
 
     pub(super) fn background_shelf(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {

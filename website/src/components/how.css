@@ -1,0 +1,55 @@
+/* How it works: steps scroll on the left, the picture stays on the right. */
+.hw{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:56px;align-items:start}
+.hw-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+/* Each step owns most of a screen of scroll, so the picture has time to show it. */
+.hw-step{min-height:62vh;display:flex;flex-direction:column;justify-content:center;gap:14px;opacity:.32;transition:opacity .35s}
+.hw-step.on{opacity:1}
+.hw-step .w-lead{max-width:440px}
+.hw-inline{display:none}
+.hw-sticky{position:sticky;top:calc(50vh - 200px)}
+.hw-panel{min-height:400px;padding:20px;border-radius:22px;display:flex;flex-direction:column;gap:18px;box-sizing:border-box}
+.hw-panel-head{display:flex;max-width:100%;overflow-x:auto;gap:4px;padding:4px;border-radius:999px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.07);align-self:flex-start}
+.hw-panel-head span{height:28px;padding:0 12px;border-radius:999px;display:inline-flex;align-items:center;font-size:12.5px;color:#8a8a8a;transition:background .3s,color .3s}
+.hw-panel-head span.on{color:#ebebeb;background:rgba(255,255,255,.1)}
+.hw-panel-body{flex:1;padding:16px;border-radius:14px;background:rgba(0,0,0,.3);border:1px solid rgba(255,255,255,.07)}
+
+/* The pictures. */
+.hw-stack{display:flex;flex-direction:column;gap:12px}
+.hw-row{display:flex;align-items:center;gap:8px;font-size:13.5px;color:#d6d6d6;flex-wrap:wrap}
+.hw-row b{color:#ebebeb;font-weight:600}
+.hw-dim{color:#8a8a8a;font-size:12.5px}
+.hw-chip{width:16px;height:16px;border-radius:5px;flex:none}
+.hw-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.hw-col{display:flex;flex-direction:column;gap:8px;min-width:0}
+.hw-col-head{display:flex;justify-content:space-between;font-size:12px;color:#a3a3a3;padding:0 2px}
+.hw-card{padding:10px;border-radius:10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.hw-card.run{border-color:rgba(69,155,247,.35)}
+.hw-card.ok{border-color:rgba(110,231,183,.3)}
+.hw-card-title{font-size:12.5px;font-weight:600;color:#ebebeb;line-height:1.35}
+.hw-log{padding:12px;border-radius:10px;background:#0c0c0e;border:1px solid rgba(255,255,255,.07);font-family:var(--mono);font-size:12px;line-height:22px;color:#cfcfcf}
+.hw-ok{color:#6ee7b7}
+.hw-run{color:#8cc3ff}
+.hw-bars{display:flex;align-items:flex-end;gap:8px;height:72px;padding:8px 0}
+.hw-bars span{flex:1;border-radius:4px;background:rgba(110,231,183,.7)}
+.hw-bars span.x{background:rgba(253,164,175,.85)}
+.hw-report{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);font-size:13px;color:#d6d6d6}
+.hw-ask{padding:12px;border-radius:10px;background:rgba(232,197,71,.08);border:1px solid rgba(232,197,71,.24);font-size:13px;color:#f5dc84}
+
+/* Narrow screens: no sticky picture; each step carries its own. */
+@container (max-width:900px){
+  .hw{grid-template-columns:minmax(0,1fr);gap:0}
+  .hw-sticky{display:none}
+  .hw-steps{gap:36px}
+  .hw-step{min-height:0;opacity:1}
+  .hw-inline{display:block;padding:14px;border-radius:18px;margin-top:6px}
+}
+@container (max-width:520px){.hw-board{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){.hw-step,.hw-panel-head span{transition:none}}
+/* A screenshot as a picture: it fills the panel, with a smaller corner. */
+.hw-panel-body > img,.hw-inline > img{display:block;width:100%;height:auto;border-radius:10px;box-shadow:none;max-width:none}
+/* Wide: the picture takes most of the row, and a screenshot fills the panel. */
+.hw.wide{grid-template-columns:minmax(0,.62fr) minmax(0,1.38fr);gap:40px}
+.hw.wide .hw-panel{min-height:0;padding:14px}
+.hw.wide .hw-panel-body{padding:0;background:none;border:0}
+.hw.wide .hw-step .w-h3{font-size:24px}
+@container (max-width:900px){.hw.wide{grid-template-columns:minmax(0,1fr);gap:0}}

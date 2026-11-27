@@ -77,10 +77,12 @@ fn home_is_the_first_page_icon_and_opens_the_page(cx: &mut TestAppContext) {
     };
     let home = bounds(visual, "sidebar-navigation-Home");
     let tasks = bounds(visual, "sidebar-navigation-My tasks");
-    // Under the project switcher, Home leads the icon row.
-    assert!(bounds(visual, "sidebar-project-button").bottom() <= home.top());
-    assert_eq!(home.top(), tasks.top());
-    assert!(home.right() <= tasks.left(), "Home comes before My tasks");
+    // In the Everywhere card, above the project card, Home leads the pages
+    // as a labelled row, under Search.
+    assert!(home.bottom() <= bounds(visual, "sidebar-project-button").top());
+    assert!(bounds(visual, "sidebar-navigation-Search").bottom() <= home.top());
+    assert_eq!(home.left(), tasks.left());
+    assert!(home.bottom() <= tasks.top(), "Home comes before My tasks");
     click(visual, "sidebar-navigation-Home");
     assert_eq!(view(window, visual), Some(AppView::Home));
     assert!(drawn(visual, "home-greeting"));
@@ -99,7 +101,18 @@ fn each_tile_opens_its_page(cx: &mut TestAppContext) {
 
     open_home(window, visual);
     click(visual, "home-tile-runs");
-    assert_eq!(view(window, visual), Some(AppView::Runs));
+    assert_eq!(view(window, visual), Some(AppView::Automations));
+    let on_all_runs = window
+        .read_with(visual, |shell, cx| {
+            shell
+                .automations
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .all_runs_chosen()
+        })
+        .unwrap();
+    assert!(on_all_runs, "the tile lands on All runs");
 
     open_home(window, visual);
     click(visual, "home-tile-inbox");
@@ -123,7 +136,7 @@ fn the_panel_links_open_the_same_pages(cx: &mut TestAppContext) {
     assert_eq!(view(window, visual), Some(AppView::MyTasks));
     open_home(window, visual);
     click(visual, "home-open-runs");
-    assert_eq!(view(window, visual), Some(AppView::Runs));
+    assert_eq!(view(window, visual), Some(AppView::Automations));
     open_home(window, visual);
     click(visual, "home-all-agents");
     assert!(drawn(visual, "agents-panel"));

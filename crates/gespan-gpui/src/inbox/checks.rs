@@ -244,6 +244,19 @@ impl Inbox {
         cx.notify();
     }
 
+    /// Opens the first failed job, with its log excerpt, unless one is open.
+    pub(super) fn open_first_failure(&mut self, cx: &mut Context<Self>) {
+        let Some(checks) = &self.checks else {
+            return;
+        };
+        if !self.ci.expanded.is_empty() {
+            return;
+        }
+        if let Some(check) = checks.checks.iter().find(|check| is_failed(check)).cloned() {
+            self.toggle_details(&check, cx);
+        }
+    }
+
     fn toggle_details(&mut self, check: &Check, cx: &mut Context<Self>) {
         let key = CheckRef::of(check);
         if self.ci.expanded.remove(&key) {
@@ -608,14 +621,30 @@ impl Inbox {
                     .flex()
                     .items_center()
                     .gap(px(8.))
+                    .when(!reruns.is_empty(), |d| {
+                        d.child(
+                            selectable_action(
+                                "inbox-checks-rerun",
+                                if self.ci.rerunning {
+                                    "Re-running…"
+                                } else {
+                                    "Re-run failed"
+                                },
+                                "Re-run failed jobs",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.rerun_checks(cx))),
+                        )
+                    })
                     .when(counts.fail > 0, |d| {
                         d.child(
                             selectable_action(
                                 "inbox-fix-checks",
                                 fix_label(self.ci.selection.len()),
-                                "Fix failed checks with AI",
+                                "Fix failed checks with an agent",
                             )
-                            .bg(content(0.1))
+                            .bg(content(0.94))
+                            .text_color(crate::theme::background_base())
+                            .font_weight(FontWeight::SEMIBOLD)
                             .when(blocked, |d| d.opacity(0.5))
                             .child(icon("sparkles", 14.))
                             .on_click(cx.listener(
@@ -625,20 +654,6 @@ impl Inbox {
                                     }
                                 },
                             )),
-                        )
-                    })
-                    .when(!reruns.is_empty(), |d| {
-                        d.child(
-                            selectable_action(
-                                "inbox-checks-rerun",
-                                if self.ci.rerunning {
-                                    "Rerunning…"
-                                } else {
-                                    "Rerun failed"
-                                },
-                                "Rerun failed jobs",
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| this.rerun_checks(cx))),
                         )
                     })
                     .child(
@@ -777,7 +792,7 @@ impl Inbox {
                                     .text_size(px(13.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(content(1.))
-                                    .child("Fix with AI"),
+                                    .child("Fix with an agent"),
                             )
                             .child(
                                 div()
@@ -1598,7 +1613,7 @@ mod tests {
         let label = window
             .update(visual, |inbox, _, _| fix_label(inbox.ci.selection.len()))
             .unwrap();
-        assert_eq!(label, "Fix 1 selected");
+        assert_eq!(label, "Fix 1 with an agent");
 
         assert!(!shown(visual, "inbox-repair-form"));
         click(visual, "inbox-fix-checks");

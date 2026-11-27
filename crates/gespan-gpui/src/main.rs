@@ -27,6 +27,8 @@ mod decision_log;
 #[cfg(debug_assertions)]
 mod dev_reload;
 mod diff_view;
+#[cfg(test)]
+mod e2e;
 mod editor_analysis;
 mod editor_scrollbar;
 mod editor_syntax;
@@ -96,6 +98,7 @@ mod right_panel;
 mod runs;
 mod runtime;
 mod search;
+mod selectable;
 mod send_morph;
 mod session_mark;
 mod session_review;
@@ -112,6 +115,7 @@ mod terminal;
 mod theme;
 mod ticket_chip;
 mod tickets;
+mod trace;
 #[cfg(target_os = "macos")]
 mod traffic_lights;
 mod transcript;

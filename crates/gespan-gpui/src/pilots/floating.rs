@@ -98,7 +98,7 @@ impl Floating {
                 let state = owner
                     .chats
                     .get(&m.id)
-                    .map(|c| c.read(cx).pilot_status().to_owned())
+                    .map(|c| c.read(cx).pilot_status(cx).to_owned())
                     .unwrap_or_else(|| "idle".into());
                 (m.id.clone(), state)
             })
@@ -344,7 +344,7 @@ impl gpui::Render for Floating {
         let failure = owner.error.clone();
         let (state, busy) = chat.as_ref().map_or(("idle".to_owned(), false), |c| {
             let c = c.read(cx);
-            (c.pilot_status().to_owned(), c.busy)
+            (c.pilot_status(cx).to_owned(), c.busy)
         });
         let light = is_light();
         div()

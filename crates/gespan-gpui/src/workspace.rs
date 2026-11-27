@@ -15,19 +15,17 @@ pub(crate) enum AppView {
     Automations,
     Flows,
     Board,
-    Runs,
 }
 impl AppView {
     pub fn label(self) -> &'static str {
         match self {
             Self::Home => "Home",
             Self::MyTasks => "My tasks",
-            Self::Inbox => "Inbox",
+            Self::Inbox => "Git",
             Self::Notes => "Notes",
             Self::Automations => "Automations",
             Self::Flows => "Flows",
             Self::Board => "Board",
-            Self::Runs => "Runs",
         }
     }
     pub fn icon(self) -> &'static str {
@@ -39,7 +37,6 @@ impl AppView {
             Self::Automations => "zap",
             Self::Flows => "git-merge",
             Self::Board => "kanban",
-            Self::Runs => "clock",
         }
     }
 }
@@ -67,12 +64,12 @@ impl TitleTab {
 
 impl TitleTab {
     /// Older builds reject an unknown `AppView` and with it the whole saved
-    /// workspace, so Flows, Runs, My tasks and Home tabs live only while
+    /// workspace, so Flows, My tasks and Home tabs live only while
     /// the app runs.
     fn saved(&self) -> bool {
         !matches!(
             self,
-            Self::App(AppView::Flows | AppView::Runs | AppView::MyTasks | AppView::Home)
+            Self::App(AppView::Flows | AppView::MyTasks | AppView::Home)
         )
     }
 }
@@ -661,6 +658,7 @@ impl Workspace {
         for appearance in state.project_appearance.values_mut() {
             appearance.normalize();
         }
+        state.assign_project_colors();
         let mut known: HashSet<_> = sessions.iter().map(|s| s.0).collect();
         state.review_owners.retain(|id, owner| {
             *id < 0
@@ -820,6 +818,13 @@ impl Workspace {
         if !self.projects.iter().any(|p| p == path) {
             self.projects.push(path.into());
         }
+        self.assign_project_colors();
+    }
+    /// Saves a distinct colour on each project that has none, so its tabs,
+    /// switcher icon and sidebar card match and two projects only share a
+    /// colour once all eight are used. Returns whether any project got one.
+    pub fn assign_project_colors(&mut self) -> bool {
+        gespan_core::project_appearance::assign_colors(&mut self.project_appearance, &self.projects)
     }
     /// Moves a project to `to` in the saved order. Returns whether it moved.
     pub fn move_project(&mut self, path: &str, to: usize) -> bool {
@@ -1896,62 +1901,31 @@ mod tests {
     }
 
     #[test]
-    fn a_saved_runs_tab_does_not_cost_an_older_build_its_workspace() {
-        let mut state = Workspace {
+    fn a_runs_tab_from_before_runs_joined_automations_is_dropped_on_restore() {
+        // Runs is now a pane of Automations, so a "Runs" tab some build wrote
+        // no longer parses. It goes on its own; everything else is kept.
+        let mut state = serde_json::to_value(Workspace {
             project: "/work/gespan".into(),
             ..Default::default()
-        };
-        state.open(7);
-        state.title_order.push(TitleTab::App(AppView::Automations));
-        state.title_order.push(TitleTab::App(AppView::Runs));
-        state.title_order.push(TitleTab::App(AppView::Flows));
-        state.pinned_tabs.push(TitleTab::App(AppView::Runs));
-        state.pinned_tabs.push(TitleTab::App(AppView::Flows));
-        state.pinned_tabs.push(TitleTab::App(AppView::Automations));
-        state
-            .scope_focus
-            .insert("/work/gespan".into(), TitleTab::App(AppView::Runs));
-        state
-            .scope_focus
-            .insert("/work/other".into(), TitleTab::Session(7));
-        let saved = serde_json::to_string(&state).unwrap();
-
-        // A build that knows neither Runs nor Flows still reads the file.
-        let older: BeforeFlows = serde_json::from_str(&saved).expect("older build parses it");
-        assert_eq!(older.project, "/work/gespan");
-        assert_eq!(older.tabs, vec![7]);
-        assert_eq!(
-            older.title_order,
-            vec![
-                BeforeFlowsTab::Session(7),
-                BeforeFlowsTab::App(BeforeFlowsView::Automations)
-            ]
+        })
+        .unwrap();
+        state["tabs"] = serde_json::json!([7]);
+        state["title_order"] =
+            serde_json::json!([{"Session": 7}, {"App": "Runs"}, {"App": "Automations"}]);
+        state["pinned_tabs"] = serde_json::json!([{"App": "Runs"}, {"App": "Automations"}]);
+        let restored = Workspace::restore(
+            Some(&state.to_string()),
+            &[(7, "/work/gespan".into())],
+            "/work",
         );
-        assert_eq!(
-            older.pinned_tabs,
-            vec![BeforeFlowsTab::App(BeforeFlowsView::Automations)]
-        );
-        assert_eq!(older.scope_focus.len(), 1);
-        assert_eq!(older.scope_focus["/work/other"], BeforeFlowsTab::Session(7));
-
-        // This build restores everything except the Runs tab.
-        let restored = Workspace::restore(Some(&saved), &[(7, "/work/gespan".into())], "/work");
-        assert_eq!(restored.project, "/work/gespan");
         assert_eq!(restored.tabs, vec![7]);
-        assert!(
-            restored
-                .title_order
-                .contains(&TitleTab::App(AppView::Automations))
-        );
-        assert!(!restored.title_order.contains(&TitleTab::App(AppView::Runs)));
-        assert!(!restored.pinned_tabs.contains(&TitleTab::App(AppView::Runs)));
-        assert!(!restored.scope_focus.contains_key("/work/gespan"));
-        // The in-memory workspace keeps its open Runs tab until restart.
-        assert!(state.title_order.contains(&TitleTab::App(AppView::Runs)));
-        assert!(state.pinned_tabs.contains(&TitleTab::App(AppView::Runs)));
         assert_eq!(
-            state.scope_focus["/work/gespan"],
-            TitleTab::App(AppView::Runs)
+            restored.title_order,
+            vec![TitleTab::Session(7), TitleTab::App(AppView::Automations)]
+        );
+        assert_eq!(
+            restored.pinned_tabs,
+            vec![TitleTab::App(AppView::Automations)]
         );
     }
 

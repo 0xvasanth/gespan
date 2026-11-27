@@ -275,6 +275,11 @@ const QUERIES: &[(&str, usize, &str)] = &[
         "a conditional upsert and a counted update",
     ),
     (
+        "gespan-core/src/store/orchestrator.rs",
+        17,
+        "trigger bodies of constraints Toasty cannot express",
+    ),
+    (
         "gespan-core/src/store/pilots.rs",
         3,
         "json1 reads of Pilot blocks",

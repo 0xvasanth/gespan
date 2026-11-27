@@ -1,7 +1,7 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from "react";
 import routes from "./routes.json";
 
-export type Page = "home" | "features" | "pilots" | "download" | "changelog" | "docs";
+export type Page = "home" | "features" | "pilots" | "cloud" | "download" | "changelog" | "docs";
 export interface Route {
   path: string;
   page: Page;
@@ -9,11 +9,25 @@ export interface Route {
 }
 export const ROUTES = routes as Route[];
 
-/** The route for a pathname, ignoring a trailing slash or index.html; null when no page matches. */
-export function matchRoute(pathname: string): Route | null {
+/** Old addresses and where they live now. public/_redirects does the same on gespan.dev. */
+export const REDIRECTS: Record<string, string> = { "/hub": "/cloud" };
+
+/** The pathname with a trailing slash or index.html dropped. */
+function normalize(pathname: string): string {
   let path = pathname.replace(/\/index\.html$/, "/");
   if (path.length > 1) path = path.replace(/\/+$/, "");
-  return ROUTES.find((route) => route.path === (path || "/")) ?? null;
+  return path || "/";
+}
+
+/** Where an old address has moved to, or null when it hasn't. */
+export function redirectFor(pathname: string): string | null {
+  return REDIRECTS[normalize(pathname)] ?? null;
+}
+
+/** The route for a pathname, ignoring a trailing slash or index.html; null when no page matches. */
+export function matchRoute(pathname: string): Route | null {
+  const path = normalize(pathname);
+  return ROUTES.find((route) => route.path === (REDIRECTS[path] ?? path)) ?? null;
 }
 
 const CHANGE = "gespan:navigate";

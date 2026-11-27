@@ -1,0 +1,30 @@
+/* The laptop under the Home hero. The stage is taller than the screen so the
+   laptop stays in view (sticky) while scrolling opens it and lifts the screen. */
+.mb-stage{position:relative;height:170vh;margin-top:8px}
+.mb-sticky{position:sticky;top:96px;display:flex;flex-direction:column;align-items:center;perspective:1600px;perspective-origin:50% 100%}
+.mb-screen{width:min(100%,960px);transform-origin:50% 100%;will-change:transform}
+.mb-bezel{position:relative;padding:14px 14px 18px;border-radius:24px 24px 10px 10px;background:linear-gradient(#141418,#0b0b0d);border:1px solid rgba(255,255,255,.13);box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 40px 120px rgba(0,0,0,.65),0 0 80px rgba(143,100,246,.18)}
+.mb-camera{position:absolute;top:5px;left:50%;width:5px;height:5px;margin-left:-2.5px;border-radius:50%;background:#2a2a30;box-shadow:0 0 0 1px rgba(255,255,255,.06)}
+/* The app screen fills the lid edge to edge. */
+.mb-bezel .w-shot{max-width:none;border-radius:8px;border:0;box-shadow:none}
+.mb-base{position:relative;width:min(112%,1080px);height:18px;margin-top:-1px;border-radius:2px 2px 20px 20px;background:linear-gradient(#3b3b42,#1d1d22 70%,#141417);box-shadow:0 1px 0 rgba(255,255,255,.18) inset,0 30px 60px rgba(0,0,0,.55)}
+.mb-notch{position:absolute;top:0;left:50%;width:16%;height:6px;transform:translateX(-50%);border-radius:0 0 8px 8px;background:#26262b}
+/* Reduced motion, and phones, where there's no room to scroll it open: the
+   laptop simply sits open below the hero copy. */
+.mb-stage.still{height:auto}
+.mb-stage.still .mb-sticky{position:static}
+@container (max-width:760px){
+  .mb-stage{height:auto}
+  .mb-sticky{position:static}
+  .mb-bezel{padding:7px 7px 10px;border-radius:14px 14px 6px 6px}
+  .mb-base{height:10px}
+}
+/* A screen drawn in page markup, clipped to the lid like a shot. */
+.mb-app{border-radius:8px;overflow:hidden}
+/* Under a page's hero copy. The lid starts tilted back, which leaves room
+   above it, so the stage tucks up under the copy; it takes no clicks, so the
+   buttons it overlaps stay usable. */
+.w-wrap.mb-under-hero{margin-top:-110px;padding-bottom:48px}
+.mb-under-hero,.mb-under-hero .mb-stage,.mb-under-hero .mb-sticky{pointer-events:none}
+@media (prefers-reduced-motion:reduce){.w-wrap.mb-under-hero{margin-top:48px}}
+@container (max-width:760px){.w-wrap.mb-under-hero{margin-top:24px;padding-bottom:24px}}

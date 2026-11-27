@@ -4,13 +4,14 @@ mod actions;
 mod agents_panel;
 #[cfg(test)]
 mod agents_panel_tests;
-mod app_commands;
 mod app_views;
 mod automation_runs;
 #[cfg(test)]
 mod automation_runs_tests;
 #[cfg(test)]
 mod browser_tabs_tests;
+#[cfg(test)]
+mod content_selection_tests;
 mod continue_outside;
 mod file_panes;
 mod first_run;
@@ -32,6 +33,7 @@ mod import_sessions;
 mod in_flight;
 mod inbox_ask;
 mod inbox_automations;
+mod launch_placement;
 mod layout;
 mod menu_bar;
 mod mobile_host;
@@ -44,6 +46,13 @@ mod new_worktree_chat_tests;
 mod notifications;
 mod open_in_editor;
 mod orchestration;
+mod orchestrator;
+mod orchestrator_mail;
+pub(crate) mod orchestrator_remote;
+#[cfg(test)]
+mod orchestrator_tests;
+mod orchestrator_tree;
+pub(crate) use orchestrator_tree::effective_access;
 mod picker_preferences;
 pub(crate) mod pilot_flows;
 mod pilot_panes;
@@ -57,6 +66,8 @@ mod quick_composer;
 mod quick_open;
 mod rail;
 pub(crate) use rail::project_tile;
+#[cfg(test)]
+mod e2e_access;
 mod rail_plan;
 mod rails;
 mod remote_projects;
@@ -83,6 +94,9 @@ mod sidebar_list;
 mod sidebar_peek;
 #[cfg(test)]
 mod surface_tests;
+mod tab_colors;
+#[cfg(test)]
+mod tab_colors_tests;
 mod tab_groups;
 #[cfg(test)]
 mod tab_groups_tests;
@@ -731,17 +745,47 @@ pub(crate) struct Shell {
     quick_open: Option<quick_open::Open>,
     report: report::ReportState,
     image_lightbox: Option<(Entity<crate::image_lightbox::ImageLightbox>, Subscription)>,
-    app_bridge: Option<gespan_core::pilot::bridge::Server>,
+    /// Where agents' `sessions` tools reach this window.
+    orchestrator_bridge: Option<gespan_core::orchestrator::bridge::Server>,
+    /// What git and the transcripts say about each session, for rosters.
+    session_facts: HashMap<i64, orchestrator::Facts>,
+    /// Sessions whose facts are being read.
+    facts_pending: HashSet<i64>,
+    /// Which session started which (`sessions_start`), loaded at start.
+    session_tree: gespan_core::orchestrator::tree::Tree,
+    /// Children started but whose first turn hasn't ended: live already.
+    launching: HashSet<i64>,
+    /// Each caller's `sessions_start` calls still being answered.
+    starting: HashMap<i64, usize>,
+    /// The turn ends each session's parent was already told about.
+    seen_turn_ends: HashMap<i64, u64>,
+    /// Children whose wait on the user was already reported.
+    waiting_reported: HashSet<i64>,
+    /// Sessions whose mail is being delivered.
+    mail_flushing: HashSet<i64>,
+    /// Sessions stopped by `sessions_cancel` or the sidebar: they take no
+    /// mail until the user sends them something.
+    cancelled: HashSet<i64>,
+    /// How many hops from a user's own turn each session's current turn is.
+    turn_hops: HashMap<i64, u8>,
+    /// The typed turns each session had when last looked at.
+    seen_typed: HashMap<i64, u64>,
+    /// Mail held for each session until the user lets it through.
+    held_mail: HashMap<i64, usize>,
+    /// `sessions_wait` calls still waiting.
+    mail_waiters: Vec<orchestrator_mail::Waiter>,
+    /// How a herdr machine is reached for `sessions_*` calls.
+    remote_for: orchestrator_remote::RemoteFor,
+    /// Remote agents started from here, by their id.
+    remote_started: HashMap<i64, orchestrator_remote::Peer>,
     mobile: mobile_host::Mobile,
-    app_results: HashMap<(i64, String), (String, Result<serde_json::Value, String>)>,
-    app_pending: HashSet<(i64, String)>,
     orchestrations: HashMap<i64, orchestration::Live>,
     control_bridge: Option<gespan_core::pilot::bridge::Server>,
     /// Each lead's last orchestration, whose agents hang under it in the sidebar.
     orchestration_summaries: HashMap<i64, gespan_core::orchestration::Summary>,
-    /// Sessions an /operator thread started, by the session that started them.
+    /// Sessions another session started (`sessions_start`, or a desktop
+    /// app launch), by the session that started them.
     started_by: HashMap<i64, i64>,
-    /// The sidebar rails under orchestrators and /operator threads.
     usage_footer: Entity<UsageFooter>,
     /// The footer's high-usage chip and its running-work dialog.
     resources: Entity<ResourceMonitor>,
@@ -871,7 +915,6 @@ pub(crate) struct Shell {
     automations: Option<Entity<crate::automations::Automations>>,
     flows: Option<Entity<crate::flows::FlowsView>>,
     board: Option<Entity<crate::board::BoardView>>,
-    runs: Option<Entity<crate::runs::Runs>>,
     home: Option<Entity<crate::home::Home>>,
     my_tasks: Option<Entity<crate::my_tasks::MyTasks>>,
     /// When each open task was first seen, by key, in milliseconds.
@@ -914,6 +957,10 @@ pub(crate) struct Shell {
     /// The collapsed project group shown open while the pointer is on it:
     /// its project folder.
     strip_peek: Option<String>,
+    /// The strip layout a test drives instead of the app's ungrouped one,
+    /// so the grouped and this-project strips stay covered.
+    #[cfg(test)]
+    tab_layout_override: Option<crate::settings::TabLayout>,
     /// A chip the pointer rests on, peeking once its wait runs out.
     peek_pending: Option<(String, gpui::Task<()>)>,
     /// The strip's direct children as last drawn: loose tabs and group boxes.
@@ -959,6 +1006,8 @@ pub(crate) struct Shell {
     backdrop: Option<(i64, bool)>,
     background_card: AnchorSlot,
     project_anchor: AnchorSlot,
+    /// The switcher's "…" button, which opens the project menu.
+    project_actions_anchor: AnchorSlot,
     history: VisitHistory,
     /// User navigation invalidates pending requests that would otherwise
     /// focus a new session in a tab or project the user has already left.
@@ -967,7 +1016,6 @@ pub(crate) struct Shell {
     new_tab_task: Option<gpui::Task<()>>,
     worktree_focus: HashMap<String, crate::worktree_switcher::WorktreeFocus>,
     session_worktrees: HashMap<i64, Option<String>>,
-    session_details: HashMap<i64, gespan_core::store::MobileSessionMetadata>,
     sidebar_hidden_sessions: HashSet<i64>,
     worktree_returns: HashMap<(String, String), i64>,
     tab_drag: Option<TabDrag>,
@@ -1236,10 +1284,23 @@ impl Shell {
             quick_open: None,
             report: Default::default(),
             image_lightbox: None,
-            app_bridge: None,
+            orchestrator_bridge: None,
+            session_facts: HashMap::new(),
+            facts_pending: HashSet::new(),
+            session_tree: sidebar_metadata.links.clone(),
+            launching: HashSet::new(),
+            starting: HashMap::new(),
+            seen_turn_ends: HashMap::new(),
+            waiting_reported: HashSet::new(),
+            mail_flushing: HashSet::new(),
+            cancelled: HashSet::new(),
+            turn_hops: HashMap::new(),
+            seen_typed: HashMap::new(),
+            held_mail: HashMap::new(),
+            mail_waiters: Vec::new(),
+            remote_for: orchestrator_remote::default_remote(),
+            remote_started: HashMap::new(),
             mobile: mobile_host::Mobile::default(),
-            app_results: HashMap::new(),
-            app_pending: HashSet::new(),
             orchestrations: HashMap::new(),
             control_bridge: None,
             orchestration_summaries: sidebar_metadata.orchestrations,
@@ -1337,7 +1398,6 @@ impl Shell {
             automations: None,
             flows: None,
             board: None,
-            runs: None,
             home: None,
             my_tasks: None,
             my_task_records: HashMap::new(),
@@ -1367,6 +1427,8 @@ impl Shell {
             pin_deck: Default::default(),
             pin_card_hover: None,
             strip_peek: None,
+            #[cfg(test)]
+            tab_layout_override: None,
             peek_pending: None,
             strip_children: Vec::new(),
             group_tab_bounds: Default::default(),
@@ -1397,13 +1459,13 @@ impl Shell {
             backdrop: None,
             background_card: AnchorSlot::default(),
             project_anchor: AnchorSlot::default(),
+            project_actions_anchor: AnchorSlot::default(),
             history: VisitHistory::default(),
             navigation_revision: 0,
             pending_project_blanks: HashSet::new(),
             new_tab_task: None,
             worktree_focus,
             session_worktrees,
-            session_details: sidebar_metadata.details,
             sidebar_hidden_sessions: sidebar_metadata.sidebar_hidden,
             worktree_returns: HashMap::new(),
             tab_drag: None,
@@ -1577,10 +1639,11 @@ impl Shell {
             // Its roster loaded with it: Pilot Flow events can be delivered.
             this.flush_pilot_flow_events(cx);
             this.bind_notices(cx);
-            this.init_app_bridge(cx);
         }
         // Every window hosts its own runs, so each has its own control bridge.
         this.init_control_bridge(cx);
+        this.init_orchestrator_bridge(cx);
+        this.resume_mail(cx);
         for summary in summaries {
             if this
                 .pilots
@@ -1778,15 +1841,13 @@ impl Shell {
             // the indexed working directory so those events cannot erase it.
             view.restore_worktree(worktree, None, cx);
             view.draft_hint = self.draft_sessions.contains(&id);
-            if let Some(bridge) = &self.app_bridge {
-                view.set_app_environment(bridge.environment(id));
-            }
             view.set_project_appearance(appearance, cx);
             view.transcript.update(cx, |transcript, cx| {
                 transcript.apply_preferences(&self.workspace.preferences, cx)
             });
         });
         self.attach_session(id, view, cx);
+        self.serve_sessions(id, cx);
     }
     /// Keeps a chat, and answers its events, in this window.
     fn attach_session(&mut self, id: i64, view: Entity<Conversation>, cx: &mut Context<Self>) {
@@ -1810,6 +1871,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let view = view.clone();
+        self.observations.push(cx.subscribe(
+            &view,
+            move |this, _, event: &crate::conversation::StopWatching, cx| {
+                this.stop_watching_child(id, event.0, cx)
+            },
+        ));
         self.observations
             .push(cx.subscribe(&view, move |this, _, _: &SessionChanged, cx| {
                 let Some(view) = this.sessions.get(&id) else {
@@ -2098,6 +2165,7 @@ impl Shell {
         let session = view.read(cx);
         let busy = session.responding();
         let focused = !self.app_view_open() && self.workspace.active == Some(id);
+        let mut finished = false;
         if busy {
             self.busy_sessions.insert(id);
             self.unseen_finished.remove(&id);
@@ -2106,8 +2174,11 @@ impl Shell {
             // only finishing its save, so it must not announce a completed turn.
             self.busy_sessions.remove(&id);
             self.unseen_finished.remove(&id);
-        } else if self.busy_sessions.remove(&id) && !focused && !session.summary.archived {
-            self.unseen_finished.insert(id);
+        } else if self.busy_sessions.remove(&id) {
+            if !focused && !session.summary.archived {
+                self.unseen_finished.insert(id);
+            }
+            finished = true;
         }
         if focused || session.summary.archived {
             self.unseen_finished.remove(&id);
@@ -2132,6 +2203,13 @@ impl Shell {
         let provider = session.summary.provider.clone();
         self.session_marks[&id].update(cx, |mark, cx| mark.set(&provider, state, cx));
         self.tab_marks[&id].update(cx, |mark, cx| mark.set(&provider, tab_state, cx));
+        if finished {
+            // The turn may have changed which files the session holds.
+            self.refresh_session_facts(id, cx);
+        }
+        // Its status is part of every sibling's roster.
+        self.push_rosters(cx);
+        self.orchestrator_session_changed(id, cx);
     }
     fn toggle_archive(&mut self, id: i64, cx: &mut Context<Self>) {
         if !self.archiving.insert(id) {
@@ -6088,7 +6166,7 @@ impl Shell {
         };
         match target {
             MenuTarget::InboxNav => (
-                "Inbox actions".into(),
+                "Git actions".into(),
                 self.inbox_nav_menu_items(cx),
                 272.,
                 MenuStyle::Explorer,
@@ -6831,7 +6909,7 @@ impl Shell {
                         .flex()
                         .flex_col()
                         .child(self.rail_top(cx))
-                        .child(self.virtual_sidebar(cx))
+                        .child(self.rail_project_card(cx))
                         .child(self.app_update_footer(cx))
                         .children(agents)
                         .child(self.sidebar_settings_row(cx)),
@@ -7602,14 +7680,17 @@ impl Shell {
                 crate::tab_motion::Slot::Live { .. } => None,
             })
             .collect();
-        // Tabs of groups other than the current project's, open while they
-        // peek or easing shut, take no share of the strip.
+        // Grouped, tabs of groups other than the current project's, open
+        // while they peek or easing shut, take no share of the strip. Flat,
+        // every tab shares it.
+        let grouped = self.tab_layout() == crate::settings::TabLayout::Grouped;
         let away: HashSet<TitleTab> = slots
             .iter()
             .map(|s| match s {
                 crate::tab_motion::Slot::Live { key, .. }
                 | crate::tab_motion::Slot::Closing { key, .. } => key,
             })
+            .filter(|_| grouped)
             .filter(|key| {
                 self.frame_project(&projects, key, cx)
                     .is_some_and(|project| {
@@ -7881,6 +7962,26 @@ impl Shell {
                     .into_iter()
                     .filter(|pane| self.session_summaries.contains_key(pane))
                     .any(|pane| self.session_metadata(pane, cx).has_saved_draft());
+                // Its project's icon in the project's colour leads the tab;
+                // the active or hovered one names the project too. Too narrow
+                // for both, the project's mark stands in for the tile.
+                let width = tab_width(&TitleTab::Session(id));
+                let narrow = width < NARROW_TAB;
+                let project = self.frame_project(&projects, &TitleTab::Session(id), cx);
+                let mark = project
+                    .as_deref()
+                    .map(|p| self.tab_project_mark(p, id.to_string()));
+                let name = project
+                    .as_deref()
+                    .filter(|_| {
+                        (active || hovered) && width >= tab_colors::TAB_PROJECT_NAME_MIN_WIDTH
+                    })
+                    .map(|p| self.tab_project_name(p, id.to_string()));
+                let lead = if narrow && mark.is_some() {
+                    tab_colors::TAB_PROJECT_MARK
+                } else {
+                    TAB_TILE.w
+                };
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -7908,11 +8009,7 @@ impl Shell {
                                 |d| d.pr_7(),
                             )
                             // Too narrow for the plate's padding: the mark sits centred.
-                            .when(tab_width(&TitleTab::Session(id)) < NARROW_TAB, |d| {
-                                d.px(px(
-                                    ((tab_width(&TitleTab::Session(id)) - TAB_TILE.w) / 2.).max(0.)
-                                ))
-                            })
+                            .when(narrow, |d| d.px(px(((width - lead) / 2.).max(0.))))
                             .gap(px(TAB_TILE_GAP))
                             .group_hover("title-tab", |s| s.bg(title_tab_fill(active, true)))
                             // Overlaid so the dashes take no room from the content.
@@ -7930,7 +8027,20 @@ impl Shell {
                                         .border_color(content(if active { 0.3 } else { 0.25 })),
                                 )
                             })
-                            .child(self.pane_tile_stack(&copy, leaving, shuffle))
+                            .map(|d| match mark {
+                                Some(mark) if narrow => d.child(mark),
+                                Some(mark) => d.child(
+                                    div()
+                                        .flex()
+                                        .flex_shrink_0()
+                                        .items_center()
+                                        .gap(px(tab_colors::TAB_PROJECT_GAP))
+                                        .child(mark)
+                                        .child(self.pane_tile_stack(&copy, leaving, shuffle)),
+                                ),
+                                None => d.child(self.pane_tile_stack(&copy, leaving, shuffle)),
+                            })
+                            .children(name)
                             .child(self.pane_headline(
                                 &copy,
                                 (leaving, dir, progress),
@@ -8067,10 +8177,14 @@ impl Shell {
                         element.into_any_element()
                     })
                 }
-                TitleTab::Pilot { id, .. } => {
+                TitleTab::Pilot { id, project, .. } => {
                     let manager = self.pilots.clone()?;
                     let w = tab_width(tab);
-                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, cx))?;
+                    let key = format!("pilot-{id}");
+                    let mark = Some(self.tab_project_mark(project, key.clone()));
+                    let name = (w >= tab_colors::TAB_PROJECT_NAME_MIN_WIDTH)
+                        .then(|| self.tab_project_name(project, key));
+                    let element = manager.update(cx, |m, cx| m.title_tab(id, w, mark, name, cx))?;
                     let drag_id = tab.clone();
                     let menu_id = id.clone();
                     let dragging = dragged.as_ref() == Some(tab);
@@ -10306,11 +10420,14 @@ mod tests {
                     path: concat!(env!("CARGO_MANIFEST_DIR"), "/assets/gespan.png").into(),
                     ..Default::default()
                 });
-                assert!(
-                    !shell
-                        .workspace
-                        .project_appearance
-                        .contains_key("/work/another-project")
+                // The other project holds only the colour it was given.
+                let other = &shell.workspace.project_appearance["/work/another-project"];
+                assert_eq!(
+                    *other,
+                    gespan_core::project_appearance::ProjectAppearance {
+                        color: other.color,
+                        ..Default::default()
+                    }
                 );
                 shell.open_menu(
                     MenuTarget::Project {
@@ -11196,15 +11313,13 @@ mod tests {
         let last = cx
             .debug_bounds(Box::leak(format!("title-tab-{last}").into_boxed_str()))
             .unwrap();
-        // The last tab sits inside its project's group, which ends one inset
-        // past it.
-        let group = cx.debug_bounds("tab-group-gespan").unwrap();
-        assert!(group.right() >= last.right());
+        // The strip is flat: no group box, the last tab ends the strip.
+        assert!(cx.debug_bounds("tab-group-gespan").is_none());
         // The strip's 2px gap and the button's 2px margin, as when it has room.
         assert!(
-            settled.left() - group.right() <= px(4.5),
+            settled.left() - last.right() <= px(4.5),
             "a full strip keeps the usual gap before the new-tab button: {:?}",
-            settled.left() - group.right()
+            settled.left() - last.right()
         );
         let (selected, other) = window
             .update(cx, |shell, _, cx| {
@@ -11691,6 +11806,7 @@ mod tests {
                 let clip = visual.debug_bounds("sidebar-frame").unwrap();
                 let content = visual.debug_bounds("sidebar-content").unwrap();
                 let main = visual.debug_bounds("main-pane-frame").unwrap();
+                let visual_list = visual.debug_bounds("sidebar-sessions").unwrap();
                 assert_eq!(
                     visual.debug_bounds("toggle-sidebar").unwrap().origin,
                     toggle.origin
@@ -11718,11 +11834,14 @@ mod tests {
                             (alpha - 0.11 * fraction).abs() < 0.0001,
                             "painted alpha {alpha} follows {fraction}"
                         );
+                        // Clipped where the main pane covers it, or at the
+                        // project card's list edge when that comes first.
+                        let list = visual_list.right().as_f32().min(main.left().as_f32());
                         assert!(
-                            (quad.content_mask.bounds.right().0
-                                - main.left().as_f32() * w.scale_factor())
-                            .abs()
-                                < w.scale_factor()
+                            (quad.content_mask.bounds.right().0 - list * w.scale_factor()).abs()
+                                < w.scale_factor(),
+                            "{:?} vs {list}",
+                            quad.content_mask.bounds
                         );
                     })
                     .unwrap();
@@ -12125,7 +12244,7 @@ mod tests {
             root.read_with(cx, |s, cx| s.sessions[&active].read(cx).transcript.clone());
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
         let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
         let before = transcript.read_with(visual, |t, _| t.render_passes);
         // Hovering the rail's page icons repaints the rail only.

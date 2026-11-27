@@ -21,17 +21,13 @@ pub const ASK_NOTE: &str = "This thread has no browser access yet. Your first br
 pub const OFF_NOTICE: &str =
     "Browser access is off for all agents. Turn it on in Settings → Browser, then try again.";
 
-/// `/browser` at the start of a prompt, or right after a leading
-/// `/operator` or `/pilot`: the prompt without it (any such
-/// prefix kept, so its own parser still sees it), or `None`.
+/// `/browser` at the start of a prompt, or right after a leading `/pilot`:
+/// the prompt without it (the prefix kept, so its own parser still sees it),
+/// or `None`.
 pub fn consume_command(text: &str) -> Option<String> {
     let trimmed = text.trim_start();
     let (prefix, rest) = match leading_word(trimmed) {
-        Some((word, rest))
-            if ["/operator", "/pilot"]
-                .iter()
-                .any(|prefix| word.eq_ignore_ascii_case(prefix)) =>
-        {
+        Some((word, rest)) if word.eq_ignore_ascii_case("/pilot") => {
             let rest = rest.trim_start();
             let prefix_len = trimmed.len() - rest.len();
             (&trimmed[..prefix_len], rest)
@@ -198,15 +194,20 @@ mod tests {
     }
 
     #[test]
-    fn the_command_is_found_alone_or_after_an_operator_prefix() {
+    fn the_command_is_found_alone_or_after_a_pilot_prefix() {
         assert_eq!(consume_command("/browser"), Some(String::new()));
         assert_eq!(
             consume_command("  /BROWSER check the login page"),
             Some("check the login page".into())
         );
         assert_eq!(
+            consume_command("/pilot /browser open it"),
+            Some("/pilot open it".into())
+        );
+        assert_eq!(
             consume_command("/operator /browser open it"),
-            Some("/operator open it".into())
+            None,
+            "/operator is no longer a prefix"
         );
         assert_eq!(consume_command("/browsers"), None);
         assert_eq!(consume_command("use /browser"), None);

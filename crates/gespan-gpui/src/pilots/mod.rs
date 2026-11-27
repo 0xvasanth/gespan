@@ -1317,41 +1317,70 @@ impl Pilots {
         })
         .detach();
     }
-    /// The left nav's Pilots section. `updated` says when each session last
-    /// changed, for the age of a Pilot whose chat is not loaded.
+    /// This project's Pilots as the left nav lists them, with each one's
+    /// status word: live Pilots lead, then the open one, then the rest as
+    /// arranged. A Pilot is this project's when it works on it or when
+    /// `also` names it (it has sessions here). Empty while Settings hides
+    /// Pilots.
+    pub(crate) fn rail_roster(
+        &self,
+        project: Option<&str>,
+        also: &HashSet<String>,
+        cx: &App,
+    ) -> Vec<(String, String)> {
+        if !self.prefs.pilots {
+            return Vec::new();
+        }
+        let status = |id: &str| {
+            self.chats
+                .get(id)
+                .map(|v| v.read(cx).pilot_status(cx).to_owned())
+                .unwrap_or_else(|| "idle".to_owned())
+        };
+        let mut roster: Vec<(String, String)> = self
+            .roster
+            .pilots
+            .iter()
+            .filter(|m| project.is_none_or(|p| m.works_on(p)) || also.contains(&m.id))
+            .map(|m| (m.id.clone(), status(&m.id)))
+            .collect();
+        roster.sort_by_key(|(id, state)| self.rail_rank(id, state));
+        roster
+    }
+    fn rail_rank(&self, id: &str, state: &str) -> u8 {
+        match state {
+            "needs-you" => 0,
+            "working" => 1,
+            _ if self.active.as_deref() == Some(id) => 2,
+            _ => 3,
+        }
+    }
+    /// The left nav's Pilots section, in the project card. `updated` says
+    /// when each session last changed, for the age of a Pilot whose chat is
+    /// not loaded; `also` names Pilots with sessions here that do not list
+    /// the project.
     pub(crate) fn rail(
         &mut self,
         project: Option<String>,
         updated: &HashMap<i64, u64>,
+        also: &HashSet<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if !self.prefs.pilots {
             return div().into_any_element();
         }
-        let mut roster: Vec<_> = self
-            .roster
-            .pilots
+        let ranked = self.rail_roster(project.as_deref(), also, cx);
+        let ranks: Vec<u8> = ranked
             .iter()
-            .filter(|m| project.as_ref().is_none_or(|p| m.works_on(p)))
-            .cloned()
+            .map(|(id, state)| self.rail_rank(id, state))
             .collect();
-        // Live Pilots lead, then the open one, then the rest as arranged.
+        let mut roster: Vec<Pilot> = ranked
+            .iter()
+            .filter_map(|(id, _)| self.roster.get(id).cloned())
+            .collect();
         // The section lists a few; a live or open Pilot always shows.
-        let status = |id: &str| {
-            self.chats
-                .get(id)
-                .map(|v| v.read(cx).pilot_status().to_owned())
-                .unwrap_or_else(|| "idle".to_owned())
-        };
-        let rank = |pilot: &Pilot| match status(&pilot.id).as_str() {
-            "needs-you" => 0,
-            "working" => 1,
-            _ if self.active.as_deref() == Some(&pilot.id) => 2,
-            _ => 3,
-        };
-        roster.sort_by_key(|pilot| rank(pilot));
         let total = roster.len();
-        let shown = rail_shown(&roster.iter().map(rank).collect::<Vec<_>>());
+        let shown = rail_shown(&ranks);
         let hidden = total - shown;
         if !self.rail_all {
             roster.truncate(shown);
@@ -1424,7 +1453,7 @@ impl Pilots {
                         .child(if all {
                             "Fewer".to_owned()
                         } else {
-                            format!("All {total} →")
+                            "All →".to_owned()
                         })
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.rail_all = !this.rail_all;
@@ -1434,10 +1463,10 @@ impl Pilots {
             });
         div()
             .debug_selector(|| "rail-pilots".into())
-            // The section spans the rail like every other row, so "All N →"
-            // and each status sit at the right edge, as on the board.
+            // The section spans the project card like every other row, so
+            // "All N →" and each status sit at the right edge, and rows
+            // start on the card's 10px gutter.
             .w_full()
-            .px(px(10.))
             // The rail's 1px gap between rows.
             .flex()
             .flex_col()
@@ -1451,7 +1480,7 @@ impl Pilots {
                         .role(Role::Button)
                         .aria_label("New pilot")
                         .h(px(32.))
-                        .px_2()
+                        .px(px(10.))
                         .rounded_md()
                         .flex()
                         .items_center()
@@ -1471,7 +1500,7 @@ impl Pilots {
                 let state = self
                     .chats
                     .get(&pilot.id)
-                    .map(|v| v.read(cx).pilot_status())
+                    .map(|v| v.read(cx).pilot_status(cx))
                     .unwrap_or("idle");
                 let unread = self
                     .chats
@@ -1505,6 +1534,13 @@ impl Pilots {
                 let context = id.clone();
                 let drag = id.clone();
                 let slot = self.rail_bounds[&id].clone();
+                // What it waits on you for, as on the board: "Which release
+                // branch?" between its name and its status.
+                let question = (state == "needs-you")
+                    .then(|| self.chats.get(&pilot.id))
+                    .flatten()
+                    .and_then(|chat| chat.read(cx).pilot_question(cx));
+                let tall = question.is_some();
                 div()
                     .id(SharedString::from(format!("pilot-rail-{id}")))
                     .debug_selector({
@@ -1514,8 +1550,8 @@ impl Pilots {
                     .group("pilot-rail-row")
                     .role(Role::Button)
                     .aria_label(label)
-                    .h(px(32.))
-                    .px_2()
+                    .h(px(if tall { 40. } else { 32. }))
+                    .px(px(10.))
                     .rounded(px(6.))
                     .relative()
                     .flex()
@@ -1523,7 +1559,8 @@ impl Pilots {
                     .gap_2()
                     .text_size(px(12.5))
                     .text_color(content(0.88))
-                    .opacity(if active { 1. } else { 0.65 })
+                    // `.prow.dim`: only an idle Pilot fades.
+                    .opacity(if active || state != "idle" { 1. } else { 0.65 })
                     .map(|d| {
                         let tip = SharedString::from(format!(
                             "{}: {}",
@@ -1558,9 +1595,9 @@ impl Pilots {
                                     .border_1()
                                     .border_color(shell_fill())
                                     .bg(if state == "working" {
-                                        rgb(pilot.color).into()
+                                        rgb(0x459bf7).into()
                                     } else if state == "needs-you" {
-                                        accent_color()
+                                        rgb(0xe8c547).into()
                                     } else {
                                         content(0.3)
                                     }),
@@ -1573,7 +1610,31 @@ impl Pilots {
                             .truncate()
                             .when(unread > 0, |d| d.pr(px(24.)))
                             .group_hover("pilot-rail-row", |s| s.pr(px(24.)))
-                            .child(pilot.label()),
+                            .flex()
+                            .flex_col()
+                            .child(div().truncate().child(pilot.label()))
+                            // `.prow` grows to 40px for the question, in
+                            // the waiting yellow, under the name.
+                            .when_some(question, |d, question| {
+                                d.child(
+                                    div()
+                                        .debug_selector({
+                                            let id = pilot.id.clone();
+                                            move || format!("pilot-rail-question-{id}")
+                                        })
+                                        .truncate()
+                                        .text_size(px(11.))
+                                        .line_height(px(14.))
+                                        .text_color(gpui::Hsla::from(rgb(
+                                            if crate::theme::is_light() {
+                                                0xa86b00
+                                            } else {
+                                                0xf5dc84
+                                            },
+                                        )))
+                                        .child(question),
+                                )
+                            }),
                     )
                     // The board's status word: yellow while it needs you,
                     // blue while it works, else how long it has been idle.
@@ -1677,8 +1738,17 @@ impl Pilots {
             })
             .into_any_element()
     }
-    /// The Pilot's title tab.
-    pub(crate) fn title_tab(&self, id: &str, width: f32, cx: &Context<Self>) -> Option<AnyElement> {
+    /// The Pilot's title tab. `mark` is its project's icon in the project's
+    /// colour, leading the tab in place of the Pilot's own mascot; `name`, the
+    /// project's name, shows while the tab is active.
+    pub(crate) fn title_tab(
+        &self,
+        id: &str,
+        width: f32,
+        mark: Option<AnyElement>,
+        name: Option<AnyElement>,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
         self.roster.get(id).map(|pilot| {
             let id = pilot.id.clone();
             let close = id.clone();
@@ -1707,11 +1777,15 @@ impl Pilots {
                         .group_hover(group.clone(), move |s| {
                             s.opacity(1.).bg(title_tab_fill(active, true))
                         })
-                        .child(crate::tab_tile::mark_tile(
-                            &crate::tab_tile::TAB_TILE,
-                            crate::tab_tile::Face::Neutral,
-                            avatar::avatar(&pilot.mascot, pilot.color, "idle", 14., true),
-                        ))
+                        .map(|d| match mark {
+                            Some(mark) => d.child(mark),
+                            None => d.child(crate::tab_tile::mark_tile(
+                                &crate::tab_tile::TAB_TILE,
+                                crate::tab_tile::Face::Neutral,
+                                avatar::avatar(&pilot.mascot, pilot.color, "idle", 14., true),
+                            )),
+                        })
+                        .children(name.filter(|_| active))
                         .child(
                             div()
                                 .flex_1()

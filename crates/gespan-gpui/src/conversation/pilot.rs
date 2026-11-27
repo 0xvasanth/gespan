@@ -47,11 +47,6 @@ impl Conversation {
         }
         cx.emit(SessionChanged);
     }
-    pub(crate) fn save_app_draft(&mut self, prompt: String, cx: &mut Context<Self>) {
-        self.input
-            .update(cx, |input, cx| input.set_text(prompt, cx));
-        self.save_message_draft(cx);
-    }
     pub(crate) fn stop_app_session(&mut self, cx: &mut Context<Self>) {
         if self.needs_history_restore() {
             self.stop_if_busy(cx);
@@ -292,14 +287,30 @@ impl Conversation {
         cx.notify();
         Ok(())
     }
-    pub(crate) fn pilot_status(&self) -> &str {
-        if self.needs_approval() || self.settings.usage_limit.is_some() {
+    /// Needs you while an approval, a usage limit or an unanswered
+    /// `pilot.ask` question waits on the user; the rail, My tasks and the
+    /// title-bar tab all read it.
+    pub(crate) fn pilot_status(&self, cx: &App) -> &str {
+        if self.needs_approval()
+            || self.settings.usage_limit.is_some()
+            || (self.transcript.read(cx).open_question().is_some()
+                && self.pilot_ui.pending.iter().all(|m| m.internal))
+        {
             "needs-you"
         } else if self.responding() {
             "working"
         } else {
             "idle"
         }
+    }
+    /// The question a Pilot's open decision card asks, for its rail row.
+    pub(crate) fn pilot_question(&self, cx: &App) -> Option<String> {
+        self.transcript
+            .read(cx)
+            .open_question()
+            .and_then(|open| open.question)
+            .map(|q| q.trim().to_owned())
+            .filter(|q| !q.is_empty())
     }
     pub(crate) fn pilot_model(&self) -> Option<String> {
         self.model.clone()
@@ -584,6 +595,7 @@ impl Conversation {
         if self.summary.provider != provider.id() {
             self.summary.provider = provider.id().into();
             self.summary.provider_id = None;
+            self.forget_roster_sent();
             self.catalog.clear();
         }
         self.model = model;
@@ -608,7 +620,7 @@ impl Conversation {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let pilot = self.settings.pilot.as_ref().unwrap().pilot.clone();
-        let status = self.pilot_status();
+        let status = self.pilot_status(cx);
         let name = pilot.label();
         // PilotHeader's greeting: it shows only before the first message.
         let body = if !self.summary.has_messages {
@@ -664,9 +676,12 @@ impl Conversation {
                     .pb_1p5()
                     .flex()
                     .flex_col()
+                    // The shelves above the composer take its width.
+                    .child(self.composer_anchor.probe())
                     .children(self.queued_internal(cx))
                     .children(self.usage_notice(true, cx))
                     .children(self.auth_notice(cx))
+                    .child(self.background_shelf(window, cx))
                     .child(self.approval_shelf(window, cx))
                     .children(self.open_choices(cx))
                     .child({
@@ -1328,6 +1343,7 @@ impl Conversation {
                     .flex()
                     .items_center()
                     .gap_1()
+                    .children(self.watch_chip(cx))
                     .child(
                         text_control("pilot-model".into(), models_open)
                             .min_w_0()

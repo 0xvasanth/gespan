@@ -16,6 +16,7 @@ mod mascot;
 mod measurements;
 mod outline;
 pub(crate) mod phases;
+pub(crate) mod pilot_trace;
 mod provider_switch;
 mod remote_plans;
 pub(crate) mod selection;
@@ -204,6 +205,17 @@ enum Body {
         turn: usize,
         expandable: bool,
     },
+    /// One step of a Pilot group's trace.
+    Trace(Arc<crate::trace::Line>),
+    /// A settled Pilot group's one line, "Worked for … · 7 steps"; its
+    /// chevron opens the whole trace with the messages.
+    TraceSummary {
+        group: usize,
+        text: String,
+        open: bool,
+    },
+    /// The time a Pilot message was written, above it in a live group.
+    ProseTime(u64),
     Reasoning,
     Actions {
         turn: usize,
@@ -428,7 +440,8 @@ pub(crate) fn pilot_continues(source: &[Row], turn: usize) -> Option<usize> {
             .map_or(0, |i| i + 1),
     )
 }
-/// pilotWorkStatus: a short status for the turn's latest activity.
+/// pilotWorkStatus: a short status for the turn's latest activity, named
+/// by the step's description when it has one. The phone shows it.
 pub(crate) fn pilot_work_label(source: &[Row], group: usize) -> String {
     let turn = source[group.min(source.len())..]
         .iter()
@@ -477,6 +490,15 @@ pub(crate) fn pilot_work_label(source: &[Row], group: usize) -> String {
         } else {
             "Compacting context…".into()
         };
+    }
+    // The step's own name, from the tool's description, when it has one.
+    if let Some(description) = tool
+        .presentation()
+        .description
+        .map(|d| d.trim().trim_end_matches(['.', '…']).to_owned())
+        .filter(|d| !d.is_empty())
+    {
+        return format!("{description}…");
     }
     match tool.summary().0.as_str() {
         "Run" => "Running command…",
@@ -651,7 +673,7 @@ pub(crate) struct TranscriptView {
     viewport: Bounds<Pixels>,
     anchor_turn: Option<usize>,
     prompt_rise: Option<(usize, Instant)>,
-    /// The /operator, Plan or Orchestrator burst inside a just-sent prompt.
+    /// The Plan or Orchestrator burst inside a just-sent prompt.
     burst: Option<burst::Burst>,
     prompt_rise_pending: bool,
     introduced_prompt: Option<usize>,
@@ -666,6 +688,16 @@ pub(crate) struct TranscriptView {
     fold_targets: HashMap<usize, Option<usize>>,
     step_queue: HashMap<usize, Instant>,
     seen_steps: HashSet<usize>,
+    /// Background jobs still running, which keep the Pilot turn that
+    /// started them live.
+    background: Vec<gespan_core::provider::BackgroundTask>,
+    /// Trace lines whose output is open, by line key.
+    trace_open: HashSet<String>,
+    /// Settled Pilot groups whose collapsed trace the user opened.
+    settled_open: HashSet<usize>,
+    /// Unix milliseconds of the last change to the source, for how long the
+    /// Pilot has been thinking since.
+    changed_at: u64,
     pub(crate) turns: HashMap<usize, gespan_core::agent::TurnInfo>,
     provider: String,
     model: String,
@@ -711,6 +743,9 @@ impl TranscriptView {
     /// PilotChat's one-tap answers: the options of a choices card that ends
     /// the chat, which wait above the composer until one is picked.
     pub(crate) fn open_choices(&self) -> Vec<String> {
+        if let Some(question) = self.open_question() {
+            return question.options;
+        }
         self.source
             .last()
             .filter(|row| self.pilot && row.role == "pilot-card")
@@ -725,6 +760,60 @@ impl TranscriptView {
                 })
             })
             .unwrap_or_default()
+    }
+    /// A `pilot.ask` decision the user has not answered: the Pilot needs
+    /// them until a message of theirs follows it.
+    pub(crate) fn open_question(&self) -> Option<gespan_core::tasks::OpenChoice> {
+        if !self.pilot {
+            return None;
+        }
+        gespan_core::tasks::open_choice(&self.source).filter(|open| open.question.is_some())
+    }
+    /// Whether the user wrote after the decision card at source row `at`.
+    fn ask_answered(&self, at: usize) -> bool {
+        self.source
+            .get(at + 1..)
+            .is_some_and(|rows| rows.iter().any(|r| r.first && r.role == "user"))
+    }
+    /// The prose the chat shows, message by message; rows folding away
+    /// are already gone.
+    #[cfg(test)]
+    pub(crate) fn shown_prose(&self) -> Vec<String> {
+        let mut shown: Vec<(usize, String)> = Vec::new();
+        for row in &self.rows {
+            if let Body::Markdown(md) = &row.body
+                && !self.motions.get(&row.key).is_some_and(|m| !m.opening)
+            {
+                let text = markdown::row_text(md);
+                match shown.last_mut() {
+                    Some((at, joined)) if *at == row.key.0 => {
+                        joined.push('\n');
+                        joined.push_str(&text);
+                    }
+                    _ => shown.push((row.key.0, text)),
+                }
+            }
+        }
+        shown.into_iter().map(|(_, text)| text).collect()
+    }
+    /// The titles of the trace lines the chat shows.
+    #[cfg(test)]
+    pub(crate) fn shown_trace(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter_map(|row| match &row.body {
+                Body::Trace(line) => Some(line.title.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+    /// A settled group's one-line summary, when one shows.
+    #[cfg(test)]
+    pub(crate) fn shown_summary(&self) -> Option<String> {
+        self.rows.iter().find_map(|row| match &row.body {
+            Body::TraceSummary { text, .. } => Some(text.clone()),
+            _ => None,
+        })
     }
     #[cfg(test)]
     pub(crate) fn pilot_card_count(&self) -> usize {
@@ -880,6 +969,17 @@ impl TranscriptView {
     }
     /// The rows of the store's window, numbered as the store numbers them.
     /// Older pages above it are read-only and never part of a save.
+    /// The plain text the transcript shows, line by line, as drawn.
+    #[cfg(test)]
+    pub(crate) fn shown_plain(&self) -> Vec<String> {
+        self.rows
+            .iter()
+            .filter_map(|row| match &row.body {
+                Body::Plain(text) => Some(text.to_string()),
+                _ => None,
+            })
+            .collect()
+    }
     pub(crate) fn source_rows(&self) -> &[Row] {
         &self.source[self.base..]
     }
@@ -1171,26 +1271,12 @@ impl TranscriptView {
             })
             .into_any_element()
     }
-    /// PilotTurnHeader: the Pilot signs its turn with its mascot and name; while
-    /// it works, a ticker beside the pill says what it is doing.
+    /// PilotTurnHeader: the Pilot signs its turn with its mascot and name.
+    /// What it is doing shows as the last line of the turn's trace.
     fn pilot_turn_header(&self, turn: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
-        // Nearby completion runs continue this header; a new stretch gets its own.
-        let latest = self
-            .source
-            .iter()
-            .rposition(|r| r.is_prompt())
-            .map_or(0, |ix| ix + 1);
-        let live = self.streaming
-            && self.source.len() > self.live_start
-            && self.pilot_group_start(latest) == turn;
-        self.pilot_header(turn, live.then(|| self.pilot_work_label(turn)), cx)
+        self.pilot_header(turn, cx)
     }
-    fn pilot_header(
-        &self,
-        turn: usize,
-        label: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    fn pilot_header(&self, turn: usize, _cx: &mut Context<Self>) -> gpui::AnyElement {
         let Some((mascot, color, name)) = self.pilot_look.clone() else {
             return div().into_any_element();
         };
@@ -1234,38 +1320,7 @@ impl TranscriptView {
             .line_height(px(20.))
             .text_color(content(0.5))
             .child(pill)
-            .when_some(label, |d, label| {
-                d.child(div().flex_shrink_0().text_color(content(0.25)).child("·"))
-                    .child(
-                        div()
-                            .id(("pilot-turn-ticker", turn))
-                            .debug_selector(|| "pilot-turn-ticker".into())
-                            .min_w_0()
-                            .flex_1()
-                            .truncate()
-                            .hover(|s| s.opacity(0.7))
-                            .child(if cx.reduce_motion() {
-                                div().child(label).into_any_element()
-                            } else {
-                                crate::activity::shimmer(
-                                    label,
-                                    self.started.map_or(0., |s| s.elapsed().as_secs_f32()),
-                                )
-                            })
-                            .when(turn < self.source.len(), |d| {
-                                d.role(Role::Button).aria_label("Show activity").on_click(
-                                    cx.listener(move |_, _, _, cx| {
-                                        cx.emit(PilotResponseAction::Activity(turn))
-                                    }),
-                                )
-                            }),
-                    )
-            })
             .into_any_element()
-    }
-    /// pilotWorkStatus: a short status for the turn's latest activity.
-    fn pilot_work_label(&self, group: usize) -> String {
-        pilot_work_label(&self.source, group)
     }
     /// PilotReactionBadge, on the top left corner of the message it answers.
     fn reaction_badge(&self, prompt: usize) -> Option<gpui::AnyElement> {
@@ -1815,8 +1870,47 @@ impl TranscriptView {
     fn prompt_start(&self, turn: usize) -> usize {
         prompt_start(&self.source, turn)
     }
-    /// groupPilotTurnItems: prose stays in the activity trail while its run is
-    /// live, and when later work in the run follows it.
+    /// The turn the source's latest prompt opens.
+    fn latest_turn(&self) -> usize {
+        self.source
+            .iter()
+            .rposition(Row::is_prompt)
+            .map_or(0, |ix| ix + 1)
+    }
+    /// Whether the Pilot group that `group` opens is live: it streams, or a
+    /// background job it started is still pending. Sessions it watches never
+    /// hold it open; they show as chips above the composer.
+    pub(crate) fn pilot_group_live(&self, group: usize) -> bool {
+        self.pilot
+            && self.pilot_group_start(self.latest_turn()) == group
+            // Starting a request precedes delivery of its prompt. History
+            // stays settled in that gap, though it is the source's tail.
+            && (self.pilot_pending_joins_live_turn()
+                || (!self.background.is_empty() && self.latest_turn() < self.source.len()))
+    }
+    /// A live group shows every message and step; a settled one only its
+    /// answer, unless the user opened its trace.
+    pub(crate) fn pilot_group_expanded(&self, group: usize) -> bool {
+        self.pilot_group_live(group) || self.settled_open.contains(&group)
+    }
+    /// Background jobs still running; they keep the latest Pilot turn live.
+    pub(crate) fn set_background(
+        &mut self,
+        tasks: Vec<gespan_core::provider::BackgroundTask>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.background == tasks {
+            return;
+        }
+        self.background = tasks;
+        if self.pilot {
+            self.rebuild(self.latest_turn().saturating_sub(1), cx);
+        }
+        cx.notify();
+    }
+    /// groupPilotTurnItems: while a group is live every message shows, in
+    /// order. Once it settles, prose stays in the trace when later work in the
+    /// run follows it.
     fn pilot_prose_hidden(&self, at: usize) -> bool {
         let end = (at + 1..self.source.len())
             .find(|&i| self.source[i].is_prompt())
@@ -1825,14 +1919,262 @@ impl TranscriptView {
             .iter()
             .rposition(Row::is_prompt)
             .map_or(0, |prompt| prompt + 1);
-        // Starting a request precedes delivery of its prompt. History remains
-        // settled during that gap, even though it is still the source's tail.
-        (self.streaming && at >= self.live_start && end == self.source.len())
-            || (self.source.get(end).is_some_and(|row| row.role == "user")
-                && self.pilot_next_run_continues(turn, end))
+        if self.pilot_group_expanded(self.pilot_group_start(turn)) {
+            return false;
+        }
+        (self.source.get(end).is_some_and(|row| row.role == "user")
+            && self.pilot_next_run_continues(turn, end))
             || self.source[at + 1..end]
                 .iter()
                 .any(|r| r.first && matches!(r.role.as_str(), "tool" | "reasoning"))
+    }
+    /// One trace line, drawn by the shared trace component. A running line
+    /// keeps the frame moving so its shimmer runs and its clock counts up.
+    fn trace_row(&self, line: &crate::trace::Line, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let open = self.trace_open.clone();
+        let weak = cx.entity().downgrade();
+        let running = line.status == crate::trace::Status::Running;
+        let paint = crate::trace::Paint {
+            open: std::rc::Rc::new(move |key| open.contains(key)),
+            toggle: std::rc::Rc::new(move |key, _, cx| {
+                let _ = weak.update(cx, |this, cx| this.toggle_trace_line(key, cx));
+            }),
+            now_ms: gespan_core::time::now_ms(),
+            shimmer: self.started.map_or(0., |s| s.elapsed().as_secs_f32()),
+            reduce_motion: cx.reduce_motion(),
+        };
+        div()
+            .w_full()
+            .min_w_0()
+            .when(running, |d| {
+                d.debug_selector(|| "pilot-running-step".into())
+            })
+            .child(crate::trace::line(line, 0, &paint))
+            .into_any_element()
+    }
+    /// A settled group's "Worked for … · 7 steps" line; its chevron opens
+    /// the whole trace, messages included.
+    fn trace_summary_row(
+        &self,
+        group: usize,
+        text: String,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        div()
+            .id(("pilot-trace-summary", group))
+            .debug_selector(|| "pilot-trace-summary".into())
+            .role(Role::Button)
+            .aria_label(format!(
+                "{text}: {}",
+                if open { "hide steps" } else { "show steps" }
+            ))
+            .aria_expanded(open)
+            .cursor_pointer()
+            .h(px(26.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .text_size(px(13.))
+            .text_color(content(0.5))
+            .hover(|s| s.opacity(0.8))
+            .child(icon("check", 14.).text_color(content(0.45)))
+            .child(div().min_w_0().truncate().child(text))
+            .child(
+                icon(
+                    if open {
+                        "chevron-down"
+                    } else {
+                        "chevron-right"
+                    },
+                    12.,
+                )
+                .text_color(content(0.35)),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_settled(group, cx)))
+            .into_any_element()
+    }
+    /// The live end of a Pilot group: "Thinking" while its latest step has
+    /// finished and the next has not begun. A running step or streaming
+    /// prose already shows what the Pilot is doing.
+    fn push_running_line(&mut self) {
+        let latest = self.latest_turn();
+        if !self.pilot || latest >= self.source.len() {
+            return;
+        }
+        let group = self.pilot_group_start(latest);
+        if !self.pilot_group_live(group) {
+            return;
+        }
+        let running = self.rows.iter().any(|row| {
+            matches!(&row.body, Body::Trace(line) if line.status == crate::trace::Status::Running)
+        });
+        let last = (latest..self.source.len())
+            .rev()
+            .find(|&i| self.source[i].first)
+            .map(|i| &self.source[i]);
+        let writing = last.is_some_and(|row| {
+            row.role == "assistant"
+                && !row.text.trim().is_empty()
+                && !row.text.trim().starts_with("<reaction>")
+        });
+        // It belongs to the turn's last message, so measuring and partial
+        // rebuilds treat it as that message's tail.
+        let Some(message) = self.messages.len().checked_sub(1) else {
+            return;
+        };
+        if running || writing {
+            return;
+        }
+        // The running line closes its message, above the turn's footer, so
+        // the gap below the turn stays where it was.
+        let at = match self.rows.last() {
+            Some(row) if matches!(row.body, Body::Actions { .. }) => self.rows.len() - 1,
+            _ => self.rows.len(),
+        };
+        let mut first = true;
+        if let Some(previous) = at
+            .checked_sub(1)
+            .and_then(|ix| self.rows.get_mut(ix))
+            .filter(|row| row.message == message)
+        {
+            previous.last = false;
+            first = false;
+        }
+        // Its key sorts after the message's cards and before its footer.
+        let start = self.messages[message].start;
+        self.rows.insert(
+            at,
+            UiRow {
+                key: (start, usize::MAX - 3),
+                body: Body::Trace(Arc::new(pilot_trace::thinking_line(
+                    group,
+                    Some(self.changed_at),
+                ))),
+                message,
+                first,
+                last: true,
+                work: false,
+                work_tail: false,
+                thought_phase: None,
+            },
+        );
+    }
+    /// The source row just past the Pilot group that `group` opens.
+    fn pilot_group_end(&self, group: usize) -> usize {
+        let mut at = group;
+        while at < self.source.len() {
+            if self.source[at].is_prompt() && !self.pilot_next_run_continues(group, at) {
+                return at;
+            }
+            if self.source[at].is_prompt() {
+                // Skip the rest of this prompt block.
+                while at < self.source.len() && self.source[at].is_prompt() {
+                    at += 1;
+                }
+                continue;
+            }
+            at += 1;
+        }
+        self.source.len()
+    }
+    /// The steps a Pilot group took, as trace lines: tool calls and finished
+    /// background jobs, in order.
+    fn pilot_group_steps(&self, group: usize) -> usize {
+        let end = self.pilot_group_end(group);
+        let mut steps = 0;
+        let mut at = group;
+        while at < end {
+            let next = (at + 1..end).find(|&i| self.source[i].first).unwrap_or(end);
+            let row = &self.source[at];
+            if row.role == "tool" {
+                let text: String = self.source[at..next]
+                    .iter()
+                    .map(|r| r.text.as_str())
+                    .collect();
+                if serde_json::from_str::<ToolCall>(&text)
+                    .ok()
+                    .and_then(ToolCall::without_legacy_heartbeats)
+                    .is_some_and(|call| !call.is_milestone())
+                {
+                    steps += 1;
+                }
+            } else if row.role == "interjection"
+                && serde_json::from_str::<gespan_core::transcript::Interjection>(&row.text)
+                    .is_ok_and(|note| note.custom_type == "task-notification")
+            {
+                steps += 1;
+            }
+            at = next;
+        }
+        steps
+    }
+    /// How long a settled Pilot group worked, from its recorded turns, else
+    /// from the times its rows arrived.
+    fn pilot_group_worked_secs(&self, group: usize) -> Option<u64> {
+        let end = self.pilot_group_end(group);
+        let recorded: Vec<u64> = (group..end)
+            .filter_map(|turn| self.turns.get(&turn))
+            .filter(|info| info.has_duration())
+            .map(|info| info.duration_ms)
+            .collect();
+        if !recorded.is_empty() {
+            return Some(recorded.iter().sum::<u64>().div_ceil(1000));
+        }
+        let first = self.source[self.prompt_start(group)..end]
+            .iter()
+            .find_map(|r| r.sent_at)?;
+        let last = self.source[group..end]
+            .iter()
+            .rev()
+            .find_map(|r| r.sent_at)?;
+        (last > first).then(|| (last - first).div_ceil(1000))
+    }
+    /// A settled group's one line, or nothing when it took no steps.
+    fn pilot_settled_summary(&self, group: usize) -> Option<String> {
+        let steps = self.pilot_group_steps(group);
+        (steps > 0).then(|| {
+            let sessions = self.run_launches(group, self.pilot_group_end(group)).len();
+            pilot_trace::settled_summary(self.pilot_group_worked_secs(group), steps, sessions)
+        })
+    }
+    /// How long the background job a notice at `at` reports on ran: from the
+    /// call that started it, matched by its description, to the notice.
+    fn background_ran_for(
+        &self,
+        turn: usize,
+        at: usize,
+        note: &gespan_core::transcript::Interjection,
+    ) -> Option<u64> {
+        let finished = self.source[at].sent_at?;
+        let group = self.pilot_group_start(turn);
+        let started = (group..at).rev().find_map(|ix| {
+            let row = &self.source[ix];
+            if !(row.first && row.role == "tool") {
+                return None;
+            }
+            let call = serde_json::from_str::<ToolCall>(&row.text).ok()?;
+            let title = pilot_trace::step_title(&call, None);
+            (!title.is_empty() && note.text.contains(&title))
+                .then_some(row.sent_at)
+                .flatten()
+        })?;
+        (finished > started).then(|| (finished - started) / 1000)
+    }
+    /// Opens or folds a settled group's trace.
+    fn toggle_settled(&mut self, group: usize, cx: &mut Context<Self>) {
+        if !self.settled_open.remove(&group) {
+            self.settled_open.insert(group);
+        }
+        self.rebuild(group, cx);
+        cx.notify();
+    }
+    /// Opens or closes what a trace line holds.
+    fn toggle_trace_line(&mut self, key: String, cx: &mut Context<Self>) {
+        if !self.trace_open.remove(&key) {
+            self.trace_open.insert(key);
+        }
+        cx.notify();
     }
     /// pilotSpawnedSessions: sessions a run's `sessions.start` calls accepted.
     fn run_launches(&self, turn: usize, end: usize) -> Vec<i64> {
@@ -2167,7 +2509,11 @@ impl TranscriptView {
                         .max_w(px(COLUMN))
                         .min_w_0()
                         .px(px(COLUMN_PAD))
-                        .child(self.pilot_header(self.source.len(), Some("Thinking…".into()), cx)),
+                        .child(self.pilot_header(self.source.len(), cx))
+                        .child(self.trace_row(
+                            &pilot_trace::thinking_line(self.source.len(), Some(self.changed_at)),
+                            cx,
+                        )),
                 )
             })
             .into_any_element()
@@ -2622,6 +2968,10 @@ impl TranscriptView {
             fold_targets: HashMap::new(),
             step_queue: HashMap::new(),
             seen_steps: HashSet::new(),
+            background: Vec::new(),
+            trace_open: HashSet::new(),
+            settled_open: HashSet::new(),
+            changed_at: gespan_core::time::now_ms(),
             turns: HashMap::new(),
             provider: "codex".into(),
             model: "Codex".into(),
@@ -3012,6 +3362,7 @@ impl TranscriptView {
             );
             return false;
         }
+        self.changed_at = gespan_core::time::now_ms();
         self.patch_view(at, rows, cx);
         true
     }
@@ -3385,6 +3736,11 @@ impl TranscriptView {
         let mut ready = false;
         let mut git_card: Option<Arc<git_turns::GitCard>> = None;
         let mut git_live_shown = false;
+        // A Pilot group shows its trace and every message while live or
+        // opened; settled, it folds to one summary line.
+        let mut expanded = false;
+        let mut shown_launches = HashSet::new();
+        let now_ms = gespan_core::time::now_ms();
         while at < self.source.len() {
             let mut end = at + 1;
             while end < self.source.len() && !self.source[end].first {
@@ -3419,7 +3775,10 @@ impl TranscriptView {
                 // A Build sends the whole approved plan; the message names it.
                 let build = gespan_core::plan::approved_plan(&text)
                     .map(|_| gespan_core::plan::BUILD_LABEL.to_owned());
-                (build.or(display), attachments)
+                // Another session's message names its sender, not the label
+                // and fences its agent reads.
+                let mail = gespan_core::orchestrator::mailbox::shown_as(&text);
+                (build.or(mail).or(display), attachments)
             } else if signed_out.is_some() {
                 (Some(text.clone()), Arc::default())
             } else {
@@ -3471,6 +3830,10 @@ impl TranscriptView {
                     .insert(turn, fold_end.filter(|_| has_work && ready));
                 git_card = self.git_card(turn, turn_end, final_answer);
                 git_live_shown = false;
+                expanded = self.pilot && self.pilot_group_expanded(self.pilot_group_start(turn));
+                if self.pilot_group_start(turn) == turn {
+                    shown_launches.clear();
+                }
             }
             let folded = !is_prompt
                 && !activity.pinned.contains(&at)
@@ -3522,6 +3885,25 @@ impl TranscriptView {
                     work_tail: false,
                     thought_phase: None,
                 });
+                if self.pilot
+                    && !self.pilot_group_live(self.pilot_group_start(turn))
+                    && let Some(text) = self.pilot_settled_summary(self.pilot_group_start(turn))
+                {
+                    self.rows.push(UiRow {
+                        key: (0, 0),
+                        body: Body::TraceSummary {
+                            group: turn,
+                            text,
+                            open: expanded,
+                        },
+                        message,
+                        first: false,
+                        last: false,
+                        work: false,
+                        work_tail: false,
+                        thought_phase: None,
+                    });
+                }
             }
             let phase = activity.at(at);
             let grouped = phase.is_some_and(|group| group.steps > 1);
@@ -3592,7 +3974,32 @@ impl TranscriptView {
                     self.seen_steps.insert(at);
                 }
             } else if role == "interjection" {
-                if let Ok(note) = serde_json::from_str(&text) {
+                let note = serde_json::from_str::<gespan_core::transcript::Interjection>(&text);
+                let finished = note
+                    .as_ref()
+                    .ok()
+                    .filter(|note| self.pilot && note.custom_type == "task-notification");
+                if let Some(note) = finished {
+                    // A finished background job is one line of the trace.
+                    if expanded
+                        && let Some(line) = pilot_trace::finished_line(
+                            at,
+                            note,
+                            self.background_ran_for(turn, at, note),
+                        )
+                    {
+                        self.rows.push(UiRow {
+                            key: (0, 0),
+                            body: Body::Trace(Arc::new(line)),
+                            message,
+                            first: false,
+                            last: false,
+                            work: false,
+                            work_tail: false,
+                            thought_phase: None,
+                        });
+                    }
+                } else if let Ok(note) = note {
                     self.rows.push(UiRow {
                         key: (0, 0),
                         body: Body::Interjection(note),
@@ -3695,7 +4102,31 @@ impl TranscriptView {
                     "pilot-document" | "pilot-launch" | gespan_core::transcript::attachments::ROLE
                 )
             {
-                // Saved work references are rendered once under the settled reply.
+                // Saved work references are rendered once under the settled
+                // reply; while the group is live they show where they landed.
+                if self.pilot && self.pilot_group_live(self.pilot_group_start(turn)) {
+                    let value = serde_json::from_str::<serde_json::Value>(&text).ok();
+                    let body = match (role.as_str(), value) {
+                        ("pilot-launch", Some(value)) => value["sessionId"]
+                            .as_i64()
+                            .filter(|id| shown_launches.insert(*id))
+                            .map(Body::Launch),
+                        ("pilot-document", Some(value)) => Some(Body::PilotCard(value)),
+                        _ => None,
+                    };
+                    if let Some(body) = body {
+                        self.rows.push(UiRow {
+                            key: (0, 0),
+                            body,
+                            message,
+                            first: false,
+                            last: false,
+                            work: false,
+                            work_tail: false,
+                            thought_phase: None,
+                        });
+                    }
+                }
             } else if reaction {
                 // PilotReactionBadge: the emoji sits on the message it answers.
                 if let Some(emoji) = text
@@ -3722,10 +4153,60 @@ impl TranscriptView {
                 && (matches!(role.as_str(), "tool" | "reasoning")
                     || (role == "assistant" && self.pilot_prose_hidden(at)))
             {
-                // groupPilotTurnItems: the header carries the process, and the
-                // prose said while working stays in the activity trail.
+                // groupPilotTurnItems: the header carries the process; a live
+                // or opened group lists each step as a line of its trace.
                 if role == "tool" {
                     self.seen_steps.insert(at);
+                    if expanded
+                        && let Ok(call) = serde_json::from_str::<ToolCall>(&text)
+                        && let Some(mut call) = call.without_legacy_heartbeats()
+                        && !call.is_milestone()
+                    {
+                        if call.state == ToolState::Running {
+                            call.live_elapsed_secs = gespan_core::tool::live::elapsed(&call.id);
+                        }
+                        let background = self
+                            .background
+                            .iter()
+                            .find(|task| task.tool_id.as_deref() == Some(call.id.as_str()));
+                        let line = pilot_trace::tool_line(
+                            &call,
+                            self.pilot_group_live(self.pilot_group_start(turn)),
+                            self.source[at].sent_at,
+                            background,
+                            None,
+                            now_ms,
+                        );
+                        self.rows.push(UiRow {
+                            key: (0, 0),
+                            body: Body::Trace(Arc::new(line)),
+                            message,
+                            first: false,
+                            last: false,
+                            work: false,
+                            work_tail: false,
+                            thought_phase: None,
+                        });
+                        // Cards while live: a session this call started shows
+                        // as soon as the call completes.
+                        if self.pilot_group_live(self.pilot_group_start(turn)) {
+                            for id in self.run_launches(at, end) {
+                                if !shown_launches.insert(id) {
+                                    continue;
+                                }
+                                self.rows.push(UiRow {
+                                    key: (0, 0),
+                                    body: Body::Launch(id),
+                                    message,
+                                    first: false,
+                                    last: false,
+                                    work: false,
+                                    work_tail: false,
+                                    thought_phase: None,
+                                });
+                            }
+                        }
+                    }
                 }
             } else if folded || activity.hidden.contains(&at) || !phase_open {
                 if role == "tool" {
@@ -3758,6 +4239,23 @@ impl TranscriptView {
                     });
                 }
             } else if matches!(role.as_str(), "assistant" | "reasoning") {
+                if self.pilot
+                    && expanded
+                    && role == "assistant"
+                    && !text.trim().is_empty()
+                    && let Some(sent_at) = self.source[at].sent_at
+                {
+                    self.rows.push(UiRow {
+                        key: (0, 0),
+                        body: Body::ProseTime(sent_at),
+                        message,
+                        first: false,
+                        last: false,
+                        work: false,
+                        work_tail: false,
+                        thought_phase: None,
+                    });
+                }
                 if role == "reasoning" {
                     self.rows.push(UiRow {
                         key: (0, 0),
@@ -3888,6 +4386,8 @@ impl TranscriptView {
                 }
                 let ordinal = match row.body {
                     Body::WorkLine { .. } => 0,
+                    Body::TraceSummary { .. } => 1,
+                    Body::Trace(_) => 3,
                     Body::Phase { .. } => 1,
                     Body::Tool { .. } => 2,
                     Body::Reasoning => 4,
@@ -3943,7 +4443,7 @@ impl TranscriptView {
                 self.push_pending(at);
             }
             if self.pilot && !is_prompt && end == turn_end {
-                let settled = !(self.streaming && turn_end == self.source.len());
+                let settled = !self.pilot_group_live(self.pilot_group_start(turn));
                 if settled {
                     let mut documents = Vec::new();
                     for row in &self.source[self.prompt_start(turn)..turn_end] {
@@ -4038,6 +4538,7 @@ impl TranscriptView {
             at = end;
         }
         self.prepared_parsers.clear();
+        self.push_running_line();
         if self.pilot && !self.rows.iter().any(|r| matches!(r.body, Body::Pending(_))) {
             self.push_pending(self.source.len());
         }
@@ -4339,7 +4840,24 @@ impl TranscriptView {
         let mut cursor = 0;
         let source = &self.source;
         let windowed = &self.windowed_phases;
+        let pilot = self.pilot;
         let keep_old = |row: &UiRow, motions: &mut HashMap<_, Motion>| -> bool {
+            // A Pilot group folds at once when it settles: its prose and
+            // trace leave with the rows sorted around the user's messages,
+            // so an exit animation would leave them between the bubbles.
+            if pilot
+                && matches!(
+                    row.body,
+                    Body::Markdown(_)
+                        | Body::Trace(_)
+                        | Body::TraceSummary { .. }
+                        | Body::ProseTime(_)
+                        | Body::PilotCard(_)
+                )
+            {
+                motions.remove(&row.key);
+                return false;
+            }
             // "Show less" hides the rest of a message at once, as in React.
             if matches!(row.body, Body::Plain(_))
                 && wanted.contains(&(row.key.0, 16))
@@ -5068,7 +5586,29 @@ impl TranscriptView {
                     })
                     .into_any_element()
             }
+            // A decision card reads as answered once the user wrote after it;
+            // until then its answers wait above the composer. That can land
+            // in a later turn, so it is read from the source as it draws.
+            Body::PilotCard(ref value) if value["type"] == "ask" => {
+                let mut value = value.clone();
+                value["answered"] = serde_json::json!(self.ask_answered(message_start));
+                crate::pilots::cards::render(&value, cx)
+            }
             Body::PilotCard(ref value) => crate::pilots::cards::render(value, cx),
+            Body::Trace(ref line) => self.trace_row(line, cx),
+            Body::TraceSummary {
+                group,
+                ref text,
+                open,
+            } => self.trace_summary_row(group, text.clone(), open, cx),
+            Body::ProseTime(sent_at) => div()
+                .debug_selector(|| "pilot-prose-time".into())
+                .pt_1()
+                .text_size(px(11.))
+                .line_height(px(16.))
+                .text_color(content(0.35))
+                .child(gespan_core::response::local_clock(sent_at))
+                .into_any_element(),
             Body::Pending(_) | Body::Launch(_) | Body::Review { .. } | Body::SavedDraft => {
                 div().into_any_element()
             }
@@ -5318,7 +5858,11 @@ impl TranscriptView {
                         div()
                             .when(loading, |d| d.min_w_0().flex_1())
                             .opacity(step_opacity)
-                            .child(self.tool(*call, message_start, cx)),
+                            .child({
+                                let selection =
+                                    self.text_selection(row.key, message_start, false, cx);
+                                self.tool(*call, message_start, selection, cx)
+                            }),
                     )
                     .into_any_element()
             }
@@ -5373,11 +5917,14 @@ impl TranscriptView {
                     self.local_media(href, label, ix)
                 } else {
                     let thread = self.thread;
-                    let selection = if reasoning {
-                        None
-                    } else {
-                        self.text_selection(row.key, message_start, !user && !error, cx)
-                    };
+                    // Reasoning selects and copies too, but stays out of
+                    // "Add to chat": it is the agent's scratch work.
+                    let selection = self.text_selection(
+                        row.key,
+                        message_start,
+                        !user && !error && !reasoning,
+                        cx,
+                    );
                     let fades = self.reveals.get(&message_start).map(|r| &r.fades);
                     let now = self.frame_now;
                     markdown::in_thread(thread, || {
@@ -6034,7 +6581,9 @@ impl Render for TranscriptView {
             self.load_older_history(cx);
         }
         if self.selection_focus.is_none() {
-            self.selection_focus = Some(cx.focus_handle());
+            let focus = cx.focus_handle();
+            self.selection.bind(cx.entity_id(), focus.clone());
+            self.selection_focus = Some(focus);
         }
         self.selection.begin_frame();
         self.phase_max_height = live_phase::max_height(window);
@@ -6077,6 +6626,7 @@ impl Render for TranscriptView {
             .on_action(cx.listener(Self::open_link_menu))
             .capture_any_mouse_down(cx.listener(
                 |this, event: &gpui::MouseDownEvent, window, cx| {
+                    crate::selectable::begin_gesture(cx);
                     if event.button == gpui::MouseButton::Right && this.links.open.is_none() {
                         window.focus(this.selection_focus.as_ref().unwrap(), cx);
                     }
@@ -6084,8 +6634,11 @@ impl Render for TranscriptView {
             ))
             .on_mouse_down(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.selection.clear_if_not_dragging();
+                // A press beside the text (a paragraph gap, a bubble's
+                // padding, a row's chrome) anchors at the nearest text, so a
+                // drag from there selects; a plain click there clears.
+                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                    this.selection.press_near(event, window, cx);
                     cx.notify();
                 }),
             )
@@ -7135,8 +7688,438 @@ mod scroll_tests {
         });
     }
 
+    fn pilot_view(cx: &mut TestAppContext) -> gpui::Entity<TranscriptView> {
+        cx.new(|_| {
+            let mut view = TranscriptView::new();
+            view.pilot_mode("cat", 0xe86b5f, "Migrator");
+            // Prose lands whole, so the rows show what the turn holds.
+            view.smooth_reveal = false;
+            view
+        })
+    }
+    fn tool_row(id: &str, input: &str, output: &str, state: ToolState) -> String {
+        serde_json::to_string(&ToolCall {
+            id: id.into(),
+            name: "Bash".into(),
+            input: input.into(),
+            output: output.into(),
+            state,
+            panel: None,
+            display: None,
+            live_elapsed_secs: None,
+        })
+        .unwrap()
+    }
+    fn timed(role: &str, text: &str, at: u64) -> Row {
+        Row {
+            sent_at: Some(at),
+            ..row(role, text)
+        }
+    }
+    fn background_task(tool: &str) -> gespan_core::provider::BackgroundTask {
+        gespan_core::provider::BackgroundTask {
+            id: "job".into(),
+            description: "Copy the community DB to staging".into(),
+            agent: false,
+            command: Some("rsync db staging/".into()),
+            started_at: gespan_core::time::now_ms() - 72_000,
+            tool_id: Some(tool.into()),
+            latest: None,
+            steps: 0,
+        }
+    }
+    fn markdown_text(view: &TranscriptView) -> Vec<String> {
+        view.rows
+            .iter()
+            .filter_map(|r| match &r.body {
+                Body::Markdown(md) => Some(markdown::row_text(md)),
+                _ => None,
+            })
+            .collect()
+    }
+    fn trace_lines(view: &TranscriptView) -> Vec<(String, crate::trace::Status)> {
+        view.rows
+            .iter()
+            .filter_map(|r| match &r.body {
+                Body::Trace(line) => Some((line.title.clone(), line.status)),
+                _ => None,
+            })
+            .collect()
+    }
+    const COPY: &str = r#"{"command":"rsync -a db staging/","description":"Copy the community DB to staging","run_in_background":true}"#;
+
+    /// The 24 November incident: the Pilot asked its question while a job it
+    /// started in the background was still running, and the chat hid it.
     #[gpui::test]
-    fn pilot_turns_merge_follow_ups_hide_live_prose_and_queue_above_the_work(
+    fn pilot_prose_shows_with_its_time_while_a_background_job_is_pending(cx: &mut TestAppContext) {
+        let view = pilot_view(cx);
+        view.update(cx, |view, cx| {
+            view.streaming(true, cx);
+            view.patch(
+                0,
+                vec![
+                    timed("user", "Start the batch", 1_000),
+                    timed("assistant", "Started the API and docs leads.", 2_000),
+                    timed(
+                        "tool",
+                        &tool_row(
+                            "copy",
+                            COPY,
+                            "Command running in background with ID: job",
+                            ToolState::Completed,
+                        ),
+                        3_000,
+                    ),
+                    timed(
+                        "assistant",
+                        "The API lead has 12 decisions for you. Go with my recommendations?",
+                        4_000,
+                    ),
+                ],
+                cx,
+            );
+            view.set_background(vec![background_task("copy")], cx);
+            assert!(view.pilot_group_live(1));
+            assert_eq!(
+                markdown_text(view),
+                [
+                    "Started the API and docs leads.",
+                    "The API lead has 12 decisions for you. Go with my recommendations?"
+                ],
+                "every message of a live turn shows, in order"
+            );
+            let times = view
+                .rows
+                .iter()
+                .filter(|r| matches!(r.body, Body::ProseTime(_)))
+                .count();
+            assert_eq!(times, 2, "each message carries its time");
+            assert_eq!(
+                trace_lines(view),
+                [(
+                    "Copy the community DB to staging".to_owned(),
+                    crate::trace::Status::Running
+                )],
+                "the pending job is the trace's running line"
+            );
+            // The provider's stream ends while the job still runs: the turn
+            // stays live because the job is pending.
+            view.streaming(false, cx);
+            assert!(
+                view.pilot_group_live(1),
+                "a pending job holds the turn open"
+            );
+            assert_eq!(markdown_text(view).len(), 2, "no fold while the job runs");
+        });
+    }
+
+    #[gpui::test]
+    fn a_pilot_turn_folds_to_one_line_once_nothing_is_pending(cx: &mut TestAppContext) {
+        let view = pilot_view(cx);
+        view.update(cx, |view, cx| {
+            view.streaming(true, cx);
+            view.patch(
+                0,
+                vec![
+                    timed("user", "Start the batch", 1_000),
+                    timed("assistant", "Copying first.", 2_000),
+                    timed(
+                        "tool",
+                        &tool_row(
+                            "copy",
+                            COPY,
+                            "Command running in background",
+                            ToolState::Completed,
+                        ),
+                        3_000,
+                    ),
+                    timed("assistant", "All three leads finished.", 251_000),
+                ],
+                cx,
+            );
+            view.set_background(vec![background_task("copy")], cx);
+            view.streaming(false, cx);
+            assert_eq!(markdown_text(view).len(), 2);
+            // The provider run's measured time is what the turn worked.
+            view.turns.get_mut(&1).unwrap().duration_ms = 250_000;
+            view.set_background(Vec::new(), cx);
+            assert!(!view.pilot_group_live(1));
+            assert_eq!(
+                markdown_text(view),
+                ["All three leads finished."],
+                "settled, only the final answer stays"
+            );
+            assert!(trace_lines(view).is_empty(), "the trace folds away");
+            let summary = view
+                .rows
+                .iter()
+                .find_map(|r| match &r.body {
+                    Body::TraceSummary { group, text, open } => Some((*group, text.clone(), *open)),
+                    _ => None,
+                })
+                .expect("one summary line");
+            assert_eq!(summary, (1, "Worked for 4m 10s · 1 step".to_owned(), false));
+            let header = view
+                .rows
+                .iter()
+                .position(|r| matches!(r.body, Body::WorkLine { .. }));
+            let line = view
+                .rows
+                .iter()
+                .position(|r| matches!(r.body, Body::TraceSummary { .. }));
+            assert_eq!(
+                line,
+                header.map(|h| h + 1),
+                "the summary sits under the signature"
+            );
+
+            // Its chevron opens the full trace, messages included.
+            view.toggle_settled(1, cx);
+            assert_eq!(
+                markdown_text(view),
+                ["Copying first.", "All three leads finished."]
+            );
+            assert_eq!(
+                trace_lines(view),
+                [(
+                    "Copy the community DB to staging".to_owned(),
+                    crate::trace::Status::Done
+                )]
+            );
+            view.toggle_settled(1, cx);
+            assert_eq!(markdown_text(view), ["All three leads finished."]);
+        });
+    }
+
+    #[gpui::test]
+    fn a_watched_session_does_not_hold_the_turn_open(cx: &mut TestAppContext) {
+        let view = pilot_view(cx);
+        let start = tool_row(
+            "start",
+            r#"{"command":"gespan app sessions.start --json {}"}"#,
+            r#"{"ok":true,"result":{"sessionId":776,"accepted":true}}"#,
+            ToolState::Completed,
+        );
+        view.update(cx, |view, cx| {
+            view.patch(
+                0,
+                vec![
+                    row("user", "Start the API lead"),
+                    row("assistant", "Starting it."),
+                    row("tool", &start),
+                    row(
+                        "assistant",
+                        "Started the API lead. I'll tell you when it stops.",
+                    ),
+                ],
+                cx,
+            );
+            // The session keeps working for hours; the Pilot watches it.
+            view.set_launches(
+                HashMap::from([(
+                    776,
+                    LaunchView {
+                        title: "API lead".into(),
+                        state: "working",
+                        harness: "claude".into(),
+                        cwd: "/repo".into(),
+                    },
+                )]),
+                cx,
+            );
+            assert!(!view.pilot_group_live(1));
+            assert_eq!(
+                markdown_text(view),
+                ["Started the API lead. I'll tell you when it stops."],
+                "the turn settles; the watched session is only a chip"
+            );
+            assert!(
+                view.rows
+                    .iter()
+                    .any(|r| matches!(r.body, Body::Launch(776)))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn trace_lines_show_each_steps_state(cx: &mut TestAppContext) {
+        let view = pilot_view(cx);
+        let failed = tool_row(
+            "db",
+            r#"{"command":"rsync db staging/","description":"Copy the community DB to staging"}"#,
+            "Exit code 1\nrsync: connection refused",
+            ToolState::Failed,
+        );
+        let done = tool_row(
+            "fixtures",
+            r#"{"command":"rsync -a fixtures/ db/","description":"Copy fixtures to the test databases"}"#,
+            "sent 1.2M",
+            ToolState::Completed,
+        );
+        let running = tool_row(
+            "tests",
+            r#"{"command":"cargo test","description":"Run the batch tests"}"#,
+            "",
+            ToolState::Running,
+        );
+        let finished = serde_json::to_string(&gespan_core::transcript::Interjection {
+            text: "Set up the work machines completed (exit code 0)".into(),
+            custom_type: "task-notification".into(),
+            severity: None,
+        })
+        .unwrap();
+        view.update(cx, |view, cx| {
+            view.streaming(true, cx);
+            view.patch(
+                0,
+                vec![
+                    row("user", "Prepare the batch"),
+                    row("tool", &done),
+                    row("tool", &failed),
+                    row("interjection", &finished),
+                    row("tool", &running),
+                ],
+                cx,
+            );
+            use crate::trace::Status::*;
+            assert_eq!(
+                trace_lines(view),
+                [
+                    ("Copy fixtures to the test databases".to_owned(), Done),
+                    (
+                        "Failed to copy the community DB to staging".to_owned(),
+                        Error
+                    ),
+                    (
+                        "Set up the work machines completed (exit code 0)".to_owned(),
+                        Done
+                    ),
+                    ("Run the batch tests".to_owned(), Running),
+                ]
+            );
+            assert!(
+                !view
+                    .rows
+                    .iter()
+                    .any(|r| matches!(&r.body, Body::Trace(l) if l.key.starts_with("thinking"))),
+                "a running step is the live end; no extra Thinking line"
+            );
+            assert!(
+                !view
+                    .rows
+                    .iter()
+                    .any(|r| matches!(&r.body, Body::Plain(t) if t.contains("connection refused"))),
+                "output never shows as raw text in the chat"
+            );
+            // The failed line's output opens inside it.
+            let key = "tool:db".to_owned();
+            assert!(
+                view.rows
+                    .iter()
+                    .any(|r| matches!(&r.body, Body::Trace(l) if l.key == key && l.expandable()))
+            );
+            view.toggle_trace_line(key.clone(), cx);
+            assert!(view.trace_open.contains(&key));
+            // Once the step finishes, the Pilot is thinking again.
+            let tests_done = tool_row(
+                "tests",
+                r#"{"command":"cargo test","description":"Run the batch tests"}"#,
+                "ok",
+                ToolState::Completed,
+            );
+            view.patch(4, vec![row("tool", &tests_done)], cx);
+            assert_eq!(
+                trace_lines(view).last().unwrap(),
+                &("Thinking".to_owned(), Running)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn launch_and_document_cards_show_while_the_turn_is_live(cx: &mut TestAppContext) {
+        let view = pilot_view(cx);
+        let start = tool_row(
+            "start",
+            r#"{"command":"gespan app sessions.start --json {}"}"#,
+            r#"{"ok":true,"result":{"sessionId":776,"accepted":true}}"#,
+            ToolState::Completed,
+        );
+        view.update(cx, |view, cx| {
+            view.streaming(true, cx);
+            view.patch(
+                0,
+                vec![
+                    row("user", "Start the API lead and write the plan"),
+                    row("tool", &start),
+                    row("pilot-document", r#"{"id":"artifact:plan","type":"document","documentId":"plan","title":"Plan","kind":"html"}"#),
+                    row("assistant", "Started the API lead; the plan is written."),
+                ],
+                cx,
+            );
+            assert!(view.pilot_group_live(1));
+            let launch = view.rows.iter().position(|r| matches!(r.body, Body::Launch(776)));
+            let step = view.rows.iter().position(|r| matches!(&r.body, Body::Trace(l) if l.key == "tool:start"));
+            assert_eq!(
+                launch,
+                step.map(|s| s + 1),
+                "the launch card follows the call that made it, while live"
+            );
+            let document = view.rows.iter().position(|r| matches!(r.body, Body::PilotCard(_)));
+            let answer = view.rows.iter().position(|r| matches!(r.body, Body::Markdown(_)));
+            assert!(document.is_some() && document < answer, "the document card shows where it landed");
+            assert_eq!(view.rows.iter().filter(|r| matches!(r.body, Body::Launch(776))).count(), 1);
+            view.streaming(false, cx);
+            assert_eq!(
+                view.rows.iter().filter(|r| matches!(r.body, Body::Launch(776))).count(),
+                1,
+                "settled, the card stays once"
+            );
+            assert_eq!(view.rows.iter().filter(|r| matches!(r.body, Body::PilotCard(_))).count(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn a_pilot_ask_card_stays_open_past_later_prose_until_the_user_answers(
+        cx: &mut TestAppContext,
+    ) {
+        let view = pilot_view(cx);
+        let ask = serde_json::json!({
+            "id": "q1", "type": "ask",
+            "question": "Backfill audit_log for 2024?",
+            "options": ["No, archive only", "Yes"],
+        })
+        .to_string();
+        view.update(cx, |view, cx| {
+            view.patch(
+                0,
+                vec![
+                    row("user", "Port the batch"),
+                    row("pilot-card", &ask),
+                    row("assistant", "I'll wait for your answer."),
+                ],
+                cx,
+            );
+            assert_eq!(
+                view.open_question().and_then(|q| q.question).as_deref(),
+                Some("Backfill audit_log for 2024?")
+            );
+            assert_eq!(view.open_choices(), ["No, archive only", "Yes"]);
+            assert!(
+                view.rows
+                    .iter()
+                    .any(|r| matches!(&r.body, Body::PilotCard(v) if v["type"] == "ask")),
+                "the decision card stays in the chat"
+            );
+            assert!(!view.ask_answered(1));
+            view.patch(3, vec![row("user", "No, archive only")], cx);
+            assert!(view.open_question().is_none());
+            assert!(view.open_choices().is_empty());
+            assert!(view.ask_answered(1), "the card reads as answered");
+        });
+    }
+
+    #[gpui::test]
+    fn pilot_turns_merge_follow_ups_show_live_prose_and_queue_above_the_work(
         cx: &mut TestAppContext,
     ) {
         let view = cx.new(|_| {
@@ -7204,7 +8187,10 @@ mod scroll_tests {
             view.streaming(true, cx);
             view.patch(6, vec![row("user", "And another thing")], cx);
             view.patch(7, vec![row("assistant", "Working on it")], cx);
-            assert!(view.pilot_prose_hidden(7), "live prose waits in the trail");
+            assert!(
+                !view.pilot_prose_hidden(7),
+                "live prose shows as it is written"
+            );
             view.set_pending(
                 vec![PendingMessage {
                     id: "q".into(),

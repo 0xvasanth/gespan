@@ -523,7 +523,7 @@ impl SettingsView {
             .text_size(px(12.))
             .line_height(px(if glass { 18. } else { RELAXED_12 }))
             .text_color(content(if glass { 0.62 } else { 0.45 }))
-            .child(text.into())
+            .child(self.text.text(text))
             .into_any_element()
     }
 
@@ -571,7 +571,6 @@ impl SettingsView {
                     | "sidebar-automations"
                     | "sidebar-inbox"
                     | "sidebar-pilots"
-                    | "sidebar-activity"
             )
         });
         let stacked = narrow && !toggle_only;

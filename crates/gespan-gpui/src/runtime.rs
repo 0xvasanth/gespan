@@ -132,6 +132,23 @@ pub(crate) fn run_turn(
         remote::run(summary, prompt, settings, controls, store, cancel, tx);
         return;
     }
+    // An end-to-end test's agent for this session (see `crate::e2e`). GPUI's
+    // test executor runs background tasks on the test thread, where a turn
+    // blocked on its process would stall the updates it sends, so it gets a
+    // thread of its own.
+    #[cfg(test)]
+    if let Some(binary) = crate::e2e::agent_binary(&store, summary.id) {
+        std::thread::spawn(move || {
+            let _session = enter_turn(&summary, false);
+            let input = TurnInput {
+                summary,
+                prompt,
+                settings,
+            };
+            run_turn_using(input, controls, store, cancel, tx, |_| Some(binary));
+        });
+        return;
+    }
     let _session = enter_turn(&summary, false);
     run_turn_using(
         TurnInput {
@@ -266,12 +283,10 @@ fn run_turn_using(
             sync_held = synced.held;
         }
         turn_start = replay.map_or(transcript.rows.len(), |replay| replay.prompt);
-        settings.operator_enabled |= settings.operator;
         let mut persisted = settings.clone();
         persisted.handoff = None;
         // These modes belong to this turn, not the next composer draft.
         persisted.plan = false;
-        persisted.operator = false;
         persisted.orchestrator = false;
         let start = if let Some(replay) = replay {
             // The prompt is already saved; only its reply is written again.
@@ -569,6 +584,7 @@ fn run_turn_using(
         // What the user wrote, before any context is wrapped around it: the
         // decision log looks up what is related to it.
         let user_message = prompt.clone();
+        let prompt = with_roster(settings.roster_block.take(), prompt, raw_native_command);
         let prompt = if raw_native_command {
             prompt
         } else if let Some(pilot) = &settings.pilot {
@@ -689,28 +705,6 @@ fn run_turn_using(
             prompt = format!(
                 "{prompt}\n\n{}",
                 gespan_core::orchestration::lead_prompt(&access)
-            );
-        }
-        if !raw_native_command && settings.operator_enabled {
-            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-            let (how, scope_note) = match gespan_core::pilot::AppAccess::for_provider(
-                kind,
-                provider_id.as_deref(),
-                &executable,
-            ) {
-                gespan_core::pilot::AppAccess::Tools => {
-                    ("Use the app_call tool with {action,input}.".to_owned(), "")
-                }
-                gespan_core::pilot::AppAccess::Cli(executable) => (
-                    format!(
-                        "Use the CLI: {} app ACTION --json JSON.",
-                        shlex_quote(&executable.to_string_lossy())
-                    ),
-                    " App credentials are in the environment; never print them.",
-                ),
-            };
-            prompt = format!(
-                "You have Gespan app access for this project. {how} Supported actions: models.list {{}}, sessions.list {{}}, sessions.read {{sessionId}}, sessions.start {{prompt,harness?,model?,title?,draft?,reveal?}}, sessions.send/draft {{sessionId,prompt}}, sessions.stop {{sessionId}}, folders.list {{}}, folders.move {{sessionId,folderId?,newFolderName?}}, notes.list {{}}, notes.read {{id}}, notes.write {{id?,title,body}}, worktrees.list {{}}. Scope is this thread's project.{scope_note} Respect the user’s request and selected access policy.\n\n{prompt}"
             );
         }
         // The decision log: its toolkit, and for a harness that reads no
@@ -870,7 +864,7 @@ fn run_turn_using(
             (ticket_tools.is_some(), gespan_core::tool_servers::TICKET),
             // Every session holds the marker; only these are told about it.
             (
-                (settings.pilot.is_some() || settings.operator_enabled)
+                settings.pilot.is_some()
                     && settings
                         .environment
                         .contains_key(gespan_core::pilot::bridge::APP_MARKER),
@@ -888,6 +882,11 @@ fn run_turn_using(
             }
         }
         if let Some(toolkit) = decision_toolkit {
+            toolkits.insert(toolkit.to_owned());
+        }
+        if tool_servers
+            && let Some(toolkit) = sessions_toolkit(summary.cwd.starts_with("remote://"))
+        {
             toolkits.insert(toolkit.to_owned());
         }
         // Exactly one of the two: both would list `actions_list` twice.
@@ -1966,6 +1965,21 @@ fn browser_facts(summary: &Session, settings: &Settings) -> gespan_core::browser
     }
 }
 
+/// The sibling roster ahead of the prompt. A raw slash command is left alone:
+/// its provider parses it, and text before it would make it a message.
+pub(crate) fn with_roster(roster: Option<String>, prompt: String, raw: bool) -> String {
+    match roster {
+        Some(roster) if !raw => format!("{roster}\n\n{prompt}"),
+        _ => prompt,
+    }
+}
+
+/// Every local session may see its siblings. Remote turns run on their own
+/// machine and mount nothing here.
+pub(crate) fn sessions_toolkit(remote: bool) -> Option<&'static str> {
+    (!remote).then_some(gespan_core::tool_servers::SESSIONS)
+}
+
 /// The one actions toolkit a turn mounts: list-only when it may not change
 /// anything. Remote projects have no local checkout to run in, and
 /// orchestration workers keep their scoped `control` workflow.
@@ -2106,6 +2120,27 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Vec<String>>(&typed).unwrap().len(),
             2
+        );
+    }
+
+    #[test]
+    fn the_roster_goes_before_the_message() {
+        use super::with_roster;
+        assert_eq!(
+            with_roster(Some("Other sessions…".into()), "Fix it".into(), false),
+            "Other sessions…\n\nFix it"
+        );
+        assert_eq!(with_roster(None, "Fix it".into(), false), "Fix it");
+    }
+
+    #[test]
+    fn a_raw_slash_command_never_carries_the_roster() {
+        use super::with_roster;
+        // OMP and Devin parse the command themselves; text before it would
+        // turn it into an ordinary message.
+        assert_eq!(
+            with_roster(Some("Other sessions…".into()), "/compact".into(), true),
+            "/compact"
         );
     }
 

@@ -28,6 +28,8 @@ use std::{
 };
 
 #[cfg(test)]
+mod all_runs_tests;
+#[cfg(test)]
 mod contract_tests;
 mod editor;
 mod gallery;
@@ -68,13 +70,6 @@ pub(crate) enum Event {
     SignInGithub {
         cwd: String,
     },
-}
-
-/// "See all in Runs": open the Runs page filtered to this automation. Its
-/// own event type so the Shell's handling of `Event` is untouched until it
-/// subscribes.
-pub(crate) struct OpenRuns {
-    pub automation: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -151,6 +146,8 @@ struct ChoiceMenu {
 }
 
 pub(crate) struct Automations {
+    /// The gallery's selectable text.
+    pub(crate) text: crate::selectable::SelectionScope,
     service: Arc<Mutex<Service>>,
     database: Option<Database>,
     cwd: String,
@@ -207,9 +204,20 @@ pub(crate) struct Automations {
     review_setup: Option<review_setup::ReviewSetup>,
     review_generation: u64,
     github_probe: review_setup::GithubProbe,
+    /// "All runs" is chosen in the list: the right pane is the run feed.
+    all_runs: bool,
+    /// Across every automation: runs going (queued included), automations
+    /// failing, runs started today.
+    totals: (usize, usize, usize),
+    /// Automations whose latest finished run failed.
+    failing: HashSet<String>,
+    /// Every automation's runs, shown while "All runs" is chosen.
+    feed: Entity<crate::runs::Runs>,
+    _feed_events: Subscription,
+    /// The page is on screen, so the feed may reload on its timer.
+    visible: bool,
 }
 impl EventEmitter<Event> for Automations {}
-impl EventEmitter<OpenRuns> for Automations {}
 impl Focusable for Automations {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -225,7 +233,19 @@ impl Automations {
         let filter =
             cx.new(|cx| Input::field("Filter automations", "Filter automations", content(0.4), cx));
         let subscription = cx.subscribe(&filter, |_, _, _: &input::Changed, cx| cx.notify());
+        let feed = cx.new(|cx| crate::runs::Runs::new(service.clone(), cx));
+        let feed_events = cx.subscribe(
+            &feed,
+            |this, _, event: &crate::runs::Event, cx| match event {
+                crate::runs::Event::OpenSession(id) => cx.emit(Event::OpenSession(id.clone())),
+                crate::runs::Event::EditAutomation(id) => this.select(id.clone(), cx),
+                crate::runs::Event::RunNow(id) => this.run_automation(id.clone(), cx),
+            },
+        );
+        // The feed redraws the list's All runs counts.
+        let feed_changed = cx.observe(&feed, |_, _, cx| cx.notify());
         let mut this = Self {
+            text: crate::selectable::SelectionScope::new(cx),
             service,
             database: None,
             cwd,
@@ -274,7 +294,14 @@ impl Automations {
             review_setup: None,
             review_generation: 0,
             github_probe: review_setup::github_probe(),
+            all_runs: true,
+            totals: (0, 0, 0),
+            failing: HashSet::new(),
+            feed,
+            _feed_events: feed_events,
+            visible: false,
         };
+        feed_changed.detach();
         this.refresh(cx);
         this
     }
@@ -380,7 +407,85 @@ impl Automations {
         self.load_folders(cx);
         cx.notify();
     }
+    /// Whether the right pane shows the run feed: "All runs" is chosen and
+    /// there is something to have run. With no automations the gallery
+    /// shows instead, so the first one is one click away.
+    pub(crate) fn showing_runs(&self) -> bool {
+        self.all_runs && self.review_setup.is_none() && !self.automations.is_empty()
+    }
+    /// "All runs" is the list's choice, whether or not there is a feed to
+    /// show yet.
+    #[cfg(test)]
+    pub(crate) fn all_runs_chosen(&self) -> bool {
+        self.all_runs
+    }
+    pub(crate) fn feed(&self) -> &Entity<crate::runs::Runs> {
+        &self.feed
+    }
+    /// The page came on screen.
+    pub(crate) fn shown(&mut self, cx: &mut Context<Self>) {
+        self.visible = true;
+        self.sync_feed(cx);
+    }
+    /// The page left the screen: the feed stops reloading.
+    pub(crate) fn hidden(&mut self, cx: &mut Context<Self>) {
+        self.visible = false;
+        self.feed.update(cx, |feed, _| feed.hidden());
+    }
+    /// The feed reloads on its timer only while it is on screen.
+    fn sync_feed(&mut self, cx: &mut Context<Self>) {
+        let on = self.visible && self.all_runs;
+        self.feed.update(cx, |feed, cx| {
+            if on {
+                feed.shown(cx);
+            } else {
+                feed.hidden();
+            }
+        });
+    }
+    /// Chooses "All runs" with `filter`: the feed of every automation's runs,
+    /// or one automation's when the filter names it.
+    pub(crate) fn show_all_runs(
+        &mut self,
+        filter: crate::runs::RunsFilter,
+        cx: &mut Context<Self>,
+    ) {
+        self.leave_detail();
+        self.all_runs = true;
+        self.feed.update(cx, |feed, cx| feed.set_filter(filter, cx));
+        self.sync_feed(cx);
+        cx.notify();
+    }
+    /// "All runs" keeping the project and status it last showed; one
+    /// automation's filter belongs to "See all runs" and is dropped.
+    pub(crate) fn show_every_run(&mut self, cx: &mut Context<Self>) {
+        let filter = crate::runs::RunsFilter {
+            automation: None,
+            automation_name: None,
+            ..self.feed.read(cx).filter().clone()
+        };
+        self.show_all_runs(filter, cx);
+    }
+    /// Closes whatever the right pane held: an editor, the gallery or the
+    /// review sheet.
+    fn leave_detail(&mut self) {
+        self.editor = None;
+        self.review_setup = None;
+        self.selected = None;
+        self.runs.clear();
+        self.gallery = false;
+        self.history = false;
+        self.confirm_delete = false;
+        self.choice = None;
+        self.trigger_menu = None;
+        self.models = None;
+        self.project_picker = None;
+        self.error = None;
+        self.request_generation += 1;
+    }
     fn show_gallery(&mut self, cx: &mut Context<Self>) {
+        self.all_runs = false;
+        self.sync_feed(cx);
         self.editor = None;
         self.review_setup = None;
         self.selected = None;
@@ -397,6 +502,7 @@ impl Automations {
         cx.notify();
     }
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.feed.update(cx, |feed, cx| feed.refresh(cx));
         let service = self.service.clone();
         let selected = self.selected.clone();
         let selected_for_work = selected.clone();
@@ -409,9 +515,11 @@ impl Automations {
             let mut sparklines = HashMap::new();
             let mut failed = HashMap::new();
             let mut runs = None;
+            let mut every = Vec::new();
             // Each automation keeps at most 100 runs, so this stays small.
             for automation in &list {
                 let history = service.runs(&automation.id)?;
+                every.extend(history.iter().cloned());
                 sparklines.insert(
                     automation.id.clone(),
                     automations::runs_per_day(&history, layout::SPARK_DAYS, now),
@@ -429,15 +537,25 @@ impl Automations {
                 (None, Some(id)) => service.runs(id)?,
                 (None, None) => Vec::new(),
             };
-            Ok::<_, String>((list, runs, sparklines, failed))
+            let (running, _) = crate::runs::rail_counts(&every);
+            let today_start = crate::runs::local_day_start(now);
+            let (_, today, _) = crate::runs::counts(&every, today_start);
+            let failing: HashSet<String> = crate::runs::failing(&every)
+                .into_iter()
+                .map(|run| run.automation_id.clone())
+                .collect();
+            let totals = (running, failing.len(), today);
+            Ok::<_, String>((list, runs, sparklines, failed, totals, failing))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.loading = false;
                 match result {
-                    Ok((list, runs, sparklines, failed)) => {
+                    Ok((list, runs, sparklines, failed, totals, failing)) => {
                         this.automations = list;
+                        this.totals = totals;
+                        this.failing = failing;
                         this.sparklines = sparklines;
                         this.spark_failed = failed;
                         if this.selected == selected {
@@ -451,7 +569,8 @@ impl Automations {
                             this.selected = None;
                             if !this.editor.as_ref().is_some_and(|e| e.dirty) {
                                 this.editor = None;
-                                this.gallery = true;
+                                this.all_runs = true;
+                                this.sync_feed(cx);
                             }
                         }
                     }
@@ -600,6 +719,8 @@ impl Automations {
         });
         self.rebuild_trigger_fields(cx);
         self.gallery = false;
+        self.all_runs = false;
+        self.sync_feed(cx);
         self.history = false;
         self.confirm_delete = false;
         self.choice = None;
@@ -855,16 +976,18 @@ impl Automations {
         })
         .detach();
     }
+    /// The editor's "Run now": runs the open automation.
     fn run(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.selected.clone() {
+            self.run_automation(id, cx);
+        }
+    }
+    /// Runs automation `id` now, as a test run.
+    pub(crate) fn run_automation(&mut self, id: String, cx: &mut Context<Self>) {
         if self.running {
             return;
         }
-        let Some(automation) = self
-            .selected
-            .as_ref()
-            .and_then(|id| self.automations.iter().find(|a| &a.id == id))
-            .cloned()
-        else {
+        let Some(automation) = self.automations.iter().find(|a| a.id == id).cloned() else {
             return;
         };
         self.running = true;
@@ -1220,7 +1343,7 @@ impl Render for Automations {
                     .gap(px(14.))
                     .child(glass::page_header(
                         "Automations",
-                        "Agents that start on their own, on a schedule or an event.",
+                        "What starts on its own, and every run it made.",
                     ))
                     .child(
                         div()
@@ -1253,6 +1376,8 @@ impl Render for Automations {
             .child(list);
         let main_content = if self.review_setup.is_some() {
             self.render_review_setup(cx)
+        } else if self.showing_runs() {
+            self.feed.clone().into_any_element()
         } else if self.gallery || self.editor.is_none() {
             self.render_gallery(cx)
         } else {
@@ -1289,6 +1414,13 @@ impl Render for Automations {
                         this.trigger_menu = None;
                         this.models = None;
                         this.project_picker = None;
+                    } else if this.feed.read(cx).menu_open() {
+                        cx.propagate();
+                        return;
+                    } else if !this.showing_runs() && !this.automations.is_empty() {
+                        // An editor, the gallery or the review sheet gives
+                        // way to All runs; All runs closes the page.
+                        this.show_every_run(cx);
                     } else if this.review_setup.is_some()
                         || (this.editor.is_some() && !this.gallery)
                     {

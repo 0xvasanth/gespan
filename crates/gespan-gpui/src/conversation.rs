@@ -84,6 +84,8 @@ use std::{
     time::Instant,
 };
 pub(crate) use watching::StopWatching;
+/// The yellow of anything waiting on the user: a watch chip, a decision card.
+pub(crate) use watching::WAITING as WATCH_WAITING;
 // Keep empty and docked composers aligned with the transcript column. Below
 // this width the empty session drops its title.
 const COMPOSER_COLUMN: f32 = COLUMN;
@@ -148,7 +150,6 @@ pub(crate) fn access_menu_items(checked: &str) -> Vec<MenuItem> {
 }
 // Tailwind v4 accents the composer menus tint their icons with.
 const YELLOW_300: u32 = 0xffdf20;
-const SKY_300: u32 = 0x74d4ff;
 const FUCHSIA_300: u32 = 0xf4a8ff;
 const AMBER_400: u32 = 0xffb900;
 fn tint(color: u32, alpha: f32) -> gpui::Hsla {
@@ -235,6 +236,18 @@ pub(crate) struct Conversation {
     file_drag: bool,
     attachment_error: Option<String>,
     app_environment: std::collections::HashMap<String, String>,
+    /// The sibling roster the next turn would carry, kept current by the shell.
+    roster: Option<String>,
+    /// The fingerprint of the roster this chat's agent was last told.
+    last_roster: Option<u64>,
+    /// The roster the running turn carries, until the agent finishes it.
+    roster_in_flight: Option<u64>,
+    /// How many turns have ended, and how the last one did, for the
+    /// session that started this one.
+    pub(crate) turn_ends: u64,
+    /// Turns the user typed, which start a fresh hop count for messages.
+    pub(crate) typed_turns: u64,
+    pub(crate) last_turn: Option<gespan_core::orchestrator::tree::Outcome>,
     /// The running turn's policy, independent of the next composer's mode.
     pub(crate) app_read_only: bool,
     planning_orchestration: bool,
@@ -870,6 +883,12 @@ impl Conversation {
             file_drag: false,
             attachment_error: None,
             app_environment: Default::default(),
+            roster: None,
+            last_roster: None,
+            roster_in_flight: None,
+            turn_ends: 0,
+            typed_turns: 0,
+            last_turn: None,
             app_read_only: false,
             planning_orchestration: false,
             orchestration_plan_checked: false,
@@ -1387,8 +1406,6 @@ impl Conversation {
             Some("orchestrator")
         } else if self.settings.plan {
             Some("plan")
-        } else if self.settings.operator {
-            Some("operator")
         } else {
             None
         };
@@ -1454,7 +1471,7 @@ impl Conversation {
         {
             return None;
         }
-        let mode = self.settings.orchestrator || self.settings.plan || self.settings.operator;
+        let mode = self.settings.orchestrator || self.settings.plan;
         Some(
             if self.busy && !mode && self.steers_follow_up(alternate, cx) {
                 ("Steer", "queue-steer")
@@ -1534,9 +1551,8 @@ impl Conversation {
         let summary = self.summary.clone();
         let store = self.store.clone();
         let cancel = self.cancel.clone();
-        // Composer modes reset after Send; the thread grant and running turn's
-        // access policy must outlive that reset and edits to the next draft.
-        self.settings.operator_enabled |= self.settings.operator;
+        // Composer modes reset after Send; the running turn's access policy
+        // must outlive that reset and edits to the next draft.
         self.app_read_only = self.settings.plan
             || self.settings.orchestrator
             || self.settings.access == AccessMode::ReadOnly;
@@ -1544,6 +1560,9 @@ impl Conversation {
         let mut settings = replaying.unwrap_or_else(|| self.settings.clone());
         // This launch's own: never what the thread's settings say.
         settings.user_typed = typed;
+        if typed {
+            self.typed_turns += 1;
+        }
         if let Some(model) = self.model_info().filter(|_| !replay) {
             for control in &model.controls {
                 settings
@@ -1573,6 +1592,7 @@ impl Conversation {
                     settings.prepared_prompt = Some(prepared);
                 }
             }
+            settings.roster_block = self.pending_roster(&prompt);
             if self.inbox_ask.is_some() {
                 let prepared = settings.prepared_prompt.take();
                 settings.prepared_prompt =
@@ -1620,7 +1640,6 @@ impl Conversation {
         }
         if settings.orchestrator {
             settings.plan = true;
-            settings.operator = false;
             self.settings.orchestrator = false;
         }
         if self.settings.handoff.take().is_some() {
@@ -1673,6 +1692,10 @@ impl Conversation {
                             return;
                         }
                         let stopping = this.stopping;
+                        if finished {
+                            this.roster_turn_ended(update.succeeded && !stopping);
+                            this.record_turn_end(update.succeeded, stopping);
+                        }
                         // The final update settles accepted rows and storage.
                         // Ignore streaming notifications after the user stops.
                         if stopping && !finished {
@@ -1860,7 +1883,7 @@ impl Conversation {
                             this.summary.updated_at = gespan_core::time::now_ms();
                             this.busy = false;
                             this.stopping = false;
-                            this.clear_background();
+                            this.clear_background(cx);
                             if this.is_remote() {
                                 this.refresh_remote_snapshot(cx);
                             }
@@ -1964,8 +1987,6 @@ impl Conversation {
             Some("orchestrator".into())
         } else if self.settings.plan {
             Some("plan".into())
-        } else if self.settings.operator {
-            Some("operator".into())
         } else {
             None
         }
@@ -2605,7 +2626,7 @@ impl Conversation {
                         cx,
                     );
                 }
-                "plan" | "operator" | "orchestrator" | "draft" => {
+                "plan" | "orchestrator" | "draft" => {
                     self.toggle_mode(id, cx);
                     return;
                 }
@@ -2815,6 +2836,8 @@ impl Conversation {
                     .map(|center| center.read(cx).selected(picked.0, &self.summary.cwd))
                     .unwrap_or_default();
                 self.summary.provider_id = None;
+                // A fresh agent conversation hasn't been told its siblings.
+                self.forget_roster_sent();
                 if let Some(pending) = &self.settings.pending_provider_switch {
                     self.settings.handoff = Some(gespan_core::agent::Handoff {
                         from: pending.from.clone(),
@@ -3096,11 +3119,6 @@ impl Conversation {
                             .icon("ai-idea")
                             .icon_color(tint(YELLOW_300, 0.8))
                             .description("Review a plan before building"),
-                        MenuAction::new("operator", "Operator")
-                            .disabled(self.is_remote())
-                            .icon("cursor-magic")
-                            .icon_color(tint(SKY_300, 0.8))
-                            .description("Give this thread access to Gespan"),
                         MenuAction::new("orchestrator", "Orchestrator")
                             .disabled(self.is_remote())
                             .icon("share")
@@ -3121,7 +3139,6 @@ impl Conversation {
                         let checked = match action.id.as_ref() {
                             "plan" => self.settings.plan,
                             "draft" => self.draft_active(cx),
-                            "operator" => self.settings.operator,
                             "orchestrator" => self.settings.orchestrator,
                             _ => false,
                         };
@@ -3305,7 +3322,7 @@ impl Conversation {
             self.pilot_pause_queue();
         }
         self.follow_ups.ready = false;
-        self.clear_background();
+        self.clear_background(cx);
         self.approvals.clear();
         self.questions.clear();
         self.controls = None;
@@ -3350,8 +3367,6 @@ impl Conversation {
             Some(input::Command::Orchestrator)
         } else if self.settings.plan {
             Some(input::Command::Plan)
-        } else if self.settings.operator {
-            Some(input::Command::Operator)
         } else {
             None
         };
@@ -5760,8 +5775,6 @@ pub(super) mod menu_tests {
                     .update(cx, |i, cx| i.set_text("Review this".into(), cx));
                 c.toggle_mode("plan", cx);
                 assert_eq!(c.input.read(cx).content, "/plan Review this");
-                c.toggle_mode("operator", cx);
-                assert_eq!(c.input.read(cx).content, "/operator Review this");
                 c.toggle_mode("orchestrator", cx);
                 assert_eq!(c.input.read(cx).content, "/orchestrator Review this");
                 c.toggle_mode("orchestrator", cx);
@@ -5774,7 +5787,7 @@ pub(super) mod menu_tests {
             .update(cx, |c, w, cx| {
                 c.input.update(cx, |i, cx| {
                     i.select_range(0..i.content.len(), cx);
-                    i.replace_text_in_range(None, "/operator New draft", w, cx);
+                    i.replace_text_in_range(None, "/orchestrator New draft", w, cx);
                 });
             })
             .unwrap();
@@ -5782,8 +5795,8 @@ pub(super) mod menu_tests {
         window
             .update(cx, |c, _, cx| {
                 assert!(!c.settings.plan);
-                assert_eq!(c.input.read(cx).content, "/operator New draft");
-                c.enable_mode("operator", cx);
+                assert_eq!(c.input.read(cx).content, "/orchestrator New draft");
+                c.enable_mode("orchestrator", cx);
                 c.input.update(cx, |i, cx| i.select_range(1..1, cx));
             })
             .unwrap();
@@ -5791,8 +5804,8 @@ pub(super) mod menu_tests {
         cx.run_until_parked();
         window
             .update(cx, |c, _, cx| {
-                assert!(!c.settings.operator);
-                assert_eq!(c.input.read(cx).content, "operator New draft");
+                assert!(!c.settings.orchestrator);
+                assert_eq!(c.input.read(cx).content, "orchestrator New draft");
             })
             .unwrap();
     }
@@ -5801,7 +5814,7 @@ pub(super) mod menu_tests {
     fn submitted_modes_clear_for_a_started_turn_and_stay_cleared_after_completion(
         cx: &mut TestAppContext,
     ) {
-        for mode in ["operator", "orchestrator", "plan"] {
+        for mode in ["orchestrator", "plan"] {
             let window = conversation(cx);
             window
                 .update(cx, |view, _, cx| {
@@ -5814,11 +5827,7 @@ pub(super) mod menu_tests {
                     view.send(cx);
                     assert!(view.busy);
                     assert!(view.input.read(cx).content.is_empty());
-                    assert!(
-                        !view.settings.plan
-                            && !view.settings.operator
-                            && !view.settings.orchestrator
-                    );
+                    assert!(!view.settings.plan && !view.settings.orchestrator);
                 })
                 .unwrap();
             cx.run_until_parked();
@@ -5829,7 +5838,7 @@ pub(super) mod menu_tests {
                         .agent_settings(view.summary.id)
                         .unwrap()
                         .unwrap();
-                    assert!(!saved.plan && !saved.operator && !saved.orchestrator);
+                    assert!(!saved.plan && !saved.orchestrator);
                     assert!(view.input.read(cx).content.is_empty());
                 })
                 .unwrap();

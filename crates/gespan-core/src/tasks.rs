@@ -145,12 +145,15 @@ fn tool_summary(text: &str, cwd: Option<&str>) -> String {
     }
 }
 
-/// The latest `choices` card a Pilot posted, while no user message follows it.
+/// The latest `choices` or `ask` card a Pilot posted, while no user message
+/// follows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenChoice {
     pub row: usize,
     pub options: Vec<String>,
     pub at: Option<u64>,
+    /// What a `pilot.ask` decision card asks.
+    pub question: Option<String>,
 }
 
 /// The Pilot chat's open choice, if its last card asks one and the user has
@@ -164,7 +167,7 @@ pub fn open_choice(rows: &[Row]) -> Option<OpenChoice> {
         return None;
     }
     let card: serde_json::Value = serde_json::from_str(&row.text).ok()?;
-    if card["type"] != "choices" {
+    if card["type"] != "choices" && card["type"] != "ask" {
         return None;
     }
     let options: Vec<String> = card["options"]
@@ -172,10 +175,11 @@ pub fn open_choice(rows: &[Row]) -> Option<OpenChoice> {
         .iter()
         .filter_map(|o| o.as_str().map(str::to_owned))
         .collect();
-    (!options.is_empty()).then_some(OpenChoice {
+    (!options.is_empty()).then(|| OpenChoice {
         row: at,
         options,
         at: row.sent_at,
+        question: card["question"].as_str().map(str::to_owned),
     })
 }
 

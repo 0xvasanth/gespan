@@ -1,0 +1,44 @@
+/* Gespan Cloud (coming soon). The page shows screens captured from the
+   Gespan Cloud design canvas; the Home page's teaser draws a small inbox in
+   the same zinc style. */
+.gc-shot{margin:0;width:100%}
+/* A canvas screen: the frame of a shot, holding an image instead of markup. */
+img.gc-screen{display:block;height:auto;object-fit:contain;background:#09090b}
+
+/* The Home page teaser */
+.gc-teaser{padding:56px;display:flex;align-items:center;gap:48px}
+.gc-teaser .gc-panel{flex:1.1;min-width:0;padding:16px;background:#09090b;border-color:#27272a;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:18px;color:#fafafa}
+.gc-panel .gc-list{display:flex;flex-direction:column;border:1px solid #27272a;border-radius:10px;background:#0c0c0e}
+.gc-row{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-top:1px solid #27272a;min-width:0}
+.gc-row:first-child{border-top:0}
+.gc-grow{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.gc-strong{font-weight:500;color:#fafafa}
+.gc-muted{color:#a1a1aa;font-size:12px}
+.gc-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;display:inline-block;margin-top:6px;background:#71717a}
+.gc-dot.wait{background:#e8c547}.gc-dot.run{background:#459bf7}.gc-dot.ok{background:#6ee7b7}.gc-dot.bad{background:#f87171}.gc-dot.mute{background:#a1a1aa}
+.gc-tabs{display:inline-flex;gap:2px;padding:3px;border-radius:8px;background:#18181b;align-self:flex-start;max-width:100%;overflow-x:auto}
+.gc-tabs span{padding:4px 10px;border-radius:6px;color:#a1a1aa;white-space:nowrap;font-size:12px}
+.gc-tabs span.on{background:#27272a;color:#fafafa}
+.gc-tabs b{font-weight:600;margin-left:4px}
+@container (max-width:960px){.gc-teaser{flex-direction:column;align-items:stretch;padding:40px 28px}}
+@container (max-width:760px){.gc-teaser{padding:32px 20px}}
+/* What the concept covers: a bento grid, two cards wide. */
+.gc-bento{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.gc-bento .gc-wide{grid-column:span 2}
+.gc-cover{padding:28px;display:flex;flex-direction:column;gap:10px;min-height:150px;box-sizing:border-box}
+@container (max-width:760px){.gc-bento{grid-template-columns:minmax(0,1fr)}.gc-bento .gc-wide{grid-column:auto}}
+/* How it would work: the hosting switch, the map and where things live. */
+.cm{display:flex;flex-direction:column;gap:20px}
+.cm-switch{margin:0;min-inline-size:0;align-self:center;display:inline-flex;gap:4px;padding:4px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09)}
+.cm-switch button{height:34px;padding:0 16px;border:0;border-radius:999px;background:transparent;color:#a3a3a3;font:inherit;font-size:13.5px;cursor:pointer;transition:background .25s,color .25s}
+.cm-switch button:hover{color:#ebebeb}
+.cm-switch button.on{color:#ebebeb;background:rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.1)}
+.cm-detail{margin:0;text-align:center;color:#a3a3a3;font-size:14px}
+.cm-dot{width:7px;height:7px;border-radius:50%;background:#71717a}
+.cm-dot.run{background:#459bf7}.cm-dot.ok{background:#6ee7b7}
+.cm-where{margin:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.cm-where > div{padding:18px 20px;border-radius:16px}
+.cm-where dt{font-weight:600;color:#ebebeb;font-size:14px}
+.cm-where dd{margin:6px 0 0;color:#a3a3a3;font-size:13.5px;line-height:20px}
+@container (max-width:760px){.cm-where{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){.cm-switch button{transition:none}}

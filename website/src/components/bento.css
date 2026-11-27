@@ -1,0 +1,33 @@
+/* The features bento: four columns, rows of wide + narrow + narrow, then
+   narrow + narrow + wide. */
+.bt-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+.bt-card{position:relative;border-radius:20px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.bt-card.wide{grid-column:span 2}
+.bt-inner{position:relative;z-index:1;height:100%;box-sizing:border-box;padding:24px;display:flex;flex-direction:column;gap:12px}
+/* The glow: a conic light drawn only in the border, turned to face the
+   pointer (--glow-angle), shown while the pointer is near. */
+.bt-card::before{content:"";position:absolute;inset:-1px;border-radius:inherit;padding:1.5px;pointer-events:none;
+  background:conic-gradient(from calc(var(--glow-angle,0deg) - 50deg),transparent 0deg,#c0affc 30deg,#9f7ef8 50deg,#459bf7 70deg,transparent 100deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box exclude,linear-gradient(#000 0 0);
+  opacity:0;transition:opacity .3s}
+.bt-card::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .3s;
+  background:radial-gradient(60% 60% at 50% 0%,rgba(143,100,246,.10),transparent 70%)}
+.bt-card[data-glow="on"]::before,.bt-card[data-glow="on"]::after{opacity:1}
+/* The pictures on the wide cards. */
+.bt-panes{margin-top:auto;padding-top:8px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.bt-pane{padding:12px;border-radius:12px;background:rgba(0,0,0,.32);border:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;gap:8px;min-width:0}
+.bt-pane-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#ebebeb;white-space:nowrap}
+.bt-chip{width:12px;height:12px;border-radius:4px;flex:none}
+.bt-line{font-family:var(--mono);font-size:11.5px;color:#a3a3a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-browser{margin-top:auto;border-radius:12px;overflow:hidden;background:rgba(0,0,0,.32);border:1px solid rgba(255,255,255,.07)}
+.bt-browser-bar{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.07)}
+.bt-browser-bar > span{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.16)}
+.bt-url{margin-left:8px;flex:1;min-width:0;padding:3px 10px;border-radius:6px;background:rgba(255,255,255,.05);font-family:var(--mono);font-size:11.5px;color:#a3a3a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-browser-body{position:relative;padding:14px 14px 44px;display:flex;flex-direction:column;gap:8px}
+.bt-skel{height:9px;border-radius:5px;background:rgba(255,255,255,.08)}
+.bt-skel.w60{width:60%}.bt-skel.w90{width:90%}.bt-skel.w40{width:40%}
+.bt-cursor{position:absolute;right:14px;bottom:10px;padding:4px 10px;border-radius:999px;font-size:11.5px;color:#d9cffd;background:rgba(143,100,246,.18);border:1px solid rgba(192,175,252,.3)}
+@container (max-width:960px){.bt-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:640px){.bt-grid{grid-template-columns:minmax(0,1fr);gap:12px}.bt-card.wide{grid-column:auto}.bt-panes{grid-template-columns:minmax(0,1fr)}}
+@media (prefers-reduced-motion:reduce){.bt-card::before,.bt-card::after{transition:none}}

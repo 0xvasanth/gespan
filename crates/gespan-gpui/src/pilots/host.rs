@@ -1,7 +1,8 @@
 //! Capability-checked app actions used by Pilot provider subprocesses.
 use super::*;
 use gespan_core::flow::{Flow, FlowStore, RunTag};
-use gespan_core::pilot::{Document, Launch, bridge::Call, completions, files, memory};
+use gespan_core::orchestrator::reports;
+use gespan_core::pilot::{Document, Launch, bridge::Call, files, memory};
 use gespan_core::{app_access as app, session_groups::Groups, time::now_ms};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -257,6 +258,12 @@ impl Pilots {
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update_in(cx, |this, window, cx| {
+                if call.action == "sessions.start" && result.is_err() {
+                    let caller = call.session;
+                    let _ = this
+                        .owner
+                        .update(cx, |owner, _| owner.pilot_start_failed(caller));
+                }
                 let result = result.map(|(value, effect)| {
                     match effect {
                         Effect::None => (),
@@ -298,7 +305,8 @@ impl Pilots {
                                 });
                             }
                             let _ = this.owner.update(cx, |owner, cx| {
-                                owner.pilot_install_app(summary, *settings, draft, cx)
+                                owner.pilot_install_app(summary, *settings, draft, cx);
+                                owner.pilot_link(caller, id, cx);
                             });
                             this.save(cx);
                             this.group_launch(&pilot_id, id, cx);
@@ -505,15 +513,43 @@ impl Pilots {
                             owner.app_placement(&input, call.session, &project, cx)
                         })
                         .ok_or_else(|| "Gespan is closing".to_string())??;
-                    Ok::<_, String>((prompt, provider, kind, source_provider, settings, placement))
+                    // The core's limits: depth, running children, and never a
+                    // broader mode than the chat asking for it.
+                    let caller_access = source
+                        .as_ref()
+                        .map(|v| crate::shell::effective_access(v.read(cx)))
+                        .unwrap_or(settings.access);
+                    let requested = match input["runtimeMode"].as_str() {
+                        None => None,
+                        Some(id) => Some(
+                            gespan_core::orchestrator::start::access_mode(id)
+                                .ok_or("Unknown runtimeMode")?,
+                        ),
+                    };
+                    let access = self
+                        .owner
+                        .update(cx, |owner, cx| {
+                            owner.pilot_start_policy(call.session, caller_access, requested, cx)
+                        })
+                        .ok_or_else(|| "Gespan is closing".to_string())??;
+                    Ok::<_, String>((
+                        prompt,
+                        provider,
+                        kind,
+                        source_provider,
+                        settings,
+                        placement,
+                        access,
+                    ))
                 })();
-                let (prompt, provider, kind, source_provider, settings, placement) = match parsed {
-                    Ok(value) => value,
-                    Err(error) => {
-                        self.finish_call(call, Err(error), cx);
-                        return;
-                    }
-                };
+                let (prompt, provider, kind, source_provider, settings, placement, access) =
+                    match parsed {
+                        Ok(value) => value,
+                        Err(error) => {
+                            self.finish_call(call, Err(error), cx);
+                            return;
+                        }
+                    };
                 let draft = flag(&input, "draft", false);
                 let reveal = flag(&input, "reveal", false);
                 let request = call.request_id.clone();
@@ -538,6 +574,7 @@ impl Pilots {
                             &models,
                         )?;
                         settings.revision = 0;
+                        settings.access = access;
                         let mut summary = locked(&store)?.create(&provider, &project)?;
                         app::launch_checkout(&input, &project, summary.id, &mut settings)?;
                         summary.title = app::optional_text(&input, "title", 160)?
@@ -775,6 +812,15 @@ impl Pilots {
                 .and_then(|id| pilot.documents.iter().find(|d| d.id == id))
                 .map(|d| json!(d))
                 .ok_or("Document not found".into()),
+            "pilot.ask" => pilot::cards::ask(&input).map(|mut card| {
+                // A decision card: it shows in the chat with one-tap answers
+                // above the composer, and the Pilot needs the user until one
+                // is given.
+                card["id"] = json!(pilot::new_id());
+                self.hold_card(call.session, &pilot.id, card.clone());
+                self.save(cx);
+                card
+            }),
             "chat.card" => {
                 let mut card = match pilot::cards::parse(&input) {
                     Ok(c) => c,
@@ -1112,8 +1158,9 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         let project = launch.cwd.clone();
         self.file_session(id, project, session, cx);
     }
-    /// Files a session a Pilot's Flow run started in the Pilot's folder. It is not a launch
-    /// (the Flow's events report it), so it never joins `launches`.
+    /// Files a session a Pilot's Flow run started in the Pilot's folder, and links it under
+    /// the Pilot's chat in the session tree. It is not a launch (the Flow's events report it),
+    /// so it never joins `launches`, and its link never wakes the chat.
     pub(crate) fn file_flow_session(
         &mut self,
         id: &str,
@@ -1122,6 +1169,16 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
         cx: &mut Context<Self>,
     ) {
         self.file_session(id, project, session, cx);
+        if let Some(chat) = self.chats.get(id).map(|view| view.read(cx).summary.id) {
+            let _ = self.owner.update(cx, |owner, cx| {
+                owner.child_link(
+                    chat,
+                    session,
+                    gespan_core::orchestrator::tree::Origin::Flow,
+                    cx,
+                )
+            });
+        }
     }
     /// Puts `session` in Pilot `id`'s folder of `project`.
     fn file_session(&mut self, id: &str, project: String, session: i64, cx: &mut Context<Self>) {
@@ -1222,7 +1279,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
             self.chats
                 .values()
                 .chain(self.running.values().map(|r| &r.view))
-                .any(|v| completions::is_source(source, v.read(cx).summary.id) && v.read(cx).busy)
+                .any(|v| reports::is_source(source, v.read(cx).summary.id) && v.read(cx).busy)
         };
         let mut ready = Vec::new();
         for pilot in &self.roster.pilots {
@@ -1237,7 +1294,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                     *p == pilot.id && work.iter().any(|w| w.session == session)
                 })
             };
-            for report in completions::ready(&pilot.launches, stopped, source_busy, in_flight) {
+            for report in reports::ready(&pilot.launches, stopped, source_busy, in_flight) {
                 let children: Vec<_> = report
                     .launches
                     .iter()
@@ -1273,11 +1330,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                             .and_then(|db| db.load(id))
                             .map(|t| gespan_core::response::prose(&t.rows))
                             .unwrap_or_else(|_| "Session was removed".into());
-                        let entry = format!(
-                            "Session {id}: {title}\n{}",
-                            gespan_core::response::limit(&rows, 12000)
-                        );
-                        (id, entry)
+                        reports::entry(id, &title, &gespan_core::response::limit(&rows, 12000))
                     })
                     .collect::<Vec<_>>()
             });
@@ -1345,12 +1398,12 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
             .running
             .keys()
             .copied()
-            .find(|run| completions::is_source(source, *run))
+            .find(|run| reports::is_source(source, *run))
             .unwrap_or(source);
         if let Some(run) = self.running.get_mut(&source) {
             match run.mailbox.iter_mut().find(|m| !m.report.is_empty()) {
                 Some(queued) => {
-                    completions::merge_report(&mut queued.report, entries);
+                    reports::merge_report(&mut queued.report, entries);
                     rewrite_report(queued);
                 }
                 None => run.mailbox.push(new_report(entries)),
@@ -1367,7 +1420,7 @@ if let Some(enabled)=input.get("enabled").and_then(Value::as_bool){h.enabled=ena
                 m.internal && m.error.is_none() && !m.report.is_empty() && !handed.contains(&m.id)
             }) {
                 Some(queued) => {
-                    completions::merge_report(&mut queued.report, entries);
+                    reports::merge_report(&mut queued.report, entries);
                     rewrite_report(queued);
                 }
                 None => pilot.outbox.push(new_report(entries)),
@@ -1459,10 +1512,10 @@ fn file_in_pilot_folder(groups: &mut Groups, pilot: &pilot::Pilot, session: i64)
         groups.add_to_folder(&folder, session);
     }
 }
-fn new_report(entries: Vec<completions::Entry>) -> Message {
+fn new_report(entries: Vec<reports::Entry>) -> Message {
     Message {
         id: pilot::new_id(),
-        text: completions::report_message(&entries),
+        text: reports::report_message(&entries),
         sent_at: Some(now_ms()),
         internal: true,
         error: None,
@@ -1474,14 +1527,14 @@ fn new_report(entries: Vec<completions::Entry>) -> Message {
 /// to be saved before it can be dispatched.
 fn rewrite_report(message: &mut Message) {
     message.id = pilot::new_id();
-    message.text = completions::report_message(&message.report);
+    message.text = reports::report_message(&message.report);
     message.sent_at = Some(now_ms());
 }
 /// Takes `session` out of the open reports in `queue`; returns whether any changed.
 fn dismiss_from(queue: &mut Vec<Message>, session: i64, open: impl Fn(&Message) -> bool) -> bool {
     let mut changed = false;
     queue.retain_mut(|m| {
-        if !open(m) || !completions::dismiss(&mut m.report, session) {
+        if !open(m) || !reports::dismiss(&mut m.report, session) {
             return true;
         }
         changed = true;

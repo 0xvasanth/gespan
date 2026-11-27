@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Inbox is now Git, a review queue for pull and merge requests:** the rail,
+  the page and Settings say Git. It lists open pull requests from GitHub,
+  GitLab and Azure DevOps together, grouped by who they wait on (Waiting on
+  you, Waiting on others, Ready to merge), each with a line saying why. Needs
+  me / Mine / All open sit on one line with a Filters dropdown (repos, host,
+  author, drafts, and label, reviewer, checks, size or updated once added)
+  that is kept per view, with saved views. The list pages 25 at a time and
+  holds new arrivals behind "N new since HH:MM · Show". dependabot and
+  renovate fold into a Bots view. Issues and tracker tickets leave the page
+  (automations still get them). Only your projects' repos, plus any you add
+  in Settings › Git, are fetched; one search folds review requests from other
+  repos under the list. Files shows hunks only, and a review bar sends
+  Comment, Request changes or Approve, with a tone and Polish, which asks the
+  pull request's Ask agent for a rewrite. Your pull request with failing
+  checks opens on the failed job, with Re-run failed and Fix with an agent.
+
+- **Releases build iOS only when asked:** each iOS App Store build uses an
+  Expo build credit, so a release now ships desktop and the Android APK, and
+  builds iOS only when the `RELEASE_IOS` repository variable is `true` or the
+  Release workflow is run by hand with "Build iOS" ticked.
+
+## [0.3.2] - 2026-11-19
+
+### Fixed
+
+- **The project menu is back in sight:** the project switcher at the top of
+  the rail ends in a "…" button that opens the current project's menu
+  (appearance, theme colors, background image, pin, Reveal in Finder, import
+  sessions, archive). Since the rail redesign it could only be opened by
+  right-clicking. The ⌘O hint moves into the switcher's tooltip.
+
+## [0.3.1] - 2026-11-19
+
+### Added
+
+- **Sessions know about each other:** every session is told what the other
+  sessions in the same repository and its worktrees are doing, where they run
+  and which files they are changing, with a warning when two change the same
+  file. Agents can also list their siblings and read their recent exchanges
+  with the new `sessions_list` and `sessions_read` tools.
+- **Say it and it runs:** ask any chat to do something "in a new worktree"
+  or "in the main repo" and it starts a session of its own, shown under the
+  chat in the sidebar, that reports back when it's done. Started sessions
+  never get broader permissions than their chat, go at most two levels deep
+  with five running at once, and can be stopped from the chat's sidebar
+  menu or by the agent with `sessions_cancel`.
+- **Sessions message each other:** `sessions_message` queues a message that
+  arrives, labelled with its sender, the next time the other session is idle,
+  never in the middle of a turn. Messages passed back and forth too often,
+  too many in an hour, or sent to a session with broader permissions wait for
+  you. `sessions_wait` waits for other sessions to finish.
+- **Pilots on the same rules:** a Pilot's started sessions join the session
+  tree, never run with more power than the Pilot's chat, and count toward the
+  same limits. Their reports to the Pilot fence what each session said.
+- **One session tree:** an orchestration lead's workers are linked under it
+  too, and workers from older versions are moved into the tree when Gespan
+  updates. The three old orchestration tables are gone. A Pilot's Flow
+  steps sit under the Pilot's chat as well.
+- **Agents on herdr machines as peers:** an agent on a saved machine working
+  in a checkout of the same repository shows in the roster, and a chat can
+  read it and wait on it. A full-access chat can also start one there (in its
+  checkout or a new herdr worktree) and message it once it has settled.
+
+### Fixed
+
+- **Releases:** a version bump on main is released even when other commits
+  land on main while its CI runs.
+- **Website:** the site takes its version and downloads from the published
+  GitHub release, so it never links to a release that is still a draft.
+
+### Removed
+
+- **`/operator`:** every chat now has its session powers through the
+  `sessions` tools, without a command. Archiving or deleting other sessions,
+  notes and folders stay with you in the UI, and with Pilots.
+
 ## [0.3.0] - 2026-11-15
 
 ### Added
@@ -2364,7 +2442,9 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/0xvasanth/gespan/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/0xvasanth/gespan/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/0xvasanth/gespan/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/0xvasanth/gespan/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/0xvasanth/gespan/compare/v0.1.2...v0.1.3

@@ -207,6 +207,8 @@ impl Automations {
             results: ReviewResults::Gespan,
         };
         self.review_generation += 1;
+        self.all_runs = false;
+        self.sync_feed(cx);
         self.review_setup = Some(ReviewSetup {
             input,
             readiness: Readiness::Checking,

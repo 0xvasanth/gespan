@@ -84,6 +84,32 @@ pub fn parse(v: &Value) -> Result<Value, String> {
     }
     Ok(result)
 }
+/// `pilot.ask`: a decision the Pilot needs from the user, with one-tap answers.
+pub fn ask(v: &Value) -> Result<Value, String> {
+    let object = v.as_object().ok_or("Provide a question object")?;
+    if let Some(key) = object
+        .keys()
+        .find(|k| !["question", "detail", "options"].contains(&k.as_str()))
+    {
+        return Err(format!("Unexpected pilot.ask field {key}"));
+    }
+    let question = text(v, "question", 280)?;
+    let mut card = parse(
+        &json!({"type": "choices", "options": v.get("options").cloned().unwrap_or(Value::Null)}),
+    )?;
+    card["type"] = json!("ask");
+    card["question"] = json!(question);
+    if v.get("detail").is_some() {
+        // Keep the detail's own lines: it is often a numbered list.
+        let detail = v["detail"]
+            .as_str()
+            .map(str::trim)
+            .filter(|d| !d.is_empty() && d.chars().count() <= 4000)
+            .ok_or("Provide detail under 4000 characters")?;
+        card["detail"] = json!(detail);
+    }
+    Ok(card)
+}
 pub fn pull_request(cwd: &str, repo: Option<&str>, number: u64) -> Result<Value, String> {
     let binary = crate::scm::shell::resolve_gui_binary("gh").ok_or("GitHub CLI not found")?;
     let mut cmd = std::process::Command::new(binary);
@@ -117,6 +143,25 @@ mod tests {
         assert!(parse(&json!({"type":"pr","repo":"owner/repo;echo x","number":1})).is_err());
         assert!(parse(&json!({"type":"choices","options":["a"],"command":"rm"})).is_err());
         assert!(parse(&json!({"type":"choices","options":["a","b","c","d","e"]})).is_err());
+        let card = ask(&json!({
+            "question": "Backfill audit_log for 2024?",
+            "detail": "1. Recommend: no, archive only\n2. Saves 3h",
+            "options": ["Go with all recommendations", "Review one by one"],
+        }))
+        .unwrap();
+        assert_eq!(card["type"], "ask");
+        assert_eq!(card["question"], "Backfill audit_log for 2024?");
+        assert_eq!(
+            card["detail"],
+            "1. Recommend: no, archive only\n2. Saves 3h"
+        );
+        assert_eq!(card["options"].as_array().unwrap().len(), 2);
+        assert!(
+            ask(&json!({"options": ["a"]})).is_err(),
+            "a question is required"
+        );
+        assert!(ask(&json!({"question": "Why?", "options": []})).is_err());
+        assert!(ask(&json!({"question": "Why?", "options": ["a"], "command": "rm"})).is_err());
         assert_eq!(
             parse(&json!({"type":"session","sessionId":"12"})).unwrap()["sessionId"],
             12

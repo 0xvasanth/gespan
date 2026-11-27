@@ -100,6 +100,10 @@ pub struct Settings {
     /// message remains the transcript and queue label.
     #[serde(skip)]
     pub prepared_prompt: Option<String>,
+    /// The sibling roster this turn tells the agent, placed before the prompt
+    /// after the user's own words are recorded. Transport-only.
+    #[serde(skip)]
+    pub roster_block: Option<String>,
     /// The note chip of this turn, saved beside its prompt.
     #[serde(skip)]
     pub note_card: Option<serde_json::Value>,
@@ -161,9 +165,6 @@ pub struct Settings {
     /// Provider-advertised controls beyond the common effort/speed switches.
     pub model_settings: std::collections::HashMap<String, String>,
     pub plan: bool,
-    pub operator: bool,
-    /// A submitted /operator grants this thread access independently of its next draft.
-    pub operator_enabled: bool,
     pub orchestrator: bool,
     /// This session was started by an orchestration lead to do one task. It
     /// stays set across turns, unlike `orchestrator`.

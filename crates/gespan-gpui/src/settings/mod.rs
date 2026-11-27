@@ -80,9 +80,9 @@ pub(crate) struct SettingsContext {
     /// The pairing code on show.
     pub mobile_invite: Option<gespan_core::mobile::Invite>,
 }
-/// Which sidebar entries the workspace shows. Notes, Board, Pilots and
-/// Activity are the `notes`, `board`, `pilots` and `working_agents`
-/// preferences and travel with the preferences instead.
+/// Which sidebar entries the workspace shows. Notes, Board and Pilots are
+/// the `notes`, `board` and `pilots` preferences and travel with the
+/// preferences instead. The running card is always shown.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct SidebarVisibility {
     pub automations: bool,
@@ -248,6 +248,8 @@ fn scale_step(percent: u32) -> u32 {
 }
 
 pub(crate) struct SettingsView {
+    /// The page's selectable text: row descriptions and notes.
+    pub(crate) text: crate::selectable::SelectionScope,
     pub(crate) section: Section,
     prefs: Preferences,
     notification_state: notification_preferences::State,
@@ -481,6 +483,7 @@ impl SettingsView {
         }));
         let selected_project = ctx.cwd.clone();
         let mut this = Self {
+            text: crate::selectable::SelectionScope::new(cx),
             section,
             prefs,
             notification_state: notification_preferences::State::default(),
@@ -616,7 +619,7 @@ impl SettingsView {
     }
     /// The Sidebar switches in page order, as Settings last drew them.
     #[cfg(test)]
-    pub(crate) fn sidebar_switches(&self) -> [bool; 7] {
+    pub(crate) fn sidebar_switches(&self) -> [bool; 6] {
         let v = self.ctx.sidebar;
         [
             self.prefs.notes,
@@ -624,7 +627,6 @@ impl SettingsView {
             v.automations,
             v.inbox,
             self.prefs.pilots,
-            self.prefs.working_agents,
             v.compact,
         ]
     }
@@ -1326,64 +1328,67 @@ impl Render for SettingsView {
                         .flex_1()
                         .overflow_y_scroll()
                         .track_scroll(&self.scroll)
-                        .child(if self.glass() {
-                            // The glass page: a narrower column whose groups
-                            // stand apart as cards.
-                            div()
-                                .mx_auto()
-                                .w_full()
-                                .flex()
-                                .flex_col()
-                                .map(|d| {
-                                    if self.section == Section::Services {
-                                        // Connections spans the pane: a
-                                        // list, not a column of settings.
-                                        d.gap(px(14.)).px(px(28.)).pt(px(24.)).pb(px(40.))
-                                    } else if narrow {
-                                        d.max_w(px(860.)).gap(px(22.)).px_5().pt_6().pb(px(40.))
-                                    } else {
-                                        d.max_w(px(860.))
-                                            .gap(px(22.))
-                                            .px_8()
-                                            .pt(px(28.))
-                                            .pb(px(40.))
-                                    }
-                                })
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_end()
-                                        .gap(px(16.))
-                                        .child(
-                                            div().min_w_0().flex_1().child(
-                                                widgets::glass_page_header(
-                                                    self.section.label(),
-                                                    self.services_description()
-                                                        .unwrap_or(self.section.description()),
+                        .child(self.text.region(
+                            "settings-text",
+                            if self.glass() {
+                                // The glass page: a narrower column whose groups
+                                // stand apart as cards.
+                                div()
+                                    .mx_auto()
+                                    .w_full()
+                                    .flex()
+                                    .flex_col()
+                                    .map(|d| {
+                                        if self.section == Section::Services {
+                                            // Connections spans the pane: a
+                                            // list, not a column of settings.
+                                            d.gap(px(14.)).px(px(28.)).pt(px(24.)).pb(px(40.))
+                                        } else if narrow {
+                                            d.max_w(px(860.)).gap(px(22.)).px_5().pt_6().pb(px(40.))
+                                        } else {
+                                            d.max_w(px(860.))
+                                                .gap(px(22.))
+                                                .px_8()
+                                                .pt(px(28.))
+                                                .pb(px(40.))
+                                        }
+                                    })
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_end()
+                                            .gap(px(16.))
+                                            .child(
+                                                div().min_w_0().flex_1().child(
+                                                    widgets::glass_page_header(
+                                                        self.section.label(),
+                                                        self.services_description()
+                                                            .unwrap_or(self.section.description()),
+                                                    ),
                                                 ),
-                                            ),
-                                        )
-                                        .children(header_action),
-                                )
-                                .children(page)
-                        } else {
-                            div()
-                                .mx_auto()
-                                .w_full()
-                                .max_w(px(1024.))
-                                .map(|d| {
-                                    if narrow {
-                                        d.px_5().pt_6().pb_16()
-                                    } else {
-                                        d.px_8().pt_8().pb_16()
-                                    }
-                                })
-                                .child(widgets::page_header(
-                                    self.section.label(),
-                                    self.section.description(),
-                                ))
-                                .children(page)
-                        })
+                                            )
+                                            .children(header_action),
+                                    )
+                                    .children(page)
+                            } else {
+                                div()
+                                    .mx_auto()
+                                    .w_full()
+                                    .max_w(px(1024.))
+                                    .map(|d| {
+                                        if narrow {
+                                            d.px_5().pt_6().pb_16()
+                                        } else {
+                                            d.px_8().pt_8().pb_16()
+                                        }
+                                    })
+                                    .child(widgets::page_header(
+                                        self.section.label(),
+                                        self.section.description(),
+                                    ))
+                                    .children(page)
+                            },
+                        ))
                         .into_any_element(),
                 ]
             })

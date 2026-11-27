@@ -47,13 +47,12 @@ const SWATCH_DOT: f32 = 10.;
 
 /// The sidebar entries Layout offers as chips, in the sidebar's own order:
 /// (id for Shell::change_sidebar_option, label).
-const SIDEBAR_CHIPS: [(&str, &str); 6] = [
-    ("sidebar-inbox", "Inbox"),
+const SIDEBAR_CHIPS: [(&str, &str); 5] = [
+    ("sidebar-inbox", "Git"),
     ("sidebar-automations", "Automations"),
     ("sidebar-pilots", "Pilots"),
     ("sidebar-board", "Board"),
     ("sidebar-notes", "Notes"),
-    ("sidebar-activity", "Activity"),
 ];
 
 pub(crate) fn parse_hex(text: &str) -> Option<u32> {
@@ -803,8 +802,7 @@ impl SettingsView {
             "sidebar-automations" => v.automations,
             "sidebar-pilots" => p.pilots,
             "sidebar-board" => p.board,
-            "sidebar-notes" => p.notes,
-            _ => p.working_agents,
+            _ => p.notes,
         };
         let chips = div()
             .flex()
@@ -855,24 +853,6 @@ impl SettingsView {
                     format!("{}%", self.shown_ui_scale()),
                     false,
                     cx,
-                )],
-            ),
-            self.row(
-                Some("title-tabs"),
-                false,
-                "Top bar tabs",
-                Some("Show this project's tabs, every project's side by side, or every project's grouped by project.".into()),
-                vec![self.segmented(
-                    "title-tabs",
-                    "Top bar tabs",
-                    &p.title_tabs,
-                    &[
-                        ("project", "This project"),
-                        ("all", "All projects"),
-                        ("grouped", "Grouped"),
-                    ],
-                    cx,
-                    |this, v, cx| this.update(cx, |p| p.title_tabs = v.into()),
                 )],
             ),
             self.row(

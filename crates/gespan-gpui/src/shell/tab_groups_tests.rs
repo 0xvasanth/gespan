@@ -3,11 +3,23 @@
 //! only the current project's tabs.
 use super::*;
 use crate::conversation::SessionChanged;
+use crate::settings::TabLayout;
 use crate::shell::tab_groups::PEEK_DELAY;
-use crate::shell::tests::window;
 use crate::strip_groups::StripEntry;
 use crate::workspace::TitleTab;
 use gpui::TestAppContext;
+
+/// The shell's test window, its strip grouped as these tests need: the app
+/// no longer offers the grouped strip, but its code stays.
+fn window(cx: &mut TestAppContext) -> (gpui::WindowHandle<Shell>, i64, i64) {
+    let (window, other, here) = crate::shell::tests::window(cx);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.set_tab_layout_override(Some(TabLayout::Grouped), cx)
+        })
+        .unwrap();
+    (window, other, here)
+}
 
 fn add_session(shell: &mut Shell, window: &mut Window, cx: &mut Context<Shell>) -> i64 {
     let summary = locked(&shell.store)
@@ -399,12 +411,10 @@ fn a_worktree_of_another_project_is_named_by_its_branch(cx: &mut TestAppContext)
             let id = add_background_tab(shell, project, cx);
             shell.workspace.tab_workspaces.insert(id, fix.into());
             assert_eq!(
-                shell.worktree_label_in(project, fix),
-                "fix-tabs",
+                crate::git_cache::worktree_branch(project, fix).as_deref(),
+                Some("fix-tabs"),
                 "the branch, resolved under the tab's own project"
             );
-            // The current project's lookup is unchanged.
-            assert_eq!(shell.worktree_label("/work/gespan-other"), "gespan-other");
         })
         .unwrap();
 }

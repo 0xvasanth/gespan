@@ -83,13 +83,18 @@ a.w-glass-flat:hover, a.w-glass:hover { background: rgba(255, 255, 255, 0.06); }
 .w-glow.violet { background: radial-gradient(closest-side, rgba(143, 100, 246, 0.30), transparent); }
 .w-glow.blue { background: radial-gradient(closest-side, rgba(69, 155, 247, 0.16), transparent); }
 
-/* Announcement bar */
+/* Announcement: a glass pill like the nav and the hero chip, on one line:
+   a violet "New in x.y.z" badge, the release's lead feature, and a link. */
 .w-announce {
-  display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 40px; padding: 8px 16px; box-sizing: border-box;
-  border-radius: 999px; background: linear-gradient(90deg, #f3c9d2, #f6ead0 50%, #c9d2f7); color: #26262b; font-size: 13px; line-height: 18px; text-align: center; text-decoration: none;
+  display: flex; align-items: center; gap: 10px; width: fit-content; max-width: min(100%, 640px); height: 36px; margin: 0 auto 12px; padding: 0 14px 0 5px; box-sizing: border-box;
+  border-radius: 999px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.09); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  color: #d6d6d6; font-size: 13px; line-height: 18px; text-decoration: none; white-space: nowrap; transition: background 0.2s, border-color 0.2s;
 }
-.w-announce b { font-weight: 600; }
-.w-announce .go { font-weight: 600; white-space: nowrap; }
+.w-announce:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(192, 175, 252, 0.3); }
+.w-announce .new { flex-shrink: 0; height: 26px; padding: 0 10px; border-radius: 999px; display: inline-flex; align-items: center; font-size: 12px; font-weight: 600; color: #111; background: #c0affc; }
+.w-announce .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.w-announce .go { flex-shrink: 0; padding-left: 10px; border-left: 1px solid rgba(235, 235, 235, 0.12); color: #a3a3a3; }
+.w-announce:hover .go { color: #ebebeb; }
 
 /* Chips, tags, tiles */
 .w-chip {
@@ -104,7 +109,6 @@ a.w-glass-flat:hover, a.w-glass:hover { background: rgba(255, 255, 255, 0.06); }
 .w-tag.run { color: #8cc3ff; background: rgba(69, 155, 247, 0.14); border-color: rgba(69, 155, 247, 0.28); }
 .w-tile { width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: rgba(235, 235, 235, 0.08); border: 1px solid rgba(255, 255, 255, 0.07); color: #c0affc; }
 .w-num { font-family: var(--mono); font-size: 12px; color: #c0affc; }
-.w-kbd { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.12); color: #a3a3a3; }
 .w-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
 
 /* Code block */
@@ -162,6 +166,7 @@ a.w-glass-flat:hover, a.w-glass:hover { background: rgba(255, 255, 255, 0.06); }
   .w-g6 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
   .w-shot { border-radius: 10px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55), 0 0 0 4px rgba(255, 255, 255, 0.025); }
   .w-chip { white-space: normal; height: auto; min-height: 32px; padding: 5px 14px 5px 6px; max-width: 100%; text-align: left; line-height: 18px; }
+  .w-announce .go { display: none; }
   .w-hide-m { display: none !important; }
   .w-stack-m { flex-direction: column !important; align-items: stretch !important; }
   .w-full-m { width: 100% !important; }

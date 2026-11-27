@@ -1,45 +1,61 @@
-// Reads the published release and the changelog from the repository, so the
-// site's download links and changelog never drift from README.md and
-// CHANGELOG.md. vite.config.ts runs this at build time.
+// The site's release data. scripts/sync-release.mjs turns GitHub's latest
+// published release into src/release.json, and vite.config.ts reads that file
+// and CHANGELOG.md at build time. README.md is not a source: the release
+// pipeline bumps it before the release is published, while its downloads
+// still 404.
 
-/** Download names in the README's release table, matched by file suffix. */
+/** The desktop downloads the site links to, matched by asset name. */
 const FILES = {
-  macArm: /_aarch64\.dmg$/,
-  macIntel: /_x64\.dmg$/,
-  windows: /_x64-setup\.exe$/,
-  appImage: /\.AppImage$/,
-  deb: /\.deb$/,
-  rpm: /\.rpm$/,
+  macArm: /^Gespan_[\d.]+_aarch64\.dmg$/,
+  macIntel: /^Gespan_[\d.]+_x64\.dmg$/,
+  windows: /^Gespan_[\d.]+_x64-setup\.exe$/,
+  appImage: /^Gespan_[\d.]+_amd64\.AppImage$/,
+  deb: /^gespan_[\d.]+_amd64\.deb$/,
+  rpm: /^gespan-[\d.]+-\d+\.[\w.]+\.rpm$/,
 };
 
 /**
- * The current release from README.md's release block, which set-version
- * rewrites on every release. Throws when the block or a download is missing,
- * so a broken README fails the site build instead of shipping dead links.
+ * The site's release record from a GitHub release (the REST API's release
+ * object). Throws for a draft or pre-release, and when any download is
+ * missing or isn't for this version, so the site never links a dead file.
  */
-export function readRelease(readme, changelog) {
-  const block = readme.match(/<!-- release:start -->([\s\S]*?)<!-- release:end -->/)?.[1];
-  if (!block) throw new Error("README.md has no release block");
-  const version = block.match(/current release is\s*\[\*\*([^*]+)\*\*\]/)?.[1];
-  if (!version) throw new Error("README.md release block names no version");
-  const urls = [...block.matchAll(/\((https:\/\/github\.com\/[^)\s]+\/releases\/download\/[^)\s]+)\)/g)].map((m) => m[1]);
+export function releaseFromGitHub(release) {
+  if (!release || typeof release.tag_name !== "string") throw new Error("not a GitHub release");
+  if (release.draft) throw new Error(`${release.tag_name} is still a draft; it has no public downloads yet`);
+  if (release.prerelease) throw new Error(`${release.tag_name} is a pre-release`);
+  const version = release.tag_name.replace(/^v/, "");
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`unexpected tag ${release.tag_name}`);
+  const assets = release.assets ?? [];
   const files = {};
   for (const [key, pattern] of Object.entries(FILES)) {
-    const url = urls.find((u) => pattern.test(u));
-    if (!url) throw new Error(`README.md release block has no ${key} download`);
-    if (!url.includes(`/v${version}/`)) throw new Error(`${key} download is not for v${version}: ${url}`);
-    files[key] = url;
+    const asset = assets.find((a) => pattern.test(a.name));
+    if (!asset) throw new Error(`${release.tag_name} has no ${key} download`);
+    if (!asset.name.includes(version)) throw new Error(`${key} download ${asset.name} is not for ${version}`);
+    files[key] = asset.browser_download_url;
   }
-  const entry = parseChangelog(changelog).find((release) => release.version === version);
-  return { version, date: entry?.date ?? null, files };
+  return {
+    version,
+    tag: release.tag_name,
+    date: (release.published_at ?? "").slice(0, 10) || null,
+    url: release.html_url,
+    files,
+  };
+}
+
+/** Compares two x.y.z versions: negative, zero or positive. */
+export function compareVersions(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+  return 0;
 }
 
 /**
  * Releases in CHANGELOG.md, newest first: version, date and each section's
- * entries. "Unreleased" is skipped. An entry keeps its bold title apart from
- * the rest of its text; continuation lines are joined.
+ * entries. "Unreleased" is skipped, and so is any version newer than
+ * `published` when it's given, since its downloads aren't out yet.
  */
-export function parseChangelog(text) {
+export function parseChangelog(text, published) {
   const releases = [];
   let release = null;
   let section = null;
@@ -79,5 +95,60 @@ export function parseChangelog(text) {
         e.body = titled ? titled[2] : e.text;
         delete e.text;
       }
-  return releases;
+  if (!published) return releases;
+  return releases.filter((r) => !/^\d+\.\d+\.\d+$/.test(r.version) || compareVersions(r.version, published) <= 0);
+}
+
+/** The published x.y.z versions in a list of GitHub releases, newest first. Drafts, pre-releases and other tags are left out. */
+export function publishedVersions(releases) {
+  return releases
+    .filter((r) => r && !r.draft && !r.prerelease && typeof r.tag_name === "string")
+    .map((r) => r.tag_name.replace(/^v/, ""))
+    .filter((v) => /^\d+\.\d+\.\d+$/.test(v))
+    .sort((a, b) => compareVersions(b, a));
+}
+
+/** Section order when releases are folded together; other kinds follow in the order they appear. */
+const KIND_ORDER = ["Added", "Changed", "Fixed", "Removed"];
+
+/**
+ * Folds each CHANGELOG version that never got a GitHub release of its own
+ * into the next published version, which shipped it (0.3.1 went out inside
+ * 0.3.2). The published version keeps its own number and date, lists what it
+ * took in under `includes`, and merges the sections by kind, its own entries
+ * first. With no `published` list, or for versions older than the oldest
+ * published one, the changelog is returned as it is.
+ */
+export function foldUnpublished(releases, published) {
+  if (!published?.length) return releases;
+  const shipped = new Set(published);
+  const oldest = published.reduce((a, b) => (compareVersions(a, b) <= 0 ? a : b));
+  const out = [];
+  let pending = [];
+  // Oldest first, so each unpublished version waits for the release that shipped it.
+  for (const release of [...releases].reverse()) {
+    const numbered = /^\d+\.\d+\.\d+$/.test(release.version);
+    if (numbered && !shipped.has(release.version) && compareVersions(release.version, oldest) > 0) {
+      pending.push(release);
+      continue;
+    }
+    if (!pending.length) {
+      out.push(release);
+      continue;
+    }
+    const parts = [release, ...pending.reverse()];
+    const kinds = [...new Set(parts.flatMap((p) => p.sections.map((s) => s.kind)))].sort((a, b) => {
+      const ia = KIND_ORDER.indexOf(a);
+      const ib = KIND_ORDER.indexOf(b);
+      return (ia < 0 ? KIND_ORDER.length : ia) - (ib < 0 ? KIND_ORDER.length : ib);
+    });
+    out.push({
+      ...release,
+      includes: pending.map((p) => p.version),
+      sections: kinds.map((kind) => ({ kind, entries: parts.flatMap((p) => p.sections.filter((s) => s.kind === kind).flatMap((s) => s.entries)) })),
+    });
+    pending = [];
+  }
+  // Unpublished versions with no newer release yet stay as they are.
+  return [...out, ...pending].reverse();
 }

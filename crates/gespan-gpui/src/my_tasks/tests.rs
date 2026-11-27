@@ -763,3 +763,74 @@ fn a_search_that_hides_everything_can_be_cleared_from_the_pane(cx: &mut TestAppC
     let query = search.read_with(&visual, |input, _| input.content.to_string());
     assert_eq!(query, "");
 }
+
+/// The pane's history and card select and copy, inline code included, and
+/// a click on a list row still selects that task.
+#[gpui::test]
+fn the_pane_text_selects_and_copies_while_rows_still_select_on_click(cx: &mut TestAppContext) {
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+    use gespan_core::tasks::{Entry, Turn};
+    cx.update(crate::input::bind);
+    let (window, mut visual) = page(cx);
+    let mut a = task("a", Kind::Question, "/work/web", 90);
+    a.history = History {
+        turns: vec![Turn {
+            entries: vec![
+                Entry::You {
+                    text: "Why does login fail?".into(),
+                    at: None,
+                },
+                Entry::Agent {
+                    text: "I traced it to `pinnedVersion` being dropped".into(),
+                    at: None,
+                },
+            ],
+        }],
+        earlier: 0,
+    };
+    show(
+        window,
+        &mut visual,
+        vec![a, task("b", Kind::Question, "/work/web", 5)],
+    );
+    let cx = &mut visual;
+    let bounds = |needle: &str, cx: &mut VisualTestContext| {
+        window
+            .update(cx, |view, _, _| view.text.bounds_for_test(needle))
+            .unwrap()
+            .unwrap_or_else(|| panic!("{needle:?} is selectable"))
+    };
+    let traced = bounds("traced", cx);
+    let dropped = bounds("dropped", cx);
+    assert_eq!(
+        cursor_at(cx, traced.center()),
+        Some(gpui::CursorStyle::IBeam)
+    );
+    drag(
+        cx,
+        gpui::point(traced.left() + px(1.), traced.center().y),
+        gpui::point(dropped.right() + px(2.), dropped.center().y),
+    );
+    assert_eq!(
+        copy(cx).as_deref(),
+        Some("traced it to pinnedVersion being dropped")
+    );
+    // The user's bubble, the card title and the card's prompt select too.
+    for needle in ["Why does login fail?", "Task a", "Prompt a"] {
+        let b = bounds(needle, cx);
+        drag(
+            cx,
+            gpui::point(b.left() + px(1.), b.center().y),
+            gpui::point(b.right() + px(2.), b.center().y),
+        );
+        assert_eq!(copy(cx).as_deref(), Some(needle));
+    }
+    let row = cx.debug_bounds("my-tasks-row-b").expect("row b");
+    assert_eq!(
+        cursor_at(cx, row.center()),
+        Some(gpui::CursorStyle::PointingHand),
+        "list rows are navigation, not text"
+    );
+    click(cx, "my-tasks-row-b");
+    assert_eq!(selected(window, cx).as_deref(), Some("b"));
+}

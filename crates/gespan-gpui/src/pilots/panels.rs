@@ -912,9 +912,16 @@ impl Pilots {
             .find(|(_, r)| r.is_prompt() && r.first)
             .map(|(i, _)| i)
             .unwrap_or(source.len());
+        // The full story of the turn: its steps and what it said between them.
+        // A reaction is not a message.
         let rows = source[start..end]
             .iter()
-            .filter(|r| matches!(r.role.as_str(), "tool" | "reasoning"))
+            .filter(|r| {
+                matches!(r.role.as_str(), "tool" | "reasoning")
+                    || (r.role == "assistant"
+                        && !r.text.trim().is_empty()
+                        && !r.text.trim_start().starts_with("<reaction>"))
+            })
             .cloned()
             .collect::<Vec<_>>();
         if rows.is_empty() {
@@ -978,7 +985,7 @@ impl Pilots {
         let state = self
             .chats
             .get(&pilot.id)
-            .map(|v| v.read(cx).pilot_status().to_owned())
+            .map(|v| v.read(cx).pilot_status(cx).to_owned())
             .unwrap_or_else(|| "idle".into());
         let status = match state.as_str() {
             "needs-you" => Some(("Needs you", crate::glass::Tone::Waiting)),

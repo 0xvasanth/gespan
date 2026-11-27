@@ -3,9 +3,9 @@ import type { ChangelogRelease, Release } from "../scripts/release.mjs";
 declare const __GESPAN_RELEASE__: Release;
 declare const __GESPAN_CHANGELOG__: ChangelogRelease[];
 
-/** The current release, read from README.md at build time. */
+/** The latest published release (src/release.json, from `bun run sync-release`). */
 export const release: Release = __GESPAN_RELEASE__;
-/** The newest releases in CHANGELOG.md, read at build time. */
+/** The newest releases in CHANGELOG.md up to the published one, read at build time. */
 export const changelog: ChangelogRelease[] = __GESPAN_CHANGELOG__;
 
 /** A release's headline: its first `count` titled entries, "A, B and C". */

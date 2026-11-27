@@ -27,7 +27,31 @@ fn counts(needs_you: usize, running: usize, idle: usize) -> Counts {
         needs_you,
         running,
         idle,
+        projects: 1,
     }
+}
+
+#[test]
+fn the_card_names_the_projects_once_live_work_spans_them() {
+    let across = Counts {
+        projects: 6,
+        ..counts(4, 7, 3)
+    };
+    assert_eq!(across.footer_text(), "7 running · 4 need you · 6 projects");
+    // One project: the rail is already scoped to it.
+    assert_eq!(counts(4, 7, 3).footer_text(), "7 running · 4 need you");
+    // The board's plural: "4 need you", one "needs you".
+    assert_eq!(counts(2, 0, 0).footer_text(), "2 need you");
+    assert_eq!(
+        counts(2, 1, 1).header_text(),
+        "1 running · 2 need you · 1 idle"
+    );
+    // Idle agents alone never claim projects.
+    let idle = Counts {
+        projects: 0,
+        ..counts(0, 0, 5)
+    };
+    assert_eq!(idle.footer_text(), "5 agents idle");
 }
 
 #[test]
@@ -384,7 +408,7 @@ fn hold_all_in_the_panel_asks_for_a_second_click_then_holds(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn turning_activity_off_hides_the_footer_and_closes_the_panel(cx: &mut TestAppContext) {
+fn an_old_activity_off_preference_keeps_the_card_and_its_open_panel(cx: &mut TestAppContext) {
     let (window, ids) = shell_with(2, cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
     set_busy(window, ids[0], true, visual);
@@ -396,10 +420,10 @@ fn turning_activity_off_hides_the_footer_and_closes_the_panel(cx: &mut TestAppCo
         })
         .unwrap();
     visual.run_until_parked();
-    assert!(visual.debug_bounds("agents-footer").is_none());
-    assert!(visual.debug_bounds("agents-panel").is_none());
+    assert!(visual.debug_bounds("agents-footer").is_some());
+    assert!(visual.debug_bounds("agents-panel").is_some());
     assert!(
-        !window
+        window
             .update(visual, |shell, _, _| shell.agents_open)
             .unwrap()
     );

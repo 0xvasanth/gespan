@@ -1,5 +1,6 @@
-//! Shared project actions for ordinary Operator threads and resident Pilots.
-//! Visibility and Pilot-only capabilities belong to the caller, not launch JSON.
+//! Project actions for resident Pilots, and the launch helpers they share
+//! with `sessions_start`. Visibility and Pilot-only capabilities belong to
+//! the caller, not launch JSON.
 use crate::{
     agent::{AccessMode, Settings},
     catalog::{Model, ModelControl},
@@ -11,35 +12,6 @@ use std::collections::HashMap;
 
 #[cfg(test)]
 mod tests;
-
-pub fn validate_operator(action: &str, input: &Value) -> Result<(), String> {
-    if !matches!(
-        action,
-        "models.list"
-            | "sessions.list"
-            | "sessions.read"
-            | "sessions.start"
-            | "sessions.send"
-            | "sessions.draft"
-            | "sessions.stop"
-            | "sessions.archive"
-            | "sessions.delete"
-            | "folders.list"
-            | "folders.move"
-            | "notes.list"
-            | "notes.read"
-            | "notes.write"
-            | "worktrees.list"
-            | "worktrees.create"
-    ) {
-        return Err("Unknown Operator action. Run app help for project actions; memory, habits and artifacts require a Pilot.".into());
-    }
-    crate::pilot::api::validate(action, input)?;
-    if input["notifyOnComplete"] == true {
-        return Err("Completion notifications are only available in a Pilot's chat".into());
-    }
-    Ok(())
-}
 
 pub fn text(input: &Value, key: &str, max: usize) -> Result<String, String> {
     input
@@ -53,22 +25,11 @@ pub fn optional_text(input: &Value, key: &str, max: usize) -> Result<Option<Stri
     input.get(key).map(|_| text(input, key, max)).transpose()
 }
 pub fn prompt(input: &Value) -> Result<String, String> {
-    let prompt = text(input, "prompt", 240_000)?;
-    if crate::composer::consume_command(&prompt, "operator").is_some() {
-        return Err("App calls cannot enable /operator in another session".into());
-    }
-    Ok(prompt)
+    text(input, "prompt", 240_000)
 }
 pub fn fingerprint(action: &str, input: &Value) -> String {
     crate::pilot::files::content_hash(&format!("{action}:{input}"))
 }
-pub fn receipt_key(caller: i64, request: &str) -> String {
-    format!(
-        "operator-app-receipt:{caller}:{}",
-        crate::pilot::files::content_hash(request)
-    )
-}
-
 /// Advertise precisely the IDs and values accepted by launch_settings.
 pub fn model_controls(kind: Kind, model: &Model) -> Vec<ModelControl> {
     let mut controls = model.controls.clone();
@@ -249,8 +210,6 @@ pub fn launch_settings(
     settings.pilot = None;
     settings.pilot_message_id = None;
     settings.pilot_sent_at = None;
-    settings.operator = false;
-    settings.operator_enabled = false;
     settings.orchestrator = false;
     settings.plan = false;
     settings.environment.clear();
@@ -362,6 +321,7 @@ pub fn conversation_page(blocks: &[Value], input: &Value) -> Result<Value, Strin
     let selected = &turns[start..end];
     Ok(json!({"turns":selected.iter().map(|(user,answers)|{
         let text=user["text"].as_str().unwrap_or("");
+        // Chats from before /operator was retired may still start with it.
         let text=crate::composer::consume_command(text,"operator").unwrap_or(text);
         json!({"turnId":user["id"],"user":capped(text,max),"assistant":answers.last().map(|b|capped(b["text"].as_str().unwrap_or(""),max)),"earlierAssistantMessages":answers.len().saturating_sub(1)})
     }).collect::<Vec<_>>(),"nextBefore":if start>0 {selected.first().map(|(b,_)|b["id"].clone())}else{None}}))

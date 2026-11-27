@@ -1,7 +1,9 @@
-//! The top bar's three tab layouts: this project's tabs only, every
-//! project's side by side, or every project's grouped by project. And
-//! opening another project's tab moves the sidebar to that project.
+//! The top bar's tabs: always every project's side by side, ungrouped,
+//! whatever layout was saved, with the grouped and this-project strips still
+//! drawable for their own tests. And opening another project's tab moves the
+//! sidebar to that project.
 use super::*;
+use crate::settings::TabLayout;
 use crate::shell::tests::window;
 use crate::strip_groups::StripEntry;
 use crate::workspace::TitleTab;
@@ -42,30 +44,120 @@ fn all_loose(window: WindowHandle<Shell>, visual: &mut VisualTestContext) -> boo
         .unwrap()
 }
 
+/// Drives the strip in a layout the app no longer offers, as tests of the
+/// grouped and this-project strips do.
+fn force_layout(window: WindowHandle<Shell>, layout: TabLayout, visual: &mut VisualTestContext) {
+    window
+        .update(visual, |shell, _, cx| {
+            shell.set_tab_layout_override(Some(layout), cx)
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    visual.run_until_parked();
+}
+
 #[gpui::test]
-fn grouped_is_the_default_layout(cx: &mut TestAppContext) {
+fn the_strip_is_ungrouped_by_default(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_reduce_motion(true));
-    let (window, _, _) = window(cx);
+    let (window, other, here) = window(cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
     visual.refresh().unwrap();
     visual.run_until_parked();
     window
         .update(visual, |shell, _, _| {
-            assert_eq!(
-                shell.workspace.preferences.tab_layout(),
-                crate::settings::TabLayout::Grouped
-            );
+            assert_eq!(shell.workspace.preferences.tab_layout(), TabLayout::All);
         })
         .unwrap();
-    assert!(drawn(visual, "tab-group-chip-another-project".into()));
+    assert!(drawn(visual, format!("title-tab-{here}")));
+    assert!(drawn(visual, format!("title-tab-{other}")));
+    assert!(!any_chip(visual), "no groups");
+    assert!(all_loose(window, visual));
 }
 
 #[gpui::test]
-fn this_project_layout_shows_only_the_current_projects_tabs(cx: &mut TestAppContext) {
+fn a_saved_grouped_or_this_project_choice_still_draws_every_tab_ungrouped(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_reduce_motion(true));
     let (window, other, here) = window(cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    set_layout(window, "project", visual);
+    for saved in ["grouped", "project", "anything else"] {
+        set_layout(window, saved, visual);
+        window
+            .update(visual, |shell, _, _| {
+                assert_eq!(
+                    shell.workspace.preferences.title_tabs, saved,
+                    "kept, not erased"
+                );
+                assert_eq!(shell.tab_layout(), TabLayout::All, "{saved}");
+            })
+            .unwrap();
+        assert!(drawn(visual, format!("title-tab-{here}")), "{saved}");
+        assert!(
+            drawn(visual, format!("title-tab-{other}")),
+            "{saved}: another project's tab too"
+        );
+        assert!(!any_chip(visual), "{saved}: no groups");
+        assert!(all_loose(window, visual), "{saved}");
+    }
+}
+
+#[gpui::test]
+fn every_projects_tabs_share_the_strip(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1200.), px(700.)));
+    // Many tabs of another project: they take their share, so the strip
+    // narrows every tab instead of running past its end.
+    let away = window
+        .update(visual, |shell, _, cx| {
+            (0..8)
+                .map(|_| {
+                    let summary = locked(&shell.store)
+                        .unwrap()
+                        .create("codex", "/work/another-project")
+                        .unwrap();
+                    let id = summary.id;
+                    shell.add(summary, cx);
+                    let active = shell.workspace.active;
+                    shell.workspace.open(id);
+                    shell.workspace.active = active;
+                    shell.invalidate_chrome(cx);
+                    id
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    visual.run_until_parked();
+    let width = |visual: &mut VisualTestContext, id: i64| {
+        visual
+            .debug_bounds(Box::leak(format!("title-tab-{id}").into_boxed_str()))
+            .unwrap_or_else(|| panic!("tab {id} drawn"))
+            .size
+            .width
+    };
+    let mine = width(visual, here);
+    assert!(
+        mine < px(crate::theme::TITLE_TAB_MAX_WIDTH),
+        "the strip is shared: {mine:?}"
+    );
+    for id in away.iter().chain([&other]) {
+        assert!((width(visual, *id) - mine).abs() <= px(1.), "tab {id}");
+    }
+    let max = window
+        .update(visual, |shell, _, _| shell.tab_scroll.max_offset().x)
+        .unwrap();
+    assert_eq!(max, px(0.), "ten tabs fit without scrolling");
+}
+
+#[gpui::test]
+fn this_project_strip_still_shows_only_the_current_projects_tabs(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    force_layout(window, TabLayout::Project, visual);
     assert!(drawn(visual, format!("title-tab-{here}")));
     assert!(
         !drawn(visual, format!("title-tab-{other}")),
@@ -88,21 +180,12 @@ fn this_project_layout_shows_only_the_current_projects_tabs(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn all_projects_layout_shows_every_tab_without_groups(cx: &mut TestAppContext) {
+fn the_grouped_strip_still_draws_its_chips(cx: &mut TestAppContext) {
     cx.update(|cx| cx.set_reduce_motion(true));
-    let (window, other, here) = window(cx);
+    let (window, _, _) = window(cx);
     let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    set_layout(window, "all", visual);
-    assert!(drawn(visual, format!("title-tab-{here}")));
-    assert!(
-        drawn(visual, format!("title-tab-{other}")),
-        "another project's too"
-    );
-    assert!(!any_chip(visual), "no groups");
-    assert!(all_loose(window, visual));
-
-    // Back to grouped, the chips return.
-    set_layout(window, "grouped", visual);
+    assert!(!any_chip(visual));
+    force_layout(window, TabLayout::Grouped, visual);
     assert!(drawn(visual, "tab-group-chip-another-project".into()));
 }
 

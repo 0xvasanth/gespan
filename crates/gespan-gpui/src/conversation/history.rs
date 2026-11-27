@@ -7,6 +7,16 @@ impl Conversation {
     pub(super) fn history_ready(&self) -> bool {
         self.loaded && !self.history_unloaded && !self.loading
     }
+    /// Whether this chat's saved settings have been read: until then its
+    /// `settings` are defaults, not what it runs with.
+    pub(crate) fn settings_known(&self) -> bool {
+        self.loaded && !self.loading
+    }
+    /// Marks the chat's settings read or not, as a load would.
+    #[cfg(test)]
+    pub(crate) fn e2e_set_loaded(&mut self, loaded: bool) {
+        self.loaded = loaded;
+    }
     pub(crate) fn needs_history_restore(&self) -> bool {
         self.history_unloaded || self.loading || (!self.loaded && self.summary.has_messages)
     }
@@ -64,8 +74,6 @@ impl Conversation {
             Some("orchestrator")
         } else if self.settings.plan {
             Some("plan")
-        } else if self.settings.operator {
-            Some("operator")
         } else {
             None
         };

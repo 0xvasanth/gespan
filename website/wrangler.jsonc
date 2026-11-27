@@ -1,0 +1,15 @@
+// gespan.dev on Cloudflare Workers: static assets only, built by `bun run build`
+// into dist/ (one index.html per page). Workers Builds runs from website/:
+// `wrangler deploy` on main and `wrangler preview` on every other branch,
+// which needs the `previews` block below (empty: previews use the top level).
+{
+  "name": "gespan",
+  "compatibility_date": "2026-11-19",
+  "assets": {
+    "directory": "./dist",
+    // An unknown path gets the app shell, as gespan.dev has always served it;
+    // the router then shows its own Page not found.
+    "not_found_handling": "single-page-application"
+  },
+  "previews": {}
+}

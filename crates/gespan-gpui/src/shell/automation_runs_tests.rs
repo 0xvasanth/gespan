@@ -1064,10 +1064,31 @@ fn muting_automation_runs_for_the_project_or_notifications_silences_the_alert(
     assert_eq!(run_alerts(&window, cx).len(), 1);
 }
 
+/// The All runs feed of the open Automations page.
+fn feed(shell: &Shell, cx: &App) -> Entity<crate::runs::Runs> {
+    shell
+        .automations
+        .as_ref()
+        .expect("Automations opened")
+        .read(cx)
+        .feed()
+        .clone()
+}
+
+/// Automations is open on All runs.
+fn on_all_runs(shell: &Shell, cx: &App) -> bool {
+    shell.active_app_view == Some(app_views::AppView::Automations)
+        && shell
+            .automations
+            .as_ref()
+            .is_some_and(|view| view.read(cx).showing_runs())
+}
+
 #[gpui::test]
 fn runs_asked_for_before_the_service_opens_show_once_it_does(cx: &mut TestAppContext) {
     let data = data();
     let window = open(&data, cx);
+    scheduled_due(&data, 20_000);
     window
         .update(cx, |shell, window, cx| {
             // As at startup: the service has not opened yet.
@@ -1086,15 +1107,14 @@ fn runs_asked_for_before_the_service_opens_show_once_it_does(cx: &mut TestAppCon
     cx.run_until_parked();
     window
         .update(cx, |shell, _, cx| {
-            assert_eq!(shell.active_app_view, Some(app_views::AppView::Runs));
-            let runs = shell.runs.as_ref().expect("Runs opened").read(cx);
-            assert_eq!(runs.filter().status, Some("failed"));
+            assert!(on_all_runs(shell, cx), "Automations opens on All runs");
+            assert_eq!(feed(shell, cx).read(cx).filter().status, Some("failed"));
         })
         .unwrap();
 }
 
 #[gpui::test]
-fn open_thread_in_runs_opens_the_runs_session(cx: &mut TestAppContext) {
+fn open_thread_in_all_runs_opens_the_runs_session(cx: &mut TestAppContext) {
     let data = data();
     let window = open(&data, cx);
     let id = scheduled_due(&data, 20_000);
@@ -1110,7 +1130,8 @@ fn open_thread_in_runs_opens_the_runs_session(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let native = window
         .update(cx, |shell, _, cx| {
-            let view = shell.runs.clone().expect("Runs opened");
+            assert!(on_all_runs(shell, cx));
+            let view = feed(shell, cx);
             let rows = view.read(cx).rows();
             assert_eq!(rows.len(), 1);
             assert!(rows[0].can_open());
@@ -1124,14 +1145,18 @@ fn open_thread_in_runs_opens_the_runs_session(cx: &mut TestAppContext) {
     cx.run_until_parked();
     window
         .read_with(cx, |shell, _| {
-            assert_eq!(shell.active_app_view, None, "Runs gives way to the thread");
+            assert_eq!(
+                shell.active_app_view, None,
+                "All runs gives way to the thread"
+            );
             assert_eq!(shell.workspace.active, Some(native));
         })
         .unwrap();
 }
 
 #[gpui::test]
-fn see_all_in_runs_opens_runs_filtered_to_that_automation(cx: &mut TestAppContext) {
+fn an_automation_filter_passed_in_reaches_all_runs(cx: &mut TestAppContext) {
+    // As the Inbox's run pill does: open runs of one automation.
     let data = data();
     let window = open(&data, cx);
     let first = scheduled_due(&data, 20_000);
@@ -1140,63 +1165,11 @@ fn see_all_in_runs_opens_runs_filtered_to_that_automation(cx: &mut TestAppContex
     assert_eq!(runs(&data.db, &first).len(), 1);
     assert_eq!(runs(&data.db, &second).len(), 1);
     window
-        .update(cx, |shell, window, cx| shell.open_automations(window, cx))
-        .unwrap();
-    cx.run_until_parked();
-    // "See all in Runs" on the first automation.
-    window
-        .update(cx, |shell, _, cx| {
-            let view = shell.automations.clone().expect("Automations opened");
-            view.update(cx, |_, cx| {
-                cx.emit(crate::automations::OpenRuns {
-                    automation: first.clone(),
-                })
-            });
-        })
-        .unwrap();
-    cx.run_until_parked();
-    window
-        .update(cx, |shell, _, cx| {
-            assert_eq!(shell.active_app_view, Some(app_views::AppView::Runs));
-            let view = shell.runs.clone().expect("Runs opened");
-            assert_eq!(view.read(cx).filter().automation.as_ref(), Some(&first));
-            let rows = view.read(cx).rows();
-            assert_eq!(rows.len(), 1, "only the chosen automation's runs");
-            let expected = runs(&data.db, &first).remove(0).id;
-            assert_eq!(rows[0].id, expected);
-            // The way back to every automation.
-            view.update(cx, |view, cx| {
-                let cleared = crate::runs::RunsFilter {
-                    automation: None,
-                    ..view.filter().clone()
-                };
-                view.set_filter(cleared, cx);
-            });
-        })
-        .unwrap();
-    // Every automation's runs load again.
-    cx.run_until_parked();
-    window
-        .update(cx, |shell, _, cx| {
-            let view = shell.runs.clone().expect("Runs opened");
-            assert_eq!(view.read(cx).rows().len(), 2);
-        })
-        .unwrap();
-}
-
-#[gpui::test]
-fn the_sidebar_runs_entry_drops_the_automation_filter(cx: &mut TestAppContext) {
-    let data = data();
-    let window = open(&data, cx);
-    let first = scheduled_due(&data, 20_000);
-    scheduled_due(&data, 20_000);
-    poll(&window, cx);
-    window
         .update(cx, |shell, window, cx| {
             shell.open_runs(
                 crate::runs::RunsFilter {
                     automation: Some(first.clone()),
-                    status: Some("failed"),
+                    automation_name: Some("Check the build".into()),
                     ..Default::default()
                 },
                 window,
@@ -1206,17 +1179,116 @@ fn the_sidebar_runs_entry_drops_the_automation_filter(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     window
-        .update(cx, |shell, window, cx| shell.show_runs(window, cx))
-        .unwrap();
-    cx.run_until_parked();
-    window
         .update(cx, |shell, _, cx| {
-            let view = shell.runs.clone().expect("Runs opened");
-            let filter = view.read(cx).filter().clone();
-            assert_eq!(filter.automation, None, "back to every automation");
-            assert_eq!(filter.status, Some("failed"), "the rest is kept");
+            assert!(on_all_runs(shell, cx));
+            let view = feed(shell, cx);
+            assert_eq!(view.read(cx).filter().automation.as_ref(), Some(&first));
+            let rows = view.read(cx).rows();
+            assert_eq!(rows.len(), 1, "only the chosen automation's runs");
+            assert_eq!(rows[0].id, runs(&data.db, &first).remove(0).id);
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn every_way_to_runs_lands_on_all_runs_and_drops_the_automation_filter(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let first = scheduled_due(&data, 20_000);
+    scheduled_due(&data, 20_000);
+    poll(&window, cx);
+    // The agents panel's All runs and Go to all runs call show_runs; Home's
+    // tile and link go through its page.
+    type Route = fn(&mut Shell, &mut Window, &mut Context<Shell>);
+    let routes: [(&str, Route); 2] = [
+        ("show_runs", |shell, window, cx| shell.show_runs(window, cx)),
+        ("home tile", |shell, window, cx| {
+            shell.open_home_page(crate::home::Page::Runs, window, cx)
+        }),
+    ];
+    for (route, go) in routes {
+        window
+            .update(cx, |shell, window, cx| {
+                shell.open_runs(
+                    crate::runs::RunsFilter {
+                        automation: Some(first.clone()),
+                        status: Some("failed"),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                );
+                // Leave for a thread, so the route has to bring it back.
+                shell.close_app_view(window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window.update(cx, go).unwrap();
+        cx.run_until_parked();
+        window
+            .update(cx, |shell, _, cx| {
+                assert!(on_all_runs(shell, cx), "{route}");
+                let filter = feed(shell, cx).read(cx).filter().clone();
+                assert_eq!(filter.automation, None, "{route}: every automation");
+                assert_eq!(filter.status, Some("failed"), "{route}: the rest is kept");
+            })
+            .unwrap();
+    }
+}
+
+#[gpui::test]
+fn the_rail_bolt_shows_a_dot_while_a_run_goes_and_a_count_when_one_failed(cx: &mut TestAppContext) {
+    let data = data();
+    let window = open(&data, cx);
+    let id = scheduled_due(&data, 20_000);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    let rail = |visual: &mut VisualTestContext| {
+        window
+            .update(visual, |shell, _, cx| shell.refresh_rail_runs(cx))
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        (
+            visual
+                .debug_bounds("sidebar-navigation-running-Automations")
+                .is_some(),
+            visual
+                .debug_bounds("sidebar-navigation-failing-Automations")
+                .is_some(),
+            window
+                .read_with(visual, |shell, _| shell.automation_state.rail_runs)
+                .unwrap(),
+        )
+    };
+    assert_eq!(rail(visual), (false, false, (0, 0)), "nothing has run");
+
+    let service = Service::open(&data.db).unwrap();
+    let mut service = service;
+    let run = service.run_now(&id, now_ms()).unwrap();
+    service
+        .update_run(&run.id, "running", None, None, now_ms())
+        .unwrap();
+    assert_eq!(rail(visual), (true, false, (1, 0)), "a run is going");
+
+    service
+        .update_run(&run.id, "failed", None, Some("boom".into()), now_ms())
+        .unwrap();
+    assert_eq!(rail(visual), (false, true, (0, 1)), "it failed");
+
+    let label = window
+        .read_with(visual, |shell, _| {
+            let (going, failing) = shell.automation_state.rail_runs;
+            super::rail::automations_aria(going, failing)
+        })
+        .unwrap();
+    assert_eq!(label, "Automations, 1 failing");
+
+    // A later success clears it.
+    let again = service.run_now(&id, now_ms() + 1).unwrap();
+    service
+        .update_run(&again.id, "succeeded", None, None, now_ms() + 2)
+        .unwrap();
+    assert_eq!(rail(visual), (false, false, (0, 0)));
 }
 
 // --- "Wake a Pilot": the run is queued on a Pilot's chat instead of starting

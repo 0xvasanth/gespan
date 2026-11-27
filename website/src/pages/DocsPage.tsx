@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { SiteFooter } from "../components/SiteFooter";
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { GUIDES, REPO } from "../docs";
+import { QUICK_START, Terminal } from "../components/Terminal";
 import "./docs.css";
 
 /** The guides in README.md's Documentation table. */
 export const DOC_GUIDES = [
   { title: "Board", href: GUIDES.board, summary: "Cards, columns and tracker tickets, and starting sessions from them." },
   { title: "Project scripts", href: GUIDES.actions, summary: "Test, build and dev-server commands for the footer, the palette and agents." },
-  { title: "Agent access with /operator", href: GUIDES.agentAccess, summary: "Let agents open sessions and manage worktrees and notes." },
+  { title: "Agent access", href: GUIDES.agentAccess, summary: "Sessions that see each other, start sessions and message each other." },
   { title: "Remote sessions", href: GUIDES.remote, summary: "Run agents on another machine over SSH.", experimental: true },
   { title: "Jira inbox", href: GUIDES.jira, summary: "Connect Jira Cloud to the Inbox." },
   { title: "Linux installation", href: GUIDES.install, summary: "System dependencies and the .deb, .rpm and AppImage packages." },
@@ -16,6 +17,11 @@ export const DOC_GUIDES = [
   { title: "Building from source", href: GUIDES.building, summary: "Platform prerequisites and packaging." },
   { title: "Desktop guide", href: GUIDES.desktop, summary: "The Rust and GPUI app: building, checks and current limitations." },
 ];
+
+/** The search shortcut's keys as this visitor's keyboard labels them: ⌘ on Apple devices, Ctrl elsewhere. */
+export function shortcutKeys(userAgent: string): [string, string] {
+  return /Mac|iPhone|iPad|iPod/.test(userAgent) ? ["⌘", "K"] : ["Ctrl", "K"];
+}
 
 /** Guides whose title or summary has every word of the query, in any order and case. */
 export function filterGuides(query: string) {
@@ -44,15 +50,20 @@ export function DocsPage() {
     <div className="w-site">
       <div className="w-frame">
         <section className="w-hero soft" aria-label="Docs">
-          <SiteNav active="docs" onHero />
+          <NavSpace />
           <div className="w-wrap" style={{ paddingTop: "48px", paddingBottom: "64px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "20px" }}>
             <p className="w-eyebrow">Docs</p>
             <h1 className="w-h1">Learn Gespan.</h1>
             <p className="w-lead" style={{ maxWidth: "560px" }}>Set up your agents, run your first session and get the most out of the board, automations and Pilots.</p>
             <label className="dc-search" style={{ marginTop: "8px" }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-              <input ref={search} type="search" placeholder="Search the guides" aria-label="Search the guides" aria-controls="gd-list" value={query} onChange={(event) => setQuery(event.target.value)} />
-              <span className="w-kbd w-hide-m" style={{ marginRight: "8px" }}>⌘K</span>
+              <input ref={search} type="search" placeholder="Search the guides" aria-label="Search the guides" aria-keyshortcuts="Meta+K Control+K" aria-controls="gd-list" value={query} onChange={(event) => setQuery(event.target.value)} />
+              {/* The shortcut hint steps aside once there's a query beside it. */}
+              {!query && (
+                <span className="dc-keys w-hide-m" aria-hidden="true">
+                  {shortcutKeys(navigator.userAgent).map((key) => <kbd key={key}>{key}</kbd>)}
+                </span>
+              )}
             </label>
           </div>
         </section>
@@ -62,8 +73,10 @@ export function DocsPage() {
           <div className="w-glass" style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <p className="w-eyebrow">Quick start</p>
-              <span className="w-meta" style={{ marginLeft: "auto" }}>5 steps</span>
+              <span className="w-meta" style={{ marginLeft: "auto" }}>Set up, then 5 steps</span>
             </div>
+            <Terminal title="Before you open Gespan" lines={QUICK_START} />
+            <h3 className="dc-then">Then, in Gespan</h3>
             <ol className="dc-qs">
               <li>
                 <span className="n">1</span>
@@ -112,7 +125,7 @@ export function DocsPage() {
               <div className="hd">
                 <p className="w-eyebrow">Tip</p>
               </div>
-              <p className="w-small">Try <span className="w-code-inline">/operator start two Codex sessions: one to inspect the API and one to review the UI</span>. The agent will open and arrange both sessions for you.</p>
+              <p className="w-small">Try <span className="w-code-inline">start two sessions in new worktrees: one to inspect the API and one to review the UI</span>. The agent starts both under this chat, and each reports back when it’s done.</p>
             </div>
           </div>
         </div>

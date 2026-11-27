@@ -148,4 +148,4 @@ How it behaves:
 - It runs nothing when a project opens, and it never runs a script in the background on its own. Listing only reads files.
 - It reads only regular files inside the project, up to 1 MB. A link that leaves the project, a pipe or a larger file is shown as "Couldn't read" instead.
 
-Return to the [README](../README.md) for a quick start, or see [Agent access](agent-access.md) for the `/operator` CLI.
+Return to the [README](../README.md) for a quick start, or see [Agent access](agent-access.md) for how agents start and message sessions.

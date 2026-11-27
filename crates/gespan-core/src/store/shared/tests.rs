@@ -15,44 +15,6 @@ const PILOT_TABLES: &str = include_str!("../../../tests/fixtures/desktop/pilot-t
 const DESKTOP_SCHEMA_V1: &str = include_str!("../../../tests/fixtures/desktop/schema-v1.sql");
 
 #[test]
-fn desktop_operator_access_restores_only_from_submitted_user_messages() {
-    for (block, enabled) in [
-        (
-            json!({"role":"user", "text":"Start a session", "gespan":true}),
-            true,
-        ),
-        (
-            json!({"role":"user", "text":"/pilot Start a session"}),
-            true,
-        ),
-        (
-            json!({"role":"user", "text":"/gespan Start a session"}),
-            true,
-        ),
-        (
-            json!({"role":"user", "text":"Start a session", "gespan":true, "draft":true}),
-            false,
-        ),
-        (
-            json!({"role":"user", "text":"Start a session", "gespan":true, "internal":true}),
-            false,
-        ),
-        (
-            json!({"role":"assistant", "text":"/pilot Start a session", "gespan":true}),
-            false,
-        ),
-        (json!({"role":"user", "text":"Start a session"}), false),
-    ] {
-        let store = Store::open_gespan(Path::new(":memory:")).unwrap();
-        let (id, _) = saved(&store, json!([block]));
-        assert_eq!(
-            store.agent_settings(id).unwrap().unwrap().operator_enabled,
-            enabled
-        );
-    }
-}
-
-#[test]
 fn saved_turn_metrics_reload_with_the_same_revision() {
     // Without exact float parsing these reload one ULP away, and the next
     // save reports the conversation as changed in another window.
@@ -251,7 +213,8 @@ fn desktop_sidebar_recovers_only_hidden_launches_of_listed_callers_without_histo
     store
         .conn()
         .execute(
-            "INSERT INTO orchestration_workers VALUES('worker','listed-caller')",
+            // A worker adopted from the desktop app's orchestration_workers.
+            "INSERT INTO session_links VALUES('worker','listed-caller','listed-caller',1,'orchestration','never',0)",
             [],
         )
         .unwrap();

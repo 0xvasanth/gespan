@@ -195,6 +195,28 @@ impl Shell {
             .collect()
     }
 
+    /// The strip's layout: always every project's tabs, ungrouped, but a test
+    /// can still drive the grouped and this-project strips.
+    pub(super) fn tab_layout(&self) -> TabLayout {
+        #[cfg(test)]
+        if let Some(layout) = self.tab_layout_override {
+            return layout;
+        }
+        self.workspace.preferences.tab_layout()
+    }
+
+    /// Drives the strip in `layout`, as the old Top bar tabs setting did.
+    #[cfg(test)]
+    pub(super) fn set_tab_layout_override(
+        &mut self,
+        layout: Option<TabLayout>,
+        cx: &mut Context<Self>,
+    ) {
+        self.tab_layout_override = layout;
+        self.invalidate_chrome(cx);
+        cx.notify();
+    }
+
     /// The strip for every project: each project's tabs as one group, where
     /// its first tab is, and app tabs loose between them.
     pub(super) fn strip_entries(&self, cx: &App) -> Vec<StripEntry<TitleTab>> {
@@ -207,7 +229,7 @@ impl Shell {
         &self,
         cx: &App,
     ) -> (Vec<StripEntry<TitleTab>>, HashMap<TitleTab, String>) {
-        let layout = self.workspace.preferences.tab_layout();
+        let layout = self.tab_layout();
         let tabs = match layout {
             TabLayout::Project => self.strip_tabs(cx),
             TabLayout::All | TabLayout::Grouped => self.global_strip_tabs(cx),
@@ -350,7 +372,6 @@ impl Shell {
                 app_views::AppView::Automations => self.open_automations(window, cx),
                 app_views::AppView::Flows => self.open_flows(window, cx),
                 app_views::AppView::Board => self.open_board(window, cx),
-                app_views::AppView::Runs => self.show_runs(window, cx),
             },
             TitleTab::Session(id) => {
                 let focus = self.workspace.tab_focus(*id);

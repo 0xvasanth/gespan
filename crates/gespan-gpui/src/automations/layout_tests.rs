@@ -4,7 +4,6 @@ use super::*;
 use chrono::{Local, TimeZone};
 use gespan_core::review_policy::ReviewResults;
 use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-use std::{cell::RefCell, rc::Rc};
 
 const CODEX_BINARY: &str = "GESPAN_CODEX_BINARY";
 
@@ -384,36 +383,6 @@ fn summary_cards_describe_project_trigger_and_agent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn see_all_in_runs_emits_open_runs(cx: &mut TestAppContext) {
-    let page = page();
-    let automation = save(
-        &page,
-        "Check the build",
-        "/work/app",
-        AutomationTrigger::new("time", "daily"),
-    );
-    let (window, mut visual) = open(&page, "/work/app", cx);
-    let opened = Rc::new(RefCell::new(Vec::<String>::new()));
-    let sink = opened.clone();
-    let _subscription = window
-        .update(&mut visual, |_, _, cx| {
-            cx.subscribe(&cx.entity(), move |_, _, event: &OpenRuns, _| {
-                sink.borrow_mut().push(event.automation.clone())
-            })
-        })
-        .unwrap();
-
-    click(&mut visual, &format!("automation-card-{}", automation.id));
-    assert!(
-        visual.drawn("automation-see-all-runs").is_none(),
-        "only the Recent runs tab links to Runs"
-    );
-    click(&mut visual, "automation-history-tab");
-    click(&mut visual, "automation-see-all-runs");
-    assert_eq!(*opened.borrow(), std::slice::from_ref(&automation.id));
-}
-
-#[gpui::test]
 fn tabs_switch_between_instructions_and_recent_runs(cx: &mut TestAppContext) {
     let page = page();
     let automation = save(
@@ -442,7 +411,10 @@ fn tabs_switch_between_instructions_and_recent_runs(cx: &mut TestAppContext) {
     assert_eq!(shown(&mut visual), (false, true));
     assert!(window.read_with(&visual, |view, _| view.history).unwrap());
     assert!(
-        visual.drawn("automation-run-row-0").is_some(),
+        window
+            .read_with(&visual, |view, _| view.history_rows().len())
+            .unwrap()
+            == 1,
         "the run is listed"
     );
 
@@ -1665,8 +1637,14 @@ fn new_button_leaves_the_open_automation_for_the_gallery(cx: &mut TestAppContext
             .read_with(visual, |view, _| (view.gallery, view.selected.clone()))
             .unwrap()
     };
-    assert_eq!(state(&mut visual), (true, None), "opens on the gallery");
-    assert!(visual.drawn("automation-scratch").is_some());
+    assert_eq!(state(&mut visual), (true, None));
+    assert!(
+        window
+            .read_with(&visual, |view, _| view.showing_runs())
+            .unwrap(),
+        "opens on All runs"
+    );
+    assert!(visual.drawn("automation-scratch").is_none());
 
     // Clicking a card opens it in the editor; only that card is selected.
     click(&mut visual, &format!("automation-card-{}", second.id));
@@ -1726,4 +1704,49 @@ fn gallery_tabs_switch_category_in_a_two_column_grid(cx: &mut TestAppContext) {
         visual.drawn("automation-scratch").is_some(),
         "always offered"
     );
+}
+
+/// A gallery card opens on a click, but a drag across its description
+/// selects the text and leaves the gallery up.
+#[gpui::test]
+fn a_gallery_card_opens_on_a_click_but_a_drag_across_it_selects(cx: &mut TestAppContext) {
+    use crate::selectable::test_support::{copy, cursor_at, drag};
+    cx.update(crate::input::bind);
+    let page = page();
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    let visual = &mut visual;
+    let description = window
+        .read_with(visual, |view, _| {
+            view.text
+                .bounds_for_test("Write your own instructions and choose a trigger.")
+        })
+        .unwrap()
+        .expect("the scratch card's description is selectable");
+    assert_eq!(
+        cursor_at(visual, description.center()),
+        Some(gpui::CursorStyle::IBeam)
+    );
+    drag(
+        visual,
+        gpui::point(description.left() + gpui::px(1.), description.center().y),
+        gpui::point(description.right() + gpui::px(2.), description.center().y),
+    );
+    assert_eq!(
+        copy(visual).as_deref(),
+        Some("Write your own instructions and choose a trigger.")
+    );
+    let gallery =
+        |visual: &mut VisualTestContext| window.read_with(visual, |view, _| view.gallery).unwrap();
+    assert!(gallery(visual), "the drag did not open the card");
+    let card = visual.drawn("automation-scratch").unwrap();
+    assert_eq!(
+        cursor_at(
+            visual,
+            gpui::point(card.right() - gpui::px(6.), card.top() + gpui::px(6.))
+        ),
+        Some(gpui::CursorStyle::PointingHand),
+        "the card itself keeps the pointer"
+    );
+    click(visual, "automation-scratch");
+    assert!(!gallery(visual), "a click still opens it");
 }

@@ -235,7 +235,10 @@ impl Shell {
                 let history = tasks::history(rows, None, turns(&key));
                 let name = chat.display_title().to_owned();
                 found.push(TaskItem {
-                    headline: last_agent_line(&history)
+                    headline: open
+                        .question
+                        .clone()
+                        .or_else(|| last_agent_line(&history))
                         .unwrap_or_else(|| "Choose an option".into()),
                     history,
                     key,

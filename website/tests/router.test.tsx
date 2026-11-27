@@ -9,6 +9,8 @@ describe("matchRoute", () => {
     ["/features", "features"],
     ["/features/", "features"],
     ["/pilots/index.html", "pilots"],
+    ["/cloud", "cloud"],
+    ["/hub", "cloud"],
     ["/index.html", "home"],
     ["/download", "download"],
   ])("%s is the %s page", (path, page) => {
@@ -79,7 +81,7 @@ describe("navigation", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
     const sheet = document.getElementById("nv-sheet")!;
-    expect([...sheet.querySelectorAll("a")].map((a) => a.textContent)).toEqual(["Features", "Pilots", "Docs", "Changelog", "Download", "GitHub"]);
+    expect([...sheet.querySelectorAll("a")].map((a) => a.textContent)).toEqual(["Features", "Pilots", "Cloud", "Docs", "Changelog", "Download", "GitHub"]);
     act(() => {
       fireEvent.click(sheet.querySelector('a[href="/changelog"]')!);
     });

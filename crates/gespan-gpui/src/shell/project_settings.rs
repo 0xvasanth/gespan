@@ -450,8 +450,8 @@ mod inbox_menu_tests {
         let (window, _, _) = crate::shell::tests::window(cx);
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
-        // Right-clicking the Inbox row opens it.
-        let inbox = visual.debug_bounds("sidebar-navigation-Inbox").unwrap();
+        // Right-clicking the Git row opens it.
+        let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
         visual.simulate_mouse_down(inbox.center(), gpui::MouseButton::Right, Default::default());
         visual.run_until_parked();
         window
@@ -513,7 +513,8 @@ mod inbox_menu_tests {
                 let inbox = shell.inbox.clone().unwrap();
                 let item = |number| gespan_core::inbox::Item {
                     provider: "github".into(),
-                    kind: "issue".into(),
+                    kind: "pr".into(),
+                    state: "open".into(),
                     repo: "acme/app".into(),
                     number,
                     ..Default::default()

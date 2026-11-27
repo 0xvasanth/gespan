@@ -158,6 +158,73 @@ pub(crate) fn launch(
         )
         .into_any_element()
 }
+/// `pilot.ask`'s decision card: what the Pilot needs decided and why. Its
+/// one-tap answers wait above the composer until one is given.
+fn decision(value: &Value) -> AnyElement {
+    let answered = value["answered"] == true;
+    let id = value["id"].as_str().unwrap_or_default().to_owned();
+    div()
+        .id(gpui::ElementId::Name(format!("pilot-ask-{id}").into()))
+        .debug_selector(move || {
+            if answered {
+                "pilot-ask-answered".into()
+            } else {
+                "pilot-ask-open".into()
+            }
+        })
+        .rounded_lg()
+        .border_1()
+        .border_color(if answered {
+            content(0.12)
+        } else {
+            gpui::Hsla::from(rgb(crate::conversation::WATCH_WAITING)).opacity(0.45)
+        })
+        .bg(content(0.035))
+        .p_3()
+        .max_w(px(520.))
+        .flex()
+        .flex_col()
+        .gap_1p5()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(px(11.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(if answered {
+                    content(0.45)
+                } else {
+                    rgb(crate::conversation::WATCH_WAITING).into()
+                })
+                .child(icon("message-square", 13.))
+                .child(if answered { "Answered" } else { "Needs you" }),
+        )
+        .child(
+            div()
+                .text_size(px(14.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(content(0.9))
+                .child(value["question"].as_str().unwrap_or_default().to_owned()),
+        )
+        .children(value["detail"].as_str().map(|detail| {
+            div()
+                .text_size(px(12.))
+                .line_height(px(18.))
+                .text_color(content(0.6))
+                .whitespace_normal()
+                .child(detail.to_owned())
+        }))
+        .when(!answered, |d| {
+            d.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(content(0.4))
+                    .child("Pick an answer below, or reply in your own words."),
+            )
+        })
+        .into_any_element()
+}
 pub(crate) fn render(
     value: &Value,
     cx: &mut Context<crate::transcript::TranscriptView>,
@@ -165,6 +232,7 @@ pub(crate) fn render(
     let kind = value["type"].as_str().unwrap_or_default();
     match kind {
         "document" => return artifact(value, cx),
+        "ask" => return decision(value),
         "session" => {
             let id = value["sessionId"].as_i64().unwrap_or_default();
             let view = value["state"]

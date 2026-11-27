@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use super::review::{self, CheckSummary, LineComment, Outcome, Review, Side, TtlCache, Verdict};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -50,7 +51,7 @@ pub struct AzureDevOpsAssignee {
     pub avatar_url: String,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AzureDevOpsWorkItem {
     pub kind: String,
@@ -64,6 +65,17 @@ pub struct AzureDevOpsWorkItem {
     pub draft: bool,
     pub repo: String,
     pub attention_reason: String,
+    pub author: String,
+    /// Pull requests (see [`super::Item`]): the review and check fields the
+    /// Git page groups by. Reviewers go by display name, as Azure DevOps
+    /// shows them; diff sizes stay 0, which its lists don't carry.
+    pub review_decision: String,
+    pub reviews: Vec<Review>,
+    pub requested_reviewers: Vec<String>,
+    pub viewer: String,
+    pub check_summary: CheckSummary,
+    pub additions: i64,
+    pub deletions: i64,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -550,7 +562,488 @@ fn azure_fetch_prs(
         API_VERSION
     );
     let response = azure_get(config, &path)?;
-    parse_pr_list(&response.value, repo, &config.url)
+    let mut items = parse_pr_list(&response.value, repo, &config.url)?;
+    if status == "active" {
+        enrich_prs(config, project, &response.value, &mut items);
+    }
+    Ok(items)
+}
+
+/// Active pull requests whose policy checks are looked up per list, at most
+/// this many, with this many requests at once.
+const MAX_ENRICHED: usize = 30;
+const ENRICH_WORKERS: usize = 6;
+const POLICY_API_VERSION: &str = "7.1-preview.1";
+/// Policy types whose evaluations are checks: build validation, and status
+/// checks posted by other services.
+const BUILD_POLICY: &str = "0609b952-1397-4640-95ec-e00a01b2c241";
+const STATUS_POLICY: &str = "cbdc66da-9728-4af8-aada-9a5a32e4a226";
+
+/// Fills the viewer and the policy checks of a list's active pull requests.
+/// Each needs its own request, so a few run at once and are kept for a
+/// minute per source commit; one that fails keeps its checks empty.
+fn enrich_prs(
+    config: &AzureDevOpsConfig,
+    project: &str,
+    rows: &Value,
+    items: &mut [AzureDevOpsWorkItem],
+) {
+    let viewer = azure_viewer(config)
+        .map(|(_, name)| name)
+        .unwrap_or_default();
+    let mut targets = std::collections::HashMap::new();
+    for row in rows
+        .get("value")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(number) = row.get("pullRequestId").and_then(Value::as_i64) else {
+            continue;
+        };
+        let project_id = row
+            .pointer("/repository/project/id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let commit = row
+            .pointer("/lastMergeSourceCommit/commitId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        targets.insert(number, (project_id, commit));
+    }
+    for item in items.iter_mut() {
+        item.viewer = viewer.clone();
+    }
+    let work: Vec<(&mut AzureDevOpsWorkItem, (String, String))> = items
+        .iter_mut()
+        .filter(|item| item.state == "open")
+        .filter_map(|item| {
+            let target = targets.get(&item.number).cloned()?;
+            (!target.0.is_empty()).then_some((item, target))
+        })
+        .take(MAX_ENRICHED)
+        .collect();
+    review::for_each_bounded(work, ENRICH_WORKERS, |(item, (project_id, commit))| {
+        static CHECKS: TtlCache<CheckSummary> =
+            TtlCache::new(Duration::from_secs(60), Duration::from_secs(60));
+        let key = format!("{}|{project_id}|{}|{commit}", config.url, item.number);
+        if let Ok(summary) = CHECKS.get(&key, || {
+            policy_evaluations(config, project, &project_id, item.number).map(|v| policy_checks(&v))
+        }) {
+            item.check_summary = summary;
+        }
+    });
+}
+
+fn policy_evaluations(
+    config: &AzureDevOpsConfig,
+    project: &str,
+    project_id: &str,
+    number: i64,
+) -> Result<Value, String> {
+    let artifact = format!("vstfs:///CodeReview/CodeReviewId/{project_id}/{number}");
+    let path = format!(
+        "/{}/_apis/policy/evaluations?artifactId={}&api-version={POLICY_API_VERSION}",
+        encode_segment(project),
+        encode_segment(&artifact)
+    );
+    Ok(azure_get(config, &path)?.value)
+}
+
+/// A build or status policy evaluation, with its name and how it counts.
+fn policy_check(evaluation: &Value) -> Option<(String, Outcome, bool)> {
+    let configuration = evaluation.get("configuration")?;
+    if configuration.get("isEnabled").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    let kind = configuration.get("type");
+    let type_id = kind
+        .and_then(|t| string_field(t, "id"))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let type_name = kind
+        .and_then(|t| string_field(t, "displayName"))
+        .unwrap_or_default();
+    let build = type_id == BUILD_POLICY || type_name.eq_ignore_ascii_case("Build");
+    if !(build || type_id == STATUS_POLICY || type_name.eq_ignore_ascii_case("Status")) {
+        return None;
+    }
+    let settings = configuration.get("settings");
+    let name = settings
+        .and_then(|s| string_field(s, "displayName"))
+        .filter(|n| !n.is_empty())
+        .or_else(|| {
+            settings
+                .and_then(|s| string_field(s, "statusName"))
+                .filter(|n| !n.is_empty())
+        })
+        .unwrap_or(type_name);
+    let outcome = match string_field(evaluation, "status")
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "approved" => Outcome::Passed,
+        "rejected" | "broken" => Outcome::Failed,
+        "notapplicable" => Outcome::Ignored,
+        _ => Outcome::Pending,
+    };
+    Some((name, outcome, build))
+}
+
+fn policy_checks(value: &Value) -> CheckSummary {
+    CheckSummary::tally(
+        value
+            .get("value")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(policy_check)
+            .map(|(name, outcome, _)| (name, outcome)),
+    )
+}
+
+/// The failed build validations, which can be queued again.
+fn failed_builds(value: &Value) -> Vec<String> {
+    value
+        .get("value")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|evaluation| {
+            policy_check(evaluation)
+                .is_some_and(|(_, outcome, build)| build && outcome == Outcome::Failed)
+        })
+        .filter_map(|evaluation| string_field(evaluation, "evaluationId"))
+        .filter(|id| !id.is_empty())
+        .collect()
+}
+
+/// Reviewer votes as reviews: 10 and 5 approve, -5 (waiting for author)
+/// and -10 (rejected) request changes, 0 is still asked. Returns the
+/// verdict, the reviews and who is still asked.
+fn pr_reviews(row: &Value) -> (String, Vec<Review>, Vec<String>) {
+    let mut reviews = Vec::new();
+    let mut requested = Vec::new();
+    let mut required_waiting = false;
+    for reviewer in row
+        .get("reviewers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = string_field(reviewer, "displayName").filter(|n| !n.is_empty()) else {
+            continue;
+        };
+        let vote = reviewer.get("vote").and_then(Value::as_i64).unwrap_or(0);
+        let state = match vote {
+            v if v > 0 => "approved",
+            v if v < 0 => "changes_requested",
+            _ => {
+                if reviewer.get("hasDeclined").and_then(Value::as_bool) != Some(true) {
+                    required_waiting |=
+                        reviewer.get("isRequired").and_then(Value::as_bool) == Some(true);
+                    requested.push(name);
+                }
+                continue;
+            }
+        };
+        reviews.push(Review {
+            login: name,
+            state: state.into(),
+        });
+    }
+    let decision = if reviews.iter().any(|r| r.state == "changes_requested") {
+        "changes_requested"
+    } else if required_waiting {
+        "review_required"
+    } else if reviews.iter().any(|r| r.state == "approved") {
+        "approved"
+    } else if !requested.is_empty() {
+        "review_required"
+    } else {
+        ""
+    };
+    (decision.into(), reviews, requested)
+}
+
+/// The connected account's id and display name, asked at most every few
+/// minutes.
+fn azure_viewer(config: &AzureDevOpsConfig) -> Result<(String, String), String> {
+    static VIEWERS: TtlCache<(String, String)> =
+        TtlCache::new(Duration::from_secs(300), Duration::from_secs(60));
+    VIEWERS.get(&config.url, || {
+        let response = azure_get(
+            config,
+            &format!("/_apis/connectionData?api-version={CONNECTION_DATA_API_VERSION}"),
+        )?;
+        parse_viewer(&response.value)
+    })
+}
+
+fn parse_viewer(value: &Value) -> Result<(String, String), String> {
+    let user = value
+        .get("authenticatedUser")
+        .or_else(|| value.get("authorizedUser"))
+        .ok_or_else(|| "Azure DevOps did not return the current user".to_string())?;
+    let id = string_field(user, "id").unwrap_or_default();
+    if id.is_empty() {
+        return Err("Azure DevOps did not return the current user".into());
+    }
+    let name = string_field(user, "providerDisplayName")
+        .filter(|n| !n.is_empty())
+        .or_else(|| string_field(user, "customDisplayName"))
+        .unwrap_or_default();
+    Ok((id, name))
+}
+
+/// The connected organization's name: the last part of its URL.
+fn organization_name(url: &str) -> String {
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// `project/repository`, from that or `organization/project/repository` of
+/// the connected organization.
+fn added_repo(config_url: &str, repo: &str) -> Result<String, String> {
+    let repo = repo.trim().trim_matches('/');
+    let parts: Vec<&str> = repo.split('/').collect();
+    if parts.len() == 3 {
+        if !parts[0].eq_ignore_ascii_case(&organization_name(config_url)) {
+            return Err(format!(
+                "{} is not the connected Azure DevOps organization",
+                parts[0]
+            ));
+        }
+        return validate_repo(&parts[1..].join("/"));
+    }
+    validate_repo(repo)
+}
+
+/// The active pull requests of a repository added by hand.
+pub fn azure_devops_list_repo_prs(
+    app: PathBuf,
+    repo: &str,
+    limit: u32,
+) -> Result<Vec<AzureDevOpsWorkItem>, String> {
+    let config = require_config(&app)?;
+    let repo = added_repo(&config.url, repo)?;
+    let (project, name) = split_repo(&repo)?;
+    azure_list_prs_for(&config, &project, &name, None, "open", limit.clamp(1, 100))
+}
+
+/// Active pull requests across the organization where you are a reviewer
+/// and have not voted: one request.
+pub fn azure_devops_review_requests(app: PathBuf) -> Result<Vec<AzureDevOpsWorkItem>, String> {
+    let config = require_config(&app)?;
+    let (me, viewer) = azure_viewer(&config)?;
+    let path = format!(
+        "/_apis/git/pullrequests?searchCriteria.status=active&searchCriteria.reviewerId={}&$top=50&api-version={}",
+        encode_segment(&me),
+        API_VERSION
+    );
+    let mut items = parse_review_requests(&azure_get(&config, &path)?.value, &me, &config.url)?;
+    for item in &mut items {
+        item.viewer = viewer.clone();
+    }
+    Ok(items)
+}
+
+fn parse_review_requests(
+    value: &Value,
+    me: &str,
+    base_url: &str,
+) -> Result<Vec<AzureDevOpsWorkItem>, String> {
+    let rows = value
+        .get("value")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "Azure DevOps did not return pull requests".to_string())?;
+    Ok(rows
+        .iter()
+        .filter(|row| {
+            // Asked through a group counts; having voted does not.
+            !row.get("reviewers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .any(|r| {
+                    string_field(r, "id").is_some_and(|id| id.eq_ignore_ascii_case(me))
+                        && r.get("vote").and_then(Value::as_i64).unwrap_or(0) != 0
+                })
+        })
+        .filter_map(|row| {
+            let (Some(project), Some(name)) = pr_repo_parts(row) else {
+                return None;
+            };
+            let mut item = parse_pr(row, &format!("{project}/{name}"), base_url)?;
+            item.attention_reason = "review_requested".into();
+            Some(item)
+        })
+        .collect())
+}
+
+/// The organization's repositories whose name matches `query`. Azure DevOps
+/// can't search them, so the list is read once a minute and filtered here.
+pub fn azure_devops_search_repos(
+    app: PathBuf,
+    query: &str,
+) -> Result<Vec<(String, String)>, String> {
+    static REPOS: TtlCache<Value> = TtlCache::new(Duration::from_secs(60), Duration::from_secs(30));
+    let config = require_config(&app)?;
+    let value = REPOS.get(&config.url, || {
+        Ok(azure_get(
+            &config,
+            &format!("/_apis/git/repositories?api-version={API_VERSION}"),
+        )?
+        .value)
+    })?;
+    Ok(parse_repo_hits(&value, query))
+}
+
+fn parse_repo_hits(value: &Value, query: &str) -> Vec<(String, String)> {
+    let query = query.trim().to_lowercase();
+    value
+        .get("value")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| row.get("isDisabled").and_then(Value::as_bool) != Some(true))
+        .filter_map(|row| {
+            let name = string_field(row, "name")?;
+            let project = row.get("project").and_then(|p| string_field(p, "name"))?;
+            let repo = format!("{project}/{name}");
+            (validate_repo(&repo).is_ok() && repo.to_lowercase().contains(&query))
+                .then(|| (repo, format!("{project} project")))
+        })
+        .take(20)
+        .collect()
+}
+
+/// Sets your vote (10 approve, -5 waiting for author; a comment leaves it)
+/// and posts `body`, if any, as a thread.
+pub fn azure_devops_submit_review(
+    app: PathBuf,
+    repo: &str,
+    number: i64,
+    verdict: Verdict,
+    body: &str,
+    comments: &[LineComment],
+) -> Result<(), String> {
+    let config = require_config(&app)?;
+    validate_item("pr", number)?;
+    let (project, name) = split_repo(repo)?;
+    let threads = format!(
+        "/{}/_apis/git/repositories/{}/pullrequests/{number}/threads?api-version={API_VERSION}",
+        encode_segment(&project),
+        encode_segment(&name),
+    );
+    for comment in comments {
+        azure_post_json(&config, &threads, azure_line_thread(comment))?;
+    }
+    let vote = match verdict {
+        Verdict::Approve => Some(10),
+        Verdict::RequestChanges => Some(-5),
+        Verdict::Comment => None,
+    };
+    if let Some(vote) = vote {
+        let (me, _) = azure_viewer(&config)?;
+        let path = format!(
+            "/{}/_apis/git/repositories/{}/pullRequests/{number}/reviewers/{}?api-version={API_VERSION}",
+            encode_segment(&project),
+            encode_segment(&name),
+            encode_segment(&me),
+        );
+        azure_send_json(&config, "PUT", &path, Some(json!({ "vote": vote })))?;
+    }
+    if !body.trim().is_empty() {
+        azure_devops_work_item_comment_for(&config, repo, "pr", number, body)?;
+    } else if vote.is_none() && comments.is_empty() {
+        return Err("Write a comment before sending it.".into());
+    }
+    Ok(())
+}
+
+/// A thread on one line of a pull request's diff: the right side for new
+/// lines, the left for deleted ones.
+pub(crate) fn azure_line_thread(comment: &LineComment) -> Value {
+    let point = json!({ "line": comment.line, "offset": 1 });
+    let (start, end) = match comment.side {
+        Side::New => ("rightFileStart", "rightFileEnd"),
+        Side::Old => ("leftFileStart", "leftFileEnd"),
+    };
+    let path = format!("/{}", comment.path.trim_start_matches('/'));
+    let mut context = json!({ "filePath": path });
+    context[start] = point.clone();
+    context[end] = point;
+    json!({
+        "comments": [{ "parentCommentId": 0, "content": comment.body.trim(), "commentType": 1 }],
+        "status": 1,
+        "threadContext": context,
+    })
+}
+
+/// Queues the pull request's failed build validations again.
+pub fn azure_devops_rerun_failed(app: PathBuf, repo: &str, number: i64) -> Result<String, String> {
+    let config = require_config(&app)?;
+    validate_item("pr", number)?;
+    let (project, name) = split_repo(repo)?;
+    let pr = azure_get(
+        &config,
+        &format!(
+            "/{}/_apis/git/repositories/{}/pullrequests/{number}?api-version={API_VERSION}",
+            encode_segment(&project),
+            encode_segment(&name)
+        ),
+    )?
+    .value;
+    let project_id = pr
+        .pointer("/repository/project/id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            "Azure DevOps did not say which project this pull request is in".to_string()
+        })?;
+    let failed = failed_builds(&policy_evaluations(&config, &project, project_id, number)?);
+    if failed.is_empty() {
+        return Err("No failed builds to queue again".into());
+    }
+    for id in &failed {
+        let path = format!(
+            "/{}/_apis/policy/evaluations/{}?api-version={POLICY_API_VERSION}",
+            encode_segment(&project),
+            encode_segment(id)
+        );
+        azure_send_json(&config, "PATCH", &path, None)?;
+    }
+    Ok(format!(
+        "Rerun requested for {} failed build{}.",
+        failed.len(),
+        if failed.len() == 1 { "" } else { "s" }
+    ))
+}
+
+fn azure_send_json(
+    config: &AzureDevOpsConfig,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<AzureResponse, String> {
+    let url = format!("{}{}", config.url.trim_end_matches('/'), path);
+    let request = azure_agent()
+        .request(method, &url)
+        .set("Authorization", &basic_auth(&config.token))
+        .set("Accept", "application/json")
+        .set("User-Agent", USER_AGENT);
+    read_azure_response(match body {
+        Some(body) => request
+            .set("Content-Type", "application/json")
+            .send_string(&body.to_string()),
+        None => request.call(),
+    })
 }
 
 fn azure_list_pr_reviews_for(
@@ -705,6 +1198,7 @@ fn parse_pr(row: &Value, repo: &str, base_url: &str) -> Option<AzureDevOpsWorkIt
         return None;
     }
     let status = string_field(row, "status").unwrap_or_default();
+    let (review_decision, reviews, requested_reviewers) = pr_reviews(row);
     Some(AzureDevOpsWorkItem {
         kind: "pr".into(),
         number,
@@ -724,6 +1218,14 @@ fn parse_pr(row: &Value, repo: &str, base_url: &str) -> Option<AzureDevOpsWorkIt
         draft: row.get("isDraft").and_then(Value::as_bool).unwrap_or(false),
         repo: repo.into(),
         attention_reason: String::new(),
+        author: row
+            .get("createdBy")
+            .and_then(|user| string_field(user, "displayName"))
+            .unwrap_or_default(),
+        review_decision,
+        reviews,
+        requested_reviewers,
+        ..Default::default()
     })
 }
 
@@ -857,6 +1359,7 @@ fn parse_wit(row: &Value) -> Option<AzureDevOpsWorkItem> {
         draft: false,
         repo: project,
         attention_reason: String::new(),
+        ..Default::default()
     })
 }
 
@@ -2002,4 +2505,156 @@ fn expand_home(input: &str) -> PathBuf {
             .join(rest);
     }
     PathBuf::from(input)
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+
+    #[test]
+    fn votes_map_to_reviews_and_a_verdict() {
+        let row = json!({"reviewers": [
+            {"displayName": "Mira", "vote": 10},
+            {"displayName": "Cubic", "vote": 5},
+            {"displayName": "Jo", "vote": -5},
+            {"displayName": "Al", "vote": -10},
+            {"displayName": "Core team", "vote": 0, "isContainer": true},
+            {"displayName": "Gone", "vote": 0, "hasDeclined": true},
+            {"vote": 10}
+        ]});
+        let (decision, reviews, requested) = pr_reviews(&row);
+        assert_eq!(decision, "changes_requested");
+        let states: Vec<(&str, &str)> = reviews
+            .iter()
+            .map(|r| (r.login.as_str(), r.state.as_str()))
+            .collect();
+        assert_eq!(
+            states,
+            [
+                ("Mira", "approved"),
+                ("Cubic", "approved"),
+                ("Jo", "changes_requested"),
+                ("Al", "changes_requested")
+            ]
+        );
+        assert_eq!(requested, ["Core team"]);
+    }
+
+    #[test]
+    fn a_required_reviewer_who_has_not_voted_holds_an_approval() {
+        let approved = json!({"reviewers": [{"displayName": "Mira", "vote": 10},
+            {"displayName": "Jo", "vote": 0}]});
+        assert_eq!(pr_reviews(&approved).0, "approved");
+        let held = json!({"reviewers": [{"displayName": "Mira", "vote": 10},
+            {"displayName": "Jo", "vote": 0, "isRequired": true}]});
+        assert_eq!(pr_reviews(&held).0, "review_required");
+        assert_eq!(
+            pr_reviews(&json!({"reviewers": [{"displayName": "Jo", "vote": 0}]})).0,
+            "review_required"
+        );
+        assert_eq!(pr_reviews(&json!({})).0, "");
+    }
+
+    #[test]
+    fn list_rows_carry_their_author_and_reviews() {
+        let row = json!({"pullRequestId": 4, "title": "T", "status": "active",
+            "createdBy": {"displayName": "Vasanth"},
+            "reviewers": [{"displayName": "Mira", "vote": -5}]});
+        let item = parse_pr(&row, "proj/app", "https://dev.azure.com/org").unwrap();
+        assert_eq!(item.author, "Vasanth");
+        assert_eq!(item.review_decision, "changes_requested");
+        assert_eq!(item.reviews.len(), 1);
+    }
+
+    #[test]
+    fn build_and_status_policies_are_checks() {
+        let evaluations = json!({"value": [
+            {"evaluationId": "a", "status": "approved", "configuration": {
+                "type": {"id": BUILD_POLICY, "displayName": "Build"},
+                "settings": {"displayName": "CI"}}},
+            {"evaluationId": "b", "status": "rejected", "configuration": {
+                "type": {"id": BUILD_POLICY, "displayName": "Build"},
+                "settings": {"displayName": "Windows tests"}}},
+            {"evaluationId": "c", "status": "running", "configuration": {
+                "type": {"id": STATUS_POLICY, "displayName": "Status"},
+                "settings": {"statusName": "sonar"}}},
+            {"evaluationId": "d", "status": "rejected", "configuration": {
+                "type": {"id": STATUS_POLICY, "displayName": "Status"},
+                "settings": {"statusName": "lint"}}},
+            {"evaluationId": "e", "status": "notApplicable", "configuration": {
+                "type": {"id": BUILD_POLICY, "displayName": "Build"}, "settings": {}}},
+            {"evaluationId": "f", "status": "rejected", "configuration": {
+                "type": {"id": "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd",
+                         "displayName": "Minimum number of reviewers"}}},
+            {"evaluationId": "g", "status": "rejected", "configuration": {
+                "isEnabled": false,
+                "type": {"id": BUILD_POLICY, "displayName": "Build"}, "settings": {}}}
+        ]});
+        let summary = policy_checks(&evaluations);
+        assert_eq!(
+            (
+                summary.total,
+                summary.passed,
+                summary.failed,
+                summary.pending
+            ),
+            (4, 1, 2, 1)
+        );
+        assert_eq!(summary.failed_names, ["Windows tests", "lint"]);
+        // Only a build validation can be queued again.
+        assert_eq!(failed_builds(&evaluations), ["b"]);
+        assert!(policy_checks(&json!({"value": []})).is_empty());
+    }
+
+    #[test]
+    fn review_requests_drop_the_ones_you_voted_on() {
+        let rows = json!({"value": [
+            {"pullRequestId": 1, "status": "active", "title": "Asked",
+             "repository": {"name": "app", "project": {"name": "proj"}},
+             "reviewers": [{"id": "ME", "displayName": "Me", "vote": 0}]},
+            {"pullRequestId": 2, "status": "active", "title": "Voted",
+             "repository": {"name": "app", "project": {"name": "proj"}},
+             "reviewers": [{"id": "me", "displayName": "Me", "vote": 10}]},
+            {"pullRequestId": 3, "status": "active", "title": "Through a group",
+             "repository": {"name": "lib", "project": {"name": "proj"}},
+             "reviewers": [{"id": "team", "displayName": "Team", "vote": 0}]},
+            {"pullRequestId": 4, "status": "active", "title": "No repo"}
+        ]});
+        let items = parse_review_requests(&rows, "me", "https://dev.azure.com/org").unwrap();
+        let found: Vec<(i64, &str)> = items.iter().map(|i| (i.number, i.repo.as_str())).collect();
+        assert_eq!(found, [(1, "proj/app"), (3, "proj/lib")]);
+        assert!(items
+            .iter()
+            .all(|i| i.attention_reason == "review_requested"));
+    }
+
+    #[test]
+    fn viewer_and_added_repos() {
+        let viewer = parse_viewer(&json!({"authenticatedUser":
+            {"id": "u1", "providerDisplayName": "Vasanth"}}))
+        .unwrap();
+        assert_eq!(viewer, ("u1".to_string(), "Vasanth".to_string()));
+        assert!(parse_viewer(&json!({})).is_err());
+        let url = "https://dev.azure.com/Contoso";
+        assert_eq!(added_repo(url, "proj/app").unwrap(), "proj/app");
+        assert_eq!(added_repo(url, "contoso/proj/app").unwrap(), "proj/app");
+        assert!(added_repo(url, "fabrikam/proj/app")
+            .unwrap_err()
+            .contains("fabrikam"));
+        assert!(added_repo(url, "app").is_err());
+    }
+
+    #[test]
+    fn repo_search_filters_without_case_and_skips_disabled() {
+        let repos = json!({"value": [
+            {"name": "App", "project": {"name": "Proj"}},
+            {"name": "app-old", "project": {"name": "Proj"}, "isDisabled": true},
+            {"name": "lib", "project": {"name": "Proj"}}
+        ]});
+        assert_eq!(
+            parse_repo_hits(&repos, "APP"),
+            [("Proj/App".to_string(), "Proj project".to_string())]
+        );
+        assert_eq!(parse_repo_hits(&repos, "proj/").len(), 2);
+    }
 }

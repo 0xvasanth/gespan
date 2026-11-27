@@ -1,4 +1,7 @@
 //! GitHub Inbox models and parsers shared with the original implementation.
+use super::review::{
+    latest_reviews, CheckSummary, LineComment, Outcome, Review, Side, TtlCache, Verdict,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
@@ -19,7 +22,7 @@ pub struct GitHubAssignee {
     pub avatar_url: String,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubWorkItem {
     pub kind: String,
@@ -36,6 +39,15 @@ pub struct GitHubWorkItem {
     pub repo: String,
     /// Who opened it, when the list says.
     pub author: String,
+    /// Pull requests (see [`super::Item`]): the review and check fields the
+    /// Git page groups by.
+    pub review_decision: String,
+    pub reviews: Vec<Review>,
+    pub requested_reviewers: Vec<String>,
+    pub viewer: String,
+    pub check_summary: CheckSummary,
+    pub additions: i64,
+    pub deletions: i64,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -188,7 +200,7 @@ pub(super) fn git_github_work_items_for(
     };
     let limit = limit.clamp(1, 100).to_string();
     let fields = if kind == "pr" {
-        "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author"
+        GITHUB_PR_LIST_FIELDS
     } else {
         "number,title,url,state,stateReason,createdAt,updatedAt,labels,assignees,author"
     };
@@ -215,7 +227,300 @@ pub(super) fn git_github_work_items_for(
     }
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let json = gh_checked(root, &refs)?;
-    parse_github_work_items(&json, kind, &repo)
+    let mut items = parse_github_work_items(&json, kind, &repo)?;
+    if kind == "pr" && !items.is_empty() {
+        // Who "you" are, so the Git page can tell your reviews apart.
+        let viewer = cached_github_login(root);
+        for item in &mut items {
+            item.viewer = viewer.clone();
+        }
+    }
+    Ok(items)
+}
+
+/// What a pull request row carries in the list: enough for the Git page to
+/// group it by who is waiting, and show its size and checks.
+const GITHUB_PR_LIST_FIELDS: &str = "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author,additions,deletions,reviewDecision,reviewRequests,latestReviews,statusCheckRollup";
+
+/// The signed-in login for `root`'s `gh`, asked at most every few minutes;
+/// empty when `gh` can't say.
+fn cached_github_login(root: &Path) -> String {
+    static LOGINS: TtlCache<String> = TtlCache::new(
+        std::time::Duration::from_secs(300),
+        std::time::Duration::from_secs(60),
+    );
+    LOGINS
+        .get(&root.to_string_lossy(), || git_github_login_for(root))
+        .unwrap_or_default()
+}
+
+/// How one entry of `statusCheckRollup` counts. A CheckRun that is not
+/// completed is pending; a completed one counts by its conclusion, where
+/// skipped and neutral pass and cancelled fails. A StatusContext counts by
+/// its state.
+fn github_rollup_outcome(row: &GitHubStatusCheckRow) -> (String, Outcome) {
+    let is_status_context = if row.typename.is_empty() {
+        !row.context.is_empty()
+    } else {
+        row.typename.eq_ignore_ascii_case("StatusContext")
+    };
+    if is_status_context {
+        let outcome = match row.state.trim().to_ascii_uppercase().as_str() {
+            "SUCCESS" => Outcome::Passed,
+            "FAILURE" | "ERROR" => Outcome::Failed,
+            _ => Outcome::Pending,
+        };
+        return (row.context.clone(), outcome);
+    }
+    let status = row.status.trim().to_ascii_uppercase();
+    let outcome = if status.is_empty() || status == "COMPLETED" {
+        match row
+            .conclusion
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_uppercase()
+            .as_str()
+        {
+            "SUCCESS" | "NEUTRAL" | "SKIPPED" => Outcome::Passed,
+            "FAILURE" | "CANCELLED" | "TIMED_OUT" | "ACTION_REQUIRED" | "STARTUP_FAILURE"
+            | "ERROR" => Outcome::Failed,
+            // A newer run of the same check replaced it.
+            "STALE" => Outcome::Ignored,
+            _ => Outcome::Pending,
+        }
+    } else {
+        Outcome::Pending
+    };
+    (row.name.clone(), outcome)
+}
+
+fn github_review_args(
+    repo: &str,
+    number: i64,
+    verdict: Verdict,
+    body_file: Option<&str>,
+) -> Result<Vec<String>, String> {
+    if number <= 0 {
+        return Err("Invalid GitHub item number".into());
+    }
+    let (owner, name) = split_github_repo(repo)?;
+    let mut args = vec![
+        "pr".to_string(),
+        "review".into(),
+        number.to_string(),
+        "--repo".into(),
+        format!("{owner}/{name}"),
+        match verdict {
+            Verdict::Approve => "--approve",
+            Verdict::RequestChanges => "--request-changes",
+            Verdict::Comment => "--comment",
+        }
+        .into(),
+    ];
+    if let Some(path) = body_file {
+        args.push("--body-file".into());
+        args.push(path.into());
+    }
+    Ok(args)
+}
+
+/// `gh pr review`: approve, request changes or comment. GitHub turns down a
+/// request for changes or a comment without a body.
+/// The reviews API's body: the verdict, its summary and each line comment on
+/// its file, line and side.
+pub(super) fn github_review_payload(
+    verdict: Verdict,
+    body: &str,
+    comments: &[LineComment],
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "event": match verdict {
+            Verdict::Approve => "APPROVE",
+            Verdict::RequestChanges => "REQUEST_CHANGES",
+            Verdict::Comment => "COMMENT",
+        },
+        "comments": comments
+            .iter()
+            .map(|c| serde_json::json!({
+                "path": c.path,
+                "line": c.line,
+                "side": if c.side == Side::Old { "LEFT" } else { "RIGHT" },
+                "body": c.body.trim(),
+            }))
+            .collect::<Vec<_>>(),
+    });
+    if !body.trim().is_empty() {
+        payload["body"] = body.trim().into();
+    }
+    payload
+}
+
+pub(super) fn git_github_pr_review_for(
+    root: &Path,
+    repo: &str,
+    number: i64,
+    verdict: Verdict,
+    body: &str,
+    comments: &[LineComment],
+) -> Result<(), String> {
+    let body = body.trim();
+    if !comments.is_empty() {
+        // `gh pr review` takes no line comments: the reviews API does.
+        let (owner, name) = split_github_repo(repo)?;
+        if number <= 0 {
+            return Err("Invalid GitHub item number".into());
+        }
+        let payload = github_review_payload(verdict, body, comments).to_string();
+        let endpoint = format!("repos/{owner}/{name}/pulls/{number}/reviews");
+        return with_temp_markdown(&payload, |path| {
+            gh_run(
+                root,
+                &["api", "--method", "POST", &endpoint, "--input", path],
+                true,
+            )
+        })
+        .map(drop);
+    }
+    if body.is_empty() {
+        if verdict != Verdict::Approve {
+            return Err("GitHub needs a message to request changes or comment".into());
+        }
+        let args = github_review_args(repo, number, verdict, None)?;
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        return gh_run(root, &refs, true).map(drop);
+    }
+    with_temp_markdown(body, |path| {
+        let args = github_review_args(repo, number, verdict, Some(path))?;
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        gh_run(root, &refs, true)
+    })
+    .map(drop)
+}
+
+/// Open pull requests anywhere that ask for your review: one `gh search`.
+pub(super) fn git_github_review_requests_for(root: &Path) -> Result<Vec<GitHubWorkItem>, String> {
+    let json = gh_checked(
+        root,
+        &[
+            "search",
+            "prs",
+            "--review-requested=@me",
+            "--state=open",
+            "--limit",
+            "50",
+            "--json",
+            "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author,repository",
+        ],
+    )?;
+    let viewer = cached_github_login(root);
+    let mut items = parse_github_work_items(&json, "pr", "")?;
+    items.retain(|item| !item.repo.is_empty());
+    for item in &mut items {
+        item.viewer = viewer.clone();
+        // The search says only that you are asked.
+        if !viewer.is_empty() {
+            item.requested_reviewers = vec![viewer.clone()];
+        }
+    }
+    Ok(items)
+}
+
+/// Repositories you can reach whose name matches `query`: an `owner/name`
+/// is looked up directly; anything else is searched among your own and
+/// your organizations' repositories, at most 20.
+pub(super) fn git_github_search_repos_for(
+    root: &Path,
+    query: &str,
+) -> Result<Vec<(String, String)>, String> {
+    let query = query.trim();
+    if let Ok((owner, name)) = split_github_repo(query) {
+        if !name.is_empty() && !query.contains(char::is_whitespace) {
+            let json = gh_checked(
+                root,
+                &[
+                    "repo",
+                    "view",
+                    &format!("{owner}/{name}"),
+                    "--json",
+                    "nameWithOwner,description",
+                ],
+            );
+            if let Ok(json) = json {
+                return parse_github_repo_hits(&format!("[{json}]"));
+            }
+        }
+    }
+    let owners = github_owners(root)?;
+    let mut args = vec![
+        "search".to_string(),
+        "repos".into(),
+        query.into(),
+        "--limit".into(),
+        "20".into(),
+        "--json".into(),
+        "fullName,description".into(),
+    ];
+    for owner in owners.iter().take(30) {
+        args.push("--owner".into());
+        args.push(owner.clone());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    parse_github_repo_hits(&gh_checked(root, &refs)?)
+}
+
+/// You and your organizations, the owners "Add a repo" searches.
+fn github_owners(root: &Path) -> Result<Vec<String>, String> {
+    static OWNERS: TtlCache<Vec<String>> = TtlCache::new(
+        std::time::Duration::from_secs(600),
+        std::time::Duration::from_secs(60),
+    );
+    OWNERS.get(&root.to_string_lossy(), || {
+        let login = git_github_login_for(root)?;
+        let orgs = gh_run(
+            root,
+            &["api", "user/orgs", "--paginate", "--jq", ".[].login"],
+            true,
+        )
+        .unwrap_or_default();
+        let mut owners = vec![login];
+        owners.extend(
+            orgs.lines()
+                .map(str::trim)
+                .filter(|org| !org.is_empty())
+                .map(str::to_string),
+        );
+        Ok(owners)
+    })
+}
+
+fn parse_github_repo_hits(json: &str) -> Result<Vec<(String, String)>, String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Row {
+        #[serde(default)]
+        full_name: String,
+        #[serde(default)]
+        name_with_owner: String,
+        #[serde(default)]
+        description: Option<String>,
+    }
+    let rows: Vec<Row> = serde_json::from_str(json).map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            let repo = if row.full_name.is_empty() {
+                row.name_with_owner
+            } else {
+                row.full_name
+            };
+            let (owner, name) = split_github_repo(&repo).ok()?;
+            Some((
+                format!("{owner}/{name}"),
+                row.description.unwrap_or_default().trim().to_string(),
+            ))
+        })
+        .collect())
 }
 
 pub(super) fn git_github_work_item_for(
@@ -1324,11 +1629,84 @@ fn parse_github_work_items(
         is_draft: bool,
         #[serde(default)]
         author: Option<RowAssignee>,
+        #[serde(default)]
+        additions: i64,
+        #[serde(default)]
+        deletions: i64,
+        #[serde(default)]
+        review_decision: Option<String>,
+        #[serde(default)]
+        review_requests: Vec<RowReviewer>,
+        #[serde(default)]
+        latest_reviews: Vec<RowReview>,
+        #[serde(default)]
+        status_check_rollup: Option<Vec<GitHubStatusCheckRow>>,
+        /// Search rows name their repository.
+        #[serde(default)]
+        repository: Option<RowRepository>,
+    }
+    /// A user has a login; a team has a name.
+    #[derive(Deserialize)]
+    struct RowReviewer {
+        #[serde(default)]
+        login: String,
+        #[serde(default)]
+        name: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RowReview {
+        #[serde(default)]
+        author: Option<RowAssignee>,
+        #[serde(default)]
+        state: String,
+        #[serde(default)]
+        submitted_at: Option<String>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RowRepository {
+        #[serde(default)]
+        name_with_owner: String,
     }
     let rows: Vec<Row> = serde_json::from_str(json).map_err(|error| error.to_string())?;
     Ok(rows
         .into_iter()
         .map(|row| GitHubWorkItem {
+            review_decision: row
+                .review_decision
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase(),
+            reviews: latest_reviews(row.latest_reviews.into_iter().map(|review| {
+                (
+                    review.author.map(|a| a.login).unwrap_or_default(),
+                    review.state,
+                    review.submitted_at.unwrap_or_default(),
+                )
+            })),
+            requested_reviewers: row
+                .review_requests
+                .into_iter()
+                .map(|r| {
+                    if r.login.trim().is_empty() {
+                        r.name
+                    } else {
+                        r.login
+                    }
+                })
+                .map(|r| r.trim().to_string())
+                .filter(|r| !r.is_empty())
+                .collect(),
+            viewer: String::new(),
+            check_summary: CheckSummary::tally(
+                row.status_check_rollup
+                    .iter()
+                    .flatten()
+                    .map(github_rollup_outcome),
+            ),
+            additions: row.additions,
+            deletions: row.deletions,
             kind: kind.to_string(),
             number: row.number,
             title: row.title,
@@ -1354,7 +1732,11 @@ fn parse_github_work_items(
                 })
                 .collect(),
             draft: row.is_draft,
-            repo: repo.to_string(),
+            repo: row
+                .repository
+                .map(|r| r.name_with_owner)
+                .filter(|r| !r.trim().is_empty())
+                .unwrap_or_else(|| repo.to_string()),
             author: row.author.map(|author| author.login).unwrap_or_default(),
         })
         .collect())
@@ -1535,7 +1917,7 @@ fn parse_github_pr_states(json: &str, repo: &str) -> Result<Vec<GitHubPrState>, 
                 assignees: Vec::new(),
                 draft: row.is_draft,
                 repo: repo.to_string(),
-                author: String::new(),
+                ..Default::default()
             },
             head_oid: row.head_ref_oid.trim().to_string(),
             checks: row
@@ -1677,6 +2059,157 @@ mod automation_event_tests {
         assert_eq!(details.review_decision, "REVIEW_REQUIRED");
         let issue = parse_github_work_item_details(r#"{"body":"x","author":null}"#).unwrap();
         assert!(issue.review_requests.is_empty());
+    }
+
+    fn rollup(json: &str) -> CheckSummary {
+        let rows: Vec<GitHubStatusCheckRow> = serde_json::from_str(json).unwrap();
+        CheckSummary::tally(rows.iter().map(github_rollup_outcome))
+    }
+
+    #[test]
+    fn a_rollup_counts_check_runs_and_status_contexts_together() {
+        let summary = rollup(
+            r#"[{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+                {"__typename":"CheckRun","name":"Windows tests","status":"COMPLETED","conclusion":"FAILURE"},
+                {"__typename":"CheckRun","name":"macOS","status":"COMPLETED","conclusion":"CANCELLED"},
+                {"__typename":"CheckRun","name":"docs","status":"COMPLETED","conclusion":"SKIPPED"},
+                {"__typename":"CheckRun","name":"e2e","status":"IN_PROGRESS","conclusion":""},
+                {"__typename":"CheckRun","name":"queued","status":"QUEUED"},
+                {"__typename":"CheckRun","name":"old","status":"COMPLETED","conclusion":"STALE"},
+                {"__typename":"StatusContext","context":"cubic","state":"SUCCESS"},
+                {"__typename":"StatusContext","context":"ci/legacy","state":"ERROR"},
+                {"__typename":"StatusContext","context":"deploy","state":"EXPECTED"},
+                {"context":"no-typename","state":"PENDING"}]"#,
+        );
+        assert_eq!(
+            (
+                summary.total,
+                summary.passed,
+                summary.failed,
+                summary.pending
+            ),
+            (10, 3, 3, 4)
+        );
+        assert_eq!(
+            summary.failed_names,
+            ["Windows tests", "macOS", "ci/legacy"]
+        );
+    }
+
+    #[test]
+    fn no_checks_and_all_skipped_rollups() {
+        assert!(rollup("[]").is_empty());
+        let skipped = rollup(
+            r#"[{"__typename":"CheckRun","name":"a","status":"COMPLETED","conclusion":"SKIPPED"},
+                {"__typename":"CheckRun","name":"b","status":"COMPLETED","conclusion":"NEUTRAL"}]"#,
+        );
+        assert_eq!((skipped.total, skipped.passed, skipped.failed), (2, 2, 0));
+        // A list row without the rollup (an older remote host) has none.
+        let rows = parse_github_work_items(
+            r#"[{"number":1,"title":"A","url":"u","state":"OPEN","statusCheckRollup":null}]"#,
+            "pr",
+            "acme/app",
+        )
+        .unwrap();
+        assert!(rows[0].check_summary.is_empty());
+    }
+
+    #[test]
+    fn pull_request_rows_carry_size_reviews_and_requests() {
+        let rows = parse_github_work_items(
+            r#"[{"number":5,"title":"A","url":"u","state":"OPEN","additions":318,"deletions":204,
+                 "reviewDecision":"CHANGES_REQUESTED",
+                 "reviewRequests":[{"__typename":"User","login":"vasanth"},
+                                   {"__typename":"Team","name":"Core","slug":"core"}],
+                 "latestReviews":[
+                   {"author":{"login":"mira"},"state":"CHANGES_REQUESTED","submittedAt":"2026-11-02T00:00:00Z"},
+                   {"author":{"login":"cubic"},"state":"APPROVED","submittedAt":"2026-11-01T00:00:00Z"},
+                   {"author":{"login":"old"},"state":"DISMISSED","submittedAt":"2026-11-01T00:00:00Z"},
+                   {"author":null,"state":"APPROVED"}],
+                 "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows tests","status":"COMPLETED","conclusion":"FAILURE"}]}]"#,
+            "pr",
+            "acme/app",
+        )
+        .unwrap();
+        let row = &rows[0];
+        assert_eq!((row.additions, row.deletions), (318, 204));
+        assert_eq!(row.review_decision, "changes_requested");
+        assert_eq!(row.requested_reviewers, ["vasanth", "Core"]);
+        let reviews: Vec<(&str, &str)> = row
+            .reviews
+            .iter()
+            .map(|r| (r.login.as_str(), r.state.as_str()))
+            .collect();
+        assert_eq!(
+            reviews,
+            [
+                ("cubic", "approved"),
+                ("old", "dismissed"),
+                ("mira", "changes_requested")
+            ]
+        );
+        assert_eq!(row.check_summary.failed_names, ["Windows tests"]);
+        assert_eq!(row.repo, "acme/app");
+        assert!(GITHUB_PR_LIST_FIELDS
+            .ends_with("reviewDecision,reviewRequests,latestReviews,statusCheckRollup"));
+    }
+
+    #[test]
+    fn search_rows_name_their_own_repository() {
+        let rows = parse_github_work_items(
+            r#"[{"number":9,"title":"A","url":"u","state":"OPEN","repository":{"name":"web","nameWithOwner":"else/web"}},
+                {"number":10,"title":"B","url":"u","state":"OPEN"}]"#,
+            "pr",
+            "",
+        )
+        .unwrap();
+        assert_eq!(rows[0].repo, "else/web");
+        assert_eq!(
+            rows[1].repo, "",
+            "dropped by the search, which needs a repo"
+        );
+    }
+
+    #[test]
+    fn reviews_ask_gh_for_the_verdict_and_need_a_body_to_object() {
+        assert_eq!(
+            github_review_args("acme/app", 5, Verdict::Approve, None).unwrap(),
+            ["pr", "review", "5", "--repo", "acme/app", "--approve"]
+        );
+        assert_eq!(
+            github_review_args("acme/app", 5, Verdict::RequestChanges, Some("/tmp/b.md")).unwrap()
+                [5..],
+            ["--request-changes", "--body-file", "/tmp/b.md"]
+        );
+        assert_eq!(
+            github_review_args("acme/app", 5, Verdict::Comment, Some("/tmp/b.md")).unwrap()[5],
+            "--comment"
+        );
+        assert!(github_review_args("acme/app", 0, Verdict::Approve, None).is_err());
+        assert!(github_review_args("not a repo", 5, Verdict::Approve, None).is_err());
+        let root = std::env::temp_dir();
+        for verdict in [Verdict::RequestChanges, Verdict::Comment] {
+            let error =
+                git_github_pr_review_for(&root, "acme/app", 5, verdict, "  ", &[]).unwrap_err();
+            assert!(error.contains("needs a message"), "{error}");
+        }
+    }
+
+    #[test]
+    fn repo_hits_read_search_and_view_shapes() {
+        let hits = parse_github_repo_hits(
+            r#"[{"fullName":"acme/app","description":"The app"},
+                {"nameWithOwner":"acme/lib","description":null},
+                {"fullName":"broken"}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            hits,
+            [
+                ("acme/app".to_string(), "The app".to_string()),
+                ("acme/lib".to_string(), String::new())
+            ]
+        );
     }
 
     #[test]

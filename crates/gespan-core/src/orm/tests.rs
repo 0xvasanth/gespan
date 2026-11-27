@@ -506,6 +506,13 @@ UPDATE board_schema SET version = 7;";
 type Build = Box<dyn Fn(&Connection)>;
 
 /// One pre-Toasty file per case: the kind, a label, and how to build it.
+/// Tables a later migration drops after adopting their rows elsewhere.
+const RETIRED: &[&str] = &[
+    "orchestration_runs",
+    "orchestration_sidebar",
+    "orchestration_workers",
+];
+
 fn legacy_files() -> Vec<(Kind, &'static str, Build)> {
     let gespan = |board_v7: bool| -> Build {
         Box::new(move |conn: &Connection| {
@@ -612,6 +619,11 @@ fn every_kind_adopts_to_the_fresh_schema() {
         kind.legacy_upgrade(&upgraded).unwrap();
         let mut kept = Vec::new();
         for table in tables(&upgraded) {
+            // Retired by a migration once its rows moved to the session tree
+            // (adopting_moves_orchestration_workers_into_the_session_tree).
+            if RETIRED.contains(&table.as_str()) {
+                continue;
+            }
             let columns: Vec<String> = upgraded
                 .prepare("SELECT name FROM pragma_table_info(?1)")
                 .unwrap()
@@ -809,4 +821,32 @@ fn a_read_only_open_of_a_missing_file_fails_without_creating_it() {
     let path = dir.path().join("missing.sqlite3");
     assert!(super::open_read_only(Kind::Settings, &path).is_err());
     assert!(!path.exists());
+}
+
+#[test]
+fn adopting_moves_orchestration_workers_into_the_session_tree() {
+    use crate::orchestrator::tree::{Origin, Wake};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gespan.db");
+    let (_, _, build) = legacy_files().remove(0);
+    build(&Connection::open(&path).unwrap());
+
+    let store = crate::store::Store::open(&path).unwrap();
+
+    let lead = store.resolve_session_id("s-1").unwrap();
+    let worker = store.resolve_session_id("s-2").unwrap();
+    let tree = store.session_links().unwrap();
+    let link = tree.link(worker).expect("the worker hangs under its lead");
+    assert_eq!((link.parent, link.root, link.depth), (lead, lead, 1));
+    assert_eq!(
+        (link.origin, link.wake),
+        (Origin::Orchestration, Wake::Never)
+    );
+    // Still a worker: off the session list, as before.
+    assert!(store.sessions().unwrap().iter().all(|s| s.id != worker));
+    assert!(store.sessions().unwrap().iter().any(|s| s.id == lead));
+    let tables: Vec<String> = schema(&path).into_iter().map(|(_, name, _)| name).collect();
+    for retired in RETIRED {
+        assert!(!tables.contains(&retired.to_string()), "{retired} is gone");
+    }
 }

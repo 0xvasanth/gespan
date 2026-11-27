@@ -19,3 +19,23 @@ snapshot_name = "0002_snapshot.toml"
 id = 8363121330793224020
 name = "0003_flow_versions.sql"
 snapshot_name = "0003_snapshot.toml"
+
+[[migrations]]
+id = 5915738051664952662
+name = "0004_orchestrator_core.sql"
+snapshot_name = "0004_snapshot.toml"
+
+[[migrations]]
+id = 4525009923261987073
+name = "0005_mailbox.sql"
+snapshot_name = "0005_snapshot.toml"
+
+[[migrations]]
+id = 6474940588847902644
+name = "0006_mail_sender_access.sql"
+snapshot_name = "0006_snapshot.toml"
+
+[[migrations]]
+id = 1277350127787500289
+name = "0007_orchestration_tables_retired.sql"
+snapshot_name = "0007_snapshot.toml"

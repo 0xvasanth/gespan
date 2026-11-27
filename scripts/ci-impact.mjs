@@ -10,18 +10,20 @@ import { pathToFileURL } from "node:url";
 export const pieces = ["core", "desktop", "host", "mobile", "release", "website"];
 
 const rules = [
+  // The website's tests read the top-level guides: every guide it links to
+  // must exist, and the Docs quick start may only quote their commands.
+  [/^docs\/[^/]+\.md$/, ["website"]],
   // Nothing reads these. docs/desktop/examples is compiled into Native, and
   // Native and the release scripts read CHANGELOG.md, so neither matches.
   [/^docs\/(?!desktop\/examples\/)/, []],
   [/^(CODE_OF_CONDUCT|CONTRIBUTING|SECURITY)\.md$/, []],
   // set-version rewrites its Install section, and a release test checks it.
-  // The website reads its release block for the download links.
-  [/^README\.md$/, ["release", "website"]],
+  [/^README\.md$/, ["release"]],
   [/^(LICENSE|NOTICE)$/, []],
   [/^\.github\/(ISSUE_TEMPLATE\/|pull_request_template\.md$|CODEOWNERS$)/, []],
   // Core's shared_contracts test scans crates/gespan-gpui/src.
   [/^crates\/gespan-gpui\/src\//, ["core", "desktop"]],
-  [/^crates\/(gespan-gpui\/(tests|assets)|gespan-first-launch)\//, ["desktop"]],
+  [/^crates\/(gespan-gpui\/(tests|assets)|gespan-first-launch|gespan-fake-agent)\//, ["desktop"]],
   [/^crates\/(board-store|gespan-mcp-config|gespan-models|gespan-redact|gespan-speech|herdr-link|keep-awake|mcp-hub|tracker-client|tracker-secrets)\//, ["core", "desktop"]],
   // Only the root workspace builds it; once gespan-core depends on it (#386/#132) it joins the rule above.
   [/^crates\/gespan-graph\//, ["core"]],

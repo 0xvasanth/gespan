@@ -529,6 +529,9 @@ fn existing_review_automation_opens_in_editor(cx: &mut TestAppContext) {
         .unwrap();
     assert!(find_review_automation(&stored(&page), CWD).is_some());
     let (window, mut visual) = open_with(&page, connected(), cx);
+    // With an automation saved the page opens on All runs; New shows the
+    // gallery's review card.
+    click(&mut visual, "new-automation");
     click(&mut visual, CARD);
     let (selected, sheet_open, editing) = window
         .read_with(&visual, |view, _| {

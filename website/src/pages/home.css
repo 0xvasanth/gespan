@@ -1,14 +1,13 @@
-.lp-bleed{padding-top:8px}
-/* The hero shot runs off the hero card's bottom edge on wide screens only. */
-.lp-bleed .w-shot{margin-bottom:-8%}
-.lp-step{padding:22px;display:flex;flex-direction:column;gap:14px}
-.lp-mini{margin-top:auto;padding:12px;border-radius:12px;background:rgba(0,0,0,.30);border:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;gap:8px}
-.lp-mini .r{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#d6d6d6}
 .lp-feat{padding:24px;display:flex;flex-direction:column;gap:12px}
-.lp-bars{display:flex;align-items:flex-end;gap:3px;height:18px}
-.lp-bars span{width:5px;border-radius:2px;background:rgba(110,231,183,.75)}
-.lp-bars span.x{background:rgba(253,164,175,.9)}
 .lp-q{padding:24px;display:flex;flex-direction:column;gap:10px}
 .lp-bub{padding:9px 12px;border-radius:14px;font-size:12.5px;line-height:18px}
-@container (max-width:960px){.lp-bleed{padding-bottom:24px}.lp-bleed .w-shot{margin-bottom:0}}
-@container (max-width:760px){.lp-bleed{padding-bottom:16px}.lp-hero-copy{padding-top:40px !important}.lp-cta .w-btn{width:100%}}
+@container (max-width:760px){.lp-hero-copy{padding-top:40px !important}.lp-cta .w-btn{width:100%}}
+
+/* The Home hero: one light source. A faint grid fades out from the
+   headline, and a spotlight sweeps in once from the top left. */
+.lp-hero::before{opacity:.35}
+.lp-hero .w-announce{margin:0 0 4px}
+/* The lid starts leaning back, which draws it well below its box; pull the stage up into that band. */
+/* The pulled-up stage overlaps the copy's box; it draws on top as it rises, but
+   lets clicks through to the buttons and links (the screen inside is a picture). */
+/* Reduced motion keeps the lid upright from the start, so there is no band to pull into. */

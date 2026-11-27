@@ -160,7 +160,7 @@ fn pilot_new_turn_keeps_its_pending_message_below_the_previous_answer(cx: &mut T
             view.set_pending(Vec::new(), cx);
             assert_eq!(view.rows.iter().map(|r| r.key).collect::<Vec<_>>(), keys,
                 "storage acceptance must not move or duplicate the prompt and Thinking header");
-            assert_eq!(view.pilot_work_label(3), "Thinking…");
+            assert_eq!(pilot_work_label(&view.source, 3), "Thinking…");
             assert_eq!(view.entrances.get(&2).copied(), entrance);
 
             view.set_pending(vec![PendingMessage {
@@ -214,11 +214,11 @@ fn pilot_pending_messages_show_thinking_and_keep_the_same_height_on_delivery(
             render(window, cx);
             let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
             assert!(
-                visual.debug_bounds("pilot-turn-ticker").is_some(),
+                visual.debug_bounds("pilot-running-step").is_some(),
                 "a new message shows Thinking before the outbox is saved"
             );
             let span = |visual: &mut gpui::VisualTestContext| {
-                let bottom = visual.debug_bounds("pilot-turn-ticker").unwrap().bottom();
+                let bottom = visual.debug_bounds("pilot-running-step").unwrap().bottom();
                 let top = window
                     .update(visual, |_, window, _| {
                         let scale = window.scale_factor();
@@ -252,7 +252,7 @@ fn pilot_pending_messages_show_thinking_and_keep_the_same_height_on_delivery(
                 })
                 .unwrap();
             render(window, visual);
-            assert!(visual.debug_bounds("pilot-turn-ticker").is_some());
+            assert!(visual.debug_bounds("pilot-running-step").is_some());
             let after = span(visual);
             assert!(
                 (before - after).abs() < 0.25,
@@ -328,7 +328,7 @@ fn pilot_steered_bubbles_align_and_stay_together_after_the_answer_and_reload(
                 })
                 .unwrap();
         };
-        let assert_group = |view: &TranscriptView| {
+        let assert_group = |view: &TranscriptView, live: bool| {
             let users: Vec<_> = view
                 .rows
                 .iter()
@@ -359,13 +359,24 @@ fn pilot_steered_bubbles_align_and_stay_together_after_the_answer_and_reload(
                     .any(|row| row.text == "Final answer to both messages")
             );
             assert!(view.stacks_on_next(0));
-            assert!(
-                !view
-                    .rows
-                    .iter()
-                    .any(|row| row.key.0 == 1 && matches!(row.body, Body::Markdown(_))),
-                "pre-steer prose is work, not a final answer between the user's messages"
-            );
+            // A row folding away animates out; it is no longer part of the reply.
+            let prose = view.rows.iter().position(|row| {
+                row.key.0 == 1
+                    && matches!(row.body, Body::Markdown(_))
+                    && !view.motions.get(&row.key).is_some_and(|m| !m.opening)
+            });
+            if live {
+                // A live turn shows every message, under the stacked bubbles.
+                assert!(
+                    prose.is_some_and(|at| at > headers[0].0),
+                    "pre-steer prose shows live inside the reply, not between the user's messages"
+                );
+            } else {
+                assert!(
+                    prose.is_none(),
+                    "settled, pre-steer prose is work, not a final answer between the user's messages"
+                );
+            }
         };
         assert_alignment(cx);
         window
@@ -379,14 +390,14 @@ fn pilot_steered_bubbles_align_and_stay_together_after_the_answer_and_reload(
                     cx,
                 );
                 view.set_pending(Vec::new(), cx);
-                assert_group(view);
+                assert_group(view, true);
             })
             .unwrap();
         assert_alignment(cx);
         let (rows, receipts) = window
             .update(cx, |view, _, cx| {
                 view.streaming(false, cx);
-                assert_group(view);
+                assert_group(view, false);
                 (
                     view.source.clone(),
                     serde_json::to_string(&view.turns).unwrap(),
@@ -402,7 +413,7 @@ fn pilot_steered_bubbles_align_and_stay_together_after_the_answer_and_reload(
             view
         });
         restored.update(cx, |view, cx| {
-            assert_group(view);
+            assert_group(view, false);
             view.streaming(true, cx);
             view.patch(
                 4,
@@ -808,7 +819,8 @@ fn input_height_changes_preserve_the_chats_painted_position_and_follow_momentum(
                 input.set_text("One\nTwo\nThree\nFour".into(), cx)
             });
             chat.transcript.update(cx, |view, cx| {
-                view.streaming(false, cx);
+                // The turn is still live: settling would fold its running
+                // line, a separate change from the input's growth.
                 view.follow.until = None;
                 view.follow.last_frame = None;
                 view.follow.frame_elapsed = Some(0.);
@@ -1122,7 +1134,7 @@ fn starting_a_request_does_not_reactivate_the_previous_turns_ticker(cx: &mut Tes
     {
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         assert!(
-            visual.debug_bounds("pilot-turn-ticker").is_none(),
+            visual.debug_bounds("pilot-running-step").is_none(),
             "the completed turn stays settled while the new prompt is being delivered"
         );
     }
@@ -1139,13 +1151,15 @@ fn starting_a_request_does_not_reactivate_the_previous_turns_ticker(cx: &mut Tes
     render(window, cx);
     let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
     assert!(
-        visual.debug_bounds("pilot-turn-ticker").is_some(),
+        visual.debug_bounds("pilot-running-step").is_some(),
         "the new turn shows its thinking ticker"
     );
 }
 
 #[gpui::test]
-fn a_notification_continuing_a_turn_does_not_move_the_chat(cx: &mut TestAppContext) {
+fn a_notification_continuing_a_turn_moves_the_chat_only_by_its_running_line(
+    cx: &mut TestAppContext,
+) {
     let window = chat(cx);
     window
         .update(cx, |view, _, cx| {
@@ -1173,8 +1187,12 @@ fn a_notification_continuing_a_turn_does_not_move_the_chat(cx: &mut TestAppConte
         .unwrap();
     render(window, cx);
     window.update(cx, |view, _, _| {
-        assert!(view.follow.offset.abs() < 0.25,
-            "a hidden notification and replacement footer have no new height, but introduced {}px of movement", view.follow.offset);
+        // The notification itself stays hidden; the only new height is the
+        // running line that says the Pilot is working on it again.
+        let line = 26. + 8.;
+        assert!(view.follow.offset.abs() <= line + 0.25,
+            "a hidden notification adds at most its running line, but introduced {}px of movement", view.follow.offset);
+        assert!(view.rows.iter().any(|r| matches!(&r.body, Body::Trace(line) if line.status == crate::trace::Status::Running)));
     }).unwrap();
 }
 
@@ -1228,17 +1246,27 @@ fn queued_messages_contribute_their_height_once(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn changing_hidden_work_status_does_not_move_settled_messages(cx: &mut TestAppContext) {
+fn a_step_finishing_does_not_move_settled_messages(cx: &mut TestAppContext) {
     let window = chat(cx);
     window
         .update(cx, |view, _, cx| {
             view.patch(0, vec![row("user", "Write a document")], cx);
             view.streaming(true, cx);
             view.patch(1, vec![row("assistant", "")], cx);
+            view.patch(
+                2,
+                vec![row(
+                    "tool",
+                    r#"{"id":"write","name":"Write","input":"{\"file_path\":\"notes.md\"}","output":"","state":"running"}"#,
+                )],
+                cx,
+            );
         })
         .unwrap();
     render(window, cx);
     window.update(cx, |view, _, _| view.follow.reset()).unwrap();
+    // The running line becomes a done line of the same height, and the
+    // Thinking line that follows it takes the running line's place.
     for text in [
         r#"{"id":"write","name":"Write","input":"{\"file_path\":\"notes.md\"}","output":"","state":"running"}"#,
         r#"{"id":"write","name":"Write","input":"{\"file_path\":\"notes.md\"}","output":"Saved the document","state":"completed"}"#,
@@ -1251,7 +1279,7 @@ fn changing_hidden_work_status_does_not_move_settled_messages(cx: &mut TestAppCo
             .update(cx, |view, _, _| {
                 assert!(
                     view.follow.offset.abs() < 0.25,
-                    "a ticker-only change moved the chat {}px",
+                    "a step finishing moved the chat {}px",
                     view.follow.offset
                 );
             })

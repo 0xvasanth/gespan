@@ -14,6 +14,8 @@ export const GITHUB_INBOX_COMMANDS = [
   "git_github_work_item_thread",
   "git_github_work_item_comment",
   "git_github_pr_action",
+  "git_github_pr_review",
+  "git_github_login",
   "git_github_pr_diff",
   "git_github_pr_checks",
   "git_github_check_details",
@@ -34,6 +36,21 @@ type GithubWorkItem = {
   draft: boolean;
   labels: { name: string; color: string }[];
   assignees: { login: string; avatarUrl: string }[];
+  author: string;
+  /** Pull requests: what the Git page groups and words them by. */
+  reviewDecision: string;
+  reviews: { login: string; state: string }[];
+  requestedReviewers: string[];
+  checkSummary: CheckSummary;
+  additions: number;
+  deletions: number;
+};
+type CheckSummary = {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+  failedNames: string[];
 };
 type GithubWorkItemComment = {
   id: string;
@@ -93,11 +110,163 @@ function itemNumber(value: unknown): string {
   return String(value);
 }
 const itemFields = (kind: string) =>
-  "number,title,url,state,createdAt,updatedAt,labels,assignees," +
-  (kind === "pr" ? "isDraft" : "stateReason");
-type ItemRow = Omit<GithubWorkItem, "repo" | "draft" | "kind"> & {
-  isDraft?: boolean;
+  "number,title,url,state,createdAt,updatedAt,labels,assignees,author," +
+  (kind === "pr"
+    ? "isDraft,additions,deletions,reviewDecision,reviewRequests,latestReviews,statusCheckRollup"
+    : "stateReason");
+type RollupRow = {
+  __typename?: string;
+  name?: string;
+  context?: string;
+  status?: string;
+  conclusion?: string | null;
+  state?: string;
 };
+type ItemRow = Omit<
+  GithubWorkItem,
+  | "repo"
+  | "draft"
+  | "kind"
+  | "author"
+  | "reviewDecision"
+  | "reviews"
+  | "requestedReviewers"
+  | "checkSummary"
+  | "additions"
+  | "deletions"
+> & {
+  isDraft?: boolean;
+  author?: { login?: string } | null;
+  additions?: number;
+  deletions?: number;
+  reviewDecision?: string | null;
+  reviewRequests?: { login?: string; name?: string }[] | null;
+  latestReviews?:
+    | { author?: { login?: string } | null; state?: string; submittedAt?: string }[]
+    | null;
+  statusCheckRollup?: RollupRow[] | null;
+};
+
+/** Line comments sent with a review, checked: a file inside the repo, a
+ * positive line, a side and words. */
+function lineComments(value: unknown): {
+  path: string;
+  line: number;
+  side: "LEFT" | "RIGHT";
+  body: string;
+}[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("Invalid line comments");
+  return value.map((entry) => {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const path = text(row.path);
+    const body = text(row.body);
+    const line = row.line;
+    if (
+      !path ||
+      path.startsWith("/") ||
+      path.split("/").some((part) => part === "..") ||
+      typeof line !== "number" ||
+      !Number.isSafeInteger(line) ||
+      line <= 0 ||
+      !body
+    )
+      throw new Error("Invalid line comment");
+    return { path, line, side: row.side === "old" ? "LEFT" : "RIGHT", body };
+  });
+}
+
+/** A review state the Git page understands, as the Rust side spells it. */
+function reviewState(state = ""): string | undefined {
+  return (
+    {
+      APPROVED: "approved",
+      CHANGES_REQUESTED: "changes_requested",
+      COMMENTED: "commented",
+      DISMISSED: "dismissed",
+    } as Record<string, string>
+  )[state.trim().toUpperCase()];
+}
+
+/** Each reviewer's latest review; a later comment does not undo a decision. */
+export function latestReviews(
+  rows: NonNullable<ItemRow["latestReviews"]>,
+): { login: string; state: string }[] {
+  const sorted = rows
+    .map((row) => ({
+      login: text(row.author?.login),
+      state: reviewState(row.state),
+      at: row.submittedAt ?? "",
+    }))
+    .filter((row) => row.login && row.state)
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  const out: { login: string; state: string }[] = [];
+  for (const row of sorted) {
+    const seen = out.find(
+      (review) => review.login.toLowerCase() === row.login.toLowerCase(),
+    );
+    if (!seen) out.push({ login: row.login, state: row.state! });
+    else if (
+      !(
+        row.state === "commented" &&
+        (seen.state === "approved" || seen.state === "changes_requested")
+      )
+    )
+      seen.state = row.state!;
+  }
+  return out;
+}
+
+/** Counts `statusCheckRollup` the way the Rust side does. */
+export function checkSummary(rows: RollupRow[]): CheckSummary {
+  const summary: CheckSummary = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    pending: 0,
+    failedNames: [],
+  };
+  for (const row of rows) {
+    const status =
+      row.__typename === "StatusContext" || (!row.__typename && row.context);
+    const name = text(status ? row.context : row.name);
+    let outcome: "passed" | "failed" | "pending" | "ignored";
+    if (status) {
+      const state = (row.state ?? "").toUpperCase();
+      outcome =
+        state === "SUCCESS"
+          ? "passed"
+          : state === "FAILURE" || state === "ERROR"
+            ? "failed"
+            : "pending";
+    } else {
+      const progress = (row.status ?? "").toUpperCase();
+      const conclusion = (row.conclusion ?? "").toUpperCase();
+      if (progress && progress !== "COMPLETED") outcome = "pending";
+      else if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(conclusion))
+        outcome = "passed";
+      else if (
+        [
+          "FAILURE",
+          "CANCELLED",
+          "TIMED_OUT",
+          "ACTION_REQUIRED",
+          "STARTUP_FAILURE",
+          "ERROR",
+        ].includes(conclusion)
+      )
+        outcome = "failed";
+      else if (conclusion === "STALE") outcome = "ignored";
+      else outcome = "pending";
+    }
+    if (outcome === "ignored") continue;
+    summary.total += 1;
+    summary[outcome] += 1;
+    if (outcome === "failed" && name && !summary.failedNames.includes(name))
+      summary.failedNames.push(name);
+  }
+  return summary;
+}
 function workItem(
   row: ItemRow,
   repo: string,
@@ -122,6 +291,15 @@ function workItem(
       login,
       avatarUrl: avatar(login),
     })),
+    author: text(row.author?.login),
+    reviewDecision: text(row.reviewDecision).toLowerCase(),
+    reviews: latestReviews(row.latestReviews ?? []),
+    requestedReviewers: (row.reviewRequests ?? [])
+      .map((reviewer) => text(reviewer.login) || text(reviewer.name))
+      .filter(Boolean),
+    checkSummary: checkSummary(row.statusCheckRollup ?? []),
+    additions: row.additions ?? 0,
+    deletions: row.deletions ?? 0,
   };
 }
 
@@ -236,7 +414,11 @@ export class GithubInbox {
     cwd: string,
     input: Record<string, unknown>,
   ): Promise<unknown> {
+    // The machine's own account: who "you" are for its projects.
+    if (command === "git_github_login")
+      return (await this.gh(cwd, ["api", "user", "--jq", ".login"])).trim();
     const repo = repoSlug(input.repo);
+    if (command === "git_github_pr_review") return this.review(cwd, repo, input);
     if (command === "git_github_check_details")
       return this.checkDetails(cwd, repo, input.jobId);
     if (command === "git_github_run_rerun_failed") {
@@ -370,6 +552,65 @@ export class GithubInbox {
         );
       default:
         throw new Error("Unsupported workspace command");
+    }
+  }
+
+  /** `gh pr review`: approve, request changes or comment. GitHub turns down
+   * a request for changes or a comment without a body. */
+  private async review(
+    cwd: string,
+    repo: string,
+    input: Record<string, unknown>,
+  ): Promise<null> {
+    const number = itemNumber(input.number);
+    const flag = (
+      {
+        approve: "--approve",
+        request_changes: "--request-changes",
+        comment: "--comment",
+      } as Record<string, string>
+    )[text(input.verdict)];
+    if (!flag) throw new Error("Unknown review verdict");
+    const body = text(input.body);
+    const comments = lineComments(input.comments);
+    if (comments.length) {
+      // `gh pr review` takes no line comments: the reviews API does.
+      if (flag === "--request-changes" && !body)
+        throw new Error("GitHub needs a message to request changes or comment");
+      const payload: Record<string, unknown> = {
+        event: { "--approve": "APPROVE", "--request-changes": "REQUEST_CHANGES", "--comment": "COMMENT" }[flag],
+        comments,
+      };
+      if (body) payload.body = body;
+      const dir = await mkdtemp(join(tmpdir(), "gespan-review-"));
+      const path = join(dir, "review.json");
+      try {
+        await writeFile(path, JSON.stringify(payload), { mode: 0o600 });
+        await this.gh(
+          cwd,
+          ["api", "--method", "POST", `repos/${repo}/pulls/${number}/reviews`, "--input", path],
+          true,
+        );
+        return null;
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+    const args = ["pr", "review", number, "--repo", repo, flag];
+    if (!body) {
+      if (flag !== "--approve")
+        throw new Error("GitHub needs a message to request changes or comment");
+      await this.gh(cwd, args, true);
+      return null;
+    }
+    const dir = await mkdtemp(join(tmpdir(), "gespan-review-"));
+    const path = join(dir, "body.md");
+    try {
+      await writeFile(path, body, { mode: 0o600 });
+      await this.gh(cwd, [...args, "--body-file", path], true);
+      return null;
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   }
 

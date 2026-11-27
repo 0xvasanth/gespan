@@ -477,6 +477,11 @@ it("accepts the exact arguments Gespan Native sends for every command", async ()
     ["git_github_pr_action", { repo, number: 42, action: "ready" }],
     ["git_github_check_details", { repo, jobId: "7" }],
     ["git_github_run_rerun_failed", { repo, runId: "9" }],
+    [
+      "git_github_pr_review",
+      { repo, number: 42, verdict: "approve", body: "" },
+    ],
+    ["git_github_login", {}],
   ];
   expect(calls.map(([command]) => command).sort()).toEqual(
     [...GITHUB_INBOX_COMMANDS].sort(),
@@ -485,6 +490,184 @@ it("accepts the exact arguments Gespan Native sends for every command", async ()
     await expect(
       inbox.run(command, cwd, args as Record<string, unknown>),
     ).resolves.toBeDefined();
+});
+
+it("fills the Git page's review fields like the Rust side does", async () => {
+  const pr = {
+    ...row,
+    isDraft: false,
+    author: { login: "devon" },
+    additions: 318,
+    deletions: 204,
+    reviewDecision: "CHANGES_REQUESTED",
+    reviewRequests: [{ login: "remote-user" }, { name: "core-team" }, {}],
+    latestReviews: [
+      { author: { login: "mira" }, state: "APPROVED", submittedAt: "2026-11-01" },
+      { author: { login: "Mira" }, state: "COMMENTED", submittedAt: "2026-11-02" },
+      { author: { login: "sam" }, state: "COMMENTED", submittedAt: "2026-11-01" },
+      { author: { login: "sam" }, state: "CHANGES_REQUESTED", submittedAt: "2026-11-03" },
+      { author: { login: "bot" }, state: "PENDING" },
+    ],
+    statusCheckRollup: [
+      { __typename: "CheckRun", name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
+      { __typename: "CheckRun", name: "docs", status: "COMPLETED", conclusion: "SKIPPED" },
+      { __typename: "CheckRun", name: "Rust tests (Windows)", status: "COMPLETED", conclusion: "CANCELLED" },
+      { __typename: "CheckRun", name: "old", status: "COMPLETED", conclusion: "STALE" },
+      { __typename: "CheckRun", name: "e2e", status: "IN_PROGRESS", conclusion: null },
+      { __typename: "StatusContext", context: "ci/legacy", state: "FAILURE" },
+      { context: "deploy", state: "PENDING" },
+    ],
+  };
+  const raw = vi.fn().mockResolvedValue(JSON.stringify([pr]));
+  const inbox = new GithubInbox(raw);
+  const [item] = (await inbox.run("git_github_work_items", cwd, {
+    repo,
+    kind: "pr",
+    state: "open",
+    search: "",
+    limit: 40,
+  })) as Record<string, unknown>[];
+  expect(item).toMatchObject({
+    author: "devon",
+    reviewDecision: "changes_requested",
+    requestedReviewers: ["remote-user", "core-team"],
+    reviews: [
+      { login: "mira", state: "approved" },
+      { login: "sam", state: "changes_requested" },
+    ],
+    checkSummary: {
+      total: 6,
+      passed: 2,
+      failed: 2,
+      pending: 2,
+      failedNames: ["Rust tests (Windows)", "ci/legacy"],
+    },
+    additions: 318,
+    deletions: 204,
+  });
+  const fields = raw.mock.calls[0][1][raw.mock.calls[0][1].indexOf("--json") + 1];
+  for (const field of ["author", "reviewDecision", "latestReviews", "statusCheckRollup", "additions"])
+    expect(fields).toContain(field);
+  // Issues carry their author but none of a pull request's review fields.
+  raw.mockClear();
+  raw.mockResolvedValue(JSON.stringify([{ ...row, author: { login: "lena" } }]));
+  const [issue] = (await inbox.run("git_github_work_items", cwd, {
+    repo,
+    kind: "issue",
+  })) as Record<string, unknown>[];
+  expect(issue).toMatchObject({ author: "lena", reviews: [], additions: 0 });
+  expect(raw.mock.calls[0][1].join(" ")).not.toContain("statusCheckRollup");
+});
+
+it("reviews by a temporary body file and needs words for all but approve", async () => {
+  const bodies: string[] = [];
+  const raw = vi.fn(async (_cwd: string, args: string[]) => {
+    const file = args.indexOf("--body-file");
+    if (file >= 0) bodies.push(readFileSync(args[file + 1], "utf8"));
+    return "";
+  });
+  const inbox = new GithubInbox(raw);
+  await inbox.run("git_github_pr_review", cwd, {
+    repo,
+    number: 42,
+    verdict: "request_changes",
+    body: " Please add the index ",
+  });
+  expect(raw.mock.calls[0][1].slice(0, 6)).toEqual([
+    "pr",
+    "review",
+    "42",
+    "--repo",
+    repo,
+    "--request-changes",
+  ]);
+  expect(bodies).toEqual(["Please add the index"]);
+  expect(existsSync(raw.mock.calls[0][1].at(-1)!)).toBe(false);
+  await inbox.run("git_github_pr_review", cwd, {
+    repo,
+    number: 42,
+    verdict: "approve",
+    body: "",
+  });
+  expect(raw.mock.calls[1]).toEqual([
+    cwd,
+    ["pr", "review", "42", "--repo", repo, "--approve"],
+    true,
+  ]);
+  await expect(
+    inbox.run("git_github_pr_review", cwd, { repo, number: 42, verdict: "comment", body: " " }),
+  ).rejects.toThrow("needs a message");
+  await expect(
+    inbox.run("git_github_pr_review", cwd, { repo, number: 42, verdict: "merge", body: "x" }),
+  ).rejects.toThrow("Unknown review verdict");
+  expect(raw).toHaveBeenCalledTimes(2);
+});
+
+it("sends line comments with a review through the reviews API", async () => {
+  const payloads: unknown[] = [];
+  const raw = vi.fn(async (_cwd: string, args: string[]) => {
+    const input = args.indexOf("--input");
+    if (input >= 0) payloads.push(JSON.parse(readFileSync(args[input + 1], "utf8")));
+    return "";
+  });
+  const inbox = new GithubInbox(raw);
+  await inbox.run("git_github_pr_review", cwd, {
+    repo,
+    number: 42,
+    verdict: "comment",
+    body: "",
+    comments: [
+      { path: "docs/hackathon.md", line: 100, side: "new", body: " test comment " },
+      { path: "src/old.rs", line: 7, side: "old", body: "why?" },
+    ],
+  });
+  expect(raw.mock.calls[0][1].slice(0, 4)).toEqual([
+    "api",
+    "--method",
+    "POST",
+    "repos/acme/web/pulls/42/reviews",
+  ]);
+  expect(payloads).toEqual([
+    {
+      event: "COMMENT",
+      comments: [
+        { path: "docs/hackathon.md", line: 100, side: "RIGHT", body: "test comment" },
+        { path: "src/old.rs", line: 7, side: "LEFT", body: "why?" },
+      ],
+    },
+  ]);
+  for (const bad of [
+    { path: "../etc/passwd", line: 1, side: "new", body: "x" },
+    { path: "/abs", line: 1, side: "new", body: "x" },
+    { path: "a.rs", line: 0, side: "new", body: "x" },
+    { path: "a.rs", line: 1, side: "new", body: " " },
+  ])
+    await expect(
+      inbox.run("git_github_pr_review", cwd, {
+        repo,
+        number: 42,
+        verdict: "approve",
+        body: "",
+        comments: [bad],
+      }),
+    ).rejects.toThrow("Invalid line comment");
+  await expect(
+    inbox.run("git_github_pr_review", cwd, {
+      repo,
+      number: 42,
+      verdict: "request_changes",
+      body: "",
+      comments: [{ path: "a.rs", line: 1, side: "new", body: "x" }],
+    }),
+  ).rejects.toThrow("needs a message");
+  expect(raw).toHaveBeenCalledTimes(1);
+});
+
+it("answers with the machine's own GitHub login", async () => {
+  const raw = vi.fn().mockResolvedValue("remote-user\n");
+  const inbox = new GithubInbox(raw);
+  expect(await inbox.run("git_github_login", cwd, {})).toBe("remote-user");
+  expect(raw).toHaveBeenCalledWith(cwd, ["api", "user", "--jq", ".login"], false);
 });
 
 it("reruns only a run's failed jobs, in the requested repository", async () => {
@@ -630,7 +813,7 @@ it.skipIf(process.platform === "win32")(
           "--repo",
           repo,
           "--json",
-          "number,title,url,state,createdAt,updatedAt,labels,assignees,stateReason",
+          "number,title,url,state,createdAt,updatedAt,labels,assignees,author,stateReason",
         ],
       });
       await expect(
@@ -651,7 +834,7 @@ it.skipIf(process.platform === "win32")(
           .trim()
           .split("\n"),
       ).toHaveLength(1);
-      expect(GITHUB_INBOX_COMMANDS).toHaveLength(10);
+      expect(GITHUB_INBOX_COMMANDS).toHaveLength(12);
     } finally {
       store.close();
       rmSync(home, { recursive: true, force: true });

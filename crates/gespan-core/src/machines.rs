@@ -528,6 +528,12 @@ fn write_seen(path: &Path, seen: &HashMap<String, u64>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// A client for a machine's herdr API, over the same ssh bridge the
+/// machine list uses.
+pub fn client_for(m: &Machine) -> herdr_link::Client<SshBridge> {
+    herdr_link::Client::new(bridge_for(m))
+}
+
 /// How Gespan reaches a machine's herdr: ssh with the user's shell
 /// environment. The login shell has already run for the machine list, so
 /// this does not wait on it again.

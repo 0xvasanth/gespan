@@ -1,35 +1,52 @@
 import { Link } from "../router";
-import { SiteNav } from "../components/SiteNav";
+import { NavSpace } from "../components/SiteNav";
 import { SiteFooter } from "../components/SiteFooter";
+import { FeatureBento } from "../components/FeatureBento";
+import { HowItWorks } from "../components/HowItWorks";
+import { Lamp } from "../components/Lamp";
+import { Macbook } from "../components/Macbook";
 import { ScrollShot } from "../components/ScrollShot";
 import logoUrl from "../assets/logo.svg";
-import { AgentMarquee, FlowDiagram, GlowParticles, HeroAgents, ShinyText, SpotCard, StatBand, TaskFeed } from "../components/fx";
+import { AgentMarquee, FlowDiagram, HeroAgents, HeroLight, ShinyText, SpotCard, StatBand, TaskFeed } from "../components/fx";
 import { GUIDES } from "../docs";
 import { changelog, formatDate, highlights, release } from "../release";
+import { SoonTag } from "./CloudPage";
 import "./home.css";
+import "./cloud.css";
+
+/** The Gespan Cloud teaser's inbox rows: title, project and age, status tone. */
+const HUB_PREVIEW = [
+  ["Review asked: #212 Cart totals in minor units", "Checkout web · 8 min", "run"],
+  ["A run asks: keep the v1 charge endpoint?", "Payments API · 12 min", "wait"],
+  ["Decide: retry policy for webhooks", "Payments API · 1 h", "mute"],
+] as const;
 
 export function HomePage() {
   return (
     <div className="w-site">
       {/* Hero */}
       <div className="w-frame">
-        <Link className="w-announce" to="/changelog" style={{ maxWidth: "760px", margin: "0 auto 12px" }}><span><b>Gespan {release.version}</b> is out: {highlights(changelog[0])}.</span> <span className="go">Read the changelog →</span></Link>
-        <section className="w-hero" aria-label="Introduction">
-          {/* A slow drifting glow behind the hero copy. */}
-          <div aria-hidden="true" className="w-glow violet animate-drift motion-reduce:animate-none" style={{ width: "900px", height: "620px", right: "-260px", top: "-180px" }} />
-          <SiteNav active="home" onHero />
-          <div className="w-wrap lp-hero-copy" style={{ paddingTop: "64px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "24px" }}>
-            <a className="w-chip animate-rise motion-reduce:animate-none" href="#agents"><span className="new">12 agents</span><ShinyText>Claude Code, Codex, Cursor CLI and nine more</ShinyText></a>
+        <section className="w-hero lp-hero" aria-label="Introduction">
+          {/* One light source: a spotlight that sweeps in over a faint grid. */}
+          <HeroLight />
+          <NavSpace />
+          <div className="w-wrap lp-hero-copy" style={{ paddingTop: "40px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "24px" }}>
+            {/* What's new sits in the hero, directly above the headline. */}
+            <Link className="w-announce animate-rise motion-reduce:animate-none" to="/changelog">
+              <span className="new">New in {release.version}</span>
+              <span className="txt"><ShinyText>{highlights(changelog[0], 1)}</ShinyText></span>
+              <span className="go">Changelog →</span>
+            </Link>
             <h1 className="w-hero-title">
               <span className="animate-rise motion-reduce:animate-none block [animation-delay:90ms]">Hold the reins.</span>
               <span className="animate-rise motion-reduce:animate-none block [animation-delay:220ms]" style={{ color: "#a3a3a3" }}><HeroAgents /></span>
             </h1>
             <p className="w-lead animate-rise motion-reduce:animate-none [animation-delay:360ms]" style={{ maxWidth: "620px" }}>One desktop app to drive all of your coding agents. Run them side by side, plan their work on a board, and let a Pilot keep it moving. It uses the subscriptions you already pay for.</p>
             <div className="lp-cta w-stack-m w-full-m animate-rise motion-reduce:animate-none [animation-delay:480ms]" style={{ display: "flex", gap: "10px", alignItems: "center", justifyContent: "center" }}><Link className="w-btn w-btn-light" to="/download"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.6c0-2.3 1.9-3.4 2-3.5-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.1-2.8.9-3.5.9-.7 0-1.8-.9-3-.8-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.8zM14.1 5.8c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z" /></svg> Download for macOS</Link> <a className="w-btn w-btn-glass" href="https://github.com/0xvasanth/gespan"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z" /></svg> View on GitHub</a></div>
-            <p className="w-meta animate-rise motion-reduce:animate-none [animation-delay:580ms]">Free and open source · macOS, Windows and Linux · No telemetry</p>
+            <p className="w-meta animate-rise motion-reduce:animate-none [animation-delay:580ms]">Free and open source · <a className="w-link" href="#agents">12 agents</a> · macOS, Windows and Linux · No telemetry</p>
           </div>
-          <div className="w-wrap lp-bleed" style={{ marginTop: "56px" }}>
-            <ScrollShot name="home" variant="hero" beam />
+          <div className="w-wrap mb-under-hero">
+            <Macbook shot="home" />
           </div>
         </section>
       </div>
@@ -66,50 +83,7 @@ export function HomePage() {
             <p className="w-eyebrow">How it works</p>
             <h2 id="loop-h" className="w-h2">From ticket to merged, with you holding the reins.</h2>
           </div>
-          <ol data-stagger="" className="w-g4" style={{ listStyle: "none", margin: "0", padding: "0" }}>
-            <li className="w-glass lp-step">
-              <span className="w-num">01</span>
-              <h3 className="w-h4">Board</h3>
-              <p className="w-small">Tickets from GitHub, GitLab, Linear, Jira and Azure DevOps land in the Inbox and become cards.</p>
-              <div className="lp-mini">
-                <div className="r"><span className="w-meta" style={{ marginRight: "auto" }}>Todo</span><span className="w-meta">2</span></div>
-                <div style={{ padding: "10px", borderRadius: "9px", background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.09)" }}>
-                  <div style={{ fontSize: "12.5px", fontWeight: "600", color: "#ebebeb" }}>Fix the login redirect loop</div>
-                  <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}><span className="w-tag mute">LIN-482</span><span className="w-tag mute">acme-web</span></div>
-                </div>
-              </div>
-            </li>
-            <li className="w-glass lp-step">
-              <span className="w-num">02</span>
-              <h3 className="w-h4">Sessions</h3>
-              <p className="w-small">Run a card with any agent, each in its own Git worktree. The card moves as the session starts, opens a pull request and finishes.</p>
-              <div className="lp-mini">
-                <div className="r"><span style={{ width: "14px", height: "14px", borderRadius: "4px", background: "#d97757" }} />Claude Code<span className="w-tag run" style={{ marginLeft: "auto" }}>Running</span></div>
-                <div className="r" style={{ color: "#8a8a8a", fontSize: "12px" }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg><span className="w-mono">fix-login-redirect</span></div>
-              </div>
-            </li>
-            <li className="w-glass lp-step">
-              <span className="w-num">03</span>
-              <h3 className="w-h4">Automations</h3>
-              <p className="w-small">Agents run on a schedule, like a daily dependency audit, and their runs show up on the board.</p>
-              <div className="lp-mini">
-                <div className="r" style={{ fontWeight: "600", color: "#ebebeb" }}>Daily dependency audit</div>
-                <div className="r">
-                  <span className="w-meta" style={{ marginRight: "auto" }}>Every day at 09:00 · Codex</span>
-                  <div className="lp-bars" aria-hidden="true"><span style={{ height: "9px" }} /><span style={{ height: "12px" }} /><span style={{ height: "8px" }} /><span className="x" style={{ height: "6px" }} /><span style={{ height: "14px" }} /><span style={{ height: "11px" }} /><span style={{ height: "16px" }} /></div>
-                </div>
-              </div>
-            </li>
-            <li className="w-glass lp-step">
-              <span className="w-num">04</span>
-              <h3 className="w-h4">Pilots</h3>
-              <p className="w-small">A long-running agent with memory triages the Inbox, starts sessions and gets a report back from each one.</p>
-              <div className="lp-mini">
-                <div className="r"><span style={{ width: "14px", height: "14px", borderRadius: "5px", background: "#f59e0b" }} /><span style={{ fontWeight: "600", color: "#ebebeb" }}>ReleasePilot</span><span className="w-tag wait" style={{ marginLeft: "auto" }}>Needs you</span></div>
-                <div className="r" style={{ color: "#a3a3a3", fontSize: "12px" }}>Started 3 sessions · 2 reported back</div>
-              </div>
-            </li>
-          </ol>
+          <HowItWorks />
           <p className="w-meta" style={{ maxWidth: "760px" }}>This is where Gespan is heading, and parts of the loop are still being built: adding Inbox items to the board, pull requests moving cards, and Pilots and automations working the board directly. Follow along in <a className="w-link" href="https://github.com/0xvasanth/gespan/issues/211">issue 211</a>.</p>
         </div>
       </section>
@@ -139,50 +113,7 @@ export function HomePage() {
             </div>
             <Link className="w-btn w-btn-glass" to="/features" style={{ marginLeft: "auto" }}>See every feature</Link>
           </div>
-          <div data-stagger="" className="w-g3">
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="12" y1="4" x2="12" y2="20" /></svg></div>
-              <h3 className="w-h4">Multi-agent workspace</h3>
-              <p className="w-small">Every conversation is a tab. Split panes to run several agents at once, and set the model, effort and permission mode for each session.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg></div>
-              <h3 className="w-h4">Worktrees built in</h3>
-              <p className="w-small">Each parallel task gets its own Git worktree, named after the task. Setup and Teardown scripts prepare and clean up each one.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10" /><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10" /></svg></div>
-              <h3 className="w-h4">Review, undo and fork</h3>
-              <p className="w-small">Checkpoints record what each turn changed, shell edits included. Keep or undo a turn's diff, or fork a new chat from any message.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></svg></div>
-              <h3 className="w-h4">Inbox and automations</h3>
-              <p className="w-small">Bring in GitHub, GitLab, Linear, Jira and Azure DevOps work. Run agents on a schedule or when an Inbox event arrives.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z" /></svg></div>
-              <h3 className="w-h4">MCP in one place</h3>
-              <p className="w-small">Add an MCP server once and share it with every session. Servers need your approval, and their secrets stay in the keychain.</p>
-            </div>
-</SpotCard>
-            <SpotCard>
-<div className="lp-feat">
-              <div className="w-tile"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></svg></div>
-              <h3 className="w-h4">In-app browser</h3>
-              <p className="w-small">Agents open, read and click through pages in a browser Gespan runs, and you use the same tab in a pane beside the chat.</p>
-            </div>
-</SpotCard>
-          </div>
+          <FeatureBento />
         </div>
       </section>
       {/* Pilots */}
@@ -275,6 +206,33 @@ export function HomePage() {
         </div>
       </section>
       {/* FAQ */}
+      <section className="w-sec" aria-labelledby="cloud-h" style={{ paddingTop: "0" }}>
+        <div className="w-wrap">
+          <div className="w-hero soft gc-teaser">
+            <div style={{ flex: "1", minWidth: "0", display: "flex", flexDirection: "column", gap: "18px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                <p className="w-eyebrow">Gespan Cloud</p>
+                <SoonTag />
+              </div>
+              <h2 id="cloud-h" className="w-h2">A concept: your whole team's agents, in one place.</h2>
+              <p className="w-lead">An early design, not yet being built: one inbox for every project, a shared board, Devboxes that run the agents, and decisions every agent follows. Teams would use it hosted, or run it on their own servers.</p>
+              <div><Link className="w-btn w-btn-glass" to="/cloud">See the concept</Link></div>
+            </div>
+            <div className="w-glass gc-panel" aria-hidden="true">
+              <div className="gc-tabs"><span className="on">Waiting <b>3</b></span><span>Snoozed</span><span>Handled</span></div>
+              <div className="gc-list">
+                {HUB_PREVIEW.map(([title, meta, tone]) => (
+                  <div key={title} className="gc-row">
+                    <span className={`gc-dot ${tone}`} />
+                    <span className="gc-grow"><span className="gc-strong">{title}</span><span className="gc-muted">{meta}</span></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="w-sec" aria-labelledby="faq-h" style={{ paddingTop: "0" }}>
         <div className="w-wrap" style={{ display: "flex", flexDirection: "column", gap: "40px" }}>
           <div data-reveal="" className="w-head">
@@ -303,15 +261,16 @@ export function HomePage() {
       </section>
       {/* Download CTA */}
       <section className="w-frame" aria-labelledby="cta-h" style={{ paddingBottom: "12px" }}>
-        <div className="w-hero">
-          <GlowParticles />
-          <div className="w-wrap" style={{ paddingTop: "96px", paddingBottom: "96px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "22px" }}>
+        <div className="w-hero lm-hero">
+          <Lamp>
+          <div className="w-wrap" style={{ paddingTop: "120px", paddingBottom: "96px", display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: "22px" }}>
             <img src={logoUrl} width="64" height="64" alt="" />
             <h2 id="cta-h" className="w-h1">Hold the reins.</h2>
             <p className="w-lead" style={{ maxWidth: "520px" }}>Install and sign in to at least one supported agent, then download Gespan for your machine.</p>
             <div className="lp-cta w-stack-m w-full-m" style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "center" }}><Link className="w-btn w-btn-light" to="/download">macOS</Link> <Link className="w-btn w-btn-glass" to="/download">Windows</Link> <Link className="w-btn w-btn-glass" to="/download">Linux</Link></div>
             <p className="w-meta">Version {release.version} · Released {formatDate(release.date)} · <a className="w-link" href="https://github.com/0xvasanth/gespan/releases">All releases</a></p>
           </div>
+          </Lamp>
         </div>
       </section>
       <SiteFooter />
