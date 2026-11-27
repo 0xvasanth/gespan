@@ -260,7 +260,7 @@ fn tile_lines_break_down_tasks_agents_and_the_inbox() {
     assert_eq!(inbox_line(Some(&inbox(1, 0, 8))), "1 review requested");
     assert_eq!(inbox_line(Some(&inbox(0, 0, 8))), "Nothing needs you");
     assert_eq!(inbox_line(Some(&inbox(0, 0, 0))), "No open pull requests");
-    assert_eq!(inbox_line(None), "Loading Git");
+    assert_eq!(inbox_line(None), "Loading pull requests");
 }
 
 #[test]

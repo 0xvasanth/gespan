@@ -13,10 +13,11 @@ pub mod azure_devops;
 pub use avatar::png as avatar_png;
 pub mod ci_repair;
 pub mod events;
+pub(crate) mod github_poll;
 pub mod polish;
 pub mod queue;
 pub mod review;
-pub use review::{CheckSummary, LineComment, RepoHit, Review, Side, Verdict};
+pub use review::{CheckSummary, LineComment, LineRef, RepoHit, Review, Side, Verdict};
 pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
@@ -296,6 +297,10 @@ pub struct Comment {
     pub state: String,
     pub path: String,
     pub line: Option<i64>,
+    /// A review comment's side of the diff, `RIGHT` (new file) or `LEFT`
+    /// (old), when it still sits on the current diff. Empty for comments
+    /// that aren't on a line, or whose line is outdated.
+    pub side: String,
     pub resolved: bool,
     pub thread_id: String,
     pub replies: Vec<Comment>,
@@ -692,13 +697,13 @@ pub struct Snapshot {
     pub repo_errors: BTreeMap<String, String>,
     /// `Item::key` to its repository scope, for repository-backed items.
     pub item_scopes: HashMap<String, String>,
-    /// Every repository this poll visited, listed or not, so Settings › Git
+    /// Every repository this poll visited, listed or not, so Settings › Pull requests
     /// can show repositories with no open pull requests. Hand-added ones
     /// (see [`Service::list_git`]) have no `project_path`.
     pub repos: Vec<ProjectRepo>,
 }
 
-/// A repository the Git page follows: one an open project points at, or one
+/// A repository the Pull requests page follows: one an open project points at, or one
 /// added by hand (no `project_path`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -1281,7 +1286,7 @@ impl Service {
         snapshot.items.retain(|i| seen.insert(i.key()));
         snapshot
     }
-    /// The Git page's poll: [`Service::list`] for `projects`, then the open
+    /// The Pull requests page's poll: [`Service::list`] for `projects`, then the open
     /// pull requests of each repository in `added` (`(provider, repo)`,
     /// added by hand) that no project already covers, then, when
     /// `other_repos`, the pull requests asking for your review anywhere
@@ -1562,6 +1567,41 @@ fn gh_root(cwd: &Path) -> PathBuf {
 pub(crate) fn run_gh(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
     run_command("gh", root, args, allow_empty)
 }
+/// `gh`'s standard output whether or not it exited cleanly: a conditional
+/// request's `304` is a failure to `gh` but an answer to us.
+pub(crate) fn run_gh_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    match command_output("gh", root, args)? {
+        (_, stdout, _) if !stdout.is_empty() => Ok(stdout),
+        (_, _, stderr) => Err(stderr),
+    }
+}
+/// Runs `program` in `root`: whether it succeeded, its standard output and
+/// its standard error, trimmed.
+fn command_output(
+    program: &str,
+    root: &Path,
+    args: &[&str],
+) -> Result<(bool, String, String), String> {
+    let binary = crate::scm::resolve_gui_binary(program)
+        .ok_or_else(|| format!("{program} is not installed. Install {program} and check again."))?;
+    let mut command = Command::new(binary);
+    command
+        .current_dir(root)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_PAGER", "cat")
+        .env("GIT_PAGER", "cat");
+    crate::scm::shell::apply_gui_env(&mut command);
+    crate::process::configure_child(&mut command);
+    let output = command.output().map_err(|e| e.to_string())?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    ))
+}
+
 fn run_command(
     program: &str,
     root: &Path,
@@ -1579,20 +1619,9 @@ fn run_command(
             program
         )
     })?;
-    let mut command = Command::new(binary);
-    command
-        .current_dir(root)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_PAGER", "cat")
-        .env("GIT_PAGER", "cat");
-    crate::scm::shell::apply_gui_env(&mut command);
-    crate::process::configure_child(&mut command);
-    let output = command.output().map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let _ = binary;
+    let (success, stdout, stderr) = command_output(program, root, args)?;
+    if !success {
         return Err(if stderr.is_empty() { stdout } else { stderr });
     }
     if stdout.is_empty() && !allow_empty {
@@ -2008,7 +2037,7 @@ mod notification_tests {
 
     #[test]
     fn every_visited_repo_is_listed_once_even_without_rows_or_when_failing() {
-        // Settings › Git lists a project's repos with no open pull requests.
+        // Settings › Pull requests lists a project's repos with no open pull requests.
         let projects = [PathBuf::from(PROJECT), PathBuf::from("/work/app-2")];
         let fetch = collect_repo_items(
             "github",

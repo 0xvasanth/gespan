@@ -112,7 +112,7 @@ function itemNumber(value: unknown): string {
 const itemFields = (kind: string) =>
   "number,title,url,state,createdAt,updatedAt,labels,assignees,author," +
   (kind === "pr"
-    ? "isDraft,additions,deletions,reviewDecision,reviewRequests,latestReviews,statusCheckRollup"
+    ? "isDraft,additions,deletions,reviewDecision,reviewRequests,latestReviews"
     : "stateReason");
 type RollupRow = {
   __typename?: string;
@@ -149,12 +149,17 @@ type ItemRow = Omit<
 
 /** Line comments sent with a review, checked: a file inside the repo, a
  * positive line, a side and words. */
-function lineComments(value: unknown): {
+type ReviewLineComment = {
   path: string;
   line: number;
   side: "LEFT" | "RIGHT";
+  start_line?: number;
+  start_side?: "LEFT" | "RIGHT";
   body: string;
-}[] {
+};
+const lineNumber = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+function lineComments(value: unknown): ReviewLineComment[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new Error("Invalid line comments");
   return value.map((entry) => {
@@ -162,17 +167,29 @@ function lineComments(value: unknown): {
     const path = text(row.path);
     const body = text(row.body);
     const line = row.line;
+    const start = row.start as Record<string, unknown> | null | undefined;
     if (
       !path ||
       path.startsWith("/") ||
       path.split("/").some((part) => part === "..") ||
-      typeof line !== "number" ||
-      !Number.isSafeInteger(line) ||
-      line <= 0 ||
+      !lineNumber(line) ||
+      (start != null && !lineNumber(start.line)) ||
       !body
     )
       throw new Error("Invalid line comment");
-    return { path, line, side: row.side === "old" ? "LEFT" : "RIGHT", body };
+    const side = (value: unknown) => (value === "old" ? "LEFT" : "RIGHT");
+    const comment: ReviewLineComment = {
+      path,
+      line: line as number,
+      side: side(row.side),
+      body,
+    };
+    // A range: GitHub takes its first line as start_line.
+    if (start && (start.line !== line || side(start.side) !== comment.side)) {
+      comment.start_line = start.line as number;
+      comment.start_side = side(start.side);
+    }
+    return comment;
   });
 }
 
@@ -215,6 +232,98 @@ export function latestReviews(
       seen.state = row.state!;
   }
   return out;
+}
+
+/** Open pull requests with review fields and check counts: never every
+ * check of every row, which timed the list out on large repositories. Keep
+ * in step with `OPEN_PRS_QUERY` in crates/gespan-core/src/inbox/github_poll.rs. */
+export const OPEN_PRS_QUERY = `query($owner: String!, $name: String!, $n: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: $n, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes {
+        number title url state isDraft createdAt updatedAt additions deletions reviewDecision
+        author { login }
+        labels(first: 10) { nodes { name color } }
+        assignees(first: 10) { nodes { login } }
+        reviewRequests(first: 10) { nodes { requestedReviewer {
+          ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { name }
+        } } }
+        latestReviews(first: 10) { nodes { author { login } state submittedAt } }
+        commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) {
+          checkRunCountsByState { state count }
+          statusContextCountsByState { state count }
+        } } } } }
+      }
+    }
+  }
+}`;
+
+type StateCount = { state?: string; count?: number };
+/** Check counts from GitHub's per-state tallies, as the Rust side reads them. */
+export function summaryFromCounts(
+  runs: StateCount[] = [],
+  statuses: StateCount[] = [],
+): CheckSummary {
+  const summary: CheckSummary = { total: 0, passed: 0, failed: 0, pending: 0, failedNames: [] };
+  const add = (kind: "passed" | "failed" | "pending" | "", count = 0) => {
+    if (!kind) return;
+    summary[kind] += count;
+    summary.total += count;
+  };
+  for (const { state = "", count } of runs)
+    add(
+      ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)
+        ? "passed"
+        : ["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"].includes(state)
+          ? "failed"
+          : state === "STALE"
+            ? ""
+            : "pending",
+      count,
+    );
+  for (const { state = "", count } of statuses)
+    add(state === "SUCCESS" ? "passed" : ["FAILURE", "ERROR"].includes(state) ? "failed" : "pending", count);
+  return summary;
+}
+
+/** `gh api graphql` output for `OPEN_PRS_QUERY`, as list rows. */
+export function openPullRequests(json: string, repo: string): GithubWorkItem[] {
+  const response = JSON.parse(json);
+  const repository = response?.data?.repository;
+  if (!repository)
+    throw new Error(response?.errors?.[0]?.message ?? "GitHub did not return the repository");
+  return (repository.pullRequests?.nodes ?? []).map((pr: Record<string, any>) => {
+    const contexts = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
+    return {
+      ...workItem(
+        {
+          number: pr.number,
+          title: pr.title ?? "",
+          url: pr.url ?? "",
+          state: pr.state ?? "",
+          createdAt: pr.createdAt,
+          updatedAt: pr.updatedAt ?? "",
+          labels: pr.labels?.nodes ?? [],
+          assignees: pr.assignees?.nodes ?? [],
+          isDraft: pr.isDraft ?? false,
+          author: pr.author,
+          additions: pr.additions,
+          deletions: pr.deletions,
+          reviewDecision: pr.reviewDecision,
+          reviewRequests: (pr.reviewRequests?.nodes ?? []).map(
+            (node: Record<string, any>) => node.requestedReviewer ?? {},
+          ),
+          latestReviews: pr.latestReviews?.nodes ?? [],
+        } as ItemRow,
+        repo,
+        "pr",
+      ),
+      checkSummary: summaryFromCounts(
+        contexts?.checkRunCountsByState,
+        contexts?.statusContextCountsByState,
+      ),
+    };
+  });
 }
 
 /** Counts `statusCheckRollup` the way the Rust side does. */
@@ -378,7 +487,10 @@ export class GithubInbox {
       const secondary =
         message.includes("secondary rate limit") ||
         message.includes("abuse detection");
-      if ((primary || secondary) && !this.backoff) {
+      // A query GitHub gave up on after 10 seconds; asking again at once only
+      // costs more points.
+      const timeout = /http 50[234]|gateway timeout|bad gateway/.test(message);
+      if ((primary || secondary || timeout) && !this.backoff) {
         this.backoff = { until: Date.now() + 60_000, error };
         if (primary && message.includes("graphql")) {
           try {
@@ -450,6 +562,29 @@ export class GithubInbox {
         "--json",
         itemFields(kind),
       ];
+      // The Pull requests page's poll: one light query with check counts,
+      // as the Rust side's `github_poll` asks.
+      if (
+        kind === "pr" &&
+        args[3] === "open" &&
+        input.assignedToMe !== true &&
+        !text(input.search)
+      )
+        return openPullRequests(
+          await this.gh(cwd, [
+            "api",
+            "graphql",
+            "-f",
+            `query=${OPEN_PRS_QUERY}`,
+            "-F",
+            `owner=${repo.split("/")[0]}`,
+            "-F",
+            `name=${repo.split("/")[1]}`,
+            "-F",
+            `n=${limit}`,
+          ]),
+          repo,
+        );
       if (input.assignedToMe === true) args.push("--assignee", "@me");
       if (text(input.search)) args.push("--search", text(input.search));
       return (JSON.parse(await this.gh(cwd, args)) as ItemRow[]).map((row) =>

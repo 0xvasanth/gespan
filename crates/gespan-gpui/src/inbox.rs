@@ -150,7 +150,7 @@ pub(crate) struct Inbox {
     /// The review bar: its comment, tone, Polish and submission.
     review: review_bar::ReviewBar,
     review_body: Entity<Input>,
-    /// Settings › Git's "Add a repo" field and what it found.
+    /// Settings › Pull requests's "Add a repo" field and what it found.
     repo_search_input: Entity<Input>,
     repo_search: git_settings::RepoSearch,
     /// What a test's repository search finds.
@@ -261,6 +261,39 @@ enum Offline {
 }
 
 /// The inbox opens scoped to the project it was opened from.
+/// The pull request's review threads that sit on the current diff, for the
+/// Files tab: a thread whose line is outdated stays in the discussion only.
+fn remote_threads(thread: &Thread) -> Vec<crate::diff_view::RemoteThread> {
+    use gespan_core::inbox::Side;
+    thread
+        .comments
+        .iter()
+        .filter(|c| c.kind == "review_comment" && !c.path.is_empty())
+        .filter_map(|first| {
+            let side = match first.side.as_str() {
+                "RIGHT" => Side::New,
+                "LEFT" => Side::Old,
+                _ => return None,
+            };
+            let line = u32::try_from(first.line?).ok().filter(|l| *l > 0)?;
+            Some(crate::diff_view::RemoteThread {
+                path: first.path.clone(),
+                line,
+                side,
+                resolved: first.resolved,
+                comments: std::iter::once(first)
+                    .chain(first.replies.iter())
+                    .map(|c| crate::diff_view::RemoteComment {
+                        author: c.author.clone(),
+                        when: ui::relative_time(&c.created_at),
+                        body: c.body.trim().to_string(),
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
 /// A review a test sent: item key, verdict, summary and line comments.
 #[cfg(test)]
 pub(crate) type SubmittedReview = (
@@ -400,8 +433,17 @@ impl Inbox {
                 this.post_comment(cx)
             }),
             cx.subscribe(&diff_view, |this, _, event: &DiffEvent, cx| {
-                if let DiffEvent::LineComment(comment) = event {
-                    this.add_line_comment(comment.clone(), cx);
+                if let DiffEvent::Refresh = event {
+                    this.refresh_files(cx);
+                    return;
+                }
+                if let DiffEvent::Polish { text, tone } = event {
+                    this.polish_line(text.clone(), *tone, cx);
+                    return;
+                }
+                if let DiffEvent::DraftsChanged = event {
+                    this.review.draft_changed();
+                    cx.notify();
                     return;
                 }
                 if let DiffEvent::Comment(text) = event {
@@ -943,6 +985,11 @@ impl Inbox {
     }
     /// Seeds the held-back set when the view changes, before a render reads it.
     fn sync_arrivals(&mut self, cx: &App) {
+        // Before the first list arrives there is nothing to compare with:
+        // seeding from the empty list would count everything as new.
+        if self.synced_ms.is_none() && self.snapshot.items.is_empty() {
+            return;
+        }
         let scope = self.view_scope(cx);
         let rows = self
             .state
@@ -1008,6 +1055,10 @@ impl Inbox {
         self.tab = Tab::Summary;
         self.diff = None;
         self.review.reset();
+        self.diff_view.update(cx, |view, cx| {
+            view.set_drafts(vec![], cx);
+            view.set_threads(vec![], cx);
+        });
         self.review_body
             .update(cx, |input, cx| input.set_text(String::new(), cx));
         self.extra_request += 1;
@@ -1126,6 +1177,9 @@ impl Inbox {
                             }
                         }
                         this.comments = rows;
+                        let threads = remote_threads(&thread);
+                        this.diff_view
+                            .update(cx, |view, cx| view.set_threads(threads, cx));
                         this.thread = Some(thread);
                         this.rebuild_activity();
                     }
@@ -1251,6 +1305,15 @@ impl Inbox {
         })
         .detach();
         cx.notify();
+    }
+    /// The Files toolbar's refresh: the diff and its review threads again,
+    /// from the host. Drafts stay.
+    fn refresh_files(&mut self, cx: &mut Context<Self>) {
+        self.diff = None;
+        self.load_detail(false, cx);
+        if self.tab == Tab::Code {
+            self.set_tab(Tab::Code, cx);
+        }
     }
     fn document_cwd(&self) -> PathBuf {
         self.item()
@@ -1497,6 +1560,58 @@ impl Inbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only review comments on the current diff become threads in Files,
+    /// each with its replies, on its side.
+    #[test]
+    fn the_pull_requests_review_threads_go_to_their_lines() {
+        let comment =
+            |id: &str, kind: &str, path: &str, line: Option<i64>, side: &str| model::Comment {
+                id: id.into(),
+                kind: kind.into(),
+                author: "cubic".into(),
+                body: format!(" {id} body "),
+                created_at: "2026-11-27T01:00:00Z".into(),
+                path: path.into(),
+                line,
+                side: side.into(),
+                ..Default::default()
+            };
+        let mut current = comment("c1", "review_comment", "CHANGELOG.md", Some(12), "RIGHT");
+        current.replies = vec![comment(
+            "c2",
+            "review_comment",
+            "CHANGELOG.md",
+            Some(12),
+            "RIGHT",
+        )];
+        current.resolved = true;
+        let thread = Thread {
+            comments: vec![
+                current,
+                comment("c3", "review_comment", "src/old.rs", Some(7), "LEFT"),
+                comment("c4", "review_comment", "src/old.rs", Some(9), ""),
+                comment("c5", "comment", "", None, ""),
+                comment("c6", "review", "", None, ""),
+            ],
+            ..Default::default()
+        };
+        let threads = remote_threads(&thread);
+        assert_eq!(
+            threads.len(),
+            2,
+            "outdated and general comments stay in the discussion"
+        );
+        assert_eq!(threads[0].path, "CHANGELOG.md");
+        assert_eq!(
+            (threads[0].line, threads[0].side),
+            (12, gespan_core::inbox::Side::New)
+        );
+        assert!(threads[0].resolved);
+        assert_eq!(threads[0].comments.len(), 2);
+        assert_eq!(threads[0].comments[0].body, "c1 body");
+        assert_eq!(threads[1].side, gespan_core::inbox::Side::Old);
+    }
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 
     fn item(provider: &str, number: i64) -> Item {

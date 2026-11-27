@@ -40,7 +40,7 @@ pub struct GitHubWorkItem {
     /// Who opened it, when the list says.
     pub author: String,
     /// Pull requests (see [`super::Item`]): the review and check fields the
-    /// Git page groups by.
+    /// Pull requests page groups by.
     pub review_decision: String,
     pub reviews: Vec<Review>,
     pub requested_reviewers: Vec<String>,
@@ -79,6 +79,8 @@ pub struct GitHubWorkItemComment {
     pub state: String,
     pub path: String,
     pub line: Option<i64>,
+    /// `RIGHT` or `LEFT` while the comment's line is on the current diff.
+    pub side: String,
     pub resolved: bool,
     pub thread_id: String,
     pub replies: Vec<GitHubWorkItemComment>,
@@ -198,6 +200,28 @@ pub(super) fn git_github_work_items_for(
     } else {
         "open"
     };
+    // The Pull requests page's poll: one light query, skipped when nothing
+    // changed (see `github_poll`).
+    if kind == "pr" && state == "open" && !assigned_to_me && search.trim().is_empty() {
+        let mut items = super::github_poll::open_pull_requests(root, &repo, limit)?;
+        let viewer = cached_github_login(root);
+        for item in &mut items {
+            item.viewer = viewer.clone();
+            // Your own failing pull request says which check failed.
+            if item.check_summary.failed > 0
+                && !viewer.is_empty()
+                && item.author.eq_ignore_ascii_case(&viewer)
+            {
+                item.check_summary.failed_names = super::github_poll::failed_check_names(
+                    root,
+                    &repo,
+                    item.number,
+                    &item.updated_at,
+                );
+            }
+        }
+        return Ok(items);
+    }
     let limit = limit.clamp(1, 100).to_string();
     let fields = if kind == "pr" {
         GITHUB_PR_LIST_FIELDS
@@ -229,7 +253,7 @@ pub(super) fn git_github_work_items_for(
     let json = gh_checked(root, &refs)?;
     let mut items = parse_github_work_items(&json, kind, &repo)?;
     if kind == "pr" && !items.is_empty() {
-        // Who "you" are, so the Git page can tell your reviews apart.
+        // Who "you" are, so the Pull requests page can tell your reviews apart.
         let viewer = cached_github_login(root);
         for item in &mut items {
             item.viewer = viewer.clone();
@@ -238,9 +262,12 @@ pub(super) fn git_github_work_items_for(
     Ok(items)
 }
 
-/// What a pull request row carries in the list: enough for the Git page to
+/// What a pull request row carries in the list: enough for the Pull requests page to
 /// group it by who is waiting, and show its size and checks.
-const GITHUB_PR_LIST_FIELDS: &str = "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author,additions,deletions,reviewDecision,reviewRequests,latestReviews,statusCheckRollup";
+/// No `statusCheckRollup`: every check of every row made the list time out
+/// on large repositories. The Pull requests page's own poll reads check
+/// counts instead (see `github_poll`).
+const GITHUB_PR_LIST_FIELDS: &str = "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author,additions,deletions,reviewDecision,reviewRequests,latestReviews";
 
 /// The signed-in login for `root`'s `gh`, asked at most every few minutes;
 /// empty when `gh` can't say.
@@ -342,12 +369,20 @@ pub(super) fn github_review_payload(
         },
         "comments": comments
             .iter()
-            .map(|c| serde_json::json!({
-                "path": c.path,
-                "line": c.line,
-                "side": if c.side == Side::Old { "LEFT" } else { "RIGHT" },
-                "body": c.body.trim(),
-            }))
+            .map(|c| {
+                let side = |side: Side| if side == Side::Old { "LEFT" } else { "RIGHT" };
+                let mut entry = serde_json::json!({
+                    "path": c.path,
+                    "line": c.end.line,
+                    "side": side(c.end.side),
+                    "body": c.body.trim(),
+                });
+                if let Some(start) = c.range_start() {
+                    entry["start_line"] = start.line.into();
+                    entry["start_side"] = side(start.side).into();
+                }
+                entry
+            })
             .collect::<Vec<_>>(),
     });
     if !body.trim().is_empty() {
@@ -741,6 +776,7 @@ query InboxPullRequestThread($owner: String!, $name: String!, $number: Int!) {
           id
           isResolved
           path
+          diffSide
           comments(first: 8) {
             totalCount
             nodes {
@@ -959,7 +995,7 @@ fn parse_github_review_reply_url(json: &str) -> Result<String, String> {
     Err("GitHub did not return a comment URL".into())
 }
 
-pub(super) fn split_github_repo(slug: &str) -> Result<(String, String), String> {
+pub(crate) fn split_github_repo(slug: &str) -> Result<(String, String), String> {
     let slug = slug.trim();
     let Some((owner, name)) = slug.split_once('/') else {
         return Err("GitHub did not return a repository".into());
@@ -1124,6 +1160,8 @@ struct GithubGraphqlReviewThread {
     is_resolved: bool,
     #[serde(default)]
     path: String,
+    #[serde(default, rename = "diffSide")]
+    diff_side: Option<String>,
     #[serde(default)]
     comments: GithubGraphqlNodes<GithubGraphqlComment>,
 }
@@ -1287,6 +1325,7 @@ fn github_mapped_comment(
         state: String::new(),
         path,
         line: comment.line.or(comment.original_line),
+        side: String::new(),
         resolved,
         thread_id: String::new(),
         replies: Vec::new(),
@@ -1324,6 +1363,7 @@ fn github_review_comment(review: GithubGraphqlReview) -> Option<GitHubWorkItemCo
         state,
         path: String::new(),
         line: None,
+        side: String::new(),
         resolved: false,
         thread_id: String::new(),
         replies: Vec::new(),
@@ -1332,8 +1372,19 @@ fn github_review_comment(review: GithubGraphqlReview) -> Option<GitHubWorkItemCo
 
 fn github_review_thread(thread: GithubGraphqlReviewThread) -> Option<GitHubWorkItemComment> {
     let thread_id = thread.id.trim().to_string();
+    let diff_side = thread.diff_side.unwrap_or_default().trim().to_uppercase();
     let mut mapped = thread.comments.nodes.into_iter().filter_map(|comment| {
-        github_mapped_comment(comment, "review_comment", &thread.path, thread.is_resolved)
+        // Only a comment with a current line sits on the diff; an outdated
+        // one keeps its original line for the discussion.
+        let current = comment.line.is_some();
+        github_mapped_comment(comment, "review_comment", &thread.path, thread.is_resolved).map(
+            |mut mapped| {
+                if current {
+                    mapped.side = diff_side.clone();
+                }
+                mapped
+            },
+        )
     });
     let mut first = mapped.next()?;
     first.thread_id = thread_id.clone();
@@ -1346,7 +1397,7 @@ fn github_review_thread(thread: GithubGraphqlReviewThread) -> Option<GitHubWorkI
     Some(first)
 }
 
-fn github_avatar_url(login: &str) -> String {
+pub(crate) fn github_avatar_url(login: &str) -> String {
     let login = login.trim();
     if login.is_empty() {
         return String::new();
@@ -1939,6 +1990,34 @@ fn parse_github_pr_states(json: &str, repo: &str) -> Result<Vec<GitHubPrState>, 
 mod automation_event_tests {
     use super::*;
 
+    /// A thread on the current diff carries its side; an outdated one keeps
+    /// its original line for the discussion but no side, so it isn't drawn on
+    /// a line it no longer matches.
+    #[test]
+    fn review_threads_carry_their_diff_side_only_while_current() {
+        let json = r#"{"data":{"repository":{"pullRequest":{
+            "reviewDecision":"","baseRefName":"main","headRefName":"f",
+            "commits":{"totalCount":0,"nodes":[]},
+            "comments":{"totalCount":0,"nodes":[]},
+            "reviews":{"totalCount":0,"nodes":[]},
+            "reviewThreads":{"totalCount":2,"nodes":[
+              {"id":"T1","isResolved":false,"path":"CHANGELOG.md","diffSide":"RIGHT","comments":{"totalCount":2,"nodes":[
+                {"id":"C1","author":{"login":"cubic"},"body":"Missing index","createdAt":"2026-11-27T01:00:00Z","line":12,"originalLine":12},
+                {"id":"C2","author":{"login":"me"},"body":"Fixed","createdAt":"2026-11-27T02:00:00Z","line":12,"originalLine":12}]}},
+              {"id":"T2","isResolved":true,"path":"src/old.rs","diffSide":"LEFT","comments":{"totalCount":1,"nodes":[
+                {"id":"C3","author":{"login":"mira"},"body":"Outdated","createdAt":"2026-11-26T01:00:00Z","line":null,"originalLine":7}]}}
+            ]}
+        }}}}"#;
+        let thread = parse_github_work_item_thread(json, "pr").unwrap();
+        let current = thread.comments.iter().find(|c| c.id == "C1").unwrap();
+        assert_eq!((current.side.as_str(), current.line), ("RIGHT", Some(12)));
+        assert_eq!(current.replies.len(), 1);
+        assert_eq!(current.replies[0].side, "RIGHT");
+        let outdated = thread.comments.iter().find(|c| c.id == "C3").unwrap();
+        assert_eq!((outdated.side.as_str(), outdated.line), ("", Some(7)));
+        assert!(outdated.resolved);
+    }
+
     #[test]
     fn open_pull_requests_carry_their_head_commit_and_checks() {
         // The shape `gh pr list --json ...,headRefOid,statusCheckRollup` prints.
@@ -2150,8 +2229,9 @@ mod automation_event_tests {
         );
         assert_eq!(row.check_summary.failed_names, ["Windows tests"]);
         assert_eq!(row.repo, "acme/app");
-        assert!(GITHUB_PR_LIST_FIELDS
-            .ends_with("reviewDecision,reviewRequests,latestReviews,statusCheckRollup"));
+        assert!(GITHUB_PR_LIST_FIELDS.ends_with("reviewDecision,reviewRequests,latestReviews"));
+        // Every check of every row timed the list out on large repositories.
+        assert!(!GITHUB_PR_LIST_FIELDS.contains("statusCheckRollup"));
     }
 
     #[test]

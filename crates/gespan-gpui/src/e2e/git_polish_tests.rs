@@ -1,4 +1,4 @@
-//! Polish on the Git page: a review comment goes to the pull request's Ask
+//! Polish on the Pull requests page: a review comment goes to the pull request's Ask
 //! agent with the chosen tone, and its rewrite comes back as an offer to
 //! Use, Try again or Keep mine. Fake by default; `GESPAN_E2E_REAL=1` asks the
 //! real `claude` and checks only that a rewrite came back.
@@ -114,4 +114,49 @@ fn a_reply_without_a_rewrite_keeps_the_draft_and_says_so(cx: &mut TestAppContext
     );
     let body = git.update(cx, |git, cx| git.use_polish_for_test(cx));
     assert_eq!(body, "nit: rename this", "the draft stays as written");
+}
+
+/// Polish from a comment box on a line goes through the same Ask agent, and
+/// its rewrite goes back to that box, not to the review bar.
+#[gpui::test]
+fn a_line_comment_is_polished_through_the_ask_agent_into_its_own_box(cx: &mut TestAppContext) {
+    let e2e = E2e::new(cx, Mode::from_env());
+    let rewrite = "Could we add an index on key here?";
+    e2e.script_next_child(serde_json::json!([format!(
+        "<polished>{rewrite}</polished>"
+    )]));
+    let item = pull_request(e2e.repo());
+    let git = e2e
+        .window()
+        .update(cx, |shell, window, cx| {
+            shell.e2e_project_provider(Kind::Claude);
+            shell.e2e_open_git(vec![item], window, cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    git.update(cx, |git, cx| {
+        git.polish_line_for_test("add an index", Tone::Suggestion, cx)
+    });
+    e2e.until(cx, "the line rewrite", |_, cx| {
+        git.read_with(cx, |git, _| git.line_polish_outcome_for_test().is_some())
+    });
+    let (tone, text) = git
+        .read_with(cx, |git, _| git.line_polish_outcome_for_test())
+        .unwrap()
+        .unwrap_or_else(|error| panic!("no rewrite: {error}"));
+    assert_eq!(tone, Tone::Suggestion);
+    match e2e.mode() {
+        Mode::Fake => assert_eq!(text, rewrite),
+        Mode::Real => assert!(!text.trim().is_empty()),
+    }
+    assert!(
+        git.read_with(cx, |git, _| git.polish_outcome_for_test().is_none()),
+        "the review bar's own Polish is untouched"
+    );
+    let session = git.read_with(cx, |git, cx| {
+        git.ask_conversation().unwrap().read(cx).summary.id
+    });
+    let prompts = e2e.prompts(session);
+    assert!(prompts[0].contains("Suggestion:"), "{prompts:?}");
+    assert!(prompts[0].contains("add an index"), "{prompts:?}");
 }

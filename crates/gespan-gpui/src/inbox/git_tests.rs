@@ -1,4 +1,4 @@
-//! The Git page on screen: views and their counts, bots folded, 25 to a
+//! The Pull requests page on screen: views and their counts, bots folded, 25 to a
 //! page, arrivals held behind the banner, the Filters dropdown kept per view
 //! and across restarts, saved views, review requests from other repos, the
 //! empty state, the review bar, Polish's card, notifications and Settings ›
@@ -219,6 +219,41 @@ fn arrivals_wait_behind_the_banner_instead_of_moving_the_list(cx: &mut TestAppCo
     assert!(shown(&mut visual, &key));
 }
 
+/// The first list to arrive is the list, not "N new": only pull requests
+/// that come after it wait behind the banner.
+#[gpui::test]
+fn the_first_list_to_arrive_is_not_held_back_as_new(cx: &mut TestAppContext) {
+    // Opened while the first fetch is still on its way.
+    let window = open(store(), cx, |_| {});
+    let mut visual = visual(window, cx);
+    assert!(!shown(&mut visual, "git-new-banner"));
+    let first = vec![asked("acme/web", 1), asked("acme/web", 2)];
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.snapshot.items = first;
+            inbox.synced_ms = Some(gespan_core::time::now_ms() as i64);
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        !shown(&mut visual, "git-new-banner"),
+        "the first list shows as it is"
+    );
+    assert_eq!(visible(window, &mut visual), vec![1, 2]);
+    // A later one still waits.
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.snapshot.items.push(asked("acme/web", 3));
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(shown(&mut visual, "git-new-banner"));
+}
+
 #[gpui::test]
 fn filters_are_kept_per_view_and_after_a_restart(cx: &mut TestAppContext) {
     let db = store();
@@ -370,7 +405,7 @@ fn review_requests_from_other_repos_fold_under_the_list_and_add_their_repo(
             repo: "acme/docs".into()
         }]
     );
-    // Switched off in Settings › Git: the fold goes.
+    // Switched off in Settings › Pull requests: the fold goes.
     window
         .update(&mut visual, |inbox, _, cx| {
             inbox.change_git_prefs(|p| p.other_repos = false, cx)
@@ -417,10 +452,11 @@ fn nothing_needs_you_shows_its_way_out_and_the_connected_hosts(cx: &mut TestAppC
     );
 }
 
+/// The bar under Files stays slim, with what is drafted and "Submit review".
+/// The panel it opens takes an optional summary and the verdict; only
+/// requesting changes needs words.
 #[gpui::test]
-fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
-    cx: &mut TestAppContext,
-) {
+fn submit_review_opens_a_panel_with_an_optional_summary_and_the_verdict(cx: &mut TestAppContext) {
     let theirs = asked("acme/web", 1);
     let mine = pr("acme/web", 2, "me");
     let (theirs_key, mine_key) = (theirs.key(), mine.key());
@@ -436,16 +472,48 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    // Closed: no summary box, no tone, just the count and Submit review.
     assert!(shown(&mut visual, "git-review-bar"));
-    click(&mut visual, "git-review-request-changes");
+    assert!(shown(&mut visual, "git-review-drafted"));
+    for gone in [
+        "git-review-body",
+        "git-review-tone",
+        "git-polish",
+        "git-review-submit",
+    ] {
+        assert!(
+            !shown(&mut visual, gone),
+            "{gone} shows before Submit review"
+        );
+    }
+    click(&mut visual, "git-review-open");
+    assert!(shown(&mut visual, "git-review-panel"));
+    assert!(shown(&mut visual, "git-review-body"));
+    assert!(shown(&mut visual, "git-review-tone"));
+    // Request changes with nothing said is refused.
+    click(&mut visual, "git-review-verdict-request-changes");
+    click(&mut visual, "git-review-submit");
     let error = window
         .update(&mut visual, |inbox, _, _| inbox.review.error.clone())
         .unwrap();
     assert_eq!(
         error.as_deref(),
-        Some("Write a comment to request changes.")
+        Some("Say in the summary what needs to change.")
     );
-    click(&mut visual, "git-review-approve");
+    // Approve needs no summary, and sending closes the panel.
+    click(&mut visual, "git-review-verdict-approve");
+    click(&mut visual, "git-review-submit");
+    assert!(
+        !shown(&mut visual, "git-review-panel"),
+        "a sent review closes the panel"
+    );
+    assert!(
+        shown(&mut visual, "git-review-status"),
+        "and says what was sent"
+    );
+    // Request changes with a summary.
+    click(&mut visual, "git-review-open");
+    click(&mut visual, "git-review-verdict-request-changes");
     window
         .update(&mut visual, |inbox, _, cx| {
             inbox.review_body.update(cx, |input, cx| {
@@ -453,7 +521,7 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
             })
         })
         .unwrap();
-    click(&mut visual, "git-review-request-changes");
+    click(&mut visual, "git-review-submit");
     let submitted = window
         .update(&mut visual, |inbox, _, _| {
             inbox.submitted_reviews.lock().unwrap().clone()
@@ -479,8 +547,12 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
             )
         })
         .unwrap();
-    assert!(body.is_empty(), "a sent review clears its draft");
+    assert!(body.is_empty(), "a sent review clears its summary");
     assert_eq!(notice.as_deref(), Some("Changes requested."));
+    // Cancel closes without sending.
+    click(&mut visual, "git-review-open");
+    click(&mut visual, "git-review-cancel");
+    assert!(!shown(&mut visual, "git-review-panel"));
     // Your own pull request can be commented on, never approved.
     window
         .update(&mut visual, |inbox, _, cx| {
@@ -490,59 +562,59 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
-    assert!(shown(&mut visual, "git-review-bar"));
-    assert!(shown(&mut visual, "git-review-comment"));
-    assert!(!shown(&mut visual, "git-review-approve"));
-    assert!(!shown(&mut visual, "git-review-request-changes"));
+    click(&mut visual, "git-review-open");
+    assert!(shown(&mut visual, "git-review-verdict-comment"));
+    assert!(!shown(&mut visual, "git-review-verdict-approve"));
+    assert!(!shown(&mut visual, "git-review-verdict-request-changes"));
 }
 
 #[gpui::test]
 fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppContext) {
-    use gespan_core::inbox::{LineComment, Side};
+    use gespan_core::inbox::{LineComment, LineRef};
     let theirs = asked("acme/web", 1);
     let key = theirs.key();
     let window = open(store(), cx, move |inbox| {
         inbox.snapshot.items = vec![theirs]
     });
     let mut visual = visual(window, cx);
-    let comment = |line, side, body: &str| LineComment {
+    let comment = |start: Option<LineRef>, end: LineRef, body: &str| LineComment {
         path: "docs/hackathon.md".into(),
-        line,
-        side,
+        start,
+        end,
         body: body.into(),
     };
+    let range = comment(
+        Some(LineRef::new(Some(98), Some(98), 98, 98)),
+        LineRef::new(None, Some(100), 99, 100),
+        "test comment",
+    );
+    let deleted = comment(None, LineRef::new(Some(7), None, 7, 7), "why?");
+    let gone = comment(None, LineRef::new(None, Some(9), 9, 9), "never mind");
     window
         .update(&mut visual, |inbox, _, cx| {
             inbox.select(key.clone(), cx);
             inbox.set_tab(Tab::Code, cx);
-            // What the diff raises on "Add to review".
-            inbox.diff_view.update(cx, |_, cx| {
-                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
-                    100,
-                    Side::New,
-                    "test comment",
-                )));
-                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
-                    7,
-                    Side::Old,
-                    "why?",
-                )));
-                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
-                    9,
-                    Side::New,
-                    "never mind",
-                )));
+            // What the diff holds after three "Add review comment"s.
+            let drafts = vec![range.clone(), deleted.clone(), gone.clone()];
+            inbox.diff_view.update(cx, |view, cx| {
+                view.set_drafts(drafts, cx);
+                cx.emit(crate::diff_view::DiffEvent::DraftsChanged);
             });
         })
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    assert!(
+        shown(&mut visual, "git-review-drafted"),
+        "the closed bar counts them"
+    );
+    click(&mut visual, "git-review-open");
     assert!(shown(&mut visual, "git-review-drafts"));
     assert!(shown(&mut visual, "git-review-draft-2"));
     click(&mut visual, "git-review-draft-remove-2");
     assert!(!shown(&mut visual, "git-review-draft-2"));
     // Line comments alone make a comment review: no summary needed.
-    click(&mut visual, "git-review-comment");
+    click(&mut visual, "git-review-submit");
     let submitted = window
         .update(&mut visual, |inbox, _, _| {
             inbox.submitted_reviews.lock().unwrap().clone()
@@ -554,15 +626,21 @@ fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppCont
             key.clone(),
             Verdict::Comment,
             String::new(),
-            vec![
-                comment(100, Side::New, "test comment"),
-                comment(7, Side::Old, "why?")
-            ]
+            vec![range, deleted]
         )]
     );
     assert!(
         !shown(&mut visual, "git-review-drafts"),
         "sent drafts are cleared"
+    );
+    assert!(
+        window
+            .update(&mut visual, |inbox, _, cx| inbox
+                .diff_view
+                .read(cx)
+                .drafts()
+                .is_empty())
+            .unwrap()
     );
     // Nothing reaches the general discussion's composer.
     let discussion = window
@@ -571,8 +649,17 @@ fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppCont
         })
         .unwrap();
     assert!(discussion.is_empty());
+    // Another pull request starts with no drafts.
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox
+                .diff_view
+                .update(cx, |view, cx| view.set_drafts(vec![gone.clone()], cx));
+            inbox.deselect(cx);
+            assert!(inbox.diff_view.read(cx).drafts().is_empty());
+        })
+        .unwrap();
 }
-
 #[gpui::test]
 fn a_polished_comment_is_offered_to_use_or_keep(cx: &mut TestAppContext) {
     let theirs = asked("acme/web", 1);
@@ -592,6 +679,7 @@ fn a_polished_comment_is_offered_to_use_or_keep(cx: &mut TestAppContext) {
         .unwrap();
     visual.run_until_parked();
     visual.refresh().unwrap();
+    click(&mut visual, "git-review-open");
     click(&mut visual, "git-tone-friendly");
     assert_eq!(
         window

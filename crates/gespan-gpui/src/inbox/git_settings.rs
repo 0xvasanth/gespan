@@ -1,12 +1,12 @@
-//! What Settings › Git shows and changes: your repositories (from your
+//! What Settings › Pull requests shows and changes: your repositories (from your
 //! projects, with a switch each, plus those added by hand), "Add a repo"
 //! search, review requests from other repos, the view Git opens on, Notify
-//! me and folding bot pull requests. The Git page owns all of it; Settings
+//! me and folding bot pull requests. The Pull requests page owns all of it; Settings
 //! reads it from here and asks for changes.
 use super::*;
 use gespan_core::inbox::{RepoHit, queue};
 
-/// One repository row in Settings › Git.
+/// One repository row in Settings › Pull requests.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RepoRow {
     pub provider: String,
@@ -19,7 +19,7 @@ pub(crate) struct RepoRow {
     pub added: bool,
 }
 
-/// Settings › Git's view of the Git page.
+/// Settings › Pull requests's view of the Pull requests page.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GitSettings {
     pub repos: Vec<RepoRow>,
@@ -116,12 +116,12 @@ impl Inbox {
             loading: self.loading && self.snapshot.repos.is_empty(),
         }
     }
-    /// The "Add a repo" field Settings › Git draws.
+    /// The "Add a repo" field Settings › Pull requests draws.
     pub(crate) fn repo_search_input(&self) -> Entity<Input> {
         self.repo_search_input.clone()
     }
 
-    /// Changes Settings › Git's switches and choices.
+    /// Changes Settings › Pull requests's switches and choices.
     pub(crate) fn change_git_prefs(
         &mut self,
         change: impl FnOnce(&mut queue::Prefs),

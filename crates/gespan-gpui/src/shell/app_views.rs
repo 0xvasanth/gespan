@@ -15,7 +15,7 @@ impl Shell {
         self.active_app_view.map(|view| match view {
             AppView::Home => "Home",
             AppView::MyTasks => "My tasks",
-            AppView::Inbox => "Git",
+            AppView::Inbox => "Pull requests",
             AppView::Notes => "Notes",
             AppView::Automations => "Automations",
             AppView::Flows => "Flows",

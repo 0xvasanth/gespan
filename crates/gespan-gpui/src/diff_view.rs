@@ -18,6 +18,9 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, Pixels, Role, ScrollWheelEvent, SharedString, StyledText,
     Subscription, Task, Window, actions, canvas, div, list, prelude::*, px, rgb,
 };
+mod review_threads;
+pub(crate) use review_threads::{RemoteComment, RemoteThread};
+
 use std::{
     borrow::Cow,
     cell::Cell,
@@ -92,9 +95,17 @@ pub(crate) enum DiffEvent {
     StageHunk(SharedString, usize),
     /// Text for the active chat's composer.
     Comment(String),
-    /// A comment for a pull request review, on its line (see
-    /// [`DiffView::review_comments`]).
-    LineComment(gespan_core::inbox::LineComment),
+    /// A pull request's review drafts were added, edited or deleted (see
+    /// [`DiffView::drafts`]).
+    DraftsChanged,
+    /// Polish on a review comment box: rewrite `text` in `tone` (see
+    /// [`DiffView::polish_result`]).
+    Polish {
+        text: String,
+        tone: gespan_core::inbox::polish::Tone,
+    },
+    /// The Files toolbar's refresh: load the diff and its comments again.
+    Refresh,
 }
 
 #[derive(Clone, PartialEq)]
@@ -107,6 +118,11 @@ enum RowKind {
     },
     Hunk(SharedString),
     Notice(SharedString),
+    /// Review comments under a line: its pending drafts and the open box.
+    Thread {
+        block: usize,
+        line: usize,
+    },
 }
 #[derive(Clone)]
 struct Row {
@@ -317,6 +333,7 @@ pub(crate) struct DiffView {
     /// The axis this wheel gesture scrolls, and when it last moved.
     wheel_axis: Option<(bool, std::time::Instant)>,
     comment: Option<Comment>,
+    review: review_threads::Review,
     action_slots: HashMap<usize, AnchorSlot>,
     focus: FocusHandle,
 }
@@ -371,6 +388,7 @@ impl DiffView {
             overview_hovered: false,
             wheel_axis: None,
             comment: None,
+            review: Default::default(),
             action_slots: HashMap::new(),
             focus: cx.focus_handle(),
         }
@@ -422,6 +440,7 @@ impl DiffView {
             RowKind::Line { block, line, .. } => RowKey(id, 1, *block, *line),
             RowKind::Hunk(_) => RowKey(id, 2, ix, 0),
             RowKind::Notice(_) => RowKey(id, 3, 0, 0),
+            RowKind::Thread { block, line } => RowKey(id, 4, *block, *line),
         })
     }
     fn rebuild(&mut self, cx: &mut Context<Self>) {
@@ -470,10 +489,21 @@ impl DiffView {
                 }
             }
             if expanded {
-                rows.extend(body.rows.iter().map(|row| Row {
-                    file: index,
-                    ..row.clone()
-                }));
+                for row in &body.rows {
+                    rows.push(Row {
+                        file: index,
+                        ..row.clone()
+                    });
+                    if let RowKind::Line { block, line, .. } = row.kind
+                        && let Some(height) = self.thread_height(index, (block, line))
+                    {
+                        rows.push(Row {
+                            file: index,
+                            kind: RowKind::Thread { block, line },
+                            height,
+                        });
+                    }
+                }
                 columns = columns.max(body.columns);
                 digits = digits.max(body.digits);
             }
@@ -840,28 +870,6 @@ impl DiffView {
         let Some(comment) = &self.comment else {
             return;
         };
-        if self.review_comments {
-            let body = comment.input.read(cx).content.trim().to_string();
-            let (side, number) = if comment.line.kind == LineKind::Del {
-                (gespan_core::inbox::Side::Old, comment.line.old_number)
-            } else {
-                (gespan_core::inbox::Side::New, comment.line.new_number)
-            };
-            let Some(line) = number.filter(|_| !body.is_empty()) else {
-                return;
-            };
-            let path = comment.path.to_string();
-            self.comment = None;
-            window.focus(&self.focus, cx);
-            cx.emit(DiffEvent::LineComment(gespan_core::inbox::LineComment {
-                path,
-                line,
-                side,
-                body,
-            }));
-            cx.notify();
-            return;
-        }
         let text = diff::format_comment(
             &comment.path,
             &comment.line,
@@ -925,6 +933,13 @@ impl DiffView {
                     }),
             )
             .child(diff_counts(additions, deletions))
+            .when(self.review_comments, |d| {
+                d.child(
+                    tool_button("diff-refresh", "Sync with GitHub", "refresh-cw", true)
+                        .debug_selector(|| "diff-refresh".into())
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DiffEvent::Refresh))),
+                )
+            })
             .child(
                 div()
                     .ml_auto()
@@ -1092,6 +1107,9 @@ impl DiffView {
         let accent: Hsla = accent_color();
         match row.kind {
             RowKind::File => self.file_header(row.file, false, cx),
+            RowKind::Thread { block, line } => {
+                self.thread_row(row.file, (block, line), row.height, cx)
+            }
             RowKind::Notice(text) => div()
                 .h(px(NOTICE))
                 .w_full()
@@ -1188,13 +1206,26 @@ impl DiffView {
                 };
                 let scroll_x = self.scroll_x;
                 let _ = window;
+                let review = self.review_comments;
+                let at = (block, line);
+                let picked = review && self.picked(file_ix, at);
+                let drafted = review && self.has_draft(file_ix, at);
                 div()
                     .id(("diff-line", ix))
+                    .debug_selector(move || format!("diff-line-{ix}"))
                     .h(px(LINE))
                     .w_full()
                     .flex()
                     .line_height(px(LINE))
                     .when_some(ink, |d, ink| d.bg(ink.opacity(0.06)))
+                    .when(picked, |d| d.bg(accent.opacity(0.16)))
+                    .when(review, |d| {
+                        d.on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                            if event.pressed_button == Some(MouseButton::Left) {
+                                this.drag_over(file_ix, at, cx);
+                            }
+                        }))
+                    })
                     .on_hover(cx.listener(move |this, hovering: &bool, _, cx| {
                         let next = if *hovering {
                             Some(ix)
@@ -1222,7 +1253,9 @@ impl DiffView {
                                     .when_some(ink, |d, ink| d.bg(ink.opacity(0.55))),
                             )
                             .child(numbers(l.old_number, hovered))
-                            .child(numbers(l.new_number, false))
+                            .child(numbers(l.new_number, false).when(drafted, |d| {
+                                d.text_color(accent).font_weight(FontWeight::SEMIBOLD)
+                            }))
                             .child(
                                 div()
                                     .w(px(24.))
@@ -1259,15 +1292,36 @@ impl DiffView {
                                         .hover(|s| s.bg(content(0.12)))
                                         .child(slot.probe())
                                         .child(icon("comment-add", 12.).text_color(content(1.)))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.open_comment(
-                                                file_ix,
-                                                comment_line.clone(),
-                                                ix,
-                                                window,
-                                                cx,
+                                        .when(review, |d| {
+                                            // Press, drag across lines, let go:
+                                            // the box opens on the range.
+                                            d.debug_selector(move || format!("diff-comment-{ix}"))
+                                                .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(
+                                                    move |this, event: &MouseDownEvent, _, cx| {
+                                                        this.press_line(
+                                                            file_ix,
+                                                            at,
+                                                            event.modifiers.shift,
+                                                            cx,
+                                                        );
+                                                        cx.stop_propagation();
+                                                    },
+                                                ),
                                             )
-                                        })),
+                                        })
+                                        .when(!review, |d| {
+                                            d.on_click(cx.listener(move |this, _, window, cx| {
+                                                this.open_comment(
+                                                    file_ix,
+                                                    comment_line.clone(),
+                                                    ix,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }))
+                                        }),
                                 )
                                 .when_some(stage, |d, chunk| {
                                     d.child(
@@ -1534,11 +1588,7 @@ impl Render for DiffView {
         let comment = self.comment.as_ref().map(|c| {
             let location = diff::comment_location(&c.path, &c.line);
             let can_add = !c.input.read(cx).content.trim().is_empty();
-            let add_label = if self.review_comments {
-                "Add to review"
-            } else {
-                "Add to chat"
-            };
+            let add_label = "Add to chat";
             popover(
                 "diff-comment",
                 crate::popover::Anchor::Slot(c.anchor.clone()),
@@ -1690,7 +1740,9 @@ impl Render for DiffView {
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
+                cx.listener(|this, _, window, cx| {
+                    // A pick of review lines ends where the button lets go.
+                    this.release_pick(window, cx);
                     if this.overview_drag.take().is_some() {
                         cx.notify();
                     }
@@ -1774,92 +1826,459 @@ impl Render for DiffView {
 mod tests {
     use super::*;
 
-    /// In a pull request's Files, a line comment is raised for the review on
-    /// its line and side; elsewhere it is still text for the chat.
-    #[gpui::test]
-    fn a_review_diff_raises_line_comments_on_their_line_and_side(cx: &mut gpui::TestAppContext) {
+    /// A review diff with "a/B/C/d/e", B and C added, and its events.
+    fn review_window(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        gpui::WindowHandle<DiffView>,
+        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        gpui::Subscription,
+    ) {
+        let mut model = file("CHANGELOG.md", "a\nb\nc\nd\ne\n", "a\nB\nC\nd\ne\n");
+        model.path = "CHANGELOG.md".into();
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |_, cx| {
-                cx.new(|cx| {
-                    let mut view = DiffView::new(cx);
-                    view.review_comments = true;
-                    view
-                })
-            })
+            cx.open_window(
+                gpui::WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::new(
+                        gpui::point(px(0.), px(0.)),
+                        gpui::size(px(1100.), px(800.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| {
+                    cx.new(|cx| {
+                        let mut view = DiffView::new(cx);
+                        view.review_comments = true;
+                        view
+                    })
+                },
+            )
             .unwrap()
         });
-        let mut model = file("docs.md", "a\nb\nc\n", "a\nB\nc\n");
-        model.path = "docs/hackathon.md".into();
         window
             .update(cx, |view, _, cx| view.set_files(vec![model], cx))
             .unwrap();
         let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let sink = events.clone();
         let view = window.root(cx).unwrap();
-        let _subscription = cx.update(|cx| {
-            cx.subscribe(&view, move |_, event: &DiffEvent, _| match event {
-                DiffEvent::LineComment(comment) => sink.borrow_mut().push(Ok(comment.clone())),
-                DiffEvent::Comment(text) => sink.borrow_mut().push(Err(text.clone())),
-                _ => {}
+        let subscription = cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &DiffEvent, _| {
+                sink.borrow_mut().push(match event {
+                    DiffEvent::Polish { text, tone } => format!("polish {tone:?} {text}"),
+                    DiffEvent::Refresh => "refresh".into(),
+                    DiffEvent::DraftsChanged => "drafts".into(),
+                    _ => "other".into(),
+                })
             })
         });
-        let line = |kind, old: Option<u32>, new: Option<u32>| Line {
-            kind,
-            text: "b".into(),
-            old_number: old,
-            new_number: new,
-            chunk: None,
-        };
-        for (line, text) in [
-            (line(LineKind::Add, None, Some(2)), " use the index "),
-            (line(LineKind::Del, Some(2), None), "why remove b?"),
-            (line(LineKind::Add, None, Some(3)), "   "),
-        ] {
-            window
-                .update(cx, |view, window, cx| {
-                    view.open_comment(0, line, 0, window, cx);
-                    let input = view.comment.as_ref().unwrap().input.clone();
-                    input.update(cx, |input, cx| input.set_text(text.into(), cx));
-                    view.add_comment(window, cx);
-                })
-                .unwrap();
+        (window, events, subscription)
+    }
+    /// The added line `text` in the review window.
+    fn added(view: &DiffView, text: &str) -> (usize, usize) {
+        view.files[0]
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(b, block)| {
+                block
+                    .lines()
+                    .iter()
+                    .position(|l| l.text == text && l.kind == LineKind::Add)
+                    .map(|i| (b, i))
+            })
+            .unwrap()
+    }
+
+    /// Each comment box has its own tone and Polish: the owner gets the
+    /// words and tone, and its rewrite is offered to Use or Keep mine.
+    #[gpui::test]
+    fn each_comment_box_polishes_its_own_words_in_its_tone(cx: &mut gpui::TestAppContext) {
+        use gespan_core::inbox::polish::Tone;
+        let (window, events, _subscription) = review_window(cx);
+        window
+            .update(cx, |view, window, cx| {
+                let b = added(view, "B");
+                view.press_line(0, b, false, cx);
+                view.release_pick(window, cx);
+                let input = view.review.editor.as_ref().unwrap().input.clone();
+                input.update(cx, |input, cx| input.set_text("this is wrong".into(), cx));
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        for selector in ["diff-review-tone", "diff-polish", "diff-tone-friendly"] {
+            assert!(
+                visual.debug_bounds(selector).is_some(),
+                "{selector} is in the box"
+            );
         }
-        cx.run_until_parked();
-        use gespan_core::inbox::{LineComment, Side};
+        let friendly = visual.debug_bounds("diff-tone-friendly").unwrap();
+        visual.simulate_click(friendly.center(), Default::default());
+        visual.run_until_parked();
+        let polish = visual.debug_bounds("diff-polish").unwrap();
+        visual.simulate_click(polish.center(), Default::default());
+        visual.run_until_parked();
         assert_eq!(
             *events.borrow(),
-            vec![
-                Ok(LineComment {
-                    path: "docs/hackathon.md".into(),
-                    line: 2,
-                    side: Side::New,
-                    body: "use the index".into(),
-                }),
-                Ok(LineComment {
-                    path: "docs/hackathon.md".into(),
-                    line: 2,
-                    side: Side::Old,
-                    body: "why remove b?".into(),
-                }),
-            ],
-            "an empty comment raises nothing"
+            vec!["polish Friendly this is wrong".to_string()]
         );
+        // While one is on its way, Polish doesn't ask again.
+        window
+            .update(visual, |view, _, cx| view.polish_editor(cx))
+            .unwrap();
+        assert_eq!(events.borrow().len(), 1);
+        window
+            .update(visual, |view, _, cx| {
+                view.polish_result(
+                    Ok((Tone::Friendly, "Good catch, could you fix this?".into())),
+                    cx,
+                )
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-polished").is_some());
+        let height = |visual: &mut gpui::VisualTestContext| {
+            window
+                .update(visual, |view, _, _| {
+                    view.rows
+                        .iter()
+                        .find(|r| matches!(r.kind, RowKind::Thread { .. }))
+                        .map(|r| r.height)
+                })
+                .unwrap()
+        };
+        assert!(
+            height(visual).unwrap() > 160.,
+            "the card makes room for itself"
+        );
+        let use_it = visual.debug_bounds("diff-polish-use").unwrap();
+        visual.simulate_click(use_it.center(), Default::default());
+        visual.run_until_parked();
+        let text = window
+            .update(visual, |view, _, cx| {
+                view.review
+                    .editor
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .read(cx)
+                    .content
+                    .to_string()
+            })
+            .unwrap();
+        assert_eq!(text, "Good catch, could you fix this?");
+        assert!(visual.debug_bounds("diff-polished").is_none());
+        // A failed rewrite says why; Keep mine clears it and keeps the words.
+        window
+            .update(visual, |view, _, cx| {
+                view.polish_result(
+                    Err("The agent did not return a rewrite. Try again.".into()),
+                    cx,
+                )
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-polish-error").is_some());
+        window
+            .update(visual, |view, _, cx| view.keep_mine(cx))
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-polish-error").is_none());
+    }
+
+    /// The pull request's own threads show under their lines, by side, and
+    /// the toolbar's refresh asks the owner to sync.
+    #[gpui::test]
+    fn existing_threads_show_on_their_lines_and_refresh_asks_to_sync(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gespan_core::inbox::Side;
+        let (window, events, _subscription) = review_window(cx);
+        let thread = |line, side, resolved| RemoteThread {
+            path: "CHANGELOG.md".into(),
+            line,
+            side,
+            resolved,
+            comments: vec![
+                RemoteComment {
+                    author: "cubic".into(),
+                    when: "2h ago".into(),
+                    body: "Missing an index".into(),
+                },
+                RemoteComment {
+                    author: "me".into(),
+                    when: "1h ago".into(),
+                    body: "Added".into(),
+                },
+            ],
+        };
+        window
+            .update(cx, |view, _, cx| {
+                view.set_threads(
+                    vec![
+                        thread(3, Side::New, false),
+                        thread(2, Side::Old, true),
+                        // Another file's thread, or a line not in this diff.
+                        RemoteThread {
+                            path: "other.rs".into(),
+                            ..thread(3, Side::New, false)
+                        },
+                        thread(99, Side::New, false),
+                    ],
+                    cx,
+                )
+            })
+            .unwrap();
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let placed = window
+            .update(visual, |view, _, _| {
+                let c = added(view, "C");
+                let old_b = view.files[0]
+                    .blocks
+                    .iter()
+                    .enumerate()
+                    .find_map(|(bi, block)| {
+                        block
+                            .lines()
+                            .iter()
+                            .position(|l| l.text == "b" && l.kind == LineKind::Del)
+                            .map(|i| (bi, i))
+                    })
+                    .unwrap();
+                (view.remote_at(0, c), view.remote_at(0, old_b))
+            })
+            .unwrap();
+        assert_eq!(
+            placed,
+            (vec![0], vec![1]),
+            "new side by new number, old by old"
+        );
+        assert!(visual.debug_bounds("diff-remote-thread-0").is_some());
+        assert!(visual.debug_bounds("diff-remote-thread-1").is_some());
+        assert!(
+            visual.debug_bounds("diff-remote-thread-2").is_none(),
+            "another file's"
+        );
+        assert!(
+            visual.debug_bounds("diff-remote-thread-3").is_none(),
+            "off the diff"
+        );
+        let refresh = visual
+            .debug_bounds("diff-refresh")
+            .expect("Files has a refresh");
+        visual.simulate_click(refresh.center(), Default::default());
+        visual.run_until_parked();
+        assert_eq!(*events.borrow(), vec!["refresh".to_string()]);
+        // Outside a pull request there is no refresh.
+        window
+            .update(visual, |view, _, cx| {
+                view.review_comments = false;
+                cx.notify();
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("diff-refresh").is_none());
+    }
+
+    /// In a pull request's Files, dragging from a line's "+" across lines
+    /// opens the comment box inline under the range; a saved draft stays
+    /// there as a pending card to edit or delete. Elsewhere a line comment is
+    /// still text for the chat.
+    #[gpui::test]
+    fn review_comments_pick_a_range_and_stay_inline_as_drafts(cx: &mut gpui::TestAppContext) {
+        use gespan_core::inbox::Side;
+        let original = "a\nb\nc\nd\ne\n";
+        let current = "a\nB\nC\nd\ne\n";
+        let mut model = file("CHANGELOG.md", original, current);
+        model.path = "CHANGELOG.md".into();
+        let window = cx.update(|cx| {
+            cx.open_window(
+                gpui::WindowOptions {
+                    window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::new(
+                        gpui::point(px(0.), px(0.)),
+                        gpui::size(px(1000.), px(700.)),
+                    ))),
+                    ..Default::default()
+                },
+                |_, cx| {
+                    cx.new(|cx| {
+                        let mut view = DiffView::new(cx);
+                        view.review_comments = true;
+                        view
+                    })
+                },
+            )
+            .unwrap()
+        });
+        window
+            .update(cx, |view, _, cx| view.set_files(vec![model], cx))
+            .unwrap();
+        let changed = std::rc::Rc::new(Cell::new(0));
+        let count = changed.clone();
+        let view = window.root(cx).unwrap();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &DiffEvent, _| {
+                if matches!(event, DiffEvent::DraftsChanged) {
+                    count.set(count.get() + 1);
+                }
+            })
+        });
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        // The rows of "B" and "C", the two added lines.
+        let rows = |visual: &mut gpui::VisualTestContext| {
+            window
+                .update(visual, |view, _, _| {
+                    let blocks = view.files[0].blocks.clone();
+                    let at = |text: &str| {
+                        blocks.iter().enumerate().find_map(|(b, block)| {
+                            block.lines().iter().position(|l| l.text == text && l.kind == LineKind::Add).map(|i| (b, i))
+                        })
+                    };
+                    let row = |at: (usize, usize)| {
+                        view.rows
+                            .iter()
+                            .position(|r| matches!(r.kind, RowKind::Line { block, line, .. } if (block, line) == at))
+                            .unwrap()
+                    };
+                    (row(at("B").unwrap()), row(at("C").unwrap()), at("B").unwrap(), at("C").unwrap())
+                })
+                .unwrap()
+        };
+        let (b_row, c_row, b, c) = rows(visual);
+        // Hover B, press its "+", drag over C with the button held, let go.
+        let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+        let b_line = visual
+            .debug_bounds(leak(format!("diff-line-{b_row}")))
+            .unwrap();
+        let c_line = visual
+            .debug_bounds(leak(format!("diff-line-{c_row}")))
+            .unwrap();
+        visual.simulate_mouse_move(b_line.center(), None, Default::default());
+        visual.run_until_parked();
+        let plus = visual
+            .debug_bounds(leak(format!("diff-comment-{b_row}")))
+            .expect("the + shows on the hovered line");
+        visual.simulate_mouse_down(plus.center(), MouseButton::Left, Default::default());
+        visual.simulate_mouse_move(c_line.center(), MouseButton::Left, Default::default());
+        visual.run_until_parked();
+        window
+            .update(visual, |view, _, _| {
+                assert!(
+                    view.picked(0, b) && view.picked(0, c),
+                    "the drag picks both lines"
+                );
+            })
+            .unwrap();
+        visual.simulate_mouse_up(c_line.center(), MouseButton::Left, Default::default());
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(
+            visual.debug_bounds("diff-review-editor").is_some(),
+            "the box opens inline"
+        );
+        let thread = window
+            .update(visual, |view, _, _| {
+                view.rows
+                    .iter()
+                    .position(|r| matches!(r.kind, RowKind::Thread { .. }))
+            })
+            .unwrap();
+        assert_eq!(thread, Some(c_row + 1), "under the range's last line");
+        // An empty box saves nothing; words save a draft on both lines.
+        window
+            .update(visual, |view, window, cx| {
+                view.save_editor(window, cx);
+                assert!(view.drafts().is_empty());
+                let input = view.review.editor.as_ref().unwrap().input.clone();
+                input.update(cx, |input, cx| {
+                    input.set_text("  Say what changed. ".into(), cx)
+                });
+                view.save_editor(window, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let drafts = window
+            .update(visual, |view, _, _| view.drafts().to_vec())
+            .unwrap();
+        assert_eq!(drafts.len(), 1);
+        let draft = &drafts[0];
+        assert_eq!(draft.path, "CHANGELOG.md");
+        assert_eq!(draft.body, "Say what changed.");
+        assert_eq!((draft.end.line, draft.end.side), (3, Side::New));
+        let start = draft.start.as_ref().expect("a range");
+        assert_eq!((start.line, start.side), (2, Side::New));
+        assert_eq!(draft.lines_label(), "lines 2 to 3");
+        assert_eq!(changed.get(), 1);
+        assert!(visual.debug_bounds("diff-review-editor").is_none());
+        assert!(
+            visual.debug_bounds("diff-draft-0").is_some(),
+            "the draft stays on its lines"
+        );
+        window
+            .update(visual, |view, _, _| {
+                assert!(view.has_draft(0, b) && view.has_draft(0, c));
+            })
+            .unwrap();
+        // Edit reopens it with its words; saving replaces it.
+        window
+            .update(visual, |view, window, cx| {
+                view.edit_draft(0, window, cx);
+                let editor = view.review.editor.as_ref().unwrap();
+                assert_eq!(editor.input.read(cx).content.as_ref(), "Say what changed.");
+                let input = editor.input.clone();
+                input.update(cx, |input, cx| {
+                    input.set_text("Name the release.".into(), cx)
+                });
+                view.save_editor(window, cx);
+                assert_eq!(view.drafts().len(), 1);
+                assert_eq!(view.drafts()[0].body, "Name the release.");
+                assert!(view.drafts()[0].start.is_some(), "editing keeps the range");
+            })
+            .unwrap();
+        // Shift on another "+" stretches the open box's range.
+        window
+            .update(visual, |view, window, cx| {
+                view.press_line(0, c, false, cx);
+                view.release_pick(window, cx);
+                view.press_line(0, b, true, cx);
+                assert!(view.picked(0, b), "shift-click extends the open box");
+                view.cancel_editor(window, cx);
+                assert!(view.review.editor.is_none());
+                view.delete_draft(0, cx);
+                assert!(view.drafts().is_empty());
+            })
+            .unwrap();
+        assert_eq!(changed.get(), 3, "saved, edited, deleted");
         // Outside a pull request the same comment is chat text.
-        events.borrow_mut().clear();
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = events.clone();
+        let _chat = cx.update(|cx| {
+            cx.subscribe(&view, move |_, event: &DiffEvent, _| {
+                if let DiffEvent::Comment(text) = event {
+                    sink.borrow_mut().push(text.clone());
+                }
+            })
+        });
         window
             .update(cx, |view, window, cx| {
                 view.review_comments = false;
-                view.open_comment(0, line(LineKind::Add, None, Some(2)), 0, window, cx);
+                let line = view.files[0].blocks[b.0].lines()[b.1].clone();
+                view.open_comment(0, line, 0, window, cx);
                 let input = view.comment.as_ref().unwrap().input.clone();
                 input.update(cx, |input, cx| input.set_text("hi".into(), cx));
                 view.add_comment(window, cx);
             })
             .unwrap();
         cx.run_until_parked();
-        assert!(
-            matches!(events.borrow()[0], Err(ref text) if text.contains("docs/hackathon.md:2"))
-        );
+        assert!(events.borrow()[0].contains("CHANGELOG.md:2"));
     }
+
     #[gpui::test]
     fn review_overview_has_no_change_markers_and_supports_scrolling_and_dragging(
         cx: &mut gpui::TestAppContext,

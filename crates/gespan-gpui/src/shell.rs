@@ -12299,7 +12299,9 @@ mod tests {
             root.read_with(cx, |s, cx| s.sessions[&active].read(cx).transcript.clone());
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
-        let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
+        let inbox = visual
+            .debug_bounds("sidebar-navigation-Pull requests")
+            .unwrap();
         let notes = visual.debug_bounds("sidebar-navigation-Notes").unwrap();
         let before = transcript.read_with(visual, |t, _| t.render_passes);
         // Hovering the rail's page icons repaints the rail only.

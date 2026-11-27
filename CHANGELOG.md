@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Git is now called Pull requests:** the rail, the page, its tab, Home's
+  tile, the app menu and Settings say Pull requests.
+- **Review comments on a range of lines, inline as on GitHub:** in a pull
+  request's Files, the "+" beside a line opens the comment box under it
+  instead of a popover. Drag from the "+" across lines, or shift-click
+  another line's "+", to comment on a range. Saved comments stay under their
+  lines as pending cards with Edit and Delete until the review is sent, and
+  ranges reach GitHub, GitLab and Azure DevOps.
+- **Tone and Polish on every review comment:** each comment box in Files has
+  its own Direct / Friendly / Suggestion tone and Polish, and the rewrite
+  shows in that box to Use, Try again or Keep mine.
+- **Submit review, as on GitHub:** the bar under Files is a slim line with
+  what's drafted and Submit review. Its panel takes an optional summary
+  (with tone and Polish) and the verdict: Comment, Approve or Request
+  changes.
+- **Existing review comments show on their lines:** the pull request's own
+  review threads appear in Files under the lines they're on, with their
+  replies, and a refresh button syncs the diff and comments with GitHub.
+
+### Fixed
+
+- **Pull requests no longer time out on large repositories or burn the
+  GitHub rate limit:** the list asks GitHub once per repository for review
+  fields and check counts instead of every check of every pull request,
+  which made GitHub answer 504 on repositories like n8n. It fetches open
+  pull requests only, skips repositories GitHub says haven't changed (a free
+  conditional request), and backs off for 1 to 15 minutes after a timeout or
+  rate limit, keeping the last list on screen. Remote projects ask the same
+  way.
+- **The view tabs no longer truncate to "Ne… 0":** the list opens at 420px,
+  never narrower than 400px, and below 440px Filters shrinks to its icon.
+
 ## [0.3.4] - 2026-11-27
 
 ### Changed

@@ -1,4 +1,4 @@
-//! The Git page's review queue: which pull requests it lists, under which
+//! The Pull requests page's review queue: which pull requests it lists, under which
 //! view and filters, grouped by who they are waiting on, and what it keeps
 //! between launches.
 //!
@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashSet};
 
 /// Rows on one page of the list.
 pub const PAGE_SIZE: usize = 25;
-/// Where the Git page keeps its views, filters and settings.
+/// Where the Pull requests page keeps its views, filters and settings.
 pub const STATE_KEY: &str = "native-git-state";
 
 /// Who a pull request is waiting on, in the order the list shows them.
@@ -91,14 +91,14 @@ pub fn is_bot(login: &str) -> bool {
 }
 
 /// An open (or draft) pull request: merged, closed and abandoned ones stay
-/// in the feed for automations but off the Git page.
+/// in the feed for automations but off the Pull requests page.
 pub fn open_pr(item: &Item) -> bool {
     item.kind == "pr"
         && item.occurrence.is_none()
         && matches!(item.status(), "Open" | "Draft")
         && !item.state.eq_ignore_ascii_case("abandoned")
 }
-/// What the Git page lists: open pull requests in your repositories.
+/// What the Pull requests page lists: open pull requests in your repositories.
 pub fn listed(item: &Item) -> bool {
     open_pr(item) && !item.other_repo
 }
@@ -622,7 +622,7 @@ pub struct SavedView {
     pub filters: Filters,
 }
 
-/// A repository added by hand in Settings › Git.
+/// A repository added by hand in Settings › Pull requests.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AddedRepo {
@@ -630,8 +630,8 @@ pub struct AddedRepo {
     pub repo: String,
 }
 
-/// What the Git page keeps: the open view, each view's filters, saved
-/// views, and Settings › Git.
+/// What the Pull requests page keeps: the open view, each view's filters, saved
+/// views, and Settings › Pull requests.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Prefs {
@@ -644,7 +644,7 @@ pub struct Prefs {
     pub notify: bool,
     pub fold_bots: bool,
     pub other_repos: bool,
-    /// Project repositories (`repo_key`) switched off in Settings › Git.
+    /// Project repositories (`repo_key`) switched off in Settings › Pull requests.
     pub hidden_repos: Vec<String>,
     pub added_repos: Vec<AddedRepo>,
 }
@@ -921,7 +921,7 @@ pub fn other_requests(items: &[Item]) -> (Vec<&Item>, Vec<String>) {
     (rows, repos)
 }
 
-/// The Git page's whole kept state: [`Prefs`], and the fetch and read state
+/// The Pull requests page's whole kept state: [`Prefs`], and the fetch and read state
 /// it shares with automations and Home.
 #[derive(Clone, Debug)]
 pub struct State {
@@ -951,8 +951,11 @@ impl State {
                     Prefs::default()
                 }
             });
-        // The feed's own filters were the Inbox's views; Git filters itself.
+        // The feed's own filters were the Inbox's views; the page filters
+        // itself. Open items only: the page lists nothing else, and
+        // automations fetch merges and closes on their own.
         feed.filters = super::Filters::default();
+        feed.filters.status.open = true;
         feed.source = "github".into();
         let mut state = Self { feed, prefs };
         if !state.prefs.keep_filters {

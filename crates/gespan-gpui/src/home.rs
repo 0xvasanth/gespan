@@ -423,7 +423,7 @@ pub(crate) fn origins_line(working: &[Working]) -> String {
 /// "3 reviews requested · 2 of yours blocked", leaving out what is zero.
 pub(crate) fn inbox_line(inbox: Option<&InboxCounts>) -> String {
     let Some(inbox) = inbox else {
-        return "Loading Git".into();
+        return "Loading pull requests".into();
     };
     let mut parts = Vec::new();
     if inbox.review > 0 {
@@ -989,7 +989,7 @@ impl Home {
         let inbox_tile = self.tile(
             Tile {
                 page: Page::Inbox,
-                label: "Git",
+                label: "Pull requests",
                 pill: inbox
                     .filter(|inbox| inbox.unread > 0)
                     .map(|inbox| (format!("{} unread", inbox.unread), Tone::Muted)),

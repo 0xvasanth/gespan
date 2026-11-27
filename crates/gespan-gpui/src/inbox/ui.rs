@@ -2378,7 +2378,7 @@ impl gpui::Render for Inbox {
         div()
             .id("inbox-view")
             .role(Role::Group)
-            .aria_label("Git")
+            .aria_label("Pull requests")
             .track_focus(&self.focus)
             .relative()
             .size_full()
@@ -2411,9 +2411,10 @@ impl gpui::Render for Inbox {
             .on_mouse_move(
                 cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
                     if let Some((start, width)) = this.resize_start {
-                        let max = (f32::from(window.viewport_size().width) * 0.5).clamp(300., 480.);
-                        this.state.feed.list_width =
-                            (width + f32::from(event.position.x) - start).clamp(300., max);
+                        let max = (f32::from(window.viewport_size().width) * 0.5)
+                            .clamp(super::git_list::LIST_MIN, super::git_list::LIST_MAX);
+                        this.state.feed.list_width = (width + f32::from(event.position.x) - start)
+                            .clamp(super::git_list::LIST_MIN, max);
                         cx.notify();
                     }
                 }),
@@ -3027,7 +3028,7 @@ mod glass_view_tests {
         // Needs me · Mine · All open with big counts, then Filters, must
         // stay on one line inside the list's padding at the narrowest and
         // the widest list.
-        for (width, reviews) in [(300., true), (340., false), (480., true)] {
+        for (width, reviews) in [(280., true), (380., true), (430., false), (520., true)] {
             let mut items: Vec<Item> = (1..=972)
                 .map(|n| pr("0xvasanth/gespan", n, &format!("Change {n}")))
                 .collect();
@@ -3068,6 +3069,24 @@ mod glass_view_tests {
                 search.top() >= filters.bottom(),
                 "search sits under them ({case})"
             );
+            // The Inbox's 280px default opens at the design's 420px.
+            if width == 280. {
+                assert_eq!(list.size.width, px(420.), "{case}");
+            }
+            // Wide enough for each label and its count: nothing truncates.
+            let widths = [
+                ("git-view-needs_me", 92.),
+                ("git-view-mine", 66.),
+                ("git-view-all", 88.),
+            ];
+            for (id, least) in widths {
+                let tab = visual.debug_bounds(id).expect("each tab shows");
+                assert!(
+                    tab.size.width >= px(least),
+                    "{id} squeezed to {:?} ({case})",
+                    tab.size.width
+                );
+            }
             for id in ["git-view-needs_me", "git-view-mine", "git-view-all"] {
                 let tab = visual.debug_bounds(id).expect("each tab shows");
                 assert!(

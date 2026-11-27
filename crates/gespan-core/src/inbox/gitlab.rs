@@ -59,7 +59,7 @@ pub struct GitlabWorkItem {
     pub attention_reason: String,
     pub author: String,
     /// Merge requests (see [`super::Item`]): the review and check fields the
-    /// Git page groups by. Diff sizes stay 0: GitLab's lists don't carry them.
+    /// Pull requests page groups by. Diff sizes stay 0: GitLab's lists don't carry them.
     pub review_decision: String,
     pub reviews: Vec<Review>,
     pub requested_reviewers: Vec<String>,
@@ -694,6 +694,25 @@ pub fn gitlab_submit_review(
     Ok(())
 }
 
+/// One end of a multi-line note: GitLab names a line by a code made of the
+/// file's SHA-1 and the line's place in the old and new file.
+fn gitlab_range_end(path: &str, line: &super::review::LineRef) -> Value {
+    use sha1::Digest;
+    let digest = sha1::Sha1::digest(path.as_bytes());
+    let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    let kind = match (line.old_line, line.new_line) {
+        (None, Some(_)) => Value::from("new"),
+        (Some(_), None) => Value::from("old"),
+        _ => Value::Null,
+    };
+    serde_json::json!({
+        "line_code": format!("{hash}_{}_{}", line.old_pos, line.new_pos),
+        "type": kind,
+        "old_line": line.old_line,
+        "new_line": line.new_line,
+    })
+}
+
 /// A discussion on one line of a merge request's diff, positioned on its
 /// `diff_refs`: a new line by its new number, a deleted one by its old.
 pub(crate) fn gitlab_line_discussion(refs: &Value, comment: &LineComment) -> Result<Value, String> {
@@ -714,9 +733,21 @@ pub(crate) fn gitlab_line_discussion(refs: &Value, comment: &LineComment) -> Res
         "old_path": comment.path,
         "new_path": comment.path,
     });
-    match comment.side {
-        Side::New => position["new_line"] = comment.line.into(),
-        Side::Old => position["old_line"] = comment.line.into(),
+    let end = &comment.end;
+    // A context line is in both files and GitLab wants both numbers.
+    match (end.old_line, end.new_line, end.side) {
+        (Some(old), Some(new), _) => {
+            position["old_line"] = old.into();
+            position["new_line"] = new.into();
+        }
+        (_, _, Side::New) => position["new_line"] = end.line.into(),
+        (_, _, Side::Old) => position["old_line"] = end.line.into(),
+    }
+    if let Some(start) = comment.range_start() {
+        position["line_range"] = serde_json::json!({
+            "start": gitlab_range_end(&comment.path, start),
+            "end": gitlab_range_end(&comment.path, end),
+        });
     }
     Ok(serde_json::json!({ "body": comment.body.trim(), "position": position }))
 }
