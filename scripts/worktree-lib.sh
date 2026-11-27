@@ -2,10 +2,14 @@
 # Helpers shared by worktree-setup.sh and worktree-prune-builds.sh. Sourced,
 # not run.
 
-# Cargo output folders, relative to a checkout. gespan-gpui is its own
-# workspace, so it has its own target folder.
+# Cargo output folders, relative to a checkout. Every crate is in the root
+# workspace, so there is one.
 # shellcheck disable=SC2034 # used by the scripts that source this file
-TARGET_DIRS=("target" "crates/gespan-gpui/target")
+TARGET_DIRS=("target")
+# Where gespan-gpui built while it was a workspace of its own. Never seeded;
+# pruned like the others, but no copy is kept for seeding.
+# shellcheck disable=SC2034
+LEGACY_TARGET_DIRS=("crates/gespan-gpui/target")
 
 # Prints each checkout of this repository, one per line, the main one first.
 worktree_paths() {

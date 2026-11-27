@@ -184,16 +184,14 @@ jobs:
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
         with:
-          workspaces: |
-            crates/gespan-gpui -> target
-            . -> target
+          workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # rust-cache deletes this folder's files but keeps its folders. A rebuilt
       # sherpa-onnx-sys then trusts the empty lib folder instead of downloading.
       - if: env.RUN == 'true'
         name: Drop the emptied sherpa-onnx folder
         shell: bash
-        run: rm -rf target/sherpa-onnx-prebuilt crates/gespan-gpui/target/sherpa-onnx-prebuilt
+        run: rm -rf target/sherpa-onnx-prebuilt
       # sherpa-onnx-sys downloads its libraries once from a link that can 504
       # for hours; this fetches them through the API, with retries, instead.
       - if: env.RUN == 'true'
@@ -251,8 +249,7 @@ jobs:
           done
           ssh -o BatchMode=yes localhost '"$HOME/.local/bin/herdr" --session default remote-api-bridge --check'
           echo "HERDR_SSHD_TARGET=localhost" >> "$GITHUB_ENV"
-      # The crates Native shares with the mobile link are root-workspace
-      # members, so they run there.
+      # The crates Native shares with the mobile link, on the default profile.
       - if: env.RUN == 'true'
         name: Shared crates
         shell: bash
@@ -332,14 +329,14 @@ jobs:
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
         with:
-          workspaces: crates/gespan-gpui -> target
+          workspaces: . -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # rust-cache deletes this folder's files but keeps its folders. A rebuilt
       # sherpa-onnx-sys then trusts the empty lib folder instead of downloading.
       - if: env.RUN == 'true'
         name: Drop the emptied sherpa-onnx folder
         shell: bash
-        run: rm -rf target/sherpa-onnx-prebuilt crates/gespan-gpui/target/sherpa-onnx-prebuilt
+        run: rm -rf target/sherpa-onnx-prebuilt
       # sherpa-onnx-sys downloads its libraries once from a link that can 504
       # for hours; this fetches them through the API, with retries, instead.
       - if: env.RUN == 'true'
@@ -368,12 +365,12 @@ jobs:
         run: cargo clippy --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-core -p gespan-gpui -p gespan-first-launch --all-targets --profile native-dev -- -D warnings
       # gespan-core's tests run in the Core job on the same OS. Each GUI test
       # gets its own process, which isolates rendering state while they run in
-      # parallel. See crates/gespan-gpui/.config/nextest.toml.
+      # parallel. See .config/nextest.toml.
       - if: env.RUN == 'true'
-        run: cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --cargo-profile native-dev --profile ci --config crates/gespan-gpui/.config/ci-cargo.toml
+        run: cargo nextest run --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --cargo-profile native-dev --profile ci --config .config/ci-cargo.toml
       # Not redundant: the tests enable gpui's test-support feature, so this is
       # the only step that builds what ships.
       - if: env.RUN == 'true'
-        run: cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev --config crates/gespan-gpui/.config/ci-cargo.toml
+        run: cargo build --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-gpui --profile native-dev --config .config/ci-cargo.toml
       - if: env.RUN == 'true'
         run: cargo test --manifest-path crates/gespan-gpui/Cargo.toml --locked -p gespan-first-launch --profile native-dev

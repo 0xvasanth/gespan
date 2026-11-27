@@ -6,23 +6,23 @@ license = "MIT"
 publish = false
 
 [dependencies]
-async-trait = "0.1"
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
-http-body-util = "0.1"
-rand = "0.10"
-serde = "1"
-rmcp = { version = "=3.8.0", default-features = false, features = ["server", "client", "elicitation", "auth", "reqwest-tls-no-provider", "transport-streamable-http-server"] }
-serde_json = "1"
-sha2 = "0.11"
-tokio = { version = "1", features = ["net", "rt-multi-thread", "sync", "time", "macros"] }
-tokio-util = "0.7"
-tracing = "0.1"
+async-trait.workspace = true
+axum = { workspace = true, features = ["http1", "tokio"] }
+http-body-util.workspace = true
+rand.workspace = true
+serde.workspace = true
+rmcp = { workspace = true, features = ["server", "client", "elicitation", "auth", "reqwest-tls-no-provider", "transport-streamable-http-server"] }
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "sync", "time", "macros"] }
+tokio-util.workspace = true
+tracing.workspace = true
 # OAuth discovery and token calls go over HTTPS; the ring provider matches the
 # app's other TLS and needs no C toolchain beyond what it already builds.
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-url = "2"
-ureq = { version = "2.12", default-features = false, features = ["json", "tls"] }
+rustls = { workspace = true, features = ["ring", "std"] }
+url.workspace = true
+ureq = { workspace = true, features = ["json", "tls"] }
 
 [dev-dependencies]
-axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json", "query"] }
-tempfile = "3"
+axum = { workspace = true, features = ["http1", "tokio", "json", "query"] }
+tempfile.workspace = true

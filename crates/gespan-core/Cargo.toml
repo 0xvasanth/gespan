@@ -1,5 +1,4 @@
 [package]
-workspace = "../gespan-gpui"
 name = "gespan-core"
 version.workspace = true
 edition.workspace = true
@@ -14,105 +13,105 @@ serde.workspace = true
 # Stored floats must reload exactly, or saved revisions stop matching.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 rusqlite.workspace = true
-toasty.workspace = true
+toasty = { workspace = true, features = ["migration"] }
 toasty-core.workspace = true
 toasty-driver-sqlite.workspace = true
 # The decision log's vectors: `vec0`, compiled against the bundled SQLite
 # above and registered on every connection (`orm::register_sqlite_vec`).
-sqlite-vec = "0.1.9"
+sqlite-vec.workspace = true
 # Its embedding model's pinned files and their downloader.
-gespan-models = { path = "../gespan-models" }
+gespan-models.workspace = true
 # Nomic embeddings on the CPU, behind the `nomic` feature. Model files come
 # from gespan-models, so no Hugging Face client. ort links no ONNX Runtime of
 # its own (`alternative-backend`): the app has exactly one, the static
 # onnxruntime sherpa-onnx-sys ships for dictation on every target, and
 # `embed::nomic` hands its API to ort.
-fastembed = { version = "7.7", optional = true, default-features = false, features = ["onnx"] }
-ort = { version = "=2.0.0-rc.15", optional = true, default-features = false, features = ["alternative-backend", "std", "api-24"] }
-sherpa-onnx-sys = { version = "2.0.0", optional = true }
+fastembed = { workspace = true, features = ["onnx"], optional = true }
+ort = { workspace = true, features = ["alternative-backend", "std", "api-24"], optional = true }
+sherpa-onnx-sys = { workspace = true, optional = true }
 # The ORM driver wrapper implements Toasty's async driver traits.
-async-trait = "0.1"
-async-channel = "2"
-shlex = "2"
-url = "2"
-base64 = "0.23"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
-sha1 = "0.11"
-sha2 = "0.11"
-rand = "0.10"
-regex = "1"
-serde_path_to_error = "0.1.20"
-zstd = "0.14"
-toml = "1.1.8"
-ureq = "2.12"
+async-trait.workspace = true
+async-channel.workspace = true
+shlex.workspace = true
+url.workspace = true
+base64.workspace = true
+chrono = { workspace = true, features = ["std", "clock"] }
+sha1.workspace = true
+sha2.workspace = true
+rand.workspace = true
+regex.workspace = true
+serde_path_to_error.workspace = true
+zstd.workspace = true
+toml.workspace = true
+ureq = { workspace = true, features = ["default"] }
 # Loopback only, so no TLS: OpenCode's client-hosted MCP socket.
-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
-webpki-roots = "1.0.11"
-similar = "3"
-unicode-width = "0.2"
-unicode-normalization = "0.1"
-gespan-mobile-link = { path = "../mobile-link" }
-gespan-tracker-secrets = { path = "../tracker-secrets" }
-gespan-tracker-client = { path = "../tracker-client" }
-gespan-board-store = { path = "../board-store" }
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
-uuid = { version = "1", features = ["v4"] }
-if-addrs = "0.15"
-hostname = "0.4"
-igd-next = "0.18"
-natpmp = "0.5"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
+tungstenite = { workspace = true, features = ["handshake"] }
+webpki-roots.workspace = true
+similar.workspace = true
+unicode-width.workspace = true
+unicode-normalization.workspace = true
+gespan-mobile-link.workspace = true
+gespan-tracker-secrets.workspace = true
+gespan-tracker-client.workspace = true
+gespan-board-store.workspace = true
+quinn = { workspace = true, features = ["runtime-tokio", "rustls-ring"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }
+uuid = { workspace = true, features = ["v4"] }
+if-addrs.workspace = true
+hostname.workspace = true
+igd-next.workspace = true
+natpmp.workspace = true
+image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }
 # The live pane decodes JPEG pictures straight to BGRA (already under `image`).
-zune-jpeg = "0.5"
-rquickjs = "0.14.0"
-semver = { version = "1", features = ["serde"] }
-minisign-verify = "0.3"
-tempfile = "3"
-flate2 = "1"
-tar = "0.4"
+zune-jpeg.workspace = true
+rquickjs.workspace = true
+semver = { workspace = true, features = ["serde"] }
+minisign-verify.workspace = true
+tempfile.workspace = true
+flate2.workspace = true
+tar.workspace = true
 # Diagnostics: structured JSONL logs, crash files and the `log` bridge.
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "ansi", "env-filter", "registry", "tracing-log"] }
-tracing-appender = "0.2"
-log = "0.4"
-tracing-log = { version = "0.2", default-features = false, features = ["log-tracer", "std"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["std", "fmt", "ansi", "env-filter", "registry", "tracing-log"] }
+tracing-appender.workspace = true
+log.workspace = true
+tracing-log = { workspace = true, features = ["log-tracer", "std"] }
 # Worktree copies: copy-on-write where the disk has it, and `.worktreeinclude`.
-reflink-copy = "0.1"
-ignore = "0.4"
-rayon = "1"
+reflink-copy.workspace = true
+ignore.workspace = true
+rayon.workspace = true
 # Report an issue: the scrubber and the bundle zip.
-gespan-redact = { path = "../gespan-redact" }
-gespan-mcp-config = { path = "../gespan-mcp-config" }
-mcp-hub = { path = "../mcp-hub" }
-gespan-browser = { path = "../gespan-browser" }
+gespan-redact.workspace = true
+gespan-mcp-config.workspace = true
+mcp-hub.workspace = true
+gespan-browser.workspace = true
 # Only for its models, registered as the Graph database kind.
-gespan-graph = { path = "../gespan-graph" }
-herdr-link = { path = "../herdr-link" }
-zip = { version = "9.1", default-features = false, features = ["deflate-flate2"] }
+gespan-graph.workspace = true
+herdr-link.workspace = true
+zip = { workspace = true, features = ["deflate-flate2"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+keyring = { workspace = true, features = ["apple-native"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
-keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
-rusty-leveldb = "4"
-tempfile = "3"
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Threading"] }
+keyring = { workspace = true, features = ["windows-native"] }
+rusty-leveldb.workspace = true
+tempfile.workspace = true
 
 # Exercise WebView2 storage fixtures on Linux and macOS too.
 [target.'cfg(not(windows))'.dev-dependencies]
-rusty-leveldb = "4"
+rusty-leveldb.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3.6", default-features = false, features = ["linux-native-sync-persistent", "crypto-rust"] }
+keyring = { workspace = true, features = ["linux-native-sync-persistent", "crypto-rust"] }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc.workspace = true
 
 [dev-dependencies]
-gespan-tracker-secrets = { path = "../tracker-secrets", features = ["testing"] }
-gespan-tracker-client = { path = "../tracker-client", features = ["testing"] }
-tempfile = "3"
-gespan-redact = { path = "../gespan-redact", features = ["fixtures"] }
-gespan-browser = { path = "../gespan-browser", features = ["testing"] }
+gespan-tracker-secrets = { workspace = true, features = ["testing"] }
+gespan-tracker-client = { workspace = true, features = ["testing"] }
+tempfile.workspace = true
+gespan-redact = { workspace = true, features = ["fixtures"] }
+gespan-browser = { workspace = true, features = ["testing"] }

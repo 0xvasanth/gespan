@@ -5,25 +5,22 @@ edition = "2021"
 license = "MIT"
 publish = false
 
-# Built under the root workspace now, and later under the gespan-gpui
-# workspace too once gespan-core depends on it, so nothing here inherits from
-# either workspace.
 [dependencies]
 # The store goes through Toasty (same pin as gespan-core, which registers
 # these models as its Graph kind). Its SQLite driver links this rusqlite.
-toasty = { version = "=0.11.0", features = ["sqlite", "migration"] }
-toasty-core = "=0.11.0"
-toasty-driver-sqlite = "=0.11.0"
-async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread"] }
+toasty = { workspace = true, features = ["sqlite", "migration"] }
+toasty-core.workspace = true
+toasty-driver-sqlite.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 # The check for unknown migrations before Toasty opens a file, and the
 # plain connection tests use. The SQLite build is the same bundled one
 # board-store uses.
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache", "hooks"] }
-serde_json = "1"
-thiserror = "2"
+rusqlite = { workspace = true, features = ["bundled", "cache", "hooks"] }
+serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 # The query oracle only.
-petgraph = "0.8"
-tempfile = "3"
+petgraph.workspace = true
+tempfile.workspace = true

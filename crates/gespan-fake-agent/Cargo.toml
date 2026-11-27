@@ -4,7 +4,6 @@ version.workspace = true
 edition = "2021"
 license.workspace = true
 publish = false
-workspace = "../gespan-gpui"
 description = "A stand-in `claude` for Gespan's end-to-end tests: speaks enough stream-json for a turn and records what it was sent."
 
 [[bin]]
@@ -15,4 +14,4 @@ doctest = false
 
 [dependencies]
 serde_json.workspace = true
-ureq = { version = "2.12", default-features = false, features = ["json"] }
+ureq = { workspace = true, features = ["json"] }

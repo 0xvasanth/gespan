@@ -24,7 +24,7 @@ fn tauri_data_dir(home: &Path) -> PathBuf {
 /// The binary that ships, which a test build would not be.
 fn binary() -> PathBuf {
     let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(
-        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../gespan-gpui/target"),
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"),
         PathBuf::from,
     );
     let name = format!("gespan-gpui{}", std::env::consts::EXE_SUFFIX);

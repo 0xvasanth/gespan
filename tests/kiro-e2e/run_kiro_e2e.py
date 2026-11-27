@@ -34,7 +34,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-DEFAULT_APP = REPO / "crates/gespan-gpui/target/native-dev/Gespan Dev.app"
+DEFAULT_APP = REPO / "target/native-dev/Gespan Dev.app"
 STUB = HERE / "fake-kiro-cli"
 STUB_REPLY = "GESPAN KIRO STUB REPLY"
 OTHER_PROVIDERS = ["codex", "claude", "cursor", "grok", "opencode", "antigravity",

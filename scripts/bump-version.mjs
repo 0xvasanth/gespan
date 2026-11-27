@@ -40,16 +40,10 @@ replaceFirst(
   /^(version = ")[^"]+(")/m,
   `$1${version}$2`,
 );
-replaceFirst(
-  join(root, "crates/gespan-gpui/Cargo.toml"),
-  /(\[workspace\.package\]\r?\nversion = ")[^"]+(")/,
-  `$1${version}$2`,
-);
-// Every package that takes the workspace version, in both lockfiles, so
+// Every package that takes the workspace version, in the lockfile, so
 // `--locked` builds keep working.
 const lockfiles = {
-  "Cargo.lock": ["gespan-browser", "gespan-models", "gespan-speech"],
-  "crates/gespan-gpui/Cargo.lock": [
+  "Cargo.lock": [
     "gespan-browser",
     "gespan-core",
     "gespan-fake-agent",

@@ -435,7 +435,7 @@ fn fake_agent() -> &'static Path {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let target = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|| manifest.join("target"))
+            .unwrap_or_else(|| manifest.join("../../target"))
             .join("e2e-fake-agent");
         let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
         let output = Command::new(cargo)

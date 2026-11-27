@@ -32,10 +32,12 @@ cutoff=$(( $(date +%s) - days * 86400 ))
 root="$(real_dir "$root")"
 main="$(real_dir "$(worktree_paths | sed -n 1p)")"
 
-for relative in "${TARGET_DIRS[@]}"; do
+for relative in "${TARGET_DIRS[@]}" "${LEGACY_TARGET_DIRS[@]}"; do
   # The checkouts holding the best copy of some profile: worktree-setup.sh
-  # clones from these, so they stay however idle they are.
+  # clones from these, so they stay however idle they are. Legacy folders
+  # seed nothing, so none of them is kept.
   keep="$(
+    printf '%s\n' "${TARGET_DIRS[@]}" | grep -Fxq "$relative" || exit 0
     profiles "$relative" | while IFS= read -r profile; do
       best="$(best_profile "$relative" "$profile")"
       [ -z "$best" ] || dirname "$best"

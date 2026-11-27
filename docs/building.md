@@ -33,7 +33,7 @@ On macOS that is `~/Library/Application Support/Gespan Development/`; the
 The build command does not launch the app. On macOS, open the result with:
 
 ```sh
-open "crates/gespan-gpui/target/release/Gespan.app"
+open "target/release/Gespan.app"
 ```
 
 The release app reads and writes your installed Gespan data.

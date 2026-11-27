@@ -8,10 +8,10 @@ publish = false
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-gespan-models = { path = "../gespan-models" }
-cpal = "0.18"
-sherpa-onnx = "2.0.0"
+gespan-models.workspace = true
+cpal.workspace = true
+sherpa-onnx.workspace = true
 thiserror = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

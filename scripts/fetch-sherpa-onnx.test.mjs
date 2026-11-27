@@ -89,8 +89,8 @@ test("each release target maps to the archive sherpa-onnx-sys links statically",
   assert.throws(() => archiveFor("x86_64-unknown-freebsd", "2.0.0"), /no sherpa-onnx static archive for x86_64-unknown-freebsd/);
 });
 
-test("the version comes from the native lockfile, and a lockfile without it is refused", async () => {
-  const native = await readFile(fileURLToPath(new URL("../crates/gespan-gpui/Cargo.lock", import.meta.url)), "utf8");
+test("the version comes from the workspace lockfile, and a lockfile without it is refused", async () => {
+  const native = await readFile(fileURLToPath(new URL("../Cargo.lock", import.meta.url)), "utf8");
   assert.match(lockedVersion(native), /^\d+\.\d+\.\d+$/);
   assert.equal(lockedVersion(lock.replace(/\n/g, "\r\n")), "2.0.0");
   assert.throws(() => lockedVersion('[[package]]\nname = "sherpa-onnx"\nversion = "2.0.0"\n'), /no sherpa-onnx-sys package/);

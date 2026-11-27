@@ -18,7 +18,8 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         embed_windows_icon(&manifest_dir);
     }
-    dependency_guard::check(&manifest_dir);
+    // The lockfile is the workspace's, two directories up.
+    dependency_guard::check(&manifest_dir.join("../.."));
 }
 
 /// GPUI loads the window and taskbar icon from resource ID 1 of the executable,

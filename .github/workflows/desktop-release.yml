@@ -77,7 +77,7 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/gespan-gpui
+          workspaces: . -> target
           key: native-release-${{ matrix.target }}
           cache-on-failure: true
       - name: Configure native channel and version
@@ -196,7 +196,7 @@ jobs:
           GESPAN_ALLOW_UNSIGNED: ${{ inputs.allow_unsigned && '1' || '' }}
         run: |
           set -euo pipefail
-          BINARY="crates/gespan-gpui/target/${{ matrix.target }}/release/gespan-gpui"
+          BINARY="target/${{ matrix.target }}/release/gespan-gpui"
           if [ "$RUNNER_OS" = Windows ]; then BINARY="$BINARY.exe"; fi
           node scripts/package.mjs '${{ matrix.kind }}' "$BINARY" native-dist '${{ matrix.arch }}'
       - uses: actions/upload-artifact@v7
@@ -260,7 +260,7 @@ jobs:
           echo "SHERPA_ONNX_ARCHIVE_DIR=$RUNNER_TEMP/sherpa-onnx" >> "$GITHUB_ENV"
       - run: cargo test --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-core --profile native-dev app_update
       - run: cargo build --locked --manifest-path crates/gespan-gpui/Cargo.toml -p gespan-gpui --release
-      - run: node scripts/package.mjs rpm crates/gespan-gpui/target/release/gespan-gpui native-dist x86_64
+      - run: node scripts/package.mjs rpm target/release/gespan-gpui native-dist x86_64
       - uses: actions/upload-artifact@v7
         with:
           name: native-linux-rpm
@@ -340,7 +340,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/gespan-gpui
+          workspaces: . -> target
           key: native-publication-verifier
       # The vX.Y.Z tag publishes into the vX.Y.Z release.
       - name: Select the version's shared release
