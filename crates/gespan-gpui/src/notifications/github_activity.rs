@@ -1,6 +1,7 @@
 //! Read-only GitHub polling for linked session notifications. No GitHub calls
 //! occur until the shell invokes poll; acknowledgment persistence stays in shell.
 use gespan_core::{
+    cli::Finished,
     session_groups::{GithubWorkItem, WorkItem},
     store::{Session, Store},
 };
@@ -173,8 +174,34 @@ pub(crate) struct GithubActivity {
     /// Detail feeds by URL with the item `updated_at` they were fetched for:
     /// an unchanged item reuses them instead of calling gh every poll.
     details: Details,
+    pace: Pace,
 }
+/// Detail feeds by URL. A feed that failed for good is kept as `Null`, so it
+/// isn't asked for again until its item changes.
 type Details = HashMap<String, (i64, Value)>;
+/// How often to ask GitHub: every minute, and after a failed poll (GitHub
+/// timing out, a rate limit, no network) wait 2, 4, 8 and then 15 minutes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Pace {
+    failures: u32,
+    retry_at: Option<Instant>,
+}
+const POLL_EVERY: Duration = Duration::from_secs(60);
+const BACKOFF_MINUTES: [u64; 4] = [2, 4, 8, 15];
+impl Pace {
+    fn ready(&self, now: Instant) -> bool {
+        self.retry_at.is_none_or(|at| now >= at)
+    }
+    fn record(&mut self, failed: bool, now: Instant) {
+        if failed {
+            self.failures += 1;
+            let ix = (self.failures as usize - 1).min(BACKOFF_MINUTES.len() - 1);
+            self.retry_at = Some(now + Duration::from_secs(BACKOFF_MINUTES[ix] * 60));
+        } else {
+            *self = Self::default();
+        }
+    }
+}
 impl EventEmitter<GithubActivityEvent> for GithubActivity {}
 impl GithubActivity {
     pub(crate) fn new(seen: HashMap<i64, i64>) -> Self {
@@ -184,6 +211,7 @@ impl GithubActivity {
             checked: None,
             checking: false,
             details: HashMap::new(),
+            pace: Pace::default(),
         }
     }
     pub(crate) fn restore_seen(&mut self, seen: HashMap<i64, i64>) {
@@ -209,17 +237,13 @@ impl GithubActivity {
         }
     }
     pub(crate) fn ready_to_poll(&self) -> bool {
+        let now = Instant::now();
         !self.checking
-            && self
-                .checked
-                .is_none_or(|at| at.elapsed() >= Duration::from_secs(60))
+            && self.pace.ready(now)
+            && self.checked.is_none_or(|at| now - at >= POLL_EVERY)
     }
     pub(crate) fn poll(&mut self, sessions: Vec<Session>, cx: &mut Context<Self>) {
-        if self.checking
-            || self
-                .checked
-                .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
-        {
+        if !self.ready_to_poll() {
             return;
         }
         self.checking = true;
@@ -228,12 +252,17 @@ impl GithubActivity {
         let details = std::mem::take(&mut self.details);
         let work = cx
             .background_executor()
-            .spawn(async move { fetch(sessions, &seen, details) });
+            .spawn(async move { fetch(sessions, &seen, details, &gh) });
         cx.spawn(async move |this, cx| {
-            let (cards, details) = work.await;
+            let fetched = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.checking = false;
-                this.details = details;
+                this.details = fetched.details;
+                this.pace.record(fetched.failed, Instant::now());
+                // A failed poll keeps the cards from the last one.
+                let Some(cards) = fetched.cards else {
+                    return;
+                };
                 // An acknowledgment made while polling must not reappear.
                 this.cards = cards
                     .into_iter()
@@ -251,22 +280,22 @@ fn timestamp(value: &str) -> i64 {
         .map(|d| d.timestamp_millis())
         .unwrap_or(0)
 }
-fn api(endpoint: &str) -> Result<Value, String> {
+/// Runs gh with these arguments. Tests pass a fake.
+type Gh<'a> = &'a dyn Fn(&[String]) -> Result<Finished, String>;
+fn gh(args: &[String]) -> Result<Finished, String> {
     let binary = gespan_core::scm::resolve_gui_binary("gh").ok_or("GitHub CLI not found")?;
-    let text = gespan_core::cli::output(
-        &binary,
-        &[
-            "api".into(),
-            "--method".into(),
-            "GET".into(),
-            endpoint.into(),
-            "--jq".into(),
-            r#"if type == "array" then map({id,sha,user:{login:.user.login},author:{login:.author.login},body:((.body // "")[0:256]),state,submitted_at,created_at,html_url,commit:{message:((.commit.message // "")[0:256]),committer:{date:.commit.committer.date}}}) else {title,state,merged,updated_at} end"#.into(),
-        ],
-        Path::new("/"),
-        Duration::from_secs(20),
-    )?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    gespan_core::cli::run(&binary, args, Path::new("/"), Duration::from_secs(20))
+}
+const DETAIL_JQ: &str = r#"if type == "array" then map({id,sha,user:{login:.user.login},author:{login:.author.login},body:((.body // "")[0:256]),state,submitted_at,created_at,html_url,commit:{message:((.commit.message // "")[0:256]),committer:{date:.commit.committer.date}}}) else {title,state,merged,updated_at} end"#;
+fn api(gh: Gh, endpoint: &str) -> Result<Value, String> {
+    let args = ["api", "--method", "GET", endpoint, "--jq", DETAIL_JQ].map(String::from);
+    let finished = gh(&args)?;
+    if !finished.success {
+        return Err(format!("{} {}", finished.stderr, finished.stdout)
+            .trim()
+            .to_owned());
+    }
+    serde_json::from_str(&finished.stdout).map_err(|e| e.to_string())
 }
 /// Only canonical GitHub repository slugs enter a gh API endpoint or query.
 fn canonical(item: &WorkItem) -> bool {
@@ -282,37 +311,53 @@ fn canonical(item: &WorkItem) -> bool {
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
         })
 }
-/// Every linked item's summary in one GraphQL request, shaped like the REST
-/// `api` summary. None if the request fails, so callers fall back to REST.
-fn summaries(items: &[(String, u64)]) -> Option<HashMap<(String, u64), Value>> {
+fn summary_query(chunk: &[(String, u64)]) -> String {
+    let mut query = String::from("query{");
+    for (ix, (repo, number)) in chunk.iter().enumerate() {
+        let Some((owner, name)) = repo.split_once('/') else {
+            continue;
+        };
+        query.push_str(&format!(
+            "i{ix}:repository(owner:\"{owner}\",name:\"{name}\"){{issueOrPullRequest(number:{number}){{...on PullRequest{{title state merged updatedAt}}...on Issue{{title state updatedAt}}}}}}"
+        ));
+    }
+    query.push('}');
+    query
+}
+/// Every linked item's summary, 50 to a GraphQL request, shaped like the REST
+/// summary. An item GitHub can't find (deleted, moved, or private to you) is
+/// left out and the rest are kept: gh exits with an error for such an answer
+/// but still prints its `data`. Errors only when an answer has no `data` at
+/// all, such as a rate limit or no network, and then nothing falls back to
+/// asking item by item, which once spent the hour's REST budget in minutes.
+fn summaries(gh: Gh, items: &[(String, u64)]) -> Result<HashMap<(String, u64), Value>, String> {
     let mut out = HashMap::new();
     for chunk in items.chunks(50) {
-        let mut query = String::from("query{");
-        for (ix, (repo, number)) in chunk.iter().enumerate() {
-            let (owner, name) = repo.split_once('/')?;
-            query.push_str(&format!(
-                "i{ix}:repository(owner:\"{owner}\",name:\"{name}\"){{issueOrPullRequest(number:{number}){{...on PullRequest{{title state merged updatedAt}}...on Issue{{title state updatedAt}}}}}}"
-            ));
-        }
-        query.push('}');
-        let binary = gespan_core::scm::resolve_gui_binary("gh")?;
-        let text = gespan_core::cli::output(
-            &binary,
-            &[
-                "api".into(),
-                "graphql".into(),
-                "-f".into(),
-                format!("query={query}"),
-            ],
-            Path::new("/"),
-            Duration::from_secs(20),
-        )
-        .ok()?;
-        let body: Value = serde_json::from_str(&text).ok()?;
-        let data = body.get("data")?;
+        let args = [
+            "api".to_owned(),
+            "graphql".to_owned(),
+            "-f".to_owned(),
+            format!("query={}", summary_query(chunk)),
+        ];
+        let finished = gh(&args)?;
+        let data = serde_json::from_str::<Value>(&finished.stdout)
+            .ok()
+            .and_then(|body| body.get("data").filter(|d| d.is_object()).cloned());
+        let Some(data) = data else {
+            let error = if finished.stderr.is_empty() {
+                finished.stdout
+            } else {
+                finished.stderr
+            };
+            return Err(if error.is_empty() {
+                "GitHub gave no answer".to_owned()
+            } else {
+                error
+            });
+        };
         for (ix, item) in chunk.iter().enumerate() {
             let node = &data[format!("i{ix}")]["issueOrPullRequest"];
-            if node.is_null() {
+            if !node.is_object() {
                 continue;
             }
             // REST reports a merged pull request as closed plus `merged`.
@@ -331,13 +376,16 @@ fn summaries(items: &[(String, u64)]) -> Option<HashMap<(String, u64), Value>> {
             );
         }
     }
-    Some(out)
+    Ok(out)
 }
-fn fetch(
-    sessions: Vec<Session>,
-    seen: &HashMap<i64, i64>,
-    previous: Details,
-) -> (HashMap<i64, Card>, Details) {
+/// One poll's result. `cards` is None when the summaries couldn't be read,
+/// so the last poll's cards stay; `failed` asks the next poll to wait.
+struct Fetched {
+    cards: Option<HashMap<i64, Card>>,
+    details: Details,
+    failed: bool,
+}
+fn fetch(sessions: Vec<Session>, seen: &HashMap<i64, i64>, previous: Details, gh: Gh) -> Fetched {
     let mut cards = HashMap::new();
     let mut details = Details::new();
     let sessions: Vec<_> = sessions
@@ -351,8 +399,26 @@ fn fetch(
         .collect();
     items.sort();
     items.dedup();
-    let batched = summaries(&items);
-    let mut cache: HashMap<String, Option<Value>> = HashMap::new();
+    if items.is_empty() {
+        return Fetched {
+            cards: Some(cards),
+            details,
+            failed: false,
+        };
+    }
+    let summaries = match summaries(gh, &items) {
+        Ok(summaries) => summaries,
+        Err(_) => {
+            return Fetched {
+                cards: None,
+                details: previous,
+                failed: true,
+            };
+        }
+    };
+    // Set once GitHub times out or rate-limits a detail feed: the rest of
+    // this poll asks for nothing more.
+    let mut throttled = false;
     for session in sessions {
         let Some(item) = session.work_item.as_ref().and_then(|w| w.github()).cloned() else {
             continue;
@@ -363,14 +429,7 @@ fn fetch(
             if item.kind == "pr" { "pull" } else { "issue" },
             item.number
         );
-        let summary = match &batched {
-            Some(batched) => batched.get(&(item.repo.clone(), item.number)).cloned(),
-            None => cache
-                .entry(base.clone())
-                .or_insert_with(|| api(&base).ok())
-                .clone(),
-        };
-        let Some(body) = summary else {
+        let Some(body) = summaries.get(&(item.repo.clone(), item.number)) else {
             continue;
         };
         let updated_at = timestamp(body["updated_at"].as_str().unwrap_or(""));
@@ -405,12 +464,20 @@ fn fetch(
         for (url, kind) in feeds {
             let body = match previous.get(&url).or_else(|| details.get(&url)) {
                 Some((at, body)) if *at == updated_at => body.clone(),
-                _ => match api(&url) {
+                _ if throttled => {
+                    card.details_error = true;
+                    continue;
+                }
+                _ => match api(gh, &url) {
                     Ok(body) => body,
-                    Err(_) => {
+                    Err(error) if gespan_core::inbox::is_throttled(&error) => {
+                        throttled = true;
                         card.details_error = true;
                         continue;
                     }
+                    // Gone or not allowed: remembered, so it isn't asked
+                    // for again until the item changes.
+                    Err(_) => Value::Null,
                 },
             };
             details.insert(url, (updated_at, body.clone()));
@@ -479,5 +546,12 @@ fn fetch(
             .sort_by_key(|e| std::cmp::Reverse(timestamp(&e.created_at)));
         cards.insert(card.session, card);
     }
-    (cards, details)
+    Fetched {
+        cards: Some(cards),
+        details,
+        failed: throttled,
+    }
 }
+#[cfg(test)]
+#[path = "github_activity_tests.rs"]
+mod tests;

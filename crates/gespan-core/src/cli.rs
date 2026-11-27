@@ -34,6 +34,25 @@ pub fn output(
 ) -> Result<String, String> {
     output_with_env(binary, args, cwd, timeout, &[])
 }
+/// What a finished command said, whether or not it succeeded.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Finished {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+/// Like [`output`], but a command that exits with an error still returns
+/// what it printed. `gh api graphql` exits with an error when one field of
+/// an answer couldn't be resolved, yet prints the rest of the answer.
+/// Errors only when the command can't start or runs past `timeout`.
+pub fn run(
+    binary: &Path,
+    args: &[String],
+    cwd: &Path,
+    timeout: Duration,
+) -> Result<Finished, String> {
+    run_with_env(binary, args, cwd, timeout, &[])
+}
 /// [`output`] with `env` set over the GUI environment.
 pub(crate) fn output_with_env(
     binary: &Path,
@@ -42,6 +61,22 @@ pub(crate) fn output_with_env(
     timeout: Duration,
     env: &[(std::ffi::OsString, std::ffi::OsString)],
 ) -> Result<String, String> {
+    let finished = run_with_env(binary, args, cwd, timeout, env)?;
+    if finished.success {
+        Ok(finished.stdout)
+    } else {
+        Err(format!("{} {}", finished.stderr, finished.stdout)
+            .trim()
+            .to_owned())
+    }
+}
+fn run_with_env(
+    binary: &Path,
+    args: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<Finished, String> {
     let mut command = Command::new(binary);
     crate::scm::shell::apply_gui_env(&mut command);
     command
@@ -84,11 +119,11 @@ pub(crate) fn output_with_env(
     crate::process::terminate(&mut child);
     let out = stdout.join().unwrap_or_default();
     let err = stderr.join().unwrap_or_default();
-    if result?.success() {
-        Ok(out)
-    } else {
-        Err(format!("{err} {out}").trim().to_owned())
-    }
+    Ok(Finished {
+        success: result?.success(),
+        stdout: out,
+        stderr: err,
+    })
 }
 #[derive(Clone, Debug)]
 pub struct Inspection {

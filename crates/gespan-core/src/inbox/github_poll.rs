@@ -360,7 +360,7 @@ pub(crate) fn parse_probe(output: &str) -> Option<Probe> {
 }
 
 /// A timeout or a rate limit: worth waiting out rather than asking again.
-pub(crate) fn is_throttled(error: &str) -> bool {
+pub fn is_throttled(error: &str) -> bool {
     let error = error.to_lowercase();
     [
         "http 502",

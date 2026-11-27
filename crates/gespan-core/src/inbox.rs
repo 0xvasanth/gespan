@@ -14,6 +14,7 @@ pub use avatar::png as avatar_png;
 pub mod ci_repair;
 pub mod events;
 pub(crate) mod github_poll;
+pub use github_poll::is_throttled;
 pub mod polish;
 pub mod queue;
 pub mod review;
