@@ -138,13 +138,16 @@ fn every_projects_tabs_share_the_strip(cx: &mut TestAppContext) {
             .size
             .width
     };
-    let mine = width(visual, here);
+    // The selected tab stays expanded; every other tab, this project's or
+    // another's, takes the same share of the rest.
+    assert!((width(visual, here) - px(SELECTED_TAB_WIDTH)).abs() <= px(1.));
+    let theirs = width(visual, other);
     assert!(
-        mine < px(crate::theme::TITLE_TAB_MAX_WIDTH),
-        "the strip is shared: {mine:?}"
+        theirs < px(SELECTED_TAB_WIDTH),
+        "the strip is shared: {theirs:?}"
     );
-    for id in away.iter().chain([&other]) {
-        assert!((width(visual, *id) - mine).abs() <= px(1.), "tab {id}");
+    for id in &away {
+        assert!((width(visual, *id) - theirs).abs() <= px(1.), "tab {id}");
     }
     let max = window
         .update(visual, |shell, _, _| shell.tab_scroll.max_offset().x)
@@ -360,4 +363,109 @@ fn a_chat_that_starts_in_a_worktree_lists_and_opens_under_its_project(cx: &mut T
             );
         })
         .unwrap();
+}
+
+#[gpui::test]
+fn a_full_strip_keeps_the_selected_tab_open_and_closable(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, _, here) = window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(900.), px(700.)));
+    // So many tabs that every other one is squeezed to its mark.
+    let crowd = window
+        .update(visual, |shell, _, cx| {
+            (0..40)
+                .map(|_| {
+                    let summary = locked(&shell.store)
+                        .unwrap()
+                        .create("codex", "/work/gespan")
+                        .unwrap();
+                    let id = summary.id;
+                    shell.add(summary, cx);
+                    let active = shell.workspace.active;
+                    shell.workspace.open(id);
+                    shell.workspace.active = active;
+                    shell.invalidate_chrome(cx);
+                    id
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    let settle = |visual: &mut VisualTestContext| {
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+    };
+    settle(visual);
+    let bounds = |visual: &mut VisualTestContext, name: String| {
+        visual.debug_bounds(Box::leak(name.into_boxed_str()))
+    };
+    // The selected tab stays expanded: its project, title and close button.
+    let tab = bounds(visual, format!("title-tab-{here}")).expect("the selected tab is drawn");
+    assert!(
+        (tab.size.width - px(SELECTED_TAB_WIDTH)).abs() <= px(2.),
+        "expanded: {tab:?}"
+    );
+    assert!(bounds(visual, format!("title-tab-project-name-{here}")).is_some());
+    let close = bounds(visual, format!("close-title-tab-{here}")).expect("selected tab closes");
+    assert!(
+        tab.contains(&close.center()),
+        "{close:?} sits on its tab {tab:?}"
+    );
+    // The others are select-only plates, so a click on one never closes it.
+    let mut others = 0;
+    for id in &crowd {
+        if let Some(other) = bounds(visual, format!("title-tab-{id}")) {
+            assert!(
+                other.size.width < px(TAB_CLOSE_MIN_WIDTH),
+                "tab {id}: {other:?}"
+            );
+            assert!(
+                bounds(visual, format!("close-title-tab-{id}")).is_none(),
+                "tab {id}"
+            );
+            others += 1;
+        }
+    }
+    assert!(others > 10, "{others} squeezed tabs on screen");
+    // Closing it selects another, which expands in its place.
+    visual.simulate_mouse_move(close.center(), None, Default::default());
+    visual.simulate_click(close.center(), Default::default());
+    settle(visual);
+    let next = window
+        .update(visual, |shell, _, _| {
+            assert!(!shell.workspace.tabs.contains(&here), "closed");
+            shell
+                .workspace
+                .active_tab()
+                .expect("another tab is selected")
+        })
+        .unwrap();
+    let next_tab = bounds(visual, format!("title-tab-{next}")).expect("drawn");
+    assert!(
+        (next_tab.size.width - px(SELECTED_TAB_WIDTH)).abs() <= px(2.),
+        "{next_tab:?}"
+    );
+    assert!(bounds(visual, format!("close-title-tab-{next}")).is_some());
+}
+
+#[gpui::test]
+fn a_roomy_strip_still_gives_every_tab_the_same_width(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1600.), px(800.)));
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    visual.run_until_parked();
+    let width = |visual: &mut VisualTestContext, id: i64| {
+        visual
+            .debug_bounds(Box::leak(format!("title-tab-{id}").into_boxed_str()))
+            .unwrap()
+            .size
+            .width
+    };
+    // Two tabs fit at full width: the selected one is no wider.
+    assert_eq!(width(visual, here), px(crate::theme::TITLE_TAB_MAX_WIDTH));
+    assert_eq!(width(visual, other), width(visual, here));
 }

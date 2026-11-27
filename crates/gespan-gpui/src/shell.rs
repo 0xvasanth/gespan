@@ -476,6 +476,9 @@ const STRIP_PAD: f32 = STRIP_LEAD + STRIP_TRAIL;
 const TAB_MIN_WIDTH: f32 = TAB_PLATE_HEIGHT;
 /// Narrower tabs drop their close button.
 const TAB_CLOSE_MIN_WIDTH: f32 = 72.;
+/// However crowded the strip, the selected tab keeps this much: room for its
+/// mark, project, title and close button. The others share the rest.
+const SELECTED_TAB_WIDTH: f32 = 184.;
 /// The new-tab button and its leading margin.
 const STRIP_NEW_TAB: f32 = TAB_PLATE_HEIGHT + 2.;
 const CORNER_CONTROL_GAP: f32 = 4.;
@@ -7721,11 +7724,6 @@ impl Shell {
             })
             .sum();
         let avail = viewport - STRIP_PAD - STRIP_NEW_TAB - group_room - share * 2.;
-        let width = if share <= 0. {
-            TITLE_TAB_MAX_WIDTH
-        } else {
-            (avail / share).clamp(0., TITLE_TAB_MAX_WIDTH)
-        };
         let selected = self.active_title_tab(cx);
         let now = std::time::Instant::now();
         let selection_changed = self.title_tab_selection.1 != selected;
@@ -7739,9 +7737,45 @@ impl Shell {
         }
         let leaving = self.title_tab_selection.0.clone();
         let switching = leaving.is_some();
-        // Every tab takes the same share, the selected one included, so
-        // switching tabs never moves the strip. Past the narrowest plate the
-        // strip scrolls instead of squeezing.
+        // How far each tab is expanded: the selected one fully, easing over
+        // from the one it took over from. Grouped, every tab takes the same
+        // share so switching never moves a group.
+        let expanded = |tab: &TitleTab| -> f32 {
+            if grouped {
+                0.
+            } else if selected.as_ref() == Some(tab) {
+                if switching { switch } else { 1. }
+            } else if leaving.as_ref() == Some(tab) {
+                1. - switch
+            } else {
+                0.
+            }
+        };
+        let even = if share <= 0. {
+            TITLE_TAB_MAX_WIDTH
+        } else {
+            (avail / share).clamp(0., TITLE_TAB_MAX_WIDTH)
+        };
+        // Crowded, the selected tab keeps room for its title and close
+        // button and the others share what is left, down to their marks.
+        let boost = (SELECTED_TAB_WIDTH - even).max(0.);
+        let lift: f32 = if boost > 0. {
+            slots
+                .iter()
+                .map(|s| match s {
+                    crate::tab_motion::Slot::Live { key, open }
+                    | crate::tab_motion::Slot::Closing { key, open, .. } => expanded(key) * *open,
+                })
+                .sum()
+        } else {
+            0.
+        };
+        let width = if lift <= 0. || share <= lift {
+            even
+        } else {
+            ((avail - SELECTED_TAB_WIDTH * lift) / (share - lift)).clamp(0., TITLE_TAB_MAX_WIDTH)
+        };
+        // Past the narrowest plate the strip scrolls instead of squeezing.
         let width = width.max(TAB_MIN_WIDTH);
         // Fractional widths round differently from tab to tab and the error
         // adds up along the strip, so a full strip's new-tab button would
@@ -7750,7 +7784,14 @@ impl Shell {
         let scale = window.scale_factor();
         let snap = |x: f32| (x * scale).floor() / scale;
         let crowded = width < TITLE_TAB_MAX_WIDTH;
-        let base_width = |_: &TitleTab| snap(width);
+        let base_width = |tab: &TitleTab| {
+            let lifted = if lift > 0. {
+                (SELECTED_TAB_WIDTH - width).max(0.) * expanded(tab)
+            } else {
+                0.
+            };
+            snap(width + lifted)
+        };
         let slot_size = |tab: &TitleTab, open: f32| {
             (
                 snap(base_width(tab) * open),
@@ -7946,9 +7987,12 @@ impl Shell {
                         drag.tab() == Some(&TitleTab::Session(id)) && !drag.active
                     });
                 // A collapsed tab drops its close button, so a click anywhere
-                // on it selects it, the selected one too.
-                let close = self.tab_can_close(id, cx)
-                    && tab_width(&TitleTab::Session(id)) >= TAB_CLOSE_MIN_WIDTH;
+                // on it selects it. The selected one keeps it, over its mark
+                // on hover: it has nothing left to select, and a full strip
+                // would otherwise leave no tab to close by pointer.
+                let squeezed = tab_width(&TitleTab::Session(id)) < TAB_CLOSE_MIN_WIDTH;
+                let close = self.tab_can_close(id, cx) && (!squeezed || active);
+                let squeezed_close = close && squeezed;
                 let dragging = self
                     .tab_drag
                     .as_ref()
@@ -7982,6 +8026,8 @@ impl Shell {
                 } else {
                     TAB_TILE.w
                 };
+                let tip =
+                    self.tab_tooltip(id, copy.headline.clone().into(), project.as_deref(), cx);
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -7989,6 +8035,7 @@ impl Shell {
                     .role(Role::Tab)
                     .aria_label(copy.headline.clone())
                     .aria_selected(active)
+                    .tooltip(move |_, cx| cx.new(|_| tip.clone()).into())
                     .cursor_pointer()
                     .w(px(tab_width(&TitleTab::Session(id))))
                     .flex_shrink_0()
@@ -8028,7 +8075,14 @@ impl Shell {
                                 )
                             })
                             .map(|d| match mark {
-                                Some(mark) if narrow => d.child(mark),
+                                Some(mark) if narrow => d.child(
+                                    div()
+                                        .flex()
+                                        .when(squeezed_close, |d| {
+                                            d.group_hover("title-tab", |s| s.opacity(0.))
+                                        })
+                                        .child(mark),
+                                ),
                                 Some(mark) => d.child(
                                     div()
                                         .flex()
@@ -8065,7 +8119,7 @@ impl Shell {
                                 .items_center()
                                 .justify_center()
                                 .hover(|s| s.bg(content(0.1)))
-                                .when(copy.panes.len() > 1, |d| {
+                                .when(copy.panes.len() > 1 && !squeezed_close, |d| {
                                     d.child(
                                         div()
                                             .debug_selector(move || {
@@ -11339,25 +11393,26 @@ mod tests {
             cx.debug_bounds(Box::leak(format!("title-tab-{id}").into_boxed_str()))
                 .unwrap()
         };
-        // The selected tab shrinks with the rest, so switching moves nothing;
-        // snapping may leave them a device pixel apart.
+        // Crowded, the selected tab stays expanded and the rest share what is
+        // left; snapping may leave it a device pixel off.
         let (wide, narrow) = (
             bounds(cx, selected).size.width,
             bounds(cx, other).size.width,
         );
         assert!(
-            (wide - narrow).abs() <= px(1.),
-            "selected {wide:?} vs other {narrow:?}"
+            (wide - px(SELECTED_TAB_WIDTH)).abs() <= px(1.),
+            "selected {wide:?}"
         );
-        assert!(narrow >= px(TAB_MIN_WIDTH));
+        assert!(
+            narrow < wide && narrow >= px(TAB_MIN_WIDTH),
+            "other {narrow:?}"
+        );
         let close = |cx: &mut gpui::VisualTestContext, id: i64| {
             cx.debug_bounds(Box::leak(format!("close-title-tab-{id}").into_boxed_str()))
         };
+        assert!(close(cx, selected).is_some(), "the selected tab can close");
         if narrow < px(TAB_CLOSE_MIN_WIDTH) {
             assert!(close(cx, other).is_none(), "a collapsed tab only selects");
-            assert!(close(cx, selected).is_none(), "the selected one too");
-        } else {
-            assert!(close(cx, selected).is_some(), "the selected tab can close");
         }
         window
             .update(cx, |shell, _, cx| {

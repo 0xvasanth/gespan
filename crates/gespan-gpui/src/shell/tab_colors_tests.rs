@@ -183,6 +183,14 @@ fn a_tab_at_its_narrowest_still_shows_its_projects_mark(cx: &mut TestAppContext)
         let Some(tab) = visual.debug_bounds(selector(format!("title-tab-{id}"))) else {
             continue;
         };
+        if id == here {
+            // The selected tab stays expanded, its mark leading.
+            assert!(drawn(
+                visual,
+                format!("title-tab-project-{id}-{gespan:06x}")
+            ));
+            continue;
+        }
         assert!(tab.size.width < px(NARROW_TAB), "tab {id} is narrow");
         let color = if project == "/work/gespan" {
             gespan
@@ -234,4 +242,65 @@ fn a_workspace_saved_before_colours_were_saved_gets_them_on_restore() {
         .map(|p| restored.project_appearance[p].color.expect("saved"))
         .collect();
     assert_eq!(colors.len(), 3, "{colors:x?}");
+}
+
+#[gpui::test]
+fn resting_on_a_squeezed_tab_shows_its_title_and_project(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, _) = window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(900.), px(700.)));
+    window
+        .update(visual, |shell, _, cx| {
+            for _ in 0..40 {
+                let summary = locked(&shell.store)
+                    .unwrap()
+                    .create("codex", "/work/gespan")
+                    .unwrap();
+                let id = summary.id;
+                shell.add(summary, cx);
+                let active = shell.workspace.active;
+                shell.workspace.open(id);
+                shell.workspace.active = active;
+            }
+            shell.invalidate_chrome(cx);
+        })
+        .unwrap();
+    settle(visual);
+    let tab = visual
+        .debug_bounds(selector(format!("title-tab-{other}")))
+        .expect("another project's tab is drawn");
+    assert!(
+        tab.size.width < px(NARROW_TAB),
+        "squeezed to its mark: {tab:?}"
+    );
+    assert!(!drawn(visual, format!("title-tab-tooltip-{other}")));
+    visual.simulate_mouse_move(tab.center(), None, Default::default());
+    visual
+        .executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    settle(visual);
+    assert!(
+        drawn(visual, format!("title-tab-tooltip-{other}")),
+        "the tooltip names what the plate hides"
+    );
+    let tip = window
+        .update(visual, |shell, _, cx| {
+            let title = shell.tab_copy(other, cx).headline;
+            let tip = shell.tab_tooltip(
+                other,
+                title.clone().into(),
+                Some("/work/another-project"),
+                cx,
+            );
+            (title, tip)
+        })
+        .unwrap();
+    assert_eq!(tip.1.title.as_ref(), tip.0);
+    let another = color_of(window, "/work/another-project", visual);
+    assert_eq!(
+        tip.1.project,
+        Some(("another-project".into(), another)),
+        "its project, in its colour"
+    );
 }

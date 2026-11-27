@@ -57,3 +57,91 @@ impl Shell {
             .into_any_element()
     }
 }
+
+/// A title tab's tooltip: its whole title, which a squeezed tab hides, then
+/// its project in the project's colour, its branch and whether it works.
+#[derive(Clone)]
+pub(super) struct TabTooltip {
+    id: i64,
+    pub(super) title: SharedString,
+    pub(super) project: Option<(SharedString, u32)>,
+    detail: SharedString,
+}
+
+impl Render for TabTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let id = self.id;
+        let mut background = shell_fill();
+        background.a = 1.;
+        div()
+            .debug_selector(move || format!("title-tab-tooltip-{id}"))
+            .max_w(px(360.))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(background)
+            .border_1()
+            .border_color(content(0.12))
+            .text_size(px(11.))
+            .line_height(px(16.))
+            .flex()
+            .flex_col()
+            .child(div().text_color(content(0.9)).child(self.title.clone()))
+            .when_some(self.project.clone(), |d, (name, color)| {
+                d.child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(rgb(color))
+                                .child(name),
+                        )
+                        .when(!self.detail.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .text_color(content(0.55))
+                                    .child(format!("· {}", self.detail)),
+                            )
+                        }),
+                )
+            })
+    }
+}
+
+impl Shell {
+    /// Session tab `id`'s tooltip, titled `title`.
+    pub(super) fn tab_tooltip(
+        &self,
+        id: i64,
+        title: SharedString,
+        project: Option<&str>,
+        cx: &App,
+    ) -> TabTooltip {
+        let project = project.map(|p| {
+            let appearance = self.appearance(p);
+            (appearance.label(p).into(), appearance.color(p))
+        });
+        let branch = project.as_ref().and(
+            self.tab_project(&crate::workspace::TitleTab::Session(id), cx)
+                .and_then(|p| {
+                    crate::git_cache::worktree_branch(&p, self.session_working_copy(id, cx))
+                }),
+        );
+        let detail = branch
+            .into_iter()
+            .chain(
+                self.background_tab_running(id, cx)
+                    .then(|| "working".to_string()),
+            )
+            .collect::<Vec<_>>()
+            .join(" · ");
+        TabTooltip {
+            id,
+            title,
+            project,
+            detail: detail.into(),
+        }
+    }
+}
