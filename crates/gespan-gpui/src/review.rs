@@ -1524,7 +1524,7 @@ impl ReviewPane {
                 return;
             }
             // Only a pull request's Files raises these; this diff never asks.
-            DiffEvent::LineComment(_) => return,
+            DiffEvent::DraftsChanged => return,
             DiffEvent::StageFile(id) | DiffEvent::DiscardFile(id) => {
                 let Some(relative) = id.strip_prefix("unstaged:").map(str::to_owned) else {
                     return;

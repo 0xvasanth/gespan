@@ -619,6 +619,20 @@ it("sends line comments with a review through the reviews API", async () => {
     comments: [
       { path: "docs/hackathon.md", line: 100, side: "new", body: " test comment " },
       { path: "src/old.rs", line: 7, side: "old", body: "why?" },
+      {
+        path: "CHANGELOG.md",
+        line: 12,
+        side: "new",
+        start: { line: 10, side: "new", oldLine: 9, newLine: 10 },
+        body: "Say what changed.",
+      },
+      {
+        path: "a.rs",
+        line: 3,
+        side: "new",
+        start: { line: 3, side: "new" },
+        body: "one line",
+      },
     ],
   });
   expect(raw.mock.calls[0][1].slice(0, 4)).toEqual([
@@ -633,6 +647,15 @@ it("sends line comments with a review through the reviews API", async () => {
       comments: [
         { path: "docs/hackathon.md", line: 100, side: "RIGHT", body: "test comment" },
         { path: "src/old.rs", line: 7, side: "LEFT", body: "why?" },
+        {
+          path: "CHANGELOG.md",
+          line: 12,
+          side: "RIGHT",
+          start_line: 10,
+          start_side: "RIGHT",
+          body: "Say what changed.",
+        },
+        { path: "a.rs", line: 3, side: "RIGHT", body: "one line" },
       ],
     },
   ]);
@@ -641,6 +664,7 @@ it("sends line comments with a review through the reviews API", async () => {
     { path: "/abs", line: 1, side: "new", body: "x" },
     { path: "a.rs", line: 0, side: "new", body: "x" },
     { path: "a.rs", line: 1, side: "new", body: " " },
+    { path: "a.rs", line: 2, side: "new", start: { line: 0 }, body: "x" },
   ])
     await expect(
       inbox.run("git_github_pr_review", cwd, {

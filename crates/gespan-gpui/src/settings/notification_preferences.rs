@@ -1042,9 +1042,9 @@ impl SettingsView {
         }))
         .into_any_element();
         if self.glass() {
-            return self.glass_group(Some("project-notifications"),"Project notifications",Some("Choose sounds, banners and sidebar indicators by category. Mute pauses them without changing your choices. Unread items stay marked in Git.".into()),Some(action),toolbar,rows);
+            return self.glass_group(Some("project-notifications"),"Project notifications",Some("Choose sounds, banners and sidebar indicators by category. Mute pauses them without changing your choices. Unread items stay marked in Pull requests.".into()),Some(action),toolbar,rows);
         }
-        self.group(Some("project-notifications"),true,"Project notifications",Some("Choose sounds, banners and sidebar indicators by category. Mute pauses them without changing your choices. Unread items stay marked in Git.".into()),
+        self.group(Some("project-notifications"),true,"Project notifications",Some("Choose sounds, banners and sidebar indicators by category. Mute pauses them without changing your choices. Unread items stay marked in Pull requests.".into()),
             Some(glass_secondary("notification-select-projects",if selecting {"Done"} else {"Select projects"},false,projects.is_empty()).child(if selecting {"Done"} else {"Select projects"})
                 .on_click(cx.listener(|this,_,_,cx| {this.notification_state.selecting = !this.notification_state.selecting;this.notification_state.selected.clear();cx.notify();})).into_any_element()),rows)
     }

@@ -597,7 +597,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let prefs = &self.workspace.preferences;
-        let watching = self.window_active && self.app_view_label() == Some("Git");
+        let watching = self.window_active && self.app_view_label() == Some("Pull requests");
         let notify = delivery::should_notify(
             prefs.notifications,
             self.notification_state.permission,

@@ -1,8 +1,8 @@
-//! Code review on the Git page: what a pull or merge request's reviews and
+//! Code review on the Pull requests page: what a pull or merge request's reviews and
 //! checks say, and the host calls a reviewer makes (submit a review, rerun
 //! failed checks, find repositories, review requests outside your repos).
 //!
-//! GitHub, GitLab and Azure DevOps fill the same shapes, so the Git page
+//! GitHub, GitLab and Azure DevOps fill the same shapes, so the Pull requests page
 //! groups and words every host's requests the same way.
 use super::{azure_devops, github, gitlab, Item, Service};
 use serde::{Deserialize, Serialize};
@@ -99,16 +99,73 @@ pub enum Side {
     Old,
 }
 
-/// A comment on one line of a pull request's diff, sent with a review so it
-/// lands on that line instead of in the general discussion.
+/// One line of a pull request's diff, as each host addresses it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LineRef {
+    /// The line's number on its side: what GitHub and Azure DevOps take.
+    pub line: u32,
+    pub side: Side,
+    /// Its numbers in the old and new file, where it has one (a context line
+    /// has both): what GitLab's position takes.
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    /// Where it sits in the old and new file even when it is not there (an
+    /// added line's place in the old file): GitLab's line codes count these.
+    pub old_pos: u32,
+    pub new_pos: u32,
+}
+
+impl LineRef {
+    /// A line from its old and new numbers and diff positions: a deleted
+    /// line (no new number) is on the old side.
+    pub fn new(old_line: Option<u32>, new_line: Option<u32>, old_pos: u32, new_pos: u32) -> Self {
+        let (line, side) = match (new_line, old_line) {
+            (Some(new), _) => (new, Side::New),
+            (None, Some(old)) => (old, Side::Old),
+            (None, None) => (0, Side::New),
+        };
+        Self {
+            line,
+            side,
+            old_line,
+            new_line,
+            old_pos,
+            new_pos,
+        }
+    }
+}
+
+/// A comment on a line, or a range of lines, of a pull request's diff, sent
+/// with a review so it lands there instead of in the general discussion.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct LineComment {
     pub path: String,
-    /// The line's number on its side.
-    pub line: u32,
-    pub side: Side,
+    /// The last line it is on.
+    #[serde(flatten)]
+    pub end: LineRef,
+    /// The first line, when it spans several.
+    pub start: Option<LineRef>,
     pub body: String,
+}
+
+impl LineComment {
+    /// "line 12", or "lines 10 to 12" for a range.
+    pub fn lines_label(&self) -> String {
+        match &self.start {
+            Some(start) if start.line != self.end.line || start.side != self.end.side => {
+                format!("lines {} to {}", start.line, self.end.line)
+            }
+            _ => format!("line {}", self.end.line),
+        }
+    }
+    /// The first line when it is a real range: one line is not one.
+    pub fn range_start(&self) -> Option<&LineRef> {
+        self.start
+            .as_ref()
+            .filter(|start| start.line != self.end.line || start.side != self.end.side)
+    }
 }
 
 /// What a submitted review says.
@@ -143,7 +200,7 @@ pub struct RepoHit {
     pub description: String,
 }
 
-/// The review states the Git page knows, from any host's spelling. A review
+/// The review states the Pull requests page knows, from any host's spelling. A review
 /// still pending (not submitted) has none.
 pub(crate) fn review_state(raw: &str) -> Option<&'static str> {
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -287,10 +344,12 @@ impl<V: Clone> TtlCache<V> {
 /// review needs a summary or at least one line comment.
 fn check_review_body(verdict: Verdict, body: &str, comments: &[LineComment]) -> Result<(), String> {
     let empty = body.trim().is_empty();
-    if comments
-        .iter()
-        .any(|c| c.body.trim().is_empty() || c.path.trim().is_empty() || c.line == 0)
-    {
+    if comments.iter().any(|c| {
+        c.body.trim().is_empty()
+            || c.path.trim().is_empty()
+            || c.end.line == 0
+            || c.start.as_ref().is_some_and(|start| start.line == 0)
+    }) {
         return Err("A line comment is missing its text or line.".into());
     }
     if (verdict == Verdict::RequestChanges && empty)
@@ -760,8 +819,8 @@ mod tests {
         // Line comments are enough for a comment review, never for changes.
         let line = LineComment {
             path: "src/lib.rs".into(),
-            line: 12,
-            side: Side::New,
+            end: LineRef::new(Some(12), Some(12), 12, 12),
+            start: None,
             body: "add the index".into(),
         };
         assert!(check_review_body(Verdict::Comment, "", std::slice::from_ref(&line)).is_ok());
@@ -775,7 +834,11 @@ mod tests {
                 ..line.clone()
             },
             LineComment {
-                line: 0,
+                end: LineRef::default(),
+                ..line.clone()
+            },
+            LineComment {
+                start: Some(LineRef::default()),
                 ..line.clone()
             },
             LineComment {
@@ -788,21 +851,59 @@ mod tests {
     }
 
     #[test]
-    fn line_comments_land_on_their_line_on_every_host() {
+    fn a_line_knows_its_side_from_the_numbers_it_has() {
+        let added = LineRef::new(None, Some(10), 9, 10);
+        assert_eq!((added.line, added.side), (10, Side::New));
+        let deleted = LineRef::new(Some(7), None, 7, 6);
+        assert_eq!((deleted.line, deleted.side), (7, Side::Old));
+        let context = LineRef::new(Some(4), Some(5), 4, 5);
+        assert_eq!((context.line, context.side), (5, Side::New));
+        let one = LineComment {
+            end: added.clone(),
+            start: Some(added.clone()),
+            ..Default::default()
+        };
+        assert_eq!(one.range_start(), None, "a range of one line is one line");
+        assert_eq!(one.lines_label(), "line 10");
+        let range = LineComment {
+            end: added,
+            start: Some(context),
+            ..Default::default()
+        };
+        assert_eq!(range.lines_label(), "lines 5 to 10");
+    }
+
+    fn sample() -> (LineComment, LineComment, LineComment) {
         let new = LineComment {
             path: "docs/hackathon.md".into(),
-            line: 100,
-            side: Side::New,
+            end: LineRef::new(None, Some(100), 98, 100),
+            start: None,
             body: " test comment ".into(),
         };
         let old = LineComment {
             path: "src/old.rs".into(),
-            line: 7,
-            side: Side::Old,
+            end: LineRef::new(Some(7), None, 7, 6),
+            start: None,
             body: "why remove this?".into(),
         };
-        let github =
-            super::github::github_review_payload(Verdict::Comment, "", &[new.clone(), old.clone()]);
+        // Lines 10 to 12 of the new file: a context line, then two added.
+        let range = LineComment {
+            path: "CHANGELOG.md".into(),
+            start: Some(LineRef::new(Some(9), Some(10), 9, 10)),
+            end: LineRef::new(None, Some(12), 10, 12),
+            body: "Say what changed.".into(),
+        };
+        (new, old, range)
+    }
+
+    #[test]
+    fn line_comments_land_on_their_lines_on_github() {
+        let (new, old, range) = sample();
+        let github = super::github::github_review_payload(
+            Verdict::Comment,
+            "",
+            &[new.clone(), old.clone(), range],
+        );
         assert_eq!(
             github,
             json!({
@@ -810,6 +911,8 @@ mod tests {
                 "comments": [
                     {"path": "docs/hackathon.md", "line": 100, "side": "RIGHT", "body": "test comment"},
                     {"path": "src/old.rs", "line": 7, "side": "LEFT", "body": "why remove this?"},
+                    {"path": "CHANGELOG.md", "start_line": 10, "start_side": "RIGHT",
+                     "line": 12, "side": "RIGHT", "body": "Say what changed."},
                 ],
             }),
             "no summary is sent when there is none"
@@ -818,16 +921,78 @@ mod tests {
             super::github::github_review_payload(Verdict::RequestChanges, " fix it ", &[])["body"],
             "fix it"
         );
+    }
+
+    #[test]
+    fn line_comments_land_on_their_lines_on_gitlab() {
+        let (new, old, range) = sample();
         let refs = json!({"base_sha": "b", "start_sha": "s", "head_sha": "h"});
         let gitlab = super::gitlab::gitlab_line_discussion(&refs, &new).unwrap();
         assert_eq!(gitlab["body"], "test comment");
         assert_eq!(gitlab["position"]["new_line"], 100);
         assert!(gitlab["position"].get("old_line").is_none());
+        assert!(gitlab["position"].get("line_range").is_none());
         assert_eq!(gitlab["position"]["head_sha"], "h");
         let gitlab_old = super::gitlab::gitlab_line_discussion(&refs, &old).unwrap();
         assert_eq!(gitlab_old["position"]["old_line"], 7);
         assert!(gitlab_old["position"].get("new_line").is_none());
+        let multi = super::gitlab::gitlab_line_discussion(&refs, &range).unwrap();
+        let lines = &multi["position"]["line_range"];
+        assert_eq!(multi["position"]["new_line"], 12);
+        assert_eq!(
+            lines["start"]["type"],
+            serde_json::Value::Null,
+            "a context line has no type"
+        );
+        assert_eq!(lines["start"]["old_line"], 9);
+        assert_eq!(lines["start"]["new_line"], 10);
+        assert_eq!(lines["end"]["type"], "new");
+        assert_eq!(lines["end"]["old_line"], serde_json::Value::Null);
+        assert!(lines["start"]["line_code"]
+            .as_str()
+            .unwrap()
+            .ends_with("_9_10"));
+        assert!(lines["end"]["line_code"]
+            .as_str()
+            .unwrap()
+            .ends_with("_10_12"));
+        assert_eq!(
+            lines["start"]["line_code"]
+                .as_str()
+                .unwrap()
+                .split('_')
+                .next()
+                .unwrap()
+                .len(),
+            40,
+            "a SHA-1 of the path"
+        );
+        // A context line on its own carries both numbers.
+        let context = LineComment {
+            end: LineRef::new(Some(9), Some(10), 9, 10),
+            ..range.clone()
+        };
+        let one = super::gitlab::gitlab_line_discussion(
+            &refs,
+            &LineComment {
+                start: None,
+                ..context
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                one["position"]["old_line"].clone(),
+                one["position"]["new_line"].clone()
+            ),
+            (json!(9), json!(10))
+        );
         assert!(super::gitlab::gitlab_line_discussion(&json!({}), &new).is_err());
+    }
+
+    #[test]
+    fn line_comments_land_on_their_lines_on_azure_devops() {
+        let (new, old, range) = sample();
         let ado = super::azure_devops::azure_line_thread(&new);
         assert_eq!(ado["threadContext"]["filePath"], "/docs/hackathon.md");
         assert_eq!(
@@ -841,6 +1006,15 @@ mod tests {
             json!({"line": 7, "offset": 1})
         );
         assert_eq!(ado_old["comments"][0]["content"], "why remove this?");
+        let ado_range = super::azure_devops::azure_line_thread(&range);
+        assert_eq!(
+            ado_range["threadContext"]["rightFileStart"],
+            json!({"line": 10, "offset": 1})
+        );
+        assert_eq!(
+            ado_range["threadContext"]["rightFileEnd"],
+            json!({"line": 12, "offset": 1})
+        );
     }
 
     #[test]

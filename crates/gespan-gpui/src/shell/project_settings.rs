@@ -451,7 +451,9 @@ mod inbox_menu_tests {
         let visual = &mut VisualTestContext::from_window(window.into(), cx);
         visual.refresh().unwrap();
         // Right-clicking the Inbox row opens it.
-        let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
+        let inbox = visual
+            .debug_bounds("sidebar-navigation-Pull requests")
+            .unwrap();
         visual.simulate_mouse_down(inbox.center(), gpui::MouseButton::Right, Default::default());
         visual.run_until_parked();
         window

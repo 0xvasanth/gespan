@@ -16,7 +16,7 @@ pub mod events;
 pub mod polish;
 pub mod queue;
 pub mod review;
-pub use review::{CheckSummary, LineComment, RepoHit, Review, Side, Verdict};
+pub use review::{CheckSummary, LineComment, LineRef, RepoHit, Review, Side, Verdict};
 pub(crate) mod github;
 pub mod gitlab;
 pub mod jira;
@@ -692,13 +692,13 @@ pub struct Snapshot {
     pub repo_errors: BTreeMap<String, String>,
     /// `Item::key` to its repository scope, for repository-backed items.
     pub item_scopes: HashMap<String, String>,
-    /// Every repository this poll visited, listed or not, so Settings › Git
+    /// Every repository this poll visited, listed or not, so Settings › Pull requests
     /// can show repositories with no open pull requests. Hand-added ones
     /// (see [`Service::list_git`]) have no `project_path`.
     pub repos: Vec<ProjectRepo>,
 }
 
-/// A repository the Git page follows: one an open project points at, or one
+/// A repository the Pull requests page follows: one an open project points at, or one
 /// added by hand (no `project_path`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -1281,7 +1281,7 @@ impl Service {
         snapshot.items.retain(|i| seen.insert(i.key()));
         snapshot
     }
-    /// The Git page's poll: [`Service::list`] for `projects`, then the open
+    /// The Pull requests page's poll: [`Service::list`] for `projects`, then the open
     /// pull requests of each repository in `added` (`(provider, repo)`,
     /// added by hand) that no project already covers, then, when
     /// `other_repos`, the pull requests asking for your review anywhere
@@ -2008,7 +2008,7 @@ mod notification_tests {
 
     #[test]
     fn every_visited_repo_is_listed_once_even_without_rows_or_when_failing() {
-        // Settings › Git lists a project's repos with no open pull requests.
+        // Settings › Pull requests lists a project's repos with no open pull requests.
         let projects = [PathBuf::from(PROJECT), PathBuf::from("/work/app-2")];
         let fetch = collect_repo_items(
             "github",

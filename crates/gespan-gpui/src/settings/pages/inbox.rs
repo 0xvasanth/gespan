@@ -65,7 +65,7 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// Settings › Git: which repositories Git lists, review requests from
+    /// Settings › Pull requests: which repositories Pull requests lists, review requests from
     /// other repos, how it opens, Notify me and bot folding. Hosts are
     /// connected in Connections.
     pub(super) fn inbox_page(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -91,7 +91,7 @@ impl SettingsView {
             .gap(px(4.))
             .text_size(px(12.5))
             .text_color(content(0.62))
-            .child("What the Git page lists and how it opens. Hosts are connected in")
+            .child("What the Pull requests page lists and how it opens. Hosts are connected in")
             .child(
                 div()
                     .id("settings-open-connections")
@@ -153,7 +153,7 @@ impl SettingsView {
                     .id(SharedString::from(format!("settings-git-repo-{ix}")))
                     .debug_selector(move || format!("settings-git-repo-{ix}"))
                     .role(gpui::Role::Switch)
-                    .aria_label(format!("Show {} in Git", row.repo))
+                    .aria_label(format!("Show {} in Pull requests", row.repo))
                     .aria_toggled(if on {
                         gpui::Toggled::True
                     } else {
@@ -252,7 +252,7 @@ impl SettingsView {
         let repos = self.glass_group(
             Some("git-repos"),
             "Your repos",
-            Some("Git lists only these: the remotes of the projects you have open in Gespan, plus any you add. The rest of your org is never fetched.".into()),
+            Some("Pull requests lists only these: the remotes of the projects you have open in Gespan, plus any you add. The rest of your org is never fetched.".into()),
             None,
             None,
             repo_rows,
@@ -318,7 +318,7 @@ impl SettingsView {
         };
         let opening = self.glass_group(
             Some("git-opening"),
-            "Opening Git",
+            "Opening Pull requests",
             None,
             None,
             None,
@@ -327,7 +327,7 @@ impl SettingsView {
                     Some("git-opens-on-row"),
                     true,
                     "Opens on",
-                    Some("The view Git shows first, 25 per page.".into()),
+                    Some("The view Pull requests shows first, 25 per page.".into()),
                     vec![opens],
                 ),
                 self.row(

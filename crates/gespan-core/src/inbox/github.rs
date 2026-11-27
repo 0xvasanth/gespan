@@ -40,7 +40,7 @@ pub struct GitHubWorkItem {
     /// Who opened it, when the list says.
     pub author: String,
     /// Pull requests (see [`super::Item`]): the review and check fields the
-    /// Git page groups by.
+    /// Pull requests page groups by.
     pub review_decision: String,
     pub reviews: Vec<Review>,
     pub requested_reviewers: Vec<String>,
@@ -229,7 +229,7 @@ pub(super) fn git_github_work_items_for(
     let json = gh_checked(root, &refs)?;
     let mut items = parse_github_work_items(&json, kind, &repo)?;
     if kind == "pr" && !items.is_empty() {
-        // Who "you" are, so the Git page can tell your reviews apart.
+        // Who "you" are, so the Pull requests page can tell your reviews apart.
         let viewer = cached_github_login(root);
         for item in &mut items {
             item.viewer = viewer.clone();
@@ -238,7 +238,7 @@ pub(super) fn git_github_work_items_for(
     Ok(items)
 }
 
-/// What a pull request row carries in the list: enough for the Git page to
+/// What a pull request row carries in the list: enough for the Pull requests page to
 /// group it by who is waiting, and show its size and checks.
 const GITHUB_PR_LIST_FIELDS: &str = "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author,additions,deletions,reviewDecision,reviewRequests,latestReviews,statusCheckRollup";
 
@@ -342,12 +342,20 @@ pub(super) fn github_review_payload(
         },
         "comments": comments
             .iter()
-            .map(|c| serde_json::json!({
-                "path": c.path,
-                "line": c.line,
-                "side": if c.side == Side::Old { "LEFT" } else { "RIGHT" },
-                "body": c.body.trim(),
-            }))
+            .map(|c| {
+                let side = |side: Side| if side == Side::Old { "LEFT" } else { "RIGHT" };
+                let mut entry = serde_json::json!({
+                    "path": c.path,
+                    "line": c.end.line,
+                    "side": side(c.end.side),
+                    "body": c.body.trim(),
+                });
+                if let Some(start) = c.range_start() {
+                    entry["start_line"] = start.line.into();
+                    entry["start_side"] = side(start.side).into();
+                }
+                entry
+            })
             .collect::<Vec<_>>(),
     });
     if !body.trim().is_empty() {

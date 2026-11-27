@@ -383,7 +383,9 @@ impl Shell {
                     }
                     Err(error) => {
                         tracing::warn!(%error, "automation inbox poll failed");
-                        this.error = Some(format!("Could not evaluate Git automations: {error}"));
+                        this.error = Some(format!(
+                            "Could not evaluate pull request automations: {error}"
+                        ));
                         // Kept across a restart, like a failed claim.
                         this.set_event_retries(attempted, cx);
                         cx.notify();

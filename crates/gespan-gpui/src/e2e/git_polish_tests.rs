@@ -1,4 +1,4 @@
-//! Polish on the Git page: a review comment goes to the pull request's Ask
+//! Polish on the Pull requests page: a review comment goes to the pull request's Ask
 //! agent with the chosen tone, and its rewrite comes back as an offer to
 //! Use, Try again or Keep mine. Fake by default; `GESPAN_E2E_REAL=1` asks the
 //! real `claude` and checks only that a rewrite came back.

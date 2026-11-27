@@ -67,7 +67,7 @@ pub(super) fn rail_tint(label: &str) -> Option<Hsla> {
     let tint = match label {
         "New thread" => 0x6ee7b7,
         "My tasks" => WAIT,
-        "Git" => 0x2dd4bf,
+        "Pull requests" => 0x2dd4bf,
         "Automations" => 0xfbbf24,
         _ => return nav_tint(label).filter(|_| label != "Home" && label != "Search"),
     };
@@ -266,7 +266,7 @@ pub(super) fn automations_aria(going: usize, failing: usize) -> String {
 const PAGES: [(&str, &str); 8] = [
     ("Home", "home"),
     ("My tasks", "circle-alert"),
-    ("Git", "git-pull-request"),
+    ("Pull requests", "git-pull-request"),
     ("Automations", "zap"),
     ("Flows", "git-merge"),
     ("Board", "kanban"),
@@ -679,7 +679,7 @@ impl Shell {
                         "Automations" => self.workspace.sidebar_automations_visible,
                         "Flows" => flows_visible,
                         "Board" => self.workspace.preferences.board,
-                        "Git" => self.workspace.sidebar_inbox_visible,
+                        "Pull requests" => self.workspace.sidebar_inbox_visible,
                         _ => true,
                     })
                     .map(|(label, glyph)| {
@@ -699,7 +699,9 @@ impl Shell {
                         let going = label == "Automations" && runs_going > 0 && failing.is_none();
                         let aria: SharedString = match (label, badge) {
                             ("My tasks", Some((n, _))) => format!("My tasks, {n} waiting").into(),
-                            ("Git", _) if unread > 0 => format!("Git, {unread} new").into(),
+                            ("Pull requests", _) if unread > 0 => {
+                                format!("Pull requests, {unread} new").into()
+                            }
                             ("Search", _) => "Search sessions".into(),
                             ("Automations", _) => automations_aria(runs_going, runs_failing).into(),
                             _ => label.into(),
@@ -779,10 +781,12 @@ impl Shell {
                                 )
                             })
                             // Git marks something new with a dot, not a count.
-                            .when(label == "Git" && unread > 0, |d| {
+                            .when(label == "Pull requests" && unread > 0, |d| {
                                 d.child(
                                     div()
-                                        .debug_selector(|| "sidebar-navigation-unread-Git".into())
+                                        .debug_selector(|| {
+                                            "sidebar-navigation-unread-Pull requests".into()
+                                        })
                                         .absolute()
                                         .top(px(5.))
                                         .right(px(7.))
@@ -805,7 +809,7 @@ impl Shell {
                                         .bg(crate::glass::Tone::Running.ink()),
                                 )
                             })
-                            .when(label == "Git", |d| {
+                            .when(label == "Pull requests", |d| {
                                 d.on_mouse_down(
                                     MouseButton::Right,
                                     cx.listener(|this, e: &gpui::MouseDownEvent, w, cx| {
@@ -822,7 +826,7 @@ impl Shell {
                             .on_click(cx.listener(move |this, _, window, cx| match label {
                                 "Home" => this.open_home(window, cx),
                                 "My tasks" => this.open_my_tasks(window, cx),
-                                "Git" => this.open_inbox(window, cx),
+                                "Pull requests" => this.open_inbox(window, cx),
                                 "Notes" => this.open_notes(window, cx),
                                 "Automations" => this.open_automations(window, cx),
                                 "Flows" => this.open_flows(window, cx),
@@ -1247,7 +1251,7 @@ impl Shell {
 mod tests {
     use super::*;
 
-    /// Something new in Git shows as a dot on its icon, never a count, and
+    /// Something new in Pull requests shows as a dot on its icon, never a count, and
     /// the icon's name says how many.
     #[gpui::test]
     fn git_marks_unread_pull_requests_with_a_dot(cx: &mut gpui::TestAppContext) {
@@ -1256,7 +1260,7 @@ mod tests {
         visual.run_until_parked();
         assert!(
             visual
-                .debug_bounds("sidebar-navigation-unread-Git")
+                .debug_bounds("sidebar-navigation-unread-Pull requests")
                 .is_none()
         );
         window
@@ -1282,13 +1286,15 @@ mod tests {
         visual.run_until_parked();
         visual.refresh().unwrap();
         let dot = visual
-            .debug_bounds("sidebar-navigation-unread-Git")
+            .debug_bounds("sidebar-navigation-unread-Pull requests")
             .expect("the dot shows");
-        let icon = visual.debug_bounds("sidebar-navigation-Git").unwrap();
+        let icon = visual
+            .debug_bounds("sidebar-navigation-Pull requests")
+            .unwrap();
         assert!(icon.contains(&dot.origin), "the dot sits on the icon");
         assert!(
             visual
-                .debug_bounds("sidebar-navigation-count-Git")
+                .debug_bounds("sidebar-navigation-count-Pull requests")
                 .is_none()
         );
     }
@@ -1328,7 +1334,7 @@ mod tests {
             },
             false,
         );
-        assert_eq!(rail_tint("Git"), Some(rgb(0x2dd4bf).into()));
+        assert_eq!(rail_tint("Pull requests"), Some(rgb(0x2dd4bf).into()));
         assert_eq!(rail_tint("Automations"), Some(rgb(0xfbbf24).into()));
         assert_eq!(rail_tint("New thread"), Some(rgb(0x6ee7b7).into()));
         // Home and Search take the row's ink.

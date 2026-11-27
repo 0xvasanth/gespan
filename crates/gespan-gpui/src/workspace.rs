@@ -21,7 +21,7 @@ impl AppView {
         match self {
             Self::Home => "Home",
             Self::MyTasks => "My tasks",
-            Self::Inbox => "Git",
+            Self::Inbox => "Pull requests",
             Self::Notes => "Notes",
             Self::Automations => "Automations",
             Self::Flows => "Flows",

@@ -108,7 +108,7 @@ impl Section {
             Section::Mcp => "MCP",
             Section::Browser => "Browser",
             Section::Skills => "Skills",
-            Section::Inbox => "Git",
+            Section::Inbox => "Pull requests",
             Section::Archive => "Archive",
             Section::Worktrees => "Worktrees",
         }
@@ -151,7 +151,7 @@ impl Section {
                 "Discover and manage file skills from project, personal, and harness folders."
             }
             Section::Inbox => {
-                "What the Git page lists and how it opens, and notifications for each project."
+                "What the Pull requests page lists and how it opens, and notifications for each project."
             }
             Section::Archive => "Projects and conversations you have archived.",
             Section::Worktrees => "Manage additional worktrees for each project.",
@@ -485,7 +485,7 @@ pub(crate) const INDEX: &[(&str, Section, &str, &str)] = &[
     (
         "sidebar-inbox",
         Section::Appearance,
-        "Git",
+        "Pull requests",
         "sidebar entries show hide",
     ),
     (

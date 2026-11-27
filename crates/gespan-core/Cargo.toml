@@ -37,6 +37,7 @@ shlex = "2"
 url = "2"
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+sha1 = "0.11"
 sha2 = "0.11"
 rand = "0.10"
 regex = "1"

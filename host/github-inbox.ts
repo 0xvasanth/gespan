@@ -149,12 +149,17 @@ type ItemRow = Omit<
 
 /** Line comments sent with a review, checked: a file inside the repo, a
  * positive line, a side and words. */
-function lineComments(value: unknown): {
+type ReviewLineComment = {
   path: string;
   line: number;
   side: "LEFT" | "RIGHT";
+  start_line?: number;
+  start_side?: "LEFT" | "RIGHT";
   body: string;
-}[] {
+};
+const lineNumber = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+function lineComments(value: unknown): ReviewLineComment[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw new Error("Invalid line comments");
   return value.map((entry) => {
@@ -162,17 +167,29 @@ function lineComments(value: unknown): {
     const path = text(row.path);
     const body = text(row.body);
     const line = row.line;
+    const start = row.start as Record<string, unknown> | null | undefined;
     if (
       !path ||
       path.startsWith("/") ||
       path.split("/").some((part) => part === "..") ||
-      typeof line !== "number" ||
-      !Number.isSafeInteger(line) ||
-      line <= 0 ||
+      !lineNumber(line) ||
+      (start != null && !lineNumber(start.line)) ||
       !body
     )
       throw new Error("Invalid line comment");
-    return { path, line, side: row.side === "old" ? "LEFT" : "RIGHT", body };
+    const side = (value: unknown) => (value === "old" ? "LEFT" : "RIGHT");
+    const comment: ReviewLineComment = {
+      path,
+      line: line as number,
+      side: side(row.side),
+      body,
+    };
+    // A range: GitHub takes its first line as start_line.
+    if (start && (start.line !== line || side(start.side) !== comment.side)) {
+      comment.start_line = start.line as number;
+      comment.start_side = side(start.side);
+    }
+    return comment;
   });
 }
 

@@ -9,7 +9,7 @@ use super::*;
 use crate::conversation::Conversation;
 use crate::glass;
 use gespan_core::inbox::{
-    LineComment, Verdict,
+    Verdict,
     polish::{self, Tone},
     queue,
 };
@@ -37,8 +37,6 @@ pub(crate) struct ReviewBar {
     pub(super) submitting: Option<Verdict>,
     pub(super) error: Option<String>,
     pub(super) notice: Option<String>,
-    /// Line comments written in Files, sent with the review on their lines.
-    pub(super) drafts: Vec<LineComment>,
 }
 impl ReviewBar {
     pub(super) fn reset(&mut self) {
@@ -109,7 +107,7 @@ impl Inbox {
             return;
         };
         let body = self.review_body.read(cx).content.trim().to_string();
-        let drafts = self.review.drafts.clone();
+        let drafts = self.diff_view.read(cx).drafts().to_vec();
         let words_needed = match verdict {
             Verdict::Approve => false,
             Verdict::RequestChanges => true,
@@ -167,7 +165,8 @@ impl Inbox {
                         this.review_body
                             .update(cx, |input, cx| input.set_text(String::new(), cx));
                         this.review.polished = None;
-                        this.review.drafts.clear();
+                        this.diff_view
+                            .update(cx, |view, cx| view.set_drafts(vec![], cx));
                         this.review.notice = Some(notice);
                         this.load_detail(false, cx);
                         this.refresh(cx);
@@ -178,17 +177,6 @@ impl Inbox {
             });
         })
         .detach();
-        cx.notify();
-    }
-
-    /// "Add to review" on a diff line: a draft sent with the review.
-    pub(super) fn add_line_comment(&mut self, comment: LineComment, cx: &mut Context<Self>) {
-        if !self.review_open() {
-            return;
-        }
-        self.review.drafts.push(comment);
-        self.review.error = None;
-        self.review.notice = None;
         cx.notify();
     }
 
@@ -412,8 +400,9 @@ impl Inbox {
                 .on_click(cx.listener(move |this, _, _, cx| this.submit_review(verdict, cx)))
         };
         let mine = self.item().is_some_and(|item| queue::is_mine(&item));
-        let drafts = (!review.drafts.is_empty()).then(|| {
-            let count = review.drafts.len();
+        let pending = self.diff_view.read(cx).drafts().to_vec();
+        let drafts = (!pending.is_empty()).then(|| {
+            let count = pending.len();
             glass::card()
                 .debug_selector(|| "git-review-drafts".into())
                 .px(px(14.))
@@ -431,7 +420,7 @@ impl Inbox {
                             if count == 1 { "" } else { "s" }
                         )),
                 )
-                .children(review.drafts.iter().enumerate().map(|(ix, draft)| {
+                .children(pending.iter().enumerate().map(|(ix, draft)| {
                     div()
                         .debug_selector(move || format!("git-review-draft-{ix}"))
                         .flex()
@@ -444,7 +433,7 @@ impl Inbox {
                                 .font_family(crate::fonts::monospace())
                                 .text_size(px(11.))
                                 .text_color(content(0.55))
-                                .child(format!("{}:{}", draft.path, draft.line)),
+                                .child(format!("{} · {}", draft.path, draft.lines_label())),
                         )
                         .child(
                             div()
@@ -463,9 +452,8 @@ impl Inbox {
                                 .cursor_pointer()
                                 .child(icon("x", 12.).text_color(content(0.5)))
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    if ix < this.review.drafts.len() {
-                                        this.review.drafts.remove(ix);
-                                    }
+                                    this.diff_view
+                                        .update(cx, |view, cx| view.delete_draft(ix, cx));
                                     cx.notify();
                                 })),
                         )

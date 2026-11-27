@@ -1,4 +1,4 @@
-//! The Git page on screen: views and their counts, bots folded, 25 to a
+//! The Pull requests page on screen: views and their counts, bots folded, 25 to a
 //! page, arrivals held behind the banner, the Filters dropdown kept per view
 //! and across restarts, saved views, review requests from other repos, the
 //! empty state, the review bar, Polish's card, notifications and Settings ›
@@ -370,7 +370,7 @@ fn review_requests_from_other_repos_fold_under_the_list_and_add_their_repo(
             repo: "acme/docs".into()
         }]
     );
-    // Switched off in Settings › Git: the fold goes.
+    // Switched off in Settings › Pull requests: the fold goes.
     window
         .update(&mut visual, |inbox, _, cx| {
             inbox.change_git_prefs(|p| p.other_repos = false, cx)
@@ -498,40 +498,35 @@ fn the_review_bar_submits_each_verdict_and_needs_words_for_all_but_approve(
 
 #[gpui::test]
 fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppContext) {
-    use gespan_core::inbox::{LineComment, Side};
+    use gespan_core::inbox::{LineComment, LineRef};
     let theirs = asked("acme/web", 1);
     let key = theirs.key();
     let window = open(store(), cx, move |inbox| {
         inbox.snapshot.items = vec![theirs]
     });
     let mut visual = visual(window, cx);
-    let comment = |line, side, body: &str| LineComment {
+    let comment = |start: Option<LineRef>, end: LineRef, body: &str| LineComment {
         path: "docs/hackathon.md".into(),
-        line,
-        side,
+        start,
+        end,
         body: body.into(),
     };
+    let range = comment(
+        Some(LineRef::new(Some(98), Some(98), 98, 98)),
+        LineRef::new(None, Some(100), 99, 100),
+        "test comment",
+    );
+    let deleted = comment(None, LineRef::new(Some(7), None, 7, 7), "why?");
+    let gone = comment(None, LineRef::new(None, Some(9), 9, 9), "never mind");
     window
         .update(&mut visual, |inbox, _, cx| {
             inbox.select(key.clone(), cx);
             inbox.set_tab(Tab::Code, cx);
-            // What the diff raises on "Add to review".
-            inbox.diff_view.update(cx, |_, cx| {
-                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
-                    100,
-                    Side::New,
-                    "test comment",
-                )));
-                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
-                    7,
-                    Side::Old,
-                    "why?",
-                )));
-                cx.emit(crate::diff_view::DiffEvent::LineComment(comment(
-                    9,
-                    Side::New,
-                    "never mind",
-                )));
+            // What the diff holds after three "Add review comment"s.
+            let drafts = vec![range.clone(), deleted.clone(), gone.clone()];
+            inbox.diff_view.update(cx, |view, cx| {
+                view.set_drafts(drafts, cx);
+                cx.emit(crate::diff_view::DiffEvent::DraftsChanged);
             });
         })
         .unwrap();
@@ -554,15 +549,21 @@ fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppCont
             key.clone(),
             Verdict::Comment,
             String::new(),
-            vec![
-                comment(100, Side::New, "test comment"),
-                comment(7, Side::Old, "why?")
-            ]
+            vec![range, deleted]
         )]
     );
     assert!(
         !shown(&mut visual, "git-review-drafts"),
         "sent drafts are cleared"
+    );
+    assert!(
+        window
+            .update(&mut visual, |inbox, _, cx| inbox
+                .diff_view
+                .read(cx)
+                .drafts()
+                .is_empty())
+            .unwrap()
     );
     // Nothing reaches the general discussion's composer.
     let discussion = window
@@ -571,8 +572,17 @@ fn line_comments_in_files_go_with_the_review_on_their_lines(cx: &mut TestAppCont
         })
         .unwrap();
     assert!(discussion.is_empty());
+    // Another pull request starts with no drafts.
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox
+                .diff_view
+                .update(cx, |view, cx| view.set_drafts(vec![gone.clone()], cx));
+            inbox.deselect(cx);
+            assert!(inbox.diff_view.read(cx).drafts().is_empty());
+        })
+        .unwrap();
 }
-
 #[gpui::test]
 fn a_polished_comment_is_offered_to_use_or_keep(cx: &mut TestAppContext) {
     let theirs = asked("acme/web", 1);

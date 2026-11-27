@@ -1316,7 +1316,7 @@ mod tests {
         let mut found: Vec<_> = [
             "Home",
             "My tasks",
-            "Git",
+            "Pull requests",
             "Runs",
             "Automations",
             "Flows",
@@ -1358,7 +1358,7 @@ mod tests {
             .update(visual, |_, _, cx| crate::flows::visible(cx))
             .unwrap();
         // Runs is a pane of Automations now, so it has no icon of its own.
-        let mut expected = vec!["Home", "My tasks", "Git", "Automations", "Search"];
+        let mut expected = vec!["Home", "My tasks", "Pull requests", "Automations", "Search"];
         if flows {
             expected.insert(4, "Flows");
         }
@@ -1398,7 +1398,7 @@ mod tests {
             .unwrap();
         visual.run_until_parked();
         let order = page_order(visual);
-        for gone in ["Git", "Automations", "Notes"] {
+        for gone in ["Pull requests", "Automations", "Notes"] {
             assert!(!order.contains(&gone), "{gone} hidden: {order:?}");
         }
         // Settings stays the last row of the sidebar either way.
@@ -1936,7 +1936,9 @@ mod tests {
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
         let new = visual.debug_bounds("sidebar-new-thread").unwrap();
-        let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
+        let inbox = visual
+            .debug_bounds("sidebar-navigation-Pull requests")
+            .unwrap();
         assert!(new.top() >= inbox.bottom());
         let selected = |visual: &mut gpui::VisualTestContext| {
             window
@@ -2151,7 +2153,7 @@ mod tests {
         visual.run_until_parked();
         let rows = [
             ("sidebar-automations", "sidebar-navigation-Automations"),
-            ("sidebar-inbox", "sidebar-navigation-Git"),
+            ("sidebar-inbox", "sidebar-navigation-Pull requests"),
         ];
         for (id, navigation) in rows {
             assert!(visual.debug_bounds(navigation).is_some(), "{navigation}");
