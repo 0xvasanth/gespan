@@ -84,10 +84,6 @@ fn a_saved_grouped_or_this_project_choice_still_draws_every_tab_ungrouped(cx: &m
         set_layout(window, saved, visual);
         window
             .update(visual, |shell, _, _| {
-                assert_eq!(
-                    shell.workspace.preferences.title_tabs, saved,
-                    "kept, not erased"
-                );
                 assert_eq!(shell.tab_layout(), TabLayout::All, "{saved}");
             })
             .unwrap();

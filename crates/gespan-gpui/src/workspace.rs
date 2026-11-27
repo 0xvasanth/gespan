@@ -659,6 +659,7 @@ impl Workspace {
             appearance.normalize();
         }
         state.assign_project_colors();
+        state.preferences.migrate_title_tabs();
         let mut known: HashSet<_> = sessions.iter().map(|s| s.0).collect();
         state.review_owners.retain(|id, owner| {
             *id < 0
@@ -1585,6 +1586,26 @@ fn rebase_saved_project(state: &mut serde_json::Value, from: &str, to: &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_workspace_saved_with_grouped_tabs_loads_on_all_projects() {
+        for saved in ["grouped", "project"] {
+            let state = serde_json::json!({
+                "project": "/work/app",
+                "projects": ["/work/app"],
+                "preferences": { "title_tabs": saved, "tab_animations": true },
+            });
+            let restored = super::Workspace::restore(Some(&state.to_string()), &[], "/work/app");
+            assert_eq!(restored.preferences.title_tabs, "all", "{saved}");
+            assert!(
+                restored.preferences.tab_animations,
+                "other preferences stay"
+            );
+            // Saved again, it stays on all projects.
+            let again = serde_json::to_value(&restored).unwrap();
+            assert_eq!(again["preferences"]["title_tabs"], "all", "{saved}");
+        }
+    }
+
     #[test]
     fn worktree_projects_and_sessions_fold_into_their_main_checkout_at_launch() {
         let store = gespan_core::store::Store::open(std::path::Path::new(":memory:")).unwrap();
