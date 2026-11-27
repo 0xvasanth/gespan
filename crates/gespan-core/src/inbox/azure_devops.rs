@@ -67,7 +67,7 @@ pub struct AzureDevOpsWorkItem {
     pub attention_reason: String,
     pub author: String,
     /// Pull requests (see [`super::Item`]): the review and check fields the
-    /// Git page groups by. Reviewers go by display name, as Azure DevOps
+    /// Pull requests page groups by. Reviewers go by display name, as Azure DevOps
     /// shows them; diff sizes stay 0, which its lists don't carry.
     pub review_decision: String,
     pub reviews: Vec<Review>,
@@ -971,15 +971,22 @@ pub fn azure_devops_submit_review(
 /// A thread on one line of a pull request's diff: the right side for new
 /// lines, the left for deleted ones.
 pub(crate) fn azure_line_thread(comment: &LineComment) -> Value {
-    let point = json!({ "line": comment.line, "offset": 1 });
-    let (start, end) = match comment.side {
+    let first = comment.range_start().unwrap_or(&comment.end);
+    let (start, end) = match comment.end.side {
         Side::New => ("rightFileStart", "rightFileEnd"),
         Side::Old => ("leftFileStart", "leftFileEnd"),
     };
+    // A range crossing from deleted to added lines starts at the first new
+    // line: one side holds the whole thread.
+    let from = if first.side == comment.end.side {
+        first.line
+    } else {
+        comment.end.line
+    };
     let path = format!("/{}", comment.path.trim_start_matches('/'));
     let mut context = json!({ "filePath": path });
-    context[start] = point.clone();
-    context[end] = point;
+    context[start] = json!({ "line": from, "offset": 1 });
+    context[end] = json!({ "line": comment.end.line, "offset": 1 });
     json!({
         "comments": [{ "parentCommentId": 0, "content": comment.body.trim(), "commentType": 1 }],
         "status": 1,

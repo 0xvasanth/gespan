@@ -1,4 +1,4 @@
-//! The Git page's list: the header (title, sync, the Needs me / Mine / All
+//! The Pull requests page's list: the header (title, sync, the Needs me / Mine / All
 //! open tabs and the Filters dropdown on one line, search under it), pull
 //! requests grouped by who they wait on, 25 to a page, new arrivals held
 //! behind a banner, review requests from other repos folded under the list,
@@ -94,7 +94,7 @@ fn size_label(item: &Item) -> Option<(String, String)> {
 
 impl Inbox {
     /// Every repository the list reads: your projects' remotes and the ones
-    /// added by hand, minus those switched off in Settings › Git.
+    /// added by hand, minus those switched off in Settings › Pull requests.
     pub(super) fn your_repos(&self) -> Vec<(String, String)> {
         let mut repos: Vec<(String, String)> = Vec::new();
         let mut add = |provider: &str, repo: &str| {
@@ -250,7 +250,7 @@ impl Inbox {
                     .line_height(px(26.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(content(1.))
-                    .child("Git"),
+                    .child("Pull requests"),
             )
             .child(
                 div()
@@ -794,7 +794,7 @@ impl Inbox {
             return glass::empty_state(
                 "git-pull-request",
                 "Connect a git host",
-                "Git lists pull requests from GitHub, GitLab and Azure DevOps.",
+                "Pull requests come from GitHub, GitLab and Azure DevOps.",
             )
             .debug_selector(|| "inbox-empty-list".into())
             .py(px(48.))

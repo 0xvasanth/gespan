@@ -321,7 +321,7 @@ fn new_layout_app_tabs_survive_frame_changes_and_close_like_session_tabs(cx: &mu
         // Close an inactive tab through its button, then the selected tabs
         // through Cmd-W, preserving the underlying conversation.
         visual.refresh().unwrap();
-        let close = visual.debug_bounds("close-app-tab-Git").unwrap();
+        let close = visual.debug_bounds("close-app-tab-Pull requests").unwrap();
         visual.simulate_click(close.center(), Default::default());
         visual.run_until_parked();
         for _ in 0..5 {

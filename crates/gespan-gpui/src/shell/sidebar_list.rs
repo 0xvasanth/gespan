@@ -1238,7 +1238,7 @@ mod tests {
             "Search",
             "Home",
             "My tasks",
-            "Git",
+            "Pull requests",
             "Runs",
             "Automations",
             "Flows",
@@ -1283,8 +1283,8 @@ mod tests {
         let flows = window
             .update(visual, |_, _, cx| crate::flows::visible(cx))
             .unwrap();
-        // Runs is a pane of Automations, and the Inbox is now Git.
-        let mut expected = vec!["Search", "Home", "My tasks", "Git", "Automations"];
+        // Runs is a pane of Automations, and the Inbox is now Pull requests.
+        let mut expected = vec!["Search", "Home", "My tasks", "Pull requests", "Automations"];
         if flows {
             expected.push("Flows");
         }
@@ -1325,7 +1325,7 @@ mod tests {
             .unwrap();
         visual.run_until_parked();
         let order = page_order(visual);
-        for gone in ["Git", "Automations", "Notes"] {
+        for gone in ["Pull requests", "Automations", "Notes"] {
             assert!(!order.contains(&gone), "{gone} hidden: {order:?}");
         }
         // Settings stays the last row of the sidebar either way.
@@ -1885,7 +1885,9 @@ mod tests {
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
         visual.run_until_parked();
         let new = visual.debug_bounds("sidebar-new-thread").unwrap();
-        let inbox = visual.debug_bounds("sidebar-navigation-Git").unwrap();
+        let inbox = visual
+            .debug_bounds("sidebar-navigation-Pull requests")
+            .unwrap();
         assert!(new.top() >= inbox.bottom());
         let selected = |visual: &mut gpui::VisualTestContext| {
             window
@@ -1901,7 +1903,7 @@ mod tests {
         assert!(selected(visual));
         visual.simulate_click(inbox.center(), Default::default());
         visual.run_until_parked();
-        assert!(!selected(visual), "Git takes the highlight");
+        assert!(!selected(visual), "Pull requests takes the highlight");
         window
             .update(visual, |shell, w, cx| {
                 shell.close_app_view(w, cx);
@@ -2108,7 +2110,7 @@ mod tests {
         visual.run_until_parked();
         let rows = [
             ("sidebar-automations", "sidebar-navigation-Automations"),
-            ("sidebar-inbox", "sidebar-navigation-Git"),
+            ("sidebar-inbox", "sidebar-navigation-Pull requests"),
         ];
         for (id, navigation) in rows {
             assert!(visual.debug_bounds(navigation).is_some(), "{navigation}");
@@ -3269,7 +3271,7 @@ mod tests {
             assert_eq!(everywhere.right(), project.right());
             assert_eq!(project.top() - everywhere.bottom(), px(10.));
             // Everywhere: Search, then the labelled pages in order.
-            let tops: Vec<_> = ["Search", "Home", "My tasks", "Git", "Automations"]
+            let tops: Vec<_> = ["Search", "Home", "My tasks", "Pull requests", "Automations"]
                 .map(|label| at(format!("sidebar-navigation-{label}"), visual))
                 .to_vec();
             assert!(tops.windows(2).all(|w| w[0].bottom() <= w[1].top()));

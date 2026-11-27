@@ -150,7 +150,7 @@ pub(crate) struct Inbox {
     /// The review bar: its comment, tone, Polish and submission.
     review: review_bar::ReviewBar,
     review_body: Entity<Input>,
-    /// Settings › Git's "Add a repo" field and what it found.
+    /// Settings › Pull requests's "Add a repo" field and what it found.
     repo_search_input: Entity<Input>,
     repo_search: git_settings::RepoSearch,
     /// What a test's repository search finds.
@@ -400,8 +400,9 @@ impl Inbox {
                 this.post_comment(cx)
             }),
             cx.subscribe(&diff_view, |this, _, event: &DiffEvent, cx| {
-                if let DiffEvent::LineComment(comment) = event {
-                    this.add_line_comment(comment.clone(), cx);
+                if let DiffEvent::DraftsChanged = event {
+                    this.review.draft_changed();
+                    cx.notify();
                     return;
                 }
                 if let DiffEvent::Comment(text) = event {
@@ -1008,6 +1009,8 @@ impl Inbox {
         self.tab = Tab::Summary;
         self.diff = None;
         self.review.reset();
+        self.diff_view
+            .update(cx, |view, cx| view.set_drafts(vec![], cx));
         self.review_body
             .update(cx, |input, cx| input.set_text(String::new(), cx));
         self.extra_request += 1;

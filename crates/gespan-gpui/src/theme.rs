@@ -500,7 +500,7 @@ pub(crate) fn nav_tint(label: &str) -> Option<Hsla> {
         "Home" => return Some(content(1.)),
         "New thread" => (0x3DD68C, 0x15874F),
         "My tasks" => (0xFFB900, 0xA86B00),
-        "Git" => (0x2DD4BF, 0x0D9488),
+        "Pull requests" => (0x2DD4BF, 0x0D9488),
         "Notes" => (0xFF7EA8, 0xCC2F66),
         "Search" => (0x5AA9FF, 0x1F6FD6),
         "Automations" => (0xF5B544, 0xC77C0A),
@@ -1057,7 +1057,7 @@ mod nav_tint_tests {
     /// the UI and keeps plain ink.
     const TINTED: [&str; 7] = [
         "New thread",
-        "Git",
+        "Pull requests",
         "Notes",
         "Search",
         "Automations",

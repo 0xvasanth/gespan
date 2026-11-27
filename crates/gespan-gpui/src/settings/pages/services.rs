@@ -180,7 +180,7 @@ impl SettingsView {
     /// The first run's subtitle says what connecting brings.
     pub(in crate::settings) fn services_description(&self) -> Option<&'static str> {
         (self.section == Section::Services && !self.has_connections())
-            .then_some("Connect the services you work in. What they bring in reaches Git, Pilots and automations.")
+            .then_some("Connect the services you work in. What they bring in reaches Pull requests, Pilots and automations.")
     }
 
     fn add_connection_button(&self, cx: &mut Context<Self>) -> AnyElement {

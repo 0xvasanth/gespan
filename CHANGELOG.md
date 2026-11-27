@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Git is now called Pull requests:** the rail, the page, its tab, Home's
+  tile, the app menu and Settings say Pull requests.
+- **Review comments on a range of lines, inline as on GitHub:** in a pull
+  request's Files, the "+" beside a line opens the comment box under it
+  instead of a popover. Drag from the "+" across lines, or shift-click
+  another line's "+", to comment on a range. Saved comments stay under their
+  lines as pending cards with Edit and Delete until the review is sent, and
+  ranges reach GitHub, GitLab and Azure DevOps.
+
 ## [0.3.3] - 2026-11-27
 
 ### Added

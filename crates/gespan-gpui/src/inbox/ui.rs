@@ -2378,7 +2378,7 @@ impl gpui::Render for Inbox {
         div()
             .id("inbox-view")
             .role(Role::Group)
-            .aria_label("Git")
+            .aria_label("Pull requests")
             .track_focus(&self.focus)
             .relative()
             .size_full()

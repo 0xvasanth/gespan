@@ -588,7 +588,7 @@ impl Shell {
         );
     }
 
-    /// Tells the user a pull request started waiting on them, unless Git is
+    /// Tells the user a pull request started waiting on them, unless Pull requests is
     /// on screen. Follows the global notification and sound preferences.
     pub(super) fn deliver_git_notice(
         &mut self,
@@ -597,7 +597,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let prefs = &self.workspace.preferences;
-        let watching = self.window_active && self.app_view_label() == Some("Git");
+        let watching = self.window_active && self.app_view_label() == Some("Pull requests");
         let notify = delivery::should_notify(
             prefs.notifications,
             self.notification_state.permission,
