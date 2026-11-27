@@ -1354,6 +1354,24 @@ mod tests {
     }
 
     #[gpui::test]
+    fn new_thread_sits_below_the_switcher_with_the_search_fields_spacing(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let switcher = visual.debug_bounds("sidebar-project-button").unwrap();
+        let more = visual.debug_bounds("sidebar-project-actions").unwrap();
+        let new = visual.debug_bounds("sidebar-new-thread").unwrap();
+        let search = visual.debug_bounds("sidebar-navigation-Search").unwrap();
+        let home = visual.debug_bounds("sidebar-navigation-Home").unwrap();
+        // No overlap: New thread starts 5px under the switcher (4px of air
+        // plus the rows' 1px gap), the same step as Search to Home.
+        assert_eq!(new.top() - switcher.bottom(), px(5.));
+        assert_eq!(new.top() - switcher.bottom(), home.top() - search.bottom());
+        assert_eq!((switcher.size.height, new.size.height), (px(44.), px(28.)));
+        assert!(more.bottom() <= switcher.bottom(), "\"…\" stays inside");
+    }
+
+    #[gpui::test]
     fn the_project_card_leads_with_the_switcher_then_new_thread(cx: &mut TestAppContext) {
         let (window, _, _) = super::super::tests::window(cx);
         let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);

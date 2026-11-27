@@ -34,6 +34,9 @@ pub(super) const CARD_PAD: f32 = 4.;
 /// The space between the Everywhere and This project cards.
 const CARD_GAP: f32 = 10.;
 const SEARCH_HEIGHT: f32 = 30.;
+/// The space under the Search field and under the switcher, before the
+/// rows that follow each: the same breathing room in both cards.
+pub(super) const HEAD_GAP: f32 = 4.;
 const MORE_HEIGHT: f32 = 24.;
 /// The time column, right-aligned.
 const TIME_WIDTH: f32 = 26.;
@@ -504,7 +507,7 @@ impl Shell {
                     .debug_selector(|| "rail-project-card".into())
                     .flex_1()
                     .min_h_0()
-                    .child(self.rail_switcher(cx))
+                    .child(div().mb(px(HEAD_GAP)).child(self.rail_switcher(cx)))
                     .child(self.sidebar_new_thread(cx))
                     .child(self.virtual_sidebar(cx)),
             )
@@ -522,7 +525,7 @@ impl Shell {
             .aria_selected(on)
             .cursor_pointer()
             .mx(px(2.))
-            .mb(px(4.))
+            .mb(px(HEAD_GAP))
             .h(px(SEARCH_HEIGHT))
             .px(px(8.))
             .rounded(px(8.))
