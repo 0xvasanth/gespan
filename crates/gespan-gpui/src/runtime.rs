@@ -119,6 +119,11 @@ pub(crate) fn locked(store: &Database) -> Result<std::sync::MutexGuard<'_, Store
         .map_err(|_| "Native session store unavailable".into())
 }
 
+/// Set by the manual benches that measure the real provider CLIs. Every
+/// other test turn resolves no CLI (see `run_turn`).
+#[cfg(test)]
+pub(crate) static REAL_CLIS_IN_TESTS: AtomicBool = AtomicBool::new(false);
+
 pub(crate) fn run_turn(
     summary: Session,
     prompt: String,
@@ -149,6 +154,19 @@ pub(crate) fn run_turn(
         });
         return;
     }
+    // Any other test turn finds no CLI, as on CI, unless the test asked for
+    // the real ones (`REAL_CLIS_IN_TESTS`). Resolving the machine's real CLI
+    // would start a real agent on the test thread, where its updates fill
+    // the channel no one drains and the test hangs.
+    #[cfg(test)]
+    let resolve = |kind| {
+        REAL_CLIS_IN_TESTS
+            .load(Ordering::Relaxed)
+            .then(|| provider::resolve(kind))
+            .flatten()
+    };
+    #[cfg(not(test))]
+    let resolve = provider::resolve;
     let _session = enter_turn(&summary, false);
     run_turn_using(
         TurnInput {
@@ -160,7 +178,7 @@ pub(crate) fn run_turn(
         store,
         cancel,
         tx,
-        provider::resolve,
+        resolve,
     );
 }
 

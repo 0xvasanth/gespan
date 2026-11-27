@@ -151,6 +151,8 @@ fn report(label: &str, runs: &[Vec<(f64, String)>]) {
 #[test]
 #[ignore = "manual benchmark against real provider CLIs"]
 fn send_latency_bench() {
+    // The point of the bench: the real CLIs, which test turns otherwise skip.
+    REAL_CLIS_IN_TESTS.store(true, Ordering::Relaxed);
     MARKS.get_or_init(Default::default);
     let _ = tracing::subscriber::set_global_default(tracing_subscriber::registry().with(Marks));
     let kind = std::env::var("BENCH_KIND").unwrap_or("claude".into());
