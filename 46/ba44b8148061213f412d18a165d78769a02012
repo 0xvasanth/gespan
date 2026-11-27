@@ -1,0 +1,53 @@
+crates/gespan-gpui/src/inbox/git_tests.rs
+  s_ff1c238ed28e4c::t_0a83095087dbfc 420-422,424,440,442-446,448-460,466-473,475-481,489,515,517-520,530-533,572-576,582,647
+  s_ff1c238ed28e4c::t_800522fe787b3e 447
+crates/gespan-core/src/inbox.rs
+  s_ff1c238ed28e4c::t_414feaa287045d 300-303
+crates/gespan-gpui/src/diff_view.rs
+  s_ff1c238ed28e4c::t_31de4577bde1f6 1829-1933,1935-1976,1978-1994,1996-2086
+  s_ff1c238ed28e4c::t_52a45b08c9ba2f 22,106-108,936-942
+  s_ff1c238ed28e4c::t_9ec85fd7547981 101-105
+  s_ff1c238ed28e4c::t_073d362d6c4319 1934,1977,1995
+crates/gespan-gpui/src/e2e/git_polish_tests.rs
+  s_ff1c238ed28e4c::t_b6ae41e0425503 118-162
+crates/gespan-gpui/src/diff_view/review_threads.rs
+  s_ff1c238ed28e4c::t_608987f7bfb738 949,958
+  s_ff1c238ed28e4c::t_1c7dee58410c14 10,42-47,51-62,116-118,255-259,360-364,369-372,406-464
+  s_ff1c238ed28e4c::t_9ec85fd7547981 701-817,821,840-863,865,886-888,890-892,950-957,976-999
+  s_ff1c238ed28e4c::t_52a45b08c9ba2f 66-67,73-113,212-220,222,224-234,236-240,249,253-254,260,540-600,602-613,1000
+  s_ff1c238ed28e4c::t_7dbbb663d54e7d 221,223,601,1001
+crates/gespan-gpui/src/review.rs
+  s_ff1c238ed28e4c::t_52a45b08c9ba2f 1527
+crates/gespan-core/src/inbox/github.rs
+  s_ff1c238ed28e4c::t_414feaa287045d 82-83,779,1163-1164,1328,1366,1375,1377-1387
+  s_ff1c238ed28e4c::t_215bb27c701a18 1993-2020
+crates/gespan-gpui/src/inbox/review_bar.rs
+  s_ff1c238ed28e4c::t_b6ae41e0425503 52-54,84-91,330-336
+  s_ff1c238ed28e4c::t_f683a4fe713f4a 279,281-284,286-287
+  s_ff1c238ed28e4c::t_17c2651989bc4a 20-27,29,203-222,224,231-234,236,309,312-322,324-329
+  s_ff1c238ed28e4c::t_14b118ef53ac63 49-51,132,134,136,138-139,186-187,350-369,375-450,475,478,487,548,552,592-667,681-683,687-713,717,719-724,739-751,753-766,768-774,776-777
+  s_ff1c238ed28e4c::t_44cc735a8b679b 223,285,323,752,775
+crates/gespan-gpui/src/inbox.rs
+  s_ff1c238ed28e4c::t_0385ce1d7dbc30 264-296,436-439,1053-1056,1175-1177,1304-1311
+  s_ff1c238ed28e4c::t_31de4577bde1f6 1312,1558-1580,1582-1609
+  s_ff1c238ed28e4c::t_9ec85fd7547981 440-443
+  s_ff1c238ed28e4c::t_f09687fe347842 1581
+CHANGELOG.md
+  s_ff1c238ed28e4c::t_f144038e3a39e0 20-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "46ba44b8148061213f412d18a165d78769a02012",
+  "prompts": {},
+  "sessions": {
+    "s_ff1c238ed28e4c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e4a764e3-fe0e-424e-b6f7-ce8d951e9c0b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
