@@ -7,8 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-27
+
+### Added
+
+- **Pilots ask with a decision card:** a Pilot can ask a question with one to
+  four one-tap answers. Until it's answered the Pilot shows as needing you in
+  the rail, My tasks and its title-bar tab.
+- **Pilot turns show live:** every message appears as it arrives, with its
+  time. Steps and background jobs show as a trace that folds to one line when
+  the turn ends ("Worked for 4m 10s · 7 steps · 3 sessions started").
+- **Git line comments land on their lines:** a comment on a diff line is
+  drafted on that line and sent with the review as a real review comment on
+  GitHub, GitLab and Azure DevOps.
+
 ### Changed
 
+- **A two-zone left nav:** an Everywhere card (Search, Home, My tasks, Git,
+  Automations) and a This project card (switcher, New thread, Pilots, Now and
+  Sessions). Every session shows once, and the running card is always shown.
+- **One flat top nav:** every project's tabs sit side by side, each led by its
+  project's icon in the project's colour. Projects with no colour get the
+  least-used one, so open projects no longer share a colour.
+- **Runs moves into Automations:** All runs is the first pane of Automations,
+  with running runs on top and a card for each failing automation.
 - **Inbox is now Git, a review queue for pull and merge requests:** the rail,
   the page and Settings say Git. It lists open pull requests from GitHub,
   GitLab and Azure DevOps together, grouped by who they wait on (Waiting on
@@ -24,11 +46,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Comment, Request changes or Approve, with a tone and Polish, which asks the
   pull request's Ask agent for a rewrite. Your pull request with failing
   checks opens on the failed job, with Re-run failed and Fix with an agent.
-
+  Git's colour is now teal.
 - **Releases build iOS only when asked:** each iOS App Store build uses an
   Expo build credit, so a release now ships desktop and the Android APK, and
   builds iOS only when the `RELEASE_IOS` repository variable is `true` or the
   Release workflow is run by hand with "Build iOS" ticked.
+
+### Fixed
+
+- **Text selects everywhere again:** chat, reasoning, tool rows, Pilot chat,
+  the Git and My tasks detail panes, runs, the Automations gallery, Settings
+  and diff lines can all be selected and copied.
+- The trace module now builds on every platform, not only macOS.
 
 ## [0.3.2] - 2026-11-19
 
@@ -2442,7 +2471,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/0xvasanth/gespan/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/0xvasanth/gespan/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/0xvasanth/gespan/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/0xvasanth/gespan/compare/v0.2.0...v0.3.0
