@@ -1,0 +1,22 @@
+crates/gespan-gpui/src/shell.rs
+  s_1af47de6072da9::t_52e58e43d5ff3e 481
+crates/gespan-gpui/src/shell/tab_colors.rs
+  s_1af47de6072da9::t_52e58e43d5ff3e 61-63,69-70,76-79,82-86,88-93,95,97-101,107,111-114,116,118-124,137,160
+  s_1af47de6072da9::t_7531d9a3210ae6 94,102-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71e1a05c8320715e8dcec6bb9b87ae6b7700525a",
+  "prompts": {},
+  "sessions": {
+    "s_1af47de6072da9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b5dea75e-c883-4c60-9a78-a29260ad4d76",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
