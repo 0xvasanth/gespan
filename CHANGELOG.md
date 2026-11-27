@@ -7,10 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-27
+
+### Changed
+
+- **The selected tab stays readable in a crowded top nav:** with many tabs
+  open, the selected tab keeps the full tab width for its icon, project,
+  title and close button while the others share the rest.
+- **Every tab has a tooltip:** resting on a tab shows its whole title, its
+  project in the project's colour, its branch and whether it's working.
+
+### Fixed
+
+- A workspace saved with the old "grouped" or "this project" top bar choice
+  now loads and saves as all projects, which is what the top bar shows.
+
 ## [0.3.3] - 2026-11-27
 
 ### Added
 
+- **Shared tools in first-run setup:** a new Tools step finds the MCP servers
+  your agents already use and moves them into Gespan's shared catalogue in one
+  step, with the MCP hub on by default for new installs. Each server lists the
+  variables and headers it will get, servers that can't move are named, and
+  servers an agent had off stay off.
 - **Pilots ask with a decision card:** a Pilot can ask a question with one to
   four one-tap answers. Until it's answered the Pilot shows as needing you in
   the rail, My tasks and its title-bar tab.
@@ -58,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Git and My tasks detail panes, runs, the Automations gallery, Settings
   and diff lines can all be selected and copied.
 - The trace module now builds on every platform, not only macOS.
+- New thread no longer sits flush against the project switcher.
+
+### Security
+
+- A repository's own MCP config can no longer pull variables from your login
+  shell into a server's headers; only your own configs are filled from it.
 
 ## [0.3.2] - 2026-11-19
 
@@ -2471,7 +2497,8 @@ First public release. macOS (Apple Silicon) only.
 - Updater endpoint and minisign public key are injected at release time rather than committed, so forks do not inherit the maintainer's update channel.
 - macOS release builds sign with `APPLE_SIGNING_IDENTITY` via a config overlay; the committed default remains ad-hoc `-` for community builds.
 
-[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/0xvasanth/gespan/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/0xvasanth/gespan/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/0xvasanth/gespan/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/0xvasanth/gespan/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/0xvasanth/gespan/compare/v0.3.0...v0.3.1
