@@ -985,6 +985,11 @@ impl Inbox {
     }
     /// Seeds the held-back set when the view changes, before a render reads it.
     fn sync_arrivals(&mut self, cx: &App) {
+        // Before the first list arrives there is nothing to compare with:
+        // seeding from the empty list would count everything as new.
+        if self.synced_ms.is_none() && self.snapshot.items.is_empty() {
+            return;
+        }
         let scope = self.view_scope(cx);
         let rows = self
             .state

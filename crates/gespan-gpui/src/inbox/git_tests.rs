@@ -219,6 +219,41 @@ fn arrivals_wait_behind_the_banner_instead_of_moving_the_list(cx: &mut TestAppCo
     assert!(shown(&mut visual, &key));
 }
 
+/// The first list to arrive is the list, not "N new": only pull requests
+/// that come after it wait behind the banner.
+#[gpui::test]
+fn the_first_list_to_arrive_is_not_held_back_as_new(cx: &mut TestAppContext) {
+    // Opened while the first fetch is still on its way.
+    let window = open(store(), cx, |_| {});
+    let mut visual = visual(window, cx);
+    assert!(!shown(&mut visual, "git-new-banner"));
+    let first = vec![asked("acme/web", 1), asked("acme/web", 2)];
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.snapshot.items = first;
+            inbox.synced_ms = Some(gespan_core::time::now_ms() as i64);
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(
+        !shown(&mut visual, "git-new-banner"),
+        "the first list shows as it is"
+    );
+    assert_eq!(visible(window, &mut visual), vec![1, 2]);
+    // A later one still waits.
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.snapshot.items.push(asked("acme/web", 3));
+            cx.notify();
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(shown(&mut visual, "git-new-banner"));
+}
+
 #[gpui::test]
 fn filters_are_kept_per_view_and_after_a_restart(cx: &mut TestAppContext) {
     let db = store();
