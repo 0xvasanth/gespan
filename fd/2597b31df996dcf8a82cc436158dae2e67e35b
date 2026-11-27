@@ -31,6 +31,7 @@ crates/gespan-gpui/src/review.rs
   s_ff1c238ed28e4c::t_bad9f2f3267711 1527
 crates/gespan-gpui/src/shell/sidebar_list.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 1241,1328,2111
+  s_ff1c238ed28e4c::t_f8d246aeda5bea 1286-1287,1888,1904,3272
 crates/gespan-core/src/inbox/azure_devops.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 70
   s_ff1c238ed28e4c::t_ca964820057671 974-975,979-985,988-989
@@ -53,6 +54,7 @@ crates/gespan-gpui/src/inbox.rs
   s_ff1c238ed28e4c::t_bad9f2f3267711 403-405,1012-1013
 crates/gespan-gpui/src/shell/my_tasks_tests.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 83
+  s_ff1c238ed28e4c::t_f8d246aeda5bea 84-85,87
 crates/gespan-gpui/src/shell/app_views.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 18
 crates/gespan-gpui/src/inbox/review_bar.rs
@@ -64,6 +66,7 @@ host/github-inbox.ts
   s_ff1c238ed28e4c::t_3a5f38c5e3f0b5 152,156-157,159-162,170,175-176,180-192
 crates/gespan-gpui/src/shell/notifications.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 600
+  s_ff1c238ed28e4c::t_f8d246aeda5bea 591
 crates/gespan-gpui/src/app_menu.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 121
 crates/gespan-core/src/inbox.rs
@@ -79,6 +82,7 @@ crates/gespan-gpui/src/home.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 426,992
 crates/gespan-gpui/src/inbox/git_list.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 1,97,253
+  s_ff1c238ed28e4c::t_f8d246aeda5bea 797
 crates/gespan-gpui/src/inbox/git_settings.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 1,4,9,22,119,124
 crates/gespan-gpui/src/inbox/git_tests.rs
@@ -87,6 +91,7 @@ crates/gespan-gpui/src/inbox/git_tests.rs
   s_ff1c238ed28e4c::t_92c46eaa6a3d85 501,508,510-511,514-520,525-529,560,566-567,575-577,581-584
 crates/gespan-gpui/src/shell/rail.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 81,258,1230,1239,1265,1271,1311
+  s_ff1c238ed28e4c::t_f8d246aeda5bea 716,723,745,747,750,807,824,1267
 crates/gespan-gpui/src/settings/pages/appearance.rs
   s_ff1c238ed28e4c::t_828da0776e4e5c 51
 host/github-inbox.test.ts
@@ -95,6 +100,8 @@ crates/gespan-gpui/src/shell/automation_runs.rs
   s_ff1c238ed28e4c::t_3dcfc63e89b476 386-388
 crates/gespan-gpui/Cargo.lock
   s_ff1c238ed28e4c::t_bc25b5bf83d6ae 2876
+crates/gespan-gpui/src/shell/project_settings.rs
+  s_ff1c238ed28e4c::t_f8d246aeda5bea 453-454
 ---
 {
   "schema_version": "authorship/3.0.0",
