@@ -16,8 +16,8 @@ pub(crate) struct Preferences {
     pub tab_animations: bool,
     /// What the top bar's tabs showed when Settings could choose: "project",
     /// "all" or "grouped". The choice is gone and the strip is always every
-    /// project's tabs, ungrouped; a saved value is kept but not read. See
-    /// [`Preferences::tab_layout`].
+    /// project's tabs, ungrouped, so a workspace saved with another choice
+    /// moves to "all" when it loads ([`Preferences::migrate_title_tabs`]).
     pub title_tabs: String,
     /// How the sidebar's Folders section groups sessions: "worktree" (by
     /// the worktree each runs in) or "folders" (the user's own folders).
@@ -250,10 +250,19 @@ impl Preferences {
     pub(crate) fn groups_by_worktree(&self) -> bool {
         self.sidebar_group_by != "folders"
     }
-    /// Always every project's tabs, ungrouped, whatever `title_tabs` holds:
-    /// a "grouped" or "project" saved before the setting went is ignored.
+    /// Always every project's tabs, ungrouped, whatever `title_tabs` holds.
     pub(crate) fn tab_layout(&self) -> TabLayout {
         TabLayout::All
+    }
+    /// Moves a "grouped" or "this project" top bar choice, saved before the
+    /// setting went, to "all": the layout the app draws for everyone now.
+    /// Returns whether it changed.
+    pub(crate) fn migrate_title_tabs(&mut self) -> bool {
+        if self.title_tabs == "all" {
+            return false;
+        }
+        self.title_tabs = "all".into();
+        true
     }
     /// Whether deleting a worktree of `project` starts with its merged branch
     /// ticked. The dialog can still change it, for that one deletion.
@@ -705,6 +714,29 @@ pub(crate) fn backdrop_colors(p: &Preferences, glass: bool) -> Option<(u32, u32)
 #[cfg(test)]
 mod tests {
     use super::Preferences;
+
+    #[test]
+    fn a_saved_grouped_or_this_project_choice_moves_to_all_projects() {
+        for saved in ["grouped", "project", "", "unknown"] {
+            let mut prefs = Preferences {
+                title_tabs: saved.into(),
+                ..Preferences::default()
+            };
+            assert!(prefs.migrate_title_tabs(), "{saved:?}");
+            assert_eq!(prefs.title_tabs, "all", "{saved:?}");
+            // Nothing else moves with it.
+            assert_eq!(
+                prefs,
+                Preferences {
+                    title_tabs: "all".into(),
+                    ..Preferences::default()
+                }
+            );
+        }
+        let mut prefs = Preferences::default();
+        assert_eq!(prefs.title_tabs, "all");
+        assert!(!prefs.migrate_title_tabs(), "already on all projects");
+    }
 
     #[test]
     fn decision_log_is_opt_in() {
