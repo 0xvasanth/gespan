@@ -1,0 +1,26 @@
+crates/gespan-gpui/src/runtime/persistence.rs
+  s_be5b96ddf27e84::t_856cdc77f5d7d2 464-514
+  s_be5b96ddf27e84::t_e46939772b8095 515-517
+crates/gespan-gpui/src/runtime.rs
+  s_be5b96ddf27e84::t_0db758dee4cb5f 157-160,162-167
+  s_be5b96ddf27e84::t_39aa367693a571 122-126
+  s_be5b96ddf27e84::t_692f33cd573edb 161,168-169,181
+crates/gespan-gpui/src/runtime/send_latency_bench.rs
+  s_be5b96ddf27e84::t_ab1fc422fee32b 154-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63fc13ce2770fa86f6617e704a8489412df08341",
+  "prompts": {},
+  "sessions": {
+    "s_be5b96ddf27e84": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07793367-3f88-41cd-a5f8-a1e8be629be8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
