@@ -13,6 +13,7 @@ pub mod azure_devops;
 pub use avatar::png as avatar_png;
 pub mod ci_repair;
 pub mod events;
+pub(crate) mod github_poll;
 pub mod polish;
 pub mod queue;
 pub mod review;
@@ -1562,6 +1563,41 @@ fn gh_root(cwd: &Path) -> PathBuf {
 pub(crate) fn run_gh(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
     run_command("gh", root, args, allow_empty)
 }
+/// `gh`'s standard output whether or not it exited cleanly: a conditional
+/// request's `304` is a failure to `gh` but an answer to us.
+pub(crate) fn run_gh_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    match command_output("gh", root, args)? {
+        (_, stdout, _) if !stdout.is_empty() => Ok(stdout),
+        (_, _, stderr) => Err(stderr),
+    }
+}
+/// Runs `program` in `root`: whether it succeeded, its standard output and
+/// its standard error, trimmed.
+fn command_output(
+    program: &str,
+    root: &Path,
+    args: &[&str],
+) -> Result<(bool, String, String), String> {
+    let binary = crate::scm::resolve_gui_binary(program)
+        .ok_or_else(|| format!("{program} is not installed. Install {program} and check again."))?;
+    let mut command = Command::new(binary);
+    command
+        .current_dir(root)
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GH_PAGER", "cat")
+        .env("GIT_PAGER", "cat");
+    crate::scm::shell::apply_gui_env(&mut command);
+    crate::process::configure_child(&mut command);
+    let output = command.output().map_err(|e| e.to_string())?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+    ))
+}
+
 fn run_command(
     program: &str,
     root: &Path,
@@ -1579,20 +1615,9 @@ fn run_command(
             program
         )
     })?;
-    let mut command = Command::new(binary);
-    command
-        .current_dir(root)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_PAGER", "cat")
-        .env("GIT_PAGER", "cat");
-    crate::scm::shell::apply_gui_env(&mut command);
-    crate::process::configure_child(&mut command);
-    let output = command.output().map_err(|e| e.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let _ = binary;
+    let (success, stdout, stderr) = command_output(program, root, args)?;
+    if !success {
         return Err(if stderr.is_empty() { stdout } else { stderr });
     }
     if stdout.is_empty() && !allow_empty {

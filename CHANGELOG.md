@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lines as pending cards with Edit and Delete until the review is sent, and
   ranges reach GitHub, GitLab and Azure DevOps.
 
+### Fixed
+
+- **Pull requests no longer time out on large repositories or burn the
+  GitHub rate limit:** the list asks GitHub once per repository for review
+  fields and check counts instead of every check of every pull request,
+  which made GitHub answer 504 on repositories like n8n. It fetches open
+  pull requests only, skips repositories GitHub says haven't changed (a free
+  conditional request), and backs off for 1 to 15 minutes after a timeout or
+  rate limit, keeping the last list on screen. Remote projects ask the same
+  way.
+- **The view tabs no longer truncate to "Ne… 0":** the list opens at 420px,
+  never narrower than 400px, and below 440px Filters shrinks to its icon.
+
 ## [0.3.3] - 2026-11-27
 
 ### Added

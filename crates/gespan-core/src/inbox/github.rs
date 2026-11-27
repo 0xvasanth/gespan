@@ -198,6 +198,28 @@ pub(super) fn git_github_work_items_for(
     } else {
         "open"
     };
+    // The Pull requests page's poll: one light query, skipped when nothing
+    // changed (see `github_poll`).
+    if kind == "pr" && state == "open" && !assigned_to_me && search.trim().is_empty() {
+        let mut items = super::github_poll::open_pull_requests(root, &repo, limit)?;
+        let viewer = cached_github_login(root);
+        for item in &mut items {
+            item.viewer = viewer.clone();
+            // Your own failing pull request says which check failed.
+            if item.check_summary.failed > 0
+                && !viewer.is_empty()
+                && item.author.eq_ignore_ascii_case(&viewer)
+            {
+                item.check_summary.failed_names = super::github_poll::failed_check_names(
+                    root,
+                    &repo,
+                    item.number,
+                    &item.updated_at,
+                );
+            }
+        }
+        return Ok(items);
+    }
     let limit = limit.clamp(1, 100).to_string();
     let fields = if kind == "pr" {
         GITHUB_PR_LIST_FIELDS
@@ -240,7 +262,10 @@ pub(super) fn git_github_work_items_for(
 
 /// What a pull request row carries in the list: enough for the Pull requests page to
 /// group it by who is waiting, and show its size and checks.
-const GITHUB_PR_LIST_FIELDS: &str = "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author,additions,deletions,reviewDecision,reviewRequests,latestReviews,statusCheckRollup";
+/// No `statusCheckRollup`: every check of every row made the list time out
+/// on large repositories. The Pull requests page's own poll reads check
+/// counts instead (see `github_poll`).
+const GITHUB_PR_LIST_FIELDS: &str = "number,title,url,state,createdAt,updatedAt,labels,assignees,isDraft,author,additions,deletions,reviewDecision,reviewRequests,latestReviews";
 
 /// The signed-in login for `root`'s `gh`, asked at most every few minutes;
 /// empty when `gh` can't say.
@@ -967,7 +992,7 @@ fn parse_github_review_reply_url(json: &str) -> Result<String, String> {
     Err("GitHub did not return a comment URL".into())
 }
 
-pub(super) fn split_github_repo(slug: &str) -> Result<(String, String), String> {
+pub(crate) fn split_github_repo(slug: &str) -> Result<(String, String), String> {
     let slug = slug.trim();
     let Some((owner, name)) = slug.split_once('/') else {
         return Err("GitHub did not return a repository".into());
@@ -1354,7 +1379,7 @@ fn github_review_thread(thread: GithubGraphqlReviewThread) -> Option<GitHubWorkI
     Some(first)
 }
 
-fn github_avatar_url(login: &str) -> String {
+pub(crate) fn github_avatar_url(login: &str) -> String {
     let login = login.trim();
     if login.is_empty() {
         return String::new();
@@ -2158,8 +2183,9 @@ mod automation_event_tests {
         );
         assert_eq!(row.check_summary.failed_names, ["Windows tests"]);
         assert_eq!(row.repo, "acme/app");
-        assert!(GITHUB_PR_LIST_FIELDS
-            .ends_with("reviewDecision,reviewRequests,latestReviews,statusCheckRollup"));
+        assert!(GITHUB_PR_LIST_FIELDS.ends_with("reviewDecision,reviewRequests,latestReviews"));
+        // Every check of every row timed the list out on large repositories.
+        assert!(!GITHUB_PR_LIST_FIELDS.contains("statusCheckRollup"));
     }
 
     #[test]

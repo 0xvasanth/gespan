@@ -22,6 +22,11 @@ pub(crate) enum FilterRow {
     Extra(Extra),
 }
 
+/// The list's narrowest, default and widest widths.
+pub(super) const LIST_MIN: f32 = 400.;
+pub(super) const LIST_DEFAULT: f32 = 420.;
+pub(super) const LIST_MAX: f32 = 520.;
+
 /// The hosts a pull request can come from, in the order they are offered.
 pub(super) const HOSTS: [&str; 3] = ["github", "gitlab", "azuredevops"];
 
@@ -208,6 +213,17 @@ impl Inbox {
         cx.notify();
     }
 
+    /// The list's width: what it was dragged to, else the design's 420px. The
+    /// Inbox's 280px default never fit the view tabs and Filters.
+    pub(super) fn list_width(&self) -> f32 {
+        let width = self.state.feed.list_width;
+        if width <= 280. {
+            LIST_DEFAULT
+        } else {
+            width.clamp(LIST_MIN, LIST_MAX)
+        }
+    }
+
     pub(super) fn list_view(&self, cx: &mut Context<Self>) -> AnyElement {
         let prefs = &self.state.prefs;
         let search_text = self.search.read(cx).content.to_string();
@@ -268,7 +284,7 @@ impl Inbox {
             .role(Role::TabList)
             .aria_label("Views")
             .min_w_0()
-            .flex_shrink(1.)
+            .flex_none()
             .children(View::TABS.into_iter().map(|view| {
                 let selected = current == Current::Builtin(view);
                 let count = prefs.count(&self.snapshot.items, view);
@@ -281,39 +297,50 @@ impl Inbox {
                 .role(Role::Tab)
                 .aria_label(format!("{}, {count}", view.label()))
                 .aria_selected(selected)
-                .px(px(9.))
+                .px(px(7.))
                 .gap(px(4.))
-                .min_w_0()
+                // Never squeezed: a truncated "Ne… 0" says nothing.
+                .flex_none()
                 .child(glass::count(count, view == View::NeedsMe && count > 0).flex_none())
                 .on_click(
                     cx.listener(move |this, _, _, cx| this.set_git_view(view.id().into(), cx)),
                 )
             }));
         let active = prefs.filters().active();
-        let filters = glass::button("git-filters", "Filters", glass::Button::Glass)
-            .debug_selector(|| "git-filters".into())
-            .role(Role::Button)
-            .aria_label(if active > 0 {
-                format!("Filters, {active} on")
-            } else {
-                "Filters".into()
-            })
-            .aria_expanded(self.filters_open)
-            .relative()
-            .flex_none()
-            .ml_auto()
-            .h(px(32.))
-            .px(px(9.))
-            .gap(px(6.))
-            .child(self.filter_anchor.probe())
-            .when(active > 0, |d| d.child(glass::count(active, false)))
-            .child(icon("chevron-down", 11.).text_color(content(0.7)))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.filters_open = !this.filters_open;
-                this.filter_row = None;
-                this.adding_filter = false;
-                cx.notify();
-            }));
+        // Below this the tabs and "Filters" don't share one line, so the
+        // button keeps only its glyph and count.
+        let compact = self.list_width() < 440.;
+        let filters = glass::button(
+            "git-filters",
+            if compact { "" } else { "Filters" },
+            glass::Button::Glass,
+        )
+        .debug_selector(|| "git-filters".into())
+        .role(Role::Button)
+        .aria_label(if active > 0 {
+            format!("Filters, {active} on")
+        } else {
+            "Filters".into()
+        })
+        .aria_expanded(self.filters_open)
+        .relative()
+        .flex_none()
+        .ml_auto()
+        .h(px(32.))
+        .px(px(9.))
+        .gap(px(6.))
+        .child(self.filter_anchor.probe())
+        .when(compact, |d| {
+            d.child(icon("filter", 13.).text_color(content(0.8)))
+        })
+        .when(active > 0, |d| d.child(glass::count(active, false)))
+        .child(icon("chevron-down", 11.).text_color(content(0.7)))
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.filters_open = !this.filters_open;
+            this.filter_row = None;
+            this.adding_filter = false;
+            cx.notify();
+        }));
         let view_line = div()
             .flex()
             .items_center()
@@ -469,7 +496,7 @@ impl Inbox {
         div()
             .debug_selector(|| "inbox-list".into())
             .relative()
-            .w(px(self.state.feed.list_width.clamp(300., 480.)))
+            .w(px(self.list_width()))
             .h_full()
             .flex_shrink_0()
             .border_r_1()
@@ -525,7 +552,7 @@ impl Inbox {
                         MouseButton::Left,
                         cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
                             this.resize_start =
-                                Some((f32::from(event.position.x), this.state.feed.list_width));
+                                Some((f32::from(event.position.x), this.list_width()));
                             cx.stop_propagation();
                         }),
                     ),

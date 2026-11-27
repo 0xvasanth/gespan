@@ -951,8 +951,11 @@ impl State {
                     Prefs::default()
                 }
             });
-        // The feed's own filters were the Inbox's views; Git filters itself.
+        // The feed's own filters were the Inbox's views; the page filters
+        // itself. Open items only: the page lists nothing else, and
+        // automations fetch merges and closes on their own.
         feed.filters = super::Filters::default();
+        feed.filters.status.open = true;
         feed.source = "github".into();
         let mut state = Self { feed, prefs };
         if !state.prefs.keep_filters {

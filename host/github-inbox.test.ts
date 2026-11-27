@@ -492,33 +492,66 @@ it("accepts the exact arguments Gespan Native sends for every command", async ()
     ).resolves.toBeDefined();
 });
 
-it("fills the Git page's review fields like the Rust side does", async () => {
-  const pr = {
-    ...row,
-    isDraft: false,
-    author: { login: "devon" },
-    additions: 318,
-    deletions: 204,
-    reviewDecision: "CHANGES_REQUESTED",
-    reviewRequests: [{ login: "remote-user" }, { name: "core-team" }, {}],
-    latestReviews: [
-      { author: { login: "mira" }, state: "APPROVED", submittedAt: "2026-11-01" },
-      { author: { login: "Mira" }, state: "COMMENTED", submittedAt: "2026-11-02" },
-      { author: { login: "sam" }, state: "COMMENTED", submittedAt: "2026-11-01" },
-      { author: { login: "sam" }, state: "CHANGES_REQUESTED", submittedAt: "2026-11-03" },
-      { author: { login: "bot" }, state: "PENDING" },
-    ],
-    statusCheckRollup: [
-      { __typename: "CheckRun", name: "lint", status: "COMPLETED", conclusion: "SUCCESS" },
-      { __typename: "CheckRun", name: "docs", status: "COMPLETED", conclusion: "SKIPPED" },
-      { __typename: "CheckRun", name: "Rust tests (Windows)", status: "COMPLETED", conclusion: "CANCELLED" },
-      { __typename: "CheckRun", name: "old", status: "COMPLETED", conclusion: "STALE" },
-      { __typename: "CheckRun", name: "e2e", status: "IN_PROGRESS", conclusion: null },
-      { __typename: "StatusContext", context: "ci/legacy", state: "FAILURE" },
-      { context: "deploy", state: "PENDING" },
-    ],
+it("polls open pull requests with one light query and check counts", async () => {
+  const response = {
+    data: {
+      repository: {
+        pullRequests: {
+          nodes: [
+            {
+              number: 42,
+              title: "Remote PR",
+              url: "https://github.com/acme/web/pull/42",
+              state: "OPEN",
+              isDraft: false,
+              createdAt: "c",
+              updatedAt: "u",
+              additions: 318,
+              deletions: 204,
+              reviewDecision: "CHANGES_REQUESTED",
+              author: { login: "devon" },
+              labels: { nodes: [{ name: "ui", color: "fff" }] },
+              assignees: { nodes: [{ login: "remote-user" }] },
+              reviewRequests: {
+                nodes: [
+                  { requestedReviewer: { login: "remote-user" } },
+                  { requestedReviewer: { name: "core-team" } },
+                  { requestedReviewer: null },
+                ],
+              },
+              latestReviews: {
+                nodes: [
+                  { author: { login: "mira" }, state: "APPROVED", submittedAt: "1" },
+                  { author: { login: "sam" }, state: "CHANGES_REQUESTED", submittedAt: "2" },
+                ],
+              },
+              commits: {
+                nodes: [
+                  {
+                    commit: {
+                      statusCheckRollup: {
+                        contexts: {
+                          checkRunCountsByState: [
+                            { state: "SUCCESS", count: 4 },
+                            { state: "SKIPPED", count: 1 },
+                            { state: "CANCELLED", count: 1 },
+                            { state: "IN_PROGRESS", count: 2 },
+                            { state: "STALE", count: 3 },
+                          ],
+                          statusContextCountsByState: [{ state: "ERROR", count: 1 }],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    },
   };
-  const raw = vi.fn().mockResolvedValue(JSON.stringify([pr]));
+  const raw = vi.fn().mockResolvedValue(JSON.stringify(response));
   const inbox = new GithubInbox(raw);
   const [item] = (await inbox.run("git_github_work_items", cwd, {
     repo,
@@ -528,6 +561,7 @@ it("fills the Git page's review fields like the Rust side does", async () => {
     limit: 40,
   })) as Record<string, unknown>[];
   expect(item).toMatchObject({
+    number: 42,
     author: "devon",
     reviewDecision: "changes_requested",
     requestedReviewers: ["remote-user", "core-team"],
@@ -535,20 +569,32 @@ it("fills the Git page's review fields like the Rust side does", async () => {
       { login: "mira", state: "approved" },
       { login: "sam", state: "changes_requested" },
     ],
-    checkSummary: {
-      total: 6,
-      passed: 2,
-      failed: 2,
-      pending: 2,
-      failedNames: ["Rust tests (Windows)", "ci/legacy"],
-    },
+    checkSummary: { total: 9, passed: 5, failed: 2, pending: 2, failedNames: [] },
     additions: 318,
     deletions: 204,
+    labels: [{ name: "ui", color: "fff" }],
   });
-  const fields = raw.mock.calls[0][1][raw.mock.calls[0][1].indexOf("--json") + 1];
-  for (const field of ["author", "reviewDecision", "latestReviews", "statusCheckRollup", "additions"])
-    expect(fields).toContain(field);
-  // Issues carry their author but none of a pull request's review fields.
+  const args = raw.mock.calls[0][1] as string[];
+  expect(args.slice(0, 2)).toEqual(["api", "graphql"]);
+  expect(args.join(" ")).toContain("checkRunCountsByState");
+  expect(args).toContain("owner=acme");
+  expect(args).toContain("name=web");
+  expect(args).toContain("n=40");
+  // A filtered list still uses gh pr list, without every check of every row.
+  raw.mockClear();
+  raw.mockResolvedValue("[]");
+  await inbox.run("git_github_work_items", cwd, {
+    repo,
+    kind: "pr",
+    state: "open",
+    search: "review-requested:@me",
+    limit: 40,
+  });
+  const list = raw.mock.calls[0][1] as string[];
+  expect(list.slice(0, 2)).toEqual(["pr", "list"]);
+  expect(list.join(" ")).not.toContain("statusCheckRollup");
+  expect(list.join(" ")).toContain("latestReviews");
+  // Issues carry their author.
   raw.mockClear();
   raw.mockResolvedValue(JSON.stringify([{ ...row, author: { login: "lena" } }]));
   const [issue] = (await inbox.run("git_github_work_items", cwd, {
@@ -556,7 +602,25 @@ it("fills the Git page's review fields like the Rust side does", async () => {
     kind: "issue",
   })) as Record<string, unknown>[];
   expect(issue).toMatchObject({ author: "lena", reviews: [], additions: 0 });
-  expect(raw.mock.calls[0][1].join(" ")).not.toContain("statusCheckRollup");
+  await expect(
+    new GithubInbox(vi.fn().mockResolvedValue('{"data":{"repository":null},"errors":[{"message":"Could not resolve"}]}')).run(
+      "git_github_work_items",
+      cwd,
+      { repo, kind: "pr", state: "open" },
+    ),
+  ).rejects.toThrow("Could not resolve");
+});
+
+it("waits a minute after a GitHub timeout instead of asking again at once", async () => {
+  const raw = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("HTTP 504: 504 Gateway Timeout (https://api.github.com/graphql)"))
+    .mockResolvedValue("[]");
+  const inbox = new GithubInbox(raw);
+  const list = { repo, kind: "issue", state: "open" };
+  await expect(inbox.run("git_github_work_items", cwd, list)).rejects.toThrow("504");
+  await expect(inbox.run("git_github_work_items", cwd, list)).rejects.toThrow("504");
+  expect(raw).toHaveBeenCalledTimes(1);
 });
 
 it("reviews by a temporary body file and needs words for all but approve", async () => {
