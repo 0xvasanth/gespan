@@ -478,7 +478,7 @@ const TAB_MIN_WIDTH: f32 = TAB_PLATE_HEIGHT;
 const TAB_CLOSE_MIN_WIDTH: f32 = 72.;
 /// However crowded the strip, the selected tab keeps this much: room for its
 /// mark, project, title and close button. The others share the rest.
-const SELECTED_TAB_WIDTH: f32 = 184.;
+const SELECTED_TAB_WIDTH: f32 = TITLE_TAB_MAX_WIDTH;
 /// The new-tab button and its leading margin.
 const STRIP_NEW_TAB: f32 = TAB_PLATE_HEIGHT + 2.;
 const CORNER_CONTROL_GAP: f32 = 4.;

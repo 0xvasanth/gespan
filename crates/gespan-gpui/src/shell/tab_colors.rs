@@ -58,55 +58,70 @@ impl Shell {
     }
 }
 
-/// A title tab's tooltip: its whole title, which a squeezed tab hides, then
-/// its project in the project's colour, its branch and whether it works.
+/// A title tab's tooltip, as the design draws it: one row with the
+/// project's mark and name in its colour, then, muted, the tab's whole title
+/// (which a squeezed tab hides), its branch and whether it is working.
 #[derive(Clone)]
 pub(super) struct TabTooltip {
     id: i64,
     pub(super) title: SharedString,
     pub(super) project: Option<(SharedString, u32)>,
-    detail: SharedString,
+    mark: Option<(gespan_core::project_appearance::ProjectAppearance, String)>,
+    pub(super) detail: SharedString,
 }
 
 impl Render for TabTooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let id = self.id;
-        let mut background = shell_fill();
-        background.a = 1.;
+        let rest = std::iter::once(self.title.to_string())
+            .chain((!self.detail.is_empty()).then(|| self.detail.to_string()))
+            .collect::<Vec<_>>()
+            .join(" · ");
         div()
             .debug_selector(move || format!("title-tab-tooltip-{id}"))
-            .max_w(px(360.))
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(background)
+            .max_w(px(420.))
+            .h(px(26.))
+            .px(px(10.))
+            .rounded(px(8.))
+            .bg(gpui::rgba(0x1c1b20f5))
             .border_1()
-            .border_color(content(0.12))
-            .text_size(px(11.))
-            .line_height(px(16.))
+            .border_color(gpui::rgba(0xffffff1f))
+            .shadow(vec![gpui::BoxShadow {
+                color: gpui::hsla(0., 0., 0., 0.4),
+                offset: gpui::point(px(0.), px(8.)),
+                blur_radius: px(24.),
+                spread_radius: px(0.),
+                inset: false,
+            }])
             .flex()
-            .flex_col()
-            .child(div().text_color(content(0.9)).child(self.title.clone()))
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(11.5))
+            .whitespace_nowrap()
+            .when_some(self.mark.clone(), |d, (appearance, path)| {
+                d.child(crate::project_settings::project_icon(
+                    &appearance,
+                    &path,
+                    12.,
+                ))
+            })
             .when_some(self.project.clone(), |d, (name, color)| {
                 d.child(
                     div()
-                        .flex()
-                        .gap_1()
-                        .child(
-                            div()
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .text_color(rgb(color))
-                                .child(name),
-                        )
-                        .when(!self.detail.is_empty(), |d| {
-                            d.child(
-                                div()
-                                    .text_color(content(0.55))
-                                    .child(format!("· {}", self.detail)),
-                            )
-                        }),
+                        .flex_shrink_0()
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(rgb(color))
+                        .child(name),
                 )
+                .child(div().flex_shrink_0().text_color(rgb(0xa3a3a3)).child("·"))
             })
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(rgb(0xa3a3a3))
+                    .child(rest),
+            )
     }
 }
 
@@ -119,6 +134,7 @@ impl Shell {
         project: Option<&str>,
         cx: &App,
     ) -> TabTooltip {
+        let mark = project.map(|p| (self.appearance(p), p.to_owned()));
         let project = project.map(|p| {
             let appearance = self.appearance(p);
             (appearance.label(p).into(), appearance.color(p))
@@ -141,6 +157,7 @@ impl Shell {
             id,
             title,
             project,
+            mark,
             detail: detail.into(),
         }
     }
