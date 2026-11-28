@@ -208,14 +208,14 @@ The [changelog](CHANGELOG.md) lists what each release added.
 
 <!-- release:start -->
 The current release is
-[**0.3.4**](https://github.com/0xvasanth/gespan/releases/tag/v0.3.4).
+[**0.3.5**](https://github.com/0xvasanth/gespan/releases/tag/v0.3.5).
 
 | Platform | Download |
 | :-- | :-- |
-| macOS, Apple Silicon | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.3.4/Gespan_0.3.4_aarch64.dmg) |
-| macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.3.4/Gespan_0.3.4_x64.dmg) |
-| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.3.4/Gespan_0.3.4_x64-setup.exe) |
-| Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.3.4/Gespan_0.3.4_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.3.4/gespan_0.3.4_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.3.4/gespan-0.3.4-1.el10.x86_64.rpm) |
+| macOS, Apple Silicon | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.3.5/Gespan_0.3.5_aarch64.dmg) |
+| macOS, Intel | [Gespan (.dmg)](https://github.com/0xvasanth/gespan/releases/download/v0.3.5/Gespan_0.3.5_x64.dmg) |
+| Windows, x64 | [Gespan (installer)](https://github.com/0xvasanth/gespan/releases/download/v0.3.5/Gespan_0.3.5_x64-setup.exe) |
+| Linux, x64 | [AppImage](https://github.com/0xvasanth/gespan/releases/download/v0.3.5/Gespan_0.3.5_amd64.AppImage) · [.deb](https://github.com/0xvasanth/gespan/releases/download/v0.3.5/gespan_0.3.5_amd64.deb) · [.rpm](https://github.com/0xvasanth/gespan/releases/download/v0.3.5/gespan-0.3.5-1.el10.x86_64.rpm) |
 <!-- release:end -->
 
 Gespan on Windows and Linux is less tested than on macOS.
