@@ -74,6 +74,11 @@ pub fn repo_folders(repos: &[ProjectRepo], chosen: &BTreeMap<String, String>) ->
         .collect()
 }
 
+/// How many repositories still wait for the user to pick their folder.
+pub fn waiting_for_pick(rows: &[RepoFolder]) -> usize {
+    rows.iter().filter(|row| row.folders.len() > 1).count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
