@@ -11,6 +11,7 @@ use toasty::Executor;
 
 pub mod review_drafts;
 pub mod review_setup;
+pub mod system;
 
 fn now_millis() -> i64 {
     crate::time::now_ms().min(i64::MAX as u64) as i64
@@ -88,6 +89,11 @@ pub struct Automation {
     /// Set on automations made by the review setup; where the review goes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_results: Option<crate::review_policy::ReviewResults>,
+    /// Made and kept by Gespan, not by the user: shown with a lock, never
+    /// deleted by hand, and only the settings its role allows change. See
+    /// [`system`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<system::SystemRole>,
     /// With the Pilot action the session settings above are kept but unused.
     #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
     pub action: AutomationAction,
@@ -891,6 +897,17 @@ impl Service {
     }
 
     pub fn upsert(&mut self, automation: AutomationUpsert) -> Result<Automation, String> {
+        self.save(automation, None)
+    }
+
+    /// Saves `automation`. `system` is set only by Gespan's own code (see
+    /// [`system`]); a save without it keeps a system automation's role and
+    /// may change only what that role allows.
+    pub(crate) fn save(
+        &mut self,
+        automation: AutomationUpsert,
+        system: Option<system::SystemRole>,
+    ) -> Result<Automation, String> {
         let now = now_millis();
         validate_upsert(&automation, now)?;
         let triggers = Some(normalize_triggers(&automation));
@@ -898,6 +915,12 @@ impl Service {
         let previous = self
             .db
             .run(|mut db| async move { get(&mut db, &id).await })?;
+        if system.is_none() {
+            if let Some(previous) = &previous {
+                system::check_user_change(previous, &automation)?;
+            }
+        }
+        let system = system.or_else(|| previous.as_ref().and_then(|value| value.system.clone()));
         // An automation belongs to one project for its whole life, so an event
         // always maps to the one automation set up for it there. Running it
         // somewhere else is a new automation (the editor's Duplicate).
@@ -941,6 +964,7 @@ impl Service {
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode,
             review_results: automation.review_results,
+            system,
             action: automation.action,
             trigger_kind: automation.trigger_kind,
             trigger_event: automation.trigger_event.trim().to_string(),
@@ -972,6 +996,18 @@ impl Service {
 
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         validate_id(id, "automation")?;
+        if self
+            .db
+            .run(|mut db| async move { get(&mut db, id).await })?
+            .is_some_and(|automation| automation.system.is_some())
+        {
+            return Err(system::CANT_DELETE.into());
+        }
+        self.delete_row(id)
+    }
+
+    /// Deletes the automation, system or not, with its runs and claims.
+    pub(crate) fn delete_row(&mut self, id: &str) -> Result<(), String> {
         self.db.run(
             |mut db| async move { AutomationRow::filter_by_id(id).delete().exec(&mut db).await },
         )

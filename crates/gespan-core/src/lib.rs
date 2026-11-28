@@ -9,6 +9,7 @@ pub mod branch_merged;
 pub mod browser;
 pub mod catalog;
 pub mod checkpoint;
+pub mod code_review;
 pub mod context;
 pub mod decisions;
 pub mod desktop_preferences;

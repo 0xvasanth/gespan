@@ -647,6 +647,9 @@ pub struct Prefs {
     /// Project repositories (`repo_key`) switched off in Settings › Pull requests.
     pub hidden_repos: Vec<String>,
     pub added_repos: Vec<AddedRepo>,
+    /// The project folder the user picked to review a repository (`repo_key`)
+    /// that more than one open project points at. See [`crate::code_review`].
+    pub review_folders: BTreeMap<String, String>,
 }
 impl Default for Prefs {
     fn default() -> Self {
@@ -661,6 +664,7 @@ impl Default for Prefs {
             other_repos: true,
             hidden_repos: Vec::new(),
             added_repos: Vec::new(),
+            review_folders: BTreeMap::new(),
         }
     }
 }
