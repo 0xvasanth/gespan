@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linked GitHub activity no longer uses up the GitHub rate limit:** when
+  one issue or pull request linked to a session had been deleted, moved or
+  made private, the check for new activity threw away the whole answer and
+  asked GitHub about every linked item one by one, every minute, from every
+  running Gespan. That spent the hour's 5,000 requests in under half an
+  hour. It now keeps the items GitHub found, never asks item by item, skips
+  feeds that are gone until their item changes, and after a timeout or rate
+  limit waits 2, 4, 8 and then 15 minutes before asking again.
 - **Pull requests no longer time out on large repositories or burn the
   GitHub rate limit:** the list asks GitHub once per repository for review
   fields and check counts instead of every check of every pull request,
