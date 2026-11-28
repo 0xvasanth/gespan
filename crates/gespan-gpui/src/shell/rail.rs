@@ -563,7 +563,7 @@ impl Shell {
         let line = rail_plan::switcher_line(&place.path, sessions);
         let hint: Vec<SharedString> = vec![
             SWITCHER_HINT.into(),
-            format!("{} · {}", place.machine(), place.path).into(),
+            format!("{} · {}", place.machine, place.path).into(),
             summary.into(),
         ];
         let fill = if is_light() { white(0.7) } else { white(0.07) };

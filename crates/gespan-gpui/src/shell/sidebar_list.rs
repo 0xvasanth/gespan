@@ -1456,7 +1456,7 @@ mod tests {
 
         let (here, line) = place(visual);
         assert!(!here.other_machine);
-        assert_eq!(here.machine(), crate::pickers::THIS_MACHINE);
+        assert_eq!(here.machine, crate::pickers::THIS_MACHINE);
         assert!(line.starts_with(&here.path), "{line}");
         assert!(
             !line.contains(crate::pickers::THIS_MACHINE),
