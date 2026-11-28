@@ -1141,7 +1141,6 @@ fn review_lessons(
     let reviews = service.code_reviews().and_then(|reviews| {
         reviews
             .into_iter()
-            .filter(|review| review.enabled)
             .map(|review| {
                 let runs = service.runs(&review.id)?;
                 Ok((review, runs))

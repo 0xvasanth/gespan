@@ -30,7 +30,7 @@ pub enum SystemRole {
 }
 
 /// Why a system automation can't be deleted from Automations.
-pub const CANT_DELETE: &str = "Gespan keeps this automation for the repo's code review. Turn reviews off for the repo in Settings › Git to remove it.";
+pub const CANT_DELETE: &str = "Gespan keeps this automation for the repo's code review. To stop it, turn the repo's review off in Settings › Git: that pauses it and keeps its history.";
 
 /// Why a change to a system automation's locked parts is refused.
 pub const LOCKED: &str = "This is a system automation. Only when it reviews, the reviewer, where findings go and on or off can change.";
@@ -673,9 +673,19 @@ mod tests {
             .iter()
             .all(|t| t.event != crate::automations::GITHUB_COMMENT_EVENT));
         service.set_enabled(&review.id, false).unwrap();
+        // Paused (as the Review button makes it), it still reads comments so
+        // its reviewer learns, but waits for nothing that would start a review.
+        assert_eq!(
+            comment_watches(&mut service),
+            vec![("github".to_string(), "/work/app".to_string())],
+            "a paused review still learns"
+        );
         assert!(
-            comment_watches(&mut service).is_empty(),
-            "paused reviews read nothing"
+            crate::automations::event_watches(&mut service, now)
+                .unwrap()
+                .iter()
+                .all(|w| w.event == crate::automations::GITHUB_COMMENT_EVENT),
+            "a paused review waits for no review event"
         );
         service
             .ensure_code_review(
@@ -684,9 +694,11 @@ mod tests {
                 &settings(WhichPrs::Opened),
             )
             .unwrap();
+        // The GitLab review's own watches: GitLab's comments, never GitHub's.
         let gitlab: Vec<_> = crate::automations::event_watches(&mut service, now)
             .unwrap()
             .into_iter()
+            .filter(|w| w.cwd == "/work/platform")
             .map(|w| (w.provider, w.event))
             .collect();
         assert!(gitlab.contains(&(

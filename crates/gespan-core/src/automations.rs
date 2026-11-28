@@ -1925,7 +1925,10 @@ pub struct Watch {
 pub fn event_watches(service: &mut Service, now: i64) -> Result<Vec<Watch>, String> {
     let mut watches = Vec::new();
     for automation in service.list()? {
-        if !automation.enabled {
+        // A paused code review still reads comments, so a review made by the
+        // Review button learns too; reading them never starts a review.
+        let paused = !automation.enabled;
+        if paused && system::reviewed_repo(&automation).is_none() {
             continue;
         }
         let since = automation
@@ -1940,7 +1943,7 @@ pub fn event_watches(service: &mut Service, now: i64) -> Result<Vec<Watch>, Stri
         for (provider, event) in WATCHED_EVENTS {
             let learning = learns.as_deref() == Some(provider)
                 && matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT);
-            if learning || has_event_trigger(&automation, provider, event) {
+            if learning || (!paused && has_event_trigger(&automation, provider, event)) {
                 watches.push(Watch {
                     provider: provider.into(),
                     event: event.into(),

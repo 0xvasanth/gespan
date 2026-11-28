@@ -1843,7 +1843,7 @@ impl Automations {
             .px(px(4.))
             .text_size(px(12.))
             .text_color(content(0.55))
-            .child("Gespan made this for the repo's code review. Turn it off for good in Settings › Git.");
+            .child("Gespan made this for the repo's code review. Turning it off, here or in Settings › Git, pauses it and keeps its history.");
         let frame = |section: gpui::Div| {
             div()
                 .w_full()

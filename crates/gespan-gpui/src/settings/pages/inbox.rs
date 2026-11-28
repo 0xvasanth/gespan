@@ -473,7 +473,14 @@ impl SettingsView {
                     .into_any_element(),
                 );
             }
-            if let Some(folder) = repo.folder.clone() {
+            // A review that runs keeps its switch even while the folder pick is
+            // open (a second clone appeared) or its project is closed, so it
+            // can always be turned off here.
+            if let Some(folder) = repo
+                .folder
+                .clone()
+                .or_else(|| review.map(|review| review.cwd.clone()))
+            {
                 let key = repo.repo.clone();
                 controls.push(
                     div()

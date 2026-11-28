@@ -873,6 +873,39 @@ mod inbox_settings {
             2,
             "pausing keeps the reviewer and what it learned"
         );
+
+        // A second clone of app appears: its folder needs a pick again, but
+        // the review it has keeps its switch, so it can still be turned on
+        // or off here.
+        window
+            .update(visual, |shell, _, cx| {
+                shell.inbox.as_ref().unwrap().update(cx, |inbox, cx| {
+                    inbox.seed_repos(
+                        vec![
+                            repo("acme/app", "/work/app"),
+                            repo("acme/app", "/work/app-clone"),
+                            repo("acme/two", "/work/two-a"),
+                            repo("acme/two", "/work/two-b"),
+                        ],
+                        cx,
+                    )
+                });
+                shell.sync_settings(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("settings-review-folder-0-1").is_some());
+        assert!(
+            visual.debug_bounds("settings-review-0").is_some(),
+            "a review that exists always keeps its switch"
+        );
+        click(visual, "settings-review-0".into());
+        assert!(reviews(window, visual).contains(&(
+            "github:acme/app".to_string(),
+            true,
+            "/work/app".to_string()
+        )));
     }
 
     #[gpui::test]
