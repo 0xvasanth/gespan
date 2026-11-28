@@ -220,6 +220,7 @@ impl Protocol {
                 "message":{"role":"user","content":self.request.claude_content(&prompt)?}}),
         )?;
         self.claude.prompt_sent = true;
+        self.claude.unechoed.push_back(false);
         self.follow_up_ready = true;
         Ok(())
     }
