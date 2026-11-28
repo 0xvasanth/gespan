@@ -1,0 +1,61 @@
+crates/gespan-gpui/src/automations/review_setup.rs
+  s_1bcc683081d4e9::t_704d23245d533e 60
+  s_1bcc683081d4e9::t_7425f671b4c128 52-56
+crates/gespan-gpui/src/pilots/code_review.rs
+  s_1bcc683081d4e9::t_9d9bde8c61b5cd 9
+  s_1bcc683081d4e9::t_c703f275f45bc2 301-302,316,362,385-392
+crates/gespan-gpui/src/shell/review_drafts_tests.rs
+  s_1bcc683081d4e9::t_9d9bde8c61b5cd 136-139,144,278-330
+crates/gespan-core/src/review_draft.rs
+  s_1bcc683081d4e9::t_cb618373087644 30-33
+crates/gespan-core/src/provider.rs
+  s_1bcc683081d4e9::t_00be887cd2fab0 1932,1937,1941-1947
+  s_1bcc683081d4e9::t_f57dcbfba44da3 2698,2702
+crates/gespan-core/src/review_policy.rs
+  s_1bcc683081d4e9::t_cb618373087644 120-124,155-157,306-311,1483-1502,1505-1517,1520-1521
+  s_1bcc683081d4e9::t_be018440e283e1 962,1044-1046,1048-1049,1054,1059,1121,1124,1301,1741,1744
+  s_1bcc683081d4e9::t_3a70faea085e25 790-792
+  s_1bcc683081d4e9::t_3a4ae2ee3c4795 147-148
+  s_1bcc683081d4e9::t_00be887cd2fab0 820,823,826-830
+  s_1bcc683081d4e9::t_f57dcbfba44da3 1379,1397-1401
+  s_1bcc683081d4e9::t_9e47adaa4af994 1402
+crates/gespan-gpui/src/automations/layout_tests.rs
+  s_1bcc683081d4e9::t_7425f671b4c128 729-731,734-735,742,756,775-776
+  s_1bcc683081d4e9::t_704d23245d533e 696-697
+  s_1bcc683081d4e9::t_69016dd5dbd0e0 728
+crates/gespan-core/src/provider/acp.rs
+  s_1bcc683081d4e9::t_00be887cd2fab0 3070,3159,3163-3168
+crates/gespan-core/src/provider/opencode.rs
+  s_1bcc683081d4e9::t_f57dcbfba44da3 1325,1329
+crates/gespan-gpui/src/shell/code_review.rs
+  s_1bcc683081d4e9::t_9d9bde8c61b5cd 31-34
+  s_1bcc683081d4e9::t_c703f275f45bc2 17,21,29-30,35-36
+crates/gespan-gpui/src/shell/automation_runs.rs
+  s_1bcc683081d4e9::t_82d1737b8d8409 1159-1161,1165,1167,1333-1342
+  s_1bcc683081d4e9::t_cfaca95d81c418 1350-1351,1357-1363,1372-1378
+crates/gespan-gpui/src/shell/review_drafts.rs
+  s_1bcc683081d4e9::t_9d9bde8c61b5cd 120-124
+  s_1bcc683081d4e9::t_15375c1e654183 175-176
+  s_1bcc683081d4e9::t_82d1737b8d8409 8,105-110,115,125-144,146,149,164-172
+crates/gespan-gpui/src/pilots/code_review_tests.rs
+  s_1bcc683081d4e9::t_8d3457c6ba3ad2 443-472
+crates/gespan-gpui/src/automations/review_setup_tests.rs
+  s_1bcc683081d4e9::t_704d23245d533e 466
+  s_1bcc683081d4e9::t_7425f671b4c128 81,84-88,398-401,404-405,411-412,414,426-429,432-433,438
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c33522d87d8bf6e21c5c6018ed21d29276fc914",
+  "prompts": {},
+  "sessions": {
+    "s_1bcc683081d4e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c8bf419-4d47-4626-8050-bbc05a1848bc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
