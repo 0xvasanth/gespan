@@ -1,0 +1,27 @@
+Cargo.toml
+  s_017e87d2e70fe1::t_b227001768d8cd 8
+CHANGELOG.md
+  s_017e87d2e70fe1::t_b227001768d8cd 10-11,2570-2571
+README.md
+  s_017e87d2e70fe1::t_b227001768d8cd 211,215-218
+package.json
+  s_017e87d2e70fe1::t_b227001768d8cd 16
+Cargo.lock
+  s_017e87d2e70fe1::t_8a47c96418a524 2818,2839,2913,2921,2929,3055,3078
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "042ee131edc55ae0a9c3bd8467737da2a4343be2",
+  "prompts": {},
+  "sessions": {
+    "s_017e87d2e70fe1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "946dca12-f300-441b-8a8a-a334a98a91df",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
