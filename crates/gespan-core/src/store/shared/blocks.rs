@@ -949,6 +949,7 @@ mod card_tests {
                 role: crate::outside_turns::TurnRole::User,
                 text: "from the cli".into(),
                 sent_at: Some(77),
+                by_program: false,
             }],
         );
         let saved = merge(&[], 0, &t.rows).unwrap();

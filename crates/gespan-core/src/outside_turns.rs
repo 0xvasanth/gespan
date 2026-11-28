@@ -28,6 +28,9 @@ pub struct OutsideTurn {
     pub text: String,
     /// When the agent wrote it, in Unix milliseconds, if the entry says.
     pub sent_at: Option<u64>,
+    /// A program driving the agent wrote it, such as Gespan's own agent,
+    /// rather than someone at its terminal. Only Claude's entries say.
+    pub by_program: bool,
 }
 
 /// The marker's `custom_type`; `Interjection::label` shows it as "From terminal".
@@ -61,6 +64,22 @@ pub fn append_rows(transcript: &mut crate::transcript::Transcript, turns: &[Outs
     }
 }
 
+/// Append turns Gespan's own agent wrote after Gespan stopped reading it,
+/// such as its answer to a message sent near the end of a turn. They continue
+/// the chat as it was, so no "From terminal" marker goes before them.
+pub fn append_own_rows(transcript: &mut crate::transcript::Transcript, turns: &[OutsideTurn]) {
+    for turn in turns {
+        let at = transcript.begin(match turn.role {
+            TurnRole::User => "user",
+            TurnRole::Assistant => "assistant",
+        });
+        if let Some(sent_at) = turn.sent_at {
+            transcript.rows[at].sent_at = Some(sent_at);
+        }
+        transcript.append(&turn.text);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parsed {
     pub turns: Vec<OutsideTurn>,
@@ -76,6 +95,7 @@ struct Entry {
     message_id: Option<String>,
     text: String,
     sent_at: Option<u64>,
+    by_program: bool,
 }
 
 /// Reads turns from a region of a Claude Code session file. Only the live
@@ -148,12 +168,14 @@ pub fn parse_claude(region: &[u8], after_uuid: Option<&str>) -> Parsed {
             if let Some(turn) = turns.last_mut() {
                 turn.text.push_str("\n\n");
                 turn.text.push_str(&entry.text);
+                turn.by_program &= entry.by_program;
             }
         } else {
             turns.push(OutsideTurn {
                 role: entry.role,
                 text: entry.text.clone(),
                 sent_at: entry.sent_at,
+                by_program: entry.by_program,
             });
         }
         last_id = entry.message_id.as_deref();
@@ -199,6 +221,7 @@ fn turn_entry(line: &ClaudeLine, uuid: Option<String>) -> Option<Entry> {
         message_id: message.id.get().map(str::to_string),
         text,
         sent_at: unix_ms(line.timestamp.get()),
+        by_program: line.entrypoint.get() == Some("sdk-cli"),
     })
 }
 
@@ -614,6 +637,7 @@ mod tests {
             role,
             text: text.into(),
             sent_at: None,
+            by_program: false,
         }
     }
 
@@ -1037,6 +1061,103 @@ mod tests {
             texts(&parsed),
             vec![(TurnRole::User, "one"), (TurnRole::Assistant, "A1")]
         );
+    }
+
+    /// `value` as if `entrypoint` wrote it, or with no `entrypoint` field.
+    fn written_by(mut value: Value, entrypoint: Option<&str>) -> Value {
+        if let Some(entrypoint) = entrypoint {
+            value["entrypoint"] = json!(entrypoint);
+        }
+        value
+    }
+
+    #[test]
+    fn turns_say_whether_a_program_or_a_terminal_wrote_them() {
+        let text = |t: &str| json!([{"type":"text","text":t}]);
+        let region = jsonl(&[
+            written_by(user("u1", None, json!("from gespan")), Some("sdk-cli")),
+            written_by(
+                assistant("a1", Some("u1"), "m1", text("sdk")),
+                Some("sdk-cli"),
+            ),
+            written_by(user("u2", Some("a1"), json!("typed")), Some("cli")),
+            written_by(assistant("a2", Some("u2"), "m2", text("cli")), Some("cli")),
+            // The Claude app resuming the session is someone else, too.
+            written_by(
+                user("u3", Some("a2"), json!("desktop")),
+                Some("claude-desktop"),
+            ),
+            // Older Claude Code versions don't say: read as a terminal.
+            written_by(assistant("a3", Some("u3"), "m3", text("unsaid")), None),
+        ]);
+        let parsed = parse_claude(&region, None);
+        let by: Vec<_> = parsed
+            .turns
+            .iter()
+            .map(|t| (t.text.as_str(), t.by_program))
+            .collect();
+        assert_eq!(
+            by,
+            [
+                ("from gespan", true),
+                ("sdk", true),
+                ("typed", false),
+                ("cli", false),
+                ("desktop", false),
+                ("unsaid", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_split_reply_is_the_programs_only_when_every_part_is() {
+        let text = |t: &str| json!([{"type":"text","text":t}]);
+        let region = jsonl(&[
+            written_by(user("u1", None, json!("go")), Some("sdk-cli")),
+            written_by(
+                assistant("a1", Some("u1"), "m1", text("First.")),
+                Some("sdk-cli"),
+            ),
+            written_by(
+                assistant("a2", Some("a1"), "m1", text("Second.")),
+                Some("cli"),
+            ),
+        ]);
+        let parsed = parse_claude(&region, None);
+        assert_eq!(parsed.turns.len(), 2);
+        assert_eq!(parsed.turns[1].text, "First.\n\nSecond.");
+        assert!(!parsed.turns[1].by_program);
+    }
+
+    #[test]
+    fn own_rows_follow_without_a_marker() {
+        let mut t = Transcript::default();
+        t.begin("user");
+        t.append("earlier");
+        let turns = [
+            OutsideTurn {
+                sent_at: Some(5),
+                ..turn(TurnRole::User, "in rust")
+            },
+            turn(TurnRole::Assistant, "Here it is in Rust"),
+        ];
+        append_own_rows(&mut t, &turns);
+        let rows: Vec<_> = t
+            .rows
+            .iter()
+            .map(|r| (r.role.as_str(), r.text.as_str()))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("user", "earlier"),
+                ("user", "in rust"),
+                ("assistant", "Here it is in Rust")
+            ]
+        );
+        assert_eq!(t.rows[1].sent_at, Some(5));
+        append_own_rows(&mut t, &[]);
+        assert_eq!(t.rows.len(), 3);
     }
 
     #[test]

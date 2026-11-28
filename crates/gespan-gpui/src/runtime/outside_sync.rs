@@ -166,7 +166,18 @@ where
     }
     if !sync.turns.is_empty() {
         let old = transcript.rows.len();
-        outside_turns::append_rows(transcript, &sync.turns);
+        // Gespan's own agent can answer a message sent near the end of a turn
+        // after Gespan stopped reading it. That answer continues the chat, and
+        // its prompt is already shown there.
+        let own = sync.turns.iter().take_while(|t| t.by_program).count();
+        let shown = recent_prompts(&transcript.rows);
+        let own_turns: Vec<_> = sync.turns[..own]
+            .iter()
+            .filter(|t| t.role != TurnRole::User || !shown.contains(t.text.trim()))
+            .cloned()
+            .collect();
+        outside_turns::append_own_rows(transcript, &own_turns);
+        outside_turns::append_rows(transcript, &sync.turns[own..]);
         if let Err(error) = save_rows(store, turn.session, old, &transcript.rows[old..]) {
             // Keep the old checkpoint, and skip this turn's own, so the next
             // send reads these turns again. That read also holds Gespan's own
@@ -177,7 +188,11 @@ where
             synced.held = true;
             return synced;
         }
-        tracing::info!(turns = sync.turns.len(), "picked up terminal turns");
+        tracing::info!(
+            turns = sync.turns.len(),
+            own,
+            "picked up turns written outside Gespan's last read"
+        );
         synced.picked = Some(old);
     }
     // No checkpoint means no file or a failed read: keep what we had.
@@ -217,6 +232,32 @@ fn save_checkpoint(store: &Database, session: i64, checkpoint: &Checkpoint) {
     if let Err(error) = saved {
         tracing::warn!(%error, "could not save the sync checkpoint");
     }
+}
+
+/// How many of the latest prompts a late own turn is checked against.
+const RECENT_PROMPTS: usize = 20;
+
+/// The text of the latest user prompts in `rows`, continuation rows joined.
+fn recent_prompts(rows: &[Row]) -> std::collections::HashSet<String> {
+    let mut prompts = Vec::new();
+    let mut current: Option<String> = None;
+    for row in rows {
+        match (&mut current, row.role == "user") {
+            (Some(text), true) if !row.first => text.push_str(&row.text),
+            (_, true) => {
+                prompts.extend(current.take());
+                current = Some(row.text.clone());
+            }
+            (_, false) => prompts.extend(current.take()),
+        }
+    }
+    prompts.extend(current);
+    prompts
+        .iter()
+        .rev()
+        .take(RECENT_PROMPTS)
+        .map(|text| text.trim().to_owned())
+        .collect()
 }
 
 /// Gespan's own latest turn: the prompt and the reply texts it shows.
@@ -309,7 +350,30 @@ mod tests {
             role,
             text: text.into(),
             sent_at: None,
+            by_program: false,
         }
+    }
+
+    #[test]
+    fn recent_prompts_join_continuations_and_keep_only_the_latest() {
+        let mut rows = vec![
+            row("user", "a long ", true),
+            row("user", "prompt ", false),
+            row("assistant", "ok", true),
+            row("user", "in rust", true),
+        ];
+        let prompts = recent_prompts(&rows);
+        assert!(prompts.contains("a long prompt") && prompts.contains("in rust"));
+        assert!(!prompts.contains("ok"));
+        for n in 0..RECENT_PROMPTS {
+            rows.push(row("user", &format!("later {n}"), true));
+        }
+        let prompts = recent_prompts(&rows);
+        assert_eq!(prompts.len(), RECENT_PROMPTS);
+        assert!(
+            !prompts.contains("in rust"),
+            "older prompts are not checked"
+        );
     }
 
     #[test]

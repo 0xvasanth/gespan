@@ -852,3 +852,103 @@ fn pilot_codex_sessions_do_not_sync() {
         .expect("a Pilot's Claude reads the account's own home");
     assert_eq!(target.home, claude.home());
 }
+
+/// Appends Claude entries as `entrypoint` writes them, each chained to the
+/// last line of the session file: `("user" | "assistant", text, entrypoint)`.
+fn claude_writes(chat: &Conversation, entries: &[(&str, &str, &str)]) {
+    let text = std::fs::read_to_string(chat.rollout()).unwrap();
+    let mut parent = serde_json::from_str::<serde_json::Value>(text.lines().last().unwrap())
+        .unwrap()["uuid"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut lines = Vec::new();
+    for (n, (role, said, entrypoint)) in entries.iter().enumerate() {
+        let uuid = format!("late-{}-{n}", text.lines().count());
+        let content = if *role == "user" {
+            serde_json::json!(said)
+        } else {
+            serde_json::json!([{"type":"text","text":said}])
+        };
+        lines.push(
+            serde_json::json!({"type":role,"uuid":uuid,"parentUuid":parent,
+            "isSidechain":false,"entrypoint":entrypoint,
+            "message":{"id":format!("msg-{uuid}"),"role":role,"content":content}}),
+        );
+        parent = uuid;
+    }
+    chat.agent_writes(&lines);
+}
+
+/// A message sent near the end of a turn, shown as its own bubble, which
+/// Claude answered after Gespan's turn had ended.
+fn late_steer(name: &str) -> Conversation {
+    let mut chat = Conversation::of(Kind::Claude, name, true);
+    assert_eq!(chat.send("Write the plan"), "Ready");
+    let steer = Row {
+        role: "user".into(),
+        text: "in rust".into(),
+        first: true,
+        sent_at: None,
+    };
+    let at = chat.rows().len();
+    locked(&chat.store)
+        .unwrap()
+        .write_rows(chat.summary.id, at, std::slice::from_ref(&steer))
+        .unwrap();
+    chat.view.push(steer);
+    claude_writes(
+        &chat,
+        &[
+            ("user", "in rust", "sdk-cli"),
+            ("assistant", "Here it is in Rust", "sdk-cli"),
+        ],
+    );
+    chat
+}
+
+#[test]
+fn a_late_steer_answered_by_gespans_own_agent_shows_its_answer_once_without_a_marker() {
+    let mut chat = late_steer("late-steer");
+    assert_eq!(chat.send("thanks"), "Ready");
+    let rows = chat.rows();
+    assert_eq!(
+        shape(&rows),
+        pairs(&[
+            ("user", "Write the plan"),
+            ("assistant", "Done"),
+            ("user", "in rust"),
+            ("assistant", "Here it is in Rust"),
+            ("user", "thanks"),
+            ("assistant", "Done"),
+        ])
+    );
+    assert_eq!(chat.view, rows, "the view shows exactly what was saved");
+}
+
+#[test]
+fn a_terminal_turn_after_a_late_own_answer_still_shows_under_the_marker() {
+    let chat = late_steer("late-steer-then-terminal");
+    // Asked again in the terminal: the same words, typed by the user.
+    claude_writes(
+        &chat,
+        &[
+            ("user", "in rust", "cli"),
+            ("assistant", "Rust again", "cli"),
+        ],
+    );
+    let (synced, transcript, _) = chat.sync_now();
+    assert_eq!(synced.picked, Some(3));
+    assert_eq!(
+        shape(&transcript.rows),
+        pairs(&[
+            ("user", "Write the plan"),
+            ("assistant", "Done"),
+            ("user", "in rust"),
+            ("assistant", "Here it is in Rust"),
+            ("interjection", "From terminal"),
+            ("user", "in rust"),
+            ("assistant", "Rust again"),
+        ])
+    );
+}
