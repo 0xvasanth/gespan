@@ -489,10 +489,7 @@ mod tests {
 
     #[test]
     fn the_switcher_line_puts_the_folder_before_the_sessions() {
-        assert_eq!(
-            switcher_line("~/repo/ae", 1),
-            "~/repo/ae · 1 session"
-        );
+        assert_eq!(switcher_line("~/repo/ae", 1), "~/repo/ae · 1 session");
         assert_eq!(switcher_line("~/farm/ae", 0), "~/farm/ae · 0 sessions");
         assert_eq!(switcher_line("~", 12), "~ · 12 sessions");
     }

@@ -1604,7 +1604,10 @@ pub(crate) fn project_place_in(path: &str, home: Option<&str>) -> ProjectPlace {
 /// `path` with `home` as `~`, only on a whole folder name: `/Users/al` is
 /// not inside `/Users/a`.
 fn tilde(path: &str, home: Option<&str>) -> String {
-    let Some(home) = home.map(|h| h.trim_end_matches('/')).filter(|h| !h.is_empty()) else {
+    let Some(home) = home
+        .map(|h| h.trim_end_matches('/'))
+        .filter(|h| !h.is_empty())
+    else {
         return path.into();
     };
     match path.strip_prefix(home) {
@@ -1737,10 +1740,7 @@ impl ProjectPicker {
                                 .items_center()
                                 .gap(px(8.))
                                 .child(div().flex_shrink(1.).min_w_0().truncate().child(label))
-                                .child(machine_chip(
-                                    &place,
-                                    format!("project-picker-machine-{ix}"),
-                                ))
+                                .child(machine_chip(&place, format!("project-picker-machine-{ix}")))
                                 .children(project.branch.clone().map(|branch| {
                                     div()
                                         .flex_shrink(1.)

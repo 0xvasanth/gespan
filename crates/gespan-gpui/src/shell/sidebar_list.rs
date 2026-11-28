@@ -1450,11 +1450,7 @@ mod tests {
             assert_eq!(chip.left() - name.right(), px(6.), "beside the name");
             assert!(chip.right() <= more.left(), "clear of \"…\"");
             assert!(chip.bottom() <= summary.top(), "on the name's line");
-            assert_eq!(
-                chip.center().y,
-                name.center().y,
-                "centred on the name"
-            );
+            assert_eq!(chip.center().y, name.center().y, "centred on the name");
             chip.size.width
         };
 
@@ -1462,7 +1458,10 @@ mod tests {
         assert!(!here.other_machine);
         assert_eq!(here.machine(), crate::pickers::THIS_MACHINE);
         assert!(line.starts_with(&here.path), "{line}");
-        assert!(!line.contains(crate::pickers::THIS_MACHINE), "the chip says it");
+        assert!(
+            !line.contains(crate::pickers::THIS_MACHINE),
+            "the chip says it"
+        );
         let this_mac = check(visual);
 
         let remote = gespan_core::remote::remote_path("box", "/home/dev/gespan");
@@ -1510,11 +1509,17 @@ mod tests {
             let chip = bounds(visual, "machine", ix).expect("every row names its machine");
             assert_eq!(row.size.height, px(crate::pickers::PICKER_ROW_HEIGHT));
             assert!(row.top() < place.top() && place.bottom() <= row.bottom());
-            assert!(chip.bottom() <= place.top(), "the chip is on the name's line");
+            assert!(
+                chip.bottom() <= place.top(),
+                "the chip is on the name's line"
+            );
             widths.push(chip.size.width);
         }
         assert!(bounds(visual, "project", 3).is_none(), "three projects");
-        let widest = widths.iter().copied().fold(px(0.), |a, b| if b > a { b } else { a });
+        let widest = widths
+            .iter()
+            .copied()
+            .fold(px(0.), |a, b| if b > a { b } else { a });
         assert_eq!(
             widths.iter().filter(|w| **w == widest).count(),
             1,
