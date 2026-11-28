@@ -58,36 +58,82 @@ impl Shell {
     }
 }
 
-/// A title tab's tooltip, as the design draws it: one row with the
-/// project's mark and name in its colour, then, muted, the tab's whole title
-/// (which a squeezed tab hides), its branch and whether it is working.
+/// How long the pointer rests on a tab before its tooltip shows.
+pub(super) const TAB_TIP_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+/// The tooltip's gap below the tab's plate, as the design draws it.
+const TAB_TIP_GAP: f32 = 6.;
+
+/// What a tab's chat is doing, as its tooltip says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TabStatus {
+    NeedsYou,
+    Working,
+    Idle,
+}
+
+impl TabStatus {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::NeedsYou => "needs you",
+            Self::Working => "working",
+            Self::Idle => "idle",
+        }
+    }
+}
+
+/// A title tab's tooltip, as the design draws it: one row under the tab's
+/// left edge with the project's mark and name in its colour, then, muted,
+/// "· branch · status".
 #[derive(Clone)]
 pub(super) struct TabTooltip {
     id: i64,
-    pub(super) title: SharedString,
     pub(super) project: Option<(SharedString, u32)>,
     mark: Option<(gespan_core::project_appearance::ProjectAppearance, String)>,
-    pub(super) detail: SharedString,
+    pub(super) branch: Option<String>,
+    pub(super) status: TabStatus,
 }
 
-impl Render for TabTooltip {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+impl TabTooltip {
+    #[cfg(test)]
+    pub(super) fn for_test(branch: Option<&str>, status: TabStatus) -> Self {
+        Self {
+            id: 0,
+            project: None,
+            mark: None,
+            branch: branch.map(str::to_owned),
+            status,
+        }
+    }
+
+    /// The muted part after the project: "· main · working".
+    pub(super) fn detail(&self) -> String {
+        self.branch
+            .iter()
+            .map(String::as_str)
+            .chain([self.status.label()])
+            .fold(String::new(), |line, part| format!("{line}· {part} "))
+            .trim_end()
+            .to_owned()
+    }
+
+    fn card(&self) -> AnyElement {
         let id = self.id;
-        let rest = std::iter::once(self.title.to_string())
-            .chain((!self.detail.is_empty()).then(|| self.detail.to_string()))
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let light = crate::theme::is_light();
+        let (fill, edge, ink, shade) = if light {
+            (0xfffffffa, 0x0000001a, 0x55555c, 0.12)
+        } else {
+            (0x1c1b20f5, 0xffffff1f, 0xa3a3a3, 0.4)
+        };
         div()
             .debug_selector(move || format!("title-tab-tooltip-{id}"))
-            .max_w(px(420.))
             .h(px(26.))
             .px(px(10.))
             .rounded(px(8.))
-            .bg(gpui::rgba(0x1c1b20f5))
+            .bg(gpui::rgba(fill))
             .border_1()
-            .border_color(gpui::rgba(0xffffff1f))
+            .border_color(gpui::rgba(edge))
             .shadow(vec![gpui::BoxShadow {
-                color: gpui::hsla(0., 0., 0., 0.4),
+                color: gpui::hsla(0., 0., 0., shade),
                 offset: gpui::point(px(0.), px(8.)),
                 blur_radius: px(24.),
                 spread_radius: px(0.),
@@ -97,6 +143,7 @@ impl Render for TabTooltip {
             .items_center()
             .gap(px(6.))
             .text_size(px(11.5))
+            .text_color(rgb(ink))
             .whitespace_nowrap()
             .when_some(self.mark.clone(), |d, (appearance, path)| {
                 d.child(crate::project_settings::project_icon(
@@ -108,57 +155,99 @@ impl Render for TabTooltip {
             .when_some(self.project.clone(), |d, (name, color)| {
                 d.child(
                     div()
-                        .flex_shrink_0()
                         .font_weight(gpui::FontWeight::BOLD)
                         .text_color(rgb(color))
                         .child(name),
                 )
-                .child(div().flex_shrink_0().text_color(rgb(0xa3a3a3)).child("·"))
             })
+            .child(self.detail())
+            .into_any_element()
+    }
+
+    /// The card, lifted out of the strip and hung just under the tab's
+    /// plate, from its left edge.
+    pub(super) fn under_tab(&self) -> AnyElement {
+        div()
+            .absolute()
+            .left_0()
+            .top(px((TITLE_BAR_HEIGHT + TAB_PLATE_HEIGHT) / 2. + TAB_TIP_GAP))
             .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(rgb(0xa3a3a3))
-                    .child(rest),
+                gpui::deferred(gpui::anchored().snap_to_window().child(self.card()))
+                    .with_priority(20),
             )
+            .into_any_element()
     }
 }
 
 impl Shell {
-    /// Session tab `id`'s tooltip, titled `title`.
-    pub(super) fn tab_tooltip(
-        &self,
-        id: i64,
-        title: SharedString,
-        project: Option<&str>,
-        cx: &App,
-    ) -> TabTooltip {
+    /// Session tab `id`'s tooltip.
+    pub(super) fn tab_tooltip(&self, id: i64, project: Option<&str>, cx: &App) -> TabTooltip {
         let mark = project.map(|p| (self.appearance(p), p.to_owned()));
+        let branch = project
+            .and_then(|p| crate::git_cache::worktree_branch(p, self.session_working_copy(id, cx)));
         let project = project.map(|p| {
             let appearance = self.appearance(p);
             (appearance.label(p).into(), appearance.color(p))
         });
-        let branch = project.as_ref().and(
-            self.tab_project(&crate::workspace::TitleTab::Session(id), cx)
-                .and_then(|p| {
-                    crate::git_cache::worktree_branch(&p, self.session_working_copy(id, cx))
-                }),
-        );
-        let detail = branch
-            .into_iter()
-            .chain(
-                self.background_tab_running(id, cx)
-                    .then(|| "working".to_string()),
-            )
-            .collect::<Vec<_>>()
-            .join(" · ");
         TabTooltip {
             id,
-            title,
             project,
             mark,
-            detail: detail.into(),
+            branch,
+            status: self.tab_status(id, cx),
         }
+    }
+
+    /// Whether tab `id` waits on the user, works or rests, as the Agents
+    /// panel decides it for its chats.
+    pub(super) fn tab_status(&self, id: i64, cx: &App) -> TabStatus {
+        let waits = self
+            .workspace
+            .layout(id)
+            .leaf_ids()
+            .into_iter()
+            .any(|pane| {
+                self.sessions
+                    .get(&pane)
+                    .is_some_and(|v| v.read(cx).needs_approval())
+            });
+        if waits {
+            TabStatus::NeedsYou
+        } else if self.background_tab_running(id, cx) {
+            TabStatus::Working
+        } else {
+            TabStatus::Idle
+        }
+    }
+
+    /// Starts tab `id`'s tooltip wait as the pointer comes onto it.
+    pub(super) fn arm_tab_tip(&mut self, id: i64, cx: &mut Context<Self>) {
+        if self.tab_tip.is_some_and(|(tip, _)| tip == id) {
+            return;
+        }
+        self.tab_tip = Some((id, false));
+        self.tab_tip_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(TAB_TIP_DELAY).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.tab_tip == Some((id, false)) {
+                    this.tab_tip = Some((id, true));
+                    this.tabs_frame.update(cx, |_, cx| cx.notify());
+                }
+            });
+        }));
+    }
+
+    /// Takes tab `id`'s tooltip down as the pointer leaves it.
+    pub(super) fn disarm_tab_tip(&mut self, id: i64) {
+        if self.tab_tip.is_some_and(|(tip, _)| tip == id) {
+            self.tab_tip = None;
+            self.tab_tip_task = None;
+        }
+    }
+
+    /// Whether tab `id`'s tooltip shows: the pointer rested on it and no
+    /// tab is being dragged.
+    pub(super) fn tab_tip_shown(&self, id: i64) -> bool {
+        self.tab_tip == Some((id, true)) && !self.tab_drag.as_ref().is_some_and(|d| d.active)
     }
 }

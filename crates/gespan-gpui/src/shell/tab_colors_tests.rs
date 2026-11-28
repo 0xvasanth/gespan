@@ -244,63 +244,115 @@ fn a_workspace_saved_before_colours_were_saved_gets_them_on_restore() {
     assert_eq!(colors.len(), 3, "{colors:x?}");
 }
 
-#[gpui::test]
-fn resting_on_a_squeezed_tab_shows_its_title_and_project(cx: &mut TestAppContext) {
-    cx.update(|cx| cx.set_reduce_motion(true));
-    let (window, other, _) = window(cx);
-    let visual = &mut VisualTestContext::from_window(window.into(), cx);
-    visual.simulate_resize(gpui::size(px(900.), px(700.)));
-    window
-        .update(visual, |shell, _, cx| {
-            for _ in 0..40 {
-                let summary = locked(&shell.store)
-                    .unwrap()
-                    .create("codex", "/work/gespan")
-                    .unwrap();
-                let id = summary.id;
-                shell.add(summary, cx);
-                let active = shell.workspace.active;
-                shell.workspace.open(id);
-                shell.workspace.active = active;
-            }
-            shell.invalidate_chrome(cx);
-        })
-        .unwrap();
+/// Rests the pointer on tab `id` for `wait`.
+fn rest_on(visual: &mut VisualTestContext, id: i64, wait: std::time::Duration) {
+    let tab = visual
+        .debug_bounds(selector(format!("title-tab-{id}")))
+        .unwrap_or_else(|| panic!("tab {id} drawn"));
+    visual.simulate_mouse_move(tab.center(), None, Default::default());
+    visual.executor().advance_clock(wait);
     settle(visual);
+}
+
+#[gpui::test]
+fn resting_on_a_tab_hangs_the_designed_tooltip_under_it(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let (window, other, here) = window(cx);
+    let visual = &mut VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(1400.), px(800.)));
+    settle(visual);
+    let tip = format!("title-tab-tooltip-{other}");
+    // Passing over a tab shows nothing yet.
+    rest_on(visual, other, tab_colors::TAB_TIP_DELAY / 2);
+    assert!(!drawn(visual, tip.clone()), "not before the delay");
+    // Resting on it hangs the card 6px under the plate, from its left edge.
+    visual.executor().advance_clock(tab_colors::TAB_TIP_DELAY);
+    settle(visual);
+    let card = visual
+        .debug_bounds(selector(tip.clone()))
+        .expect("the tooltip shows after the delay");
     let tab = visual
         .debug_bounds(selector(format!("title-tab-{other}")))
-        .expect("another project's tab is drawn");
+        .unwrap();
+    let plate_bottom =
+        tab.top() + px((crate::theme::TITLE_BAR_HEIGHT + crate::theme::TAB_PLATE_HEIGHT) / 2.);
     assert!(
-        tab.size.width < px(NARROW_TAB),
-        "squeezed to its mark: {tab:?}"
+        (card.top() - plate_bottom - px(6.)).abs() <= px(1.),
+        "under the plate: {card:?} {tab:?}"
     );
-    assert!(!drawn(visual, format!("title-tab-tooltip-{other}")));
-    visual.simulate_mouse_move(tab.center(), None, Default::default());
-    visual
-        .executor()
-        .advance_clock(std::time::Duration::from_secs(2));
-    settle(visual);
     assert!(
-        drawn(visual, format!("title-tab-tooltip-{other}")),
-        "the tooltip names what the plate hides"
+        (card.left() - tab.left()).abs() <= px(1.),
+        "from its left edge"
     );
-    let tip = window
+    assert!(
+        (card.size.height - px(26.)).abs() <= px(1.),
+        "one row: {card:?}"
+    );
+    // Its row: the project's mark and name in its colour, then the status.
+    let shown = window
         .update(visual, |shell, _, cx| {
-            let title = shell.tab_copy(other, cx).headline;
-            let tip = shell.tab_tooltip(
-                other,
-                title.clone().into(),
-                Some("/work/another-project"),
-                cx,
-            );
-            (title, tip)
+            shell.tab_tooltip(other, Some("/work/another-project"), cx)
         })
         .unwrap();
-    assert_eq!(tip.1.title.as_ref(), tip.0);
     let another = color_of(window, "/work/another-project", visual);
     assert_eq!(
-        tip.1.project,
+        shown.project,
         Some(("another-project".into(), another)),
-        "its project, in its colour"
+        "the project, in its colour"
     );
+    assert_eq!(shown.detail(), "· idle");
+    // Moving to another tab takes it down.
+    rest_on(visual, here, std::time::Duration::ZERO);
+    assert!(!drawn(visual, tip), "gone once the pointer leaves");
+}
+
+#[gpui::test]
+fn the_tooltip_says_whether_a_tab_needs_you_works_or_rests(cx: &mut TestAppContext) {
+    let (window, other, _) = window(cx);
+    let status = |window: gpui::WindowHandle<Shell>, cx: &mut TestAppContext| {
+        window
+            .update(cx, |shell, _, cx| shell.tab_status(other, cx))
+            .unwrap()
+    };
+    assert_eq!(status(window, cx), tab_colors::TabStatus::Idle);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.sessions[&other].update(cx, |view, cx| {
+                view.busy = true;
+                cx.emit(crate::conversation::SessionChanged);
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(status(window, cx), tab_colors::TabStatus::Working);
+    window
+        .update(cx, |shell, _, cx| {
+            shell.sessions[&other].update(cx, |view, cx| {
+                view.set_approvals_for_test(vec![gespan_core::agent::Approval {
+                    id: "a1".into(),
+                    title: "Run a command?".into(),
+                    detail: "git status".into(),
+                    can_remember: false,
+                    tool: None,
+                }]);
+                cx.emit(crate::conversation::SessionChanged);
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(status(window, cx), tab_colors::TabStatus::NeedsYou);
+}
+
+#[test]
+fn the_tooltip_row_reads_branch_then_status() {
+    let tip = |branch: Option<&str>, status| tab_colors::TabTooltip::for_test(branch, status);
+    assert_eq!(
+        tip(Some("main"), tab_colors::TabStatus::Working).detail(),
+        "· main · working"
+    );
+    assert_eq!(
+        tip(Some("feat/limits"), tab_colors::TabStatus::NeedsYou).detail(),
+        "· feat/limits · needs you"
+    );
+    assert_eq!(tip(None, tab_colors::TabStatus::Idle).detail(), "· idle");
 }
