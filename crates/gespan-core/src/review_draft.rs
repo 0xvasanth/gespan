@@ -321,6 +321,25 @@ pub type GhRunner<'a> = dyn FnMut(&[&str], Option<&str>) -> Result<String, Strin
 
 /// The request body of a pending GitHub review: no `event`, so GitHub keeps
 /// it as a draft only its author sees.
+/// Ends every review text Gespan posts, so a reviewer never learns from
+/// its own posted review as if the user had written it. Invisible on
+/// GitHub and GitLab, which render it as an HTML comment.
+pub const POSTED_MARKER: &str = "<!-- gespan:review -->";
+
+/// `body` with [`POSTED_MARKER`] at its end.
+pub fn marked(body: &str) -> String {
+    if body.contains(POSTED_MARKER) {
+        body.to_string()
+    } else {
+        format!("{}\n\n{POSTED_MARKER}", body.trim_end())
+    }
+}
+
+/// Whether `body` is a review Gespan posted.
+pub fn is_posted_review(body: &str) -> bool {
+    body.contains(POSTED_MARKER)
+}
+
 pub fn github_payload(plan: &Plan, head_sha: &str) -> Value {
     let comments: Vec<Value> = plan
         .inline
@@ -333,13 +352,13 @@ pub fn github_payload(plan: &Plan, head_sha: &str) -> Value {
                     Side::Old => "LEFT",
                     Side::New => "RIGHT",
                 },
-                "body": placed.body,
+                "body": marked(&placed.body),
             })
         })
         .collect();
     json!({
         "commit_id": head_sha,
-        "body": plan.body(),
+        "body": marked(&plan.body()),
         "comments": comments,
     })
 }
@@ -438,7 +457,7 @@ fn github_submit(draft: &DraftReview, review_id: u64, gh: &mut GhRunner<'_>) -> 
         "repos/{}/pulls/{}/reviews/{review_id}/events",
         draft.repo, draft.number
     );
-    let payload = json!({ "event": "COMMENT", "body": draft.body }).to_string();
+    let payload = json!({ "event": "COMMENT", "body": marked(&draft.body) }).to_string();
     gh(&["api", "--method", "POST", &endpoint], Some(&payload)).map(|_| ())
 }
 
@@ -491,7 +510,7 @@ pub fn gitlab_note_payload(placed: &Placed, refs: &DiffRefs) -> Value {
     if let Some(line) = placed.anchor.new_line {
         position["new_line"] = json!(line);
     }
-    json!({ "note": placed.body, "position": position })
+    json!({ "note": marked(&placed.body), "position": position })
 }
 
 /// Leaves `findings` as draft notes on GitLab merge request `target`: one for
@@ -553,7 +572,7 @@ pub fn gitlab_create(
         }
     }
     plan.inline = placed_ok;
-    let summary = http.post_json(&notes, &json!({ "note": plan.body() }))?;
+    let summary = http.post_json(&notes, &json!({ "note": marked(&plan.body()) }))?;
     let summary_id = summary
         .get("id")
         .and_then(Value::as_u64)

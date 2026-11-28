@@ -308,8 +308,10 @@ fn delivery(policy: &ReviewPolicy) -> String {
         }
         (Some(target), results @ (ReviewResults::Draft | ReviewResults::Post)) => {
             let mut text = format!(
-                "When your review is ready, post it with exactly: gh pr review {} --repo {} --comment --body '<your review>'. Write any apostrophe in the review as '\\''. Post nothing else, and do not change any files.",
-                target.number, target.repo
+                "When your review is ready, post it with exactly: gh pr review {} --repo {} --comment --body '<your review>\n\n{}'. Write any apostrophe in the review as '\\''. Keep the last line exactly as given. Post nothing else, and do not change any files.",
+                target.number,
+                target.repo,
+                crate::review_draft::POSTED_MARKER
             );
             if results == ReviewResults::Draft {
                 text.push_str(" The user approves the post before it reaches GitHub.");
@@ -1452,6 +1454,20 @@ mod tests {
             target: None,
         };
         assert!(!instruction(&untargeted).contains("gh pr view"));
+    }
+
+    #[test]
+    fn the_post_the_instruction_asks_for_is_marked_and_allowed() {
+        for results in [ReviewResults::Draft, ReviewResults::Post] {
+            let p = policy(results);
+            let text = instruction(&p);
+            assert!(text.contains(crate::review_draft::POSTED_MARKER), "{text}");
+            let command = format!(
+                "gh pr review 7 --repo acme/app --comment --body 'Looks fine.\n\n{}'",
+                crate::review_draft::POSTED_MARKER
+            );
+            assert_ne!(verdict(&p, &command), Verdict::Deny, "{command}");
+        }
     }
 
     #[test]
