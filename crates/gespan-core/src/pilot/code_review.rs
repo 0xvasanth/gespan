@@ -91,10 +91,10 @@ pub fn lessons(items: &[Item], reviews: &[(Automation, Vec<AutomationRun>)]) -> 
             continue;
         };
         let repo = crate::inbox::queue::repo_key(&item.provider, &item.repo);
-        let Some((_, runs)) = reviews
-            .iter()
-            .find(|(automation, _)| reviewed_repo(automation) == Some(repo.as_str()))
-        else {
+        let Some((_, runs)) = reviews.iter().find(|(automation, _)| {
+            reviewed_repo(automation) == Some(repo.as_str())
+                && crate::automations::system::learns(automation)
+        }) else {
             continue;
         };
         let at = item.updated_ms();
@@ -398,6 +398,49 @@ mod tests {
         };
         let items = vec![item(7, after, comment("c3", "me", "x", true, true))];
         assert!(lessons(&items, &[(mine, vec![run(7, REVIEWED_AT, None)])]).is_empty());
+    }
+
+    #[test]
+    fn a_review_turned_off_in_settings_learns_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let learning = review(&dir);
+        let items = vec![item(
+            7,
+            "2026-11-21T00:00:00Z",
+            comment("c1", "me", "too strict", true, true),
+        )];
+        let runs = vec![run(7, REVIEWED_AT, Some(REVIEWED_AT + 60_000))];
+        assert_eq!(
+            lessons(&items, &[(learning.clone(), runs.clone())]).len(),
+            1
+        );
+        let off = Automation {
+            system: Some(system::SystemRole::CodeReview {
+                repo: "github:acme/app".into(),
+                learns: false,
+            }),
+            enabled: false,
+            ..learning
+        };
+        assert!(lessons(&items, &[(off, runs)]).is_empty());
+    }
+
+    #[test]
+    fn a_learning_run_cannot_read_the_pull_request_or_the_web() {
+        // Learning runs are read-only and carry no review policy, so their
+        // shell is the read-only one: a comment can't send the reviewer to
+        // read the pull request (whose description its author wrote) or a page.
+        use crate::provider::claude::read_only::allowed;
+        for command in [
+            "gh pr view 7 --repo acme/app",
+            "gh pr diff 7 --repo acme/app",
+            "gh api repos/acme/app/pulls/7",
+            "gh issue view 7 --repo acme/app",
+            "curl https://example.com",
+            "git fetch origin",
+        ] {
+            assert!(!allowed(command), "{command}");
+        }
     }
 
     #[test]

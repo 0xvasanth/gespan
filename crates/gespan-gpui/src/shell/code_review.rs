@@ -87,9 +87,13 @@ impl Shell {
                     let mut settings = system::settings_of(&existing).unwrap_or(defaults);
                     settings.enabled = true;
                     service.ensure_code_review(&repo, &folder, &settings)?;
+                    service.set_code_review_learning(&repo, true)?;
                 }
                 (Some(existing), false) => {
+                    // Off in Settings stops reviews and learning both; a
+                    // review the Review button made stays paused but learns.
                     service.set_enabled(&existing.id, false)?;
+                    service.set_code_review_learning(&repo, false)?;
                 }
                 (None, true) => {
                     service.ensure_code_review(&repo, &folder, &defaults)?;

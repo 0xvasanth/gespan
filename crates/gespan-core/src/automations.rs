@@ -1938,6 +1938,7 @@ pub fn event_watches(service: &mut Service, now: i64) -> Result<Vec<Watch>, Stri
         // A repo's code review also reads its pull requests' comments, so
         // its reviewer Pilot can learn from the user's corrections.
         let learns = system::reviewed_repo(&automation)
+            .filter(|_| system::learns(&automation))
             .and_then(|repo| repo.split_once(':'))
             .map(|(provider, _)| provider.to_string());
         for (provider, event) in WATCHED_EVENTS {

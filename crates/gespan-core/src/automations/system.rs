@@ -26,8 +26,34 @@ pub enum SystemRole {
     /// Reviews the pull or merge requests of `repo`, a
     /// [`crate::inbox::queue::repo_key`] such as `github:acme/app`.
     #[serde(rename_all = "camelCase")]
-    CodeReview { repo: String },
+    CodeReview {
+        repo: String,
+        /// Whether its reviewer Pilot learns from comments on the pull
+        /// requests it reviewed. On unless the repo's review was turned off
+        /// in Settings › Git; a review the Review button made (paused) still
+        /// learns.
+        #[serde(default = "learns_by_default", skip_serializing_if = "is_true")]
+        learns: bool,
+    },
 }
+
+fn learns_by_default() -> bool {
+    true
+}
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+/// Whether `automation` is a code review whose reviewer learns.
+pub fn learns(automation: &Automation) -> bool {
+    matches!(
+        automation.system,
+        Some(SystemRole::CodeReview { learns: true, .. })
+    )
+}
+
+/// Why a reviewer's id held by a user's own automation isn't taken over.
+pub const ID_TAKEN: &str = "An automation of yours already has this code review's id.";
 
 /// Why a system automation can't be deleted from Automations.
 pub const CANT_DELETE: &str = "Gespan keeps this automation for the repo's code review. To stop it, turn the repo's review off in Settings › Git: that pauses it and keeps its history.";
@@ -158,7 +184,7 @@ pub fn which_of(automation: &Automation) -> Option<WhichPrs> {
 /// The repo a code review automation reviews.
 pub fn reviewed_repo(automation: &Automation) -> Option<&str> {
     match &automation.system {
-        Some(SystemRole::CodeReview { repo }) => Some(repo),
+        Some(SystemRole::CodeReview { repo, .. }) => Some(repo),
         None => None,
     }
 }
@@ -209,12 +235,41 @@ impl Service {
         settings: &ReviewSettings,
     ) -> Result<Automation, String> {
         let draft = review_upsert(repo, cwd, settings)?;
+        let id = draft.id.clone();
+        let previous = self
+            .db
+            .run(|mut db| async move { super::get(&mut db, &id).await })?;
+        // A user's own automation that holds this id is never taken over.
+        if previous.as_ref().is_some_and(|p| p.system.is_none()) {
+            return Err(ID_TAKEN.into());
+        }
+        let learns = previous.as_ref().is_none_or(learns);
         self.save(
             draft,
             Some(SystemRole::CodeReview {
                 repo: normalize(repo),
+                learns,
             }),
         )
+    }
+
+    /// Turns learning on or off for `repo`'s code review.
+    pub fn set_code_review_learning(&mut self, repo: &str, on: bool) -> Result<(), String> {
+        let id = review_id(repo);
+        let Some(review) = self
+            .db
+            .run(|mut db| async move { super::get(&mut db, &id).await })?
+        else {
+            return Ok(());
+        };
+        let Some(SystemRole::CodeReview { repo, .. }) = review.system.clone() else {
+            return Err(ID_TAKEN.into());
+        };
+        self.save(
+            AutomationUpsert::from_automation(&review),
+            Some(SystemRole::CodeReview { repo, learns: on }),
+        )
+        .map(|_| ())
     }
 
     /// Removes `repo`'s code review, if it has one.
@@ -325,6 +380,15 @@ mod tests {
         (directory, service)
     }
 
+    fn find(service: &mut Service, id: &str) -> Automation {
+        service
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == id)
+            .unwrap()
+    }
+
     fn settings(which: WhichPrs) -> ReviewSettings {
         ReviewSettings {
             which,
@@ -354,7 +418,8 @@ mod tests {
         assert_eq!(
             saved.system,
             Some(SystemRole::CodeReview {
-                repo: "github:acme/app".into()
+                repo: "github:acme/app".into(),
+                learns: true,
             })
         );
         assert_eq!(saved.name, REVIEW_NAME);
@@ -708,6 +773,100 @@ mod tests {
             crate::automations::GITLAB_COMMENT_EVENT.to_string()
         )));
         assert!(!gitlab.iter().any(|(p, _)| p == "github"));
+    }
+
+    #[test]
+    fn a_review_switched_off_in_settings_stops_learning_too() {
+        let (_dir, mut service) = service();
+        let now = crate::automations::now_millis();
+        let review = service
+            .ensure_code_review(
+                "github:acme/app",
+                "/work/app",
+                &settings(WhichPrs::ReviewRequested),
+            )
+            .unwrap();
+        assert!(learns(&review), "a new review learns");
+        let watches =
+            |service: &mut Service| crate::automations::event_watches(service, now).unwrap();
+
+        // Settings › Git off: paused and not learning.
+        service.set_enabled(&review.id, false).unwrap();
+        service
+            .set_code_review_learning("github:acme/app", false)
+            .unwrap();
+        let off = find(&mut service, &review.id);
+        assert!(!off.enabled);
+        assert!(!learns(&off));
+        assert!(
+            watches(&mut service).is_empty(),
+            "no comment watches: {:?}",
+            watches(&mut service)
+        );
+        assert_eq!(
+            off.system,
+            Some(SystemRole::CodeReview {
+                repo: "github:acme/app".into(),
+                learns: false
+            })
+        );
+
+        // Saving its settings again (as the Review button does) keeps it off.
+        let mut paused = settings(WhichPrs::ReviewRequested);
+        paused.enabled = false;
+        let again = service
+            .ensure_code_review("github:acme/app", "/work/app", &paused)
+            .unwrap();
+        assert!(!learns(&again), "a later save never turns learning back on");
+
+        // On in Settings again: learning returns.
+        service
+            .set_code_review_learning("github:acme/app", true)
+            .unwrap();
+        assert!(learns(&find(&mut service, &review.id)));
+        assert!(!watches(&mut service).is_empty());
+    }
+
+    #[test]
+    fn a_review_saved_before_learning_could_be_turned_off_learns() {
+        // Older rows have no `learns`; they learn as they always did.
+        let role: SystemRole =
+            serde_json::from_str(r#"{"kind":"codeReview","repo":"github:acme/app"}"#).unwrap();
+        assert_eq!(
+            role,
+            SystemRole::CodeReview {
+                repo: "github:acme/app".into(),
+                learns: true
+            }
+        );
+        // And a learning review is saved the same way as before.
+        assert_eq!(
+            serde_json::to_string(&role).unwrap(),
+            r#"{"kind":"codeReview","repo":"github:acme/app"}"#
+        );
+    }
+
+    #[test]
+    fn a_users_automation_holding_the_reviews_id_is_never_taken_over() {
+        let (_dir, mut service) = service();
+        let draft =
+            review_upsert("github:acme/app", "/work/app", &settings(WhichPrs::Opened)).unwrap();
+        let mine = service.upsert(draft).unwrap();
+        assert!(mine.system.is_none());
+        let err = service
+            .ensure_code_review("github:acme/app", "/work/app", &settings(WhichPrs::Opened))
+            .unwrap_err();
+        assert_eq!(err, ID_TAKEN);
+        assert_eq!(
+            service
+                .set_code_review_learning("github:acme/app", false)
+                .unwrap_err(),
+            ID_TAKEN
+        );
+        assert!(
+            find(&mut service, &mine.id).system.is_none(),
+            "still the user's"
+        );
     }
 
     #[test]
