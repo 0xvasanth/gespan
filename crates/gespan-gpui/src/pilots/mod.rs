@@ -2,6 +2,9 @@
 //! overview, settings and floating windows.
 pub(crate) mod avatar;
 pub(crate) mod cards;
+mod code_review;
+#[cfg(test)]
+mod code_review_tests;
 mod color_picker;
 #[cfg(test)]
 mod dictation_tests;
@@ -196,6 +199,11 @@ pub(crate) struct Pilots {
     /// Completed steps waiting for a review slot, oldest first.
     review_queue: std::collections::VecDeque<flow_reviews::QueuedReview>,
     flow_watch: flow_reviews::Watch,
+    /// Sessions of system code reviews: they read a reviewer's rules from
+    /// their prompt and may never act as it.
+    pub(crate) code_reviews: HashSet<i64>,
+    /// Hidden runs teaching a reviewer from trusted comments, by session.
+    learning: HashMap<i64, code_review::LearningRun>,
     /// Prompts hidden runs were given; tests never send them.
     #[cfg(test)]
     pub(crate) hidden_prompts: Vec<(i64, String)>,
@@ -222,6 +230,7 @@ impl Pilots {
             .values()
             .chain(self.running.values().map(|r| &r.view))
             .chain(self.reviews.values().map(|r| &r.view))
+            .chain(self.learning.values().map(|r| &r.view))
             .map(|v| {
                 let s = &v.read(cx).summary;
                 (
@@ -240,6 +249,7 @@ impl Pilots {
             .values()
             .chain(self.running.values().map(|r| &r.view))
             .chain(self.reviews.values().map(|r| &r.view))
+            .chain(self.learning.values().map(|r| &r.view))
             .find(|v| v.read(cx).summary.id == id)
         {
             view.update(cx, |v, cx| v.stop_if_busy(cx));
@@ -437,6 +447,8 @@ impl Pilots {
             reviews: HashMap::new(),
             review_queue: Default::default(),
             flow_watch: Default::default(),
+            code_reviews: HashSet::new(),
+            learning: HashMap::new(),
             #[cfg(test)]
             hidden_prompts: Vec::new(),
             #[cfg(test)]
@@ -491,7 +503,8 @@ impl Pilots {
             .reviews
             .values()
             .map(|review| (review.view.clone(), false));
-        chats.chain(habits).chain(reviews).collect()
+        let learning = self.learning.values().map(|run| (run.view.clone(), false));
+        chats.chain(habits).chain(reviews).chain(learning).collect()
     }
     pub(crate) fn is_pilot_session(&self, id: i64) -> bool {
         self.roster.hidden_sessions.contains(&id)
@@ -657,8 +670,7 @@ impl Pilots {
     /// Every Pilot's id and name, in roster order.
     pub(crate) fn names(&self) -> Vec<(String, String)> {
         self.roster
-            .pilots
-            .iter()
+            .listed()
             .map(|pilot| (pilot.id.clone(), pilot.label()))
             .collect()
     }
@@ -1339,8 +1351,7 @@ impl Pilots {
         };
         let mut roster: Vec<(String, String)> = self
             .roster
-            .pilots
-            .iter()
+            .listed()
             .filter(|m| project.is_none_or(|p| m.works_on(p)) || also.contains(&m.id))
             .map(|m| (m.id.clone(), status(&m.id)))
             .collect();
@@ -1393,7 +1404,7 @@ impl Pilots {
         // With no Pilot yet, the card stands in for the section. A project
         // without Pilots of its own, when others exist, offers one under the
         // label instead.
-        if self.roster.pilots.is_empty() {
+        if self.roster.listed().next().is_none() {
             return self.intro_card(project.into_iter().collect(), cx);
         }
         let add_project = project.clone();

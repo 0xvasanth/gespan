@@ -3657,7 +3657,7 @@ pub(super) fn flow_updates(s: &Setup, cx: &mut TestAppContext) -> Vec<String> {
 pub(super) fn pilot_state(s: &Setup, cx: &mut TestAppContext) -> pilot::Pilot {
     cx.update(|cx| s.manager.read(cx).roster.get(&s.id).unwrap().clone())
 }
-fn call_from(
+pub(super) fn call_from(
     s: &Setup,
     session: i64,
     request: &str,

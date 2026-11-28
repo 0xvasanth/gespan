@@ -59,6 +59,7 @@ impl Shell {
             results: ReviewResults::Gespan,
             enabled: true,
         };
+        let reviewed = (repo.clone(), folder.clone());
         let work = cx.background_executor().spawn(async move {
             let mut service = service_lock(&service)?;
             let id = system::review_id(&repo);
@@ -82,9 +83,21 @@ impl Shell {
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                if let Err(error) = result {
-                    tracing::warn!(%error, "code review change failed");
-                    this.inbox_menu_failed(error, cx);
+                match result {
+                    Err(error) => {
+                        tracing::warn!(%error, "code review change failed");
+                        this.inbox_menu_failed(error, cx);
+                    }
+                    // The repo's reviewer Pilot is ready before its first review.
+                    Ok(()) if on => {
+                        if let Some(pilots) = this.pilots.clone() {
+                            let (repo, folder) = &reviewed;
+                            pilots.update(cx, |pilots, cx| {
+                                pilots.ensure_reviewer(repo, folder, cx);
+                            });
+                        }
+                    }
+                    Ok(()) => {}
                 }
                 this.refresh_code_reviews(cx);
                 this.refresh_run_views(cx);

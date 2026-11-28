@@ -380,19 +380,25 @@ impl Shell {
             items.extend(watched.items);
             let read = watched.read;
             let mut service = service_lock(&service)?;
+            let lessons = review_lessons(&mut service, &items);
             automations::claim_inbox_events_retry(&mut service, &items, now())
-                .map(|(runs, retry)| (runs, retry, read))
+                .map(|(runs, retry)| (runs, retry, read, lessons))
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.automation_state.events_polling = false;
                 match result {
-                    Ok((runs, retry, read)) => {
+                    Ok((runs, retry, read, lessons)) => {
                         this.automation_state.comments_read.extend(read);
                         this.set_event_retries(retry, cx);
                         for run in runs {
                             this.launch_automation(run, false, cx);
+                        }
+                        if let Some(pilots) = this.pilots.clone() {
+                            for lesson in lessons {
+                                pilots.update(cx, |pilots, cx| pilots.learn(lesson, cx));
+                            }
                         }
                     }
                     Err(error) => {
@@ -578,6 +584,10 @@ impl Shell {
         settings.access = launch_access(automation, settings.review.as_ref());
         WorktreeChoice::from_mode(&automation.workspace_mode, &automation.worktree_cwd)
             .apply(&mut settings);
+        // A repo's code review runs through its reviewer Pilot: the rules it
+        // learned go in the prompt, and the session can never act as it.
+        let reviewer = self.code_reviewer(automation, cx);
+        let reviewed = reviewer.is_some();
         let store = self.store.clone();
         let launch = due.clone();
         let revision = self.navigation_revision;
@@ -595,6 +605,10 @@ impl Shell {
                 .prompt
                 .clone()
                 .unwrap_or_else(|| automation.prompt.clone());
+            let prompt = match &reviewer {
+                Some((root, id)) => with_review_rules(prompt, root, id),
+                None => prompt,
+            };
             let prompt = match settings.review.as_ref() {
                 Some(policy) => {
                     let context = match policy.target.as_ref() {
@@ -681,6 +695,9 @@ impl Shell {
                         this.automation_state
                             .session_automations
                             .insert(id, due.automation.id.clone());
+                        if reviewed && let Some(pilots) = this.pilots.clone() {
+                            pilots.update(cx, |pilots, _| pilots.register_code_review(id));
+                        }
                         this.notify_sidebar(cx);
                         this.automation_state.running.insert(
                             id,
@@ -755,6 +772,22 @@ impl Shell {
             });
         })
         .detach();
+    }
+
+    /// Where a system code review's reviewer Pilot keeps its files, and its
+    /// id, made the first time. `None` for any other automation, or while
+    /// Pilots are not loaded.
+    fn code_reviewer(
+        &mut self,
+        automation: &automations::Automation,
+        cx: &mut Context<Self>,
+    ) -> Option<(std::path::PathBuf, String)> {
+        let repo = automations::system::reviewed_repo(automation)?;
+        let pilots = self.pilots.clone()?;
+        pilots.update(cx, |pilots, cx| {
+            pilots.ensure_reviewer(repo, &automation.cwd, cx);
+            pilots.reviewer_files(repo)
+        })
     }
 
     /// Delivers a run to its Pilot: the prompt is queued on the Pilot's chat,
@@ -1090,6 +1123,40 @@ fn review_launch(
     })
 }
 
+/// What the reviewer Pilots learn from `items`: trusted comments on pull
+/// requests their repo's code review reviewed. Learning never holds up a
+/// claim: a failed read teaches nothing this time.
+fn review_lessons(
+    service: &mut Service,
+    items: &[gespan_core::inbox::Item],
+) -> Vec<gespan_core::pilot::code_review::Lesson> {
+    let comments = items.iter().any(|item| {
+        item.occurrence.as_ref().is_some_and(|o| {
+            gespan_core::pilot::code_review::Correction::from_occurrence(o).is_some()
+        })
+    });
+    if !comments {
+        return Vec::new();
+    }
+    let reviews = service.code_reviews().and_then(|reviews| {
+        reviews
+            .into_iter()
+            .filter(|review| review.enabled)
+            .map(|review| {
+                let runs = service.runs(&review.id)?;
+                Ok((review, runs))
+            })
+            .collect::<Result<Vec<_>, String>>()
+    });
+    match reviews {
+        Ok(reviews) => gespan_core::pilot::code_review::lessons(items, &reviews),
+        Err(error) => {
+            tracing::warn!(%error, "code review runs could not be read to learn from");
+            Vec::new()
+        }
+    }
+}
+
 /// Where a finished run leaves its draft review: only a pending-review run
 /// with a pull or merge request to leave it on.
 pub(super) fn pending_review_target(
@@ -1119,6 +1186,20 @@ fn launch_access(
     } else {
         gespan_core::agent::AccessMode::from_id(&automation.runtime_mode)
     }
+}
+
+/// `prompt` with the reviewer's learned rules after it. Rules that can't be
+/// read leave the review to run without them.
+fn with_review_rules(prompt: String, root: &std::path::Path, pilot_id: &str) -> String {
+    use gespan_core::pilot::{code_review, memory};
+    let rules = memory::read(root, pilot_id, Some(code_review::REVIEW_TOPIC))
+        .map_err(|error| tracing::warn!(%error, "a reviewer's rules could not be read"))
+        .ok()
+        .and_then(|file| file.text);
+    format!(
+        "{prompt}\n\n{}",
+        code_review::review_rules(rules.as_deref())
+    )
 }
 
 /// The prompt a review run is given: any prefetched pull request first, the

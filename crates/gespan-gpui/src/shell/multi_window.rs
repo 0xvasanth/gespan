@@ -188,7 +188,7 @@ impl Shell {
             && self
                 .pilots
                 .as_ref()
-                .is_some_and(|m| !m.read(cx).roster.pilots.is_empty())
+                .is_some_and(|m| m.read(cx).roster.listed().next().is_some())
             && !self.unsaved_files(cx)
         {
             self.set_window_visible(window, false, cx);

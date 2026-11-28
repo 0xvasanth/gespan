@@ -831,6 +831,36 @@ mod inbox_settings {
         );
         assert_eq!(moved.len(), 2, "moving never leaves a second review behind");
 
+        // Each repo got one reviewer Pilot, working in the review's folder,
+        // and none of them is listed with the user's Pilots.
+        let reviewers = |window: WindowHandle<Shell>, visual: &mut VisualTestContext| {
+            window
+                .update(visual, |shell, _, cx| {
+                    let pilots = shell.pilot_manager().read(cx);
+                    let names: Vec<String> = pilots.names().into_iter().map(|(id, _)| id).collect();
+                    pilots
+                        .roster
+                        .pilots
+                        .iter()
+                        .filter_map(|p| {
+                            assert!(!names.contains(&p.id), "a reviewer was listed");
+                            Some((p.reviewed_repo()?.to_string(), p.projects.clone()))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            reviewers(window, visual),
+            [
+                ("github:acme/app".to_string(), vec!["/work/app".to_string()]),
+                (
+                    "github:acme/two".to_string(),
+                    vec!["/work/two-a".to_string()]
+                ),
+            ]
+        );
+
         // Off pauses it: kept, with its history, but not running.
         click(visual, "settings-review-0".into());
         assert!(reviews(window, visual).contains(&(
@@ -838,6 +868,11 @@ mod inbox_settings {
             false,
             "/work/app".to_string()
         )));
+        assert_eq!(
+            reviewers(window, visual).len(),
+            2,
+            "pausing keeps the reviewer and what it learned"
+        );
     }
 
     #[gpui::test]

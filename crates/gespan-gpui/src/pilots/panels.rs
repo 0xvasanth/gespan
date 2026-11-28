@@ -542,7 +542,7 @@ impl Pilots {
                 if key_owned == "pilot-name" {
                     let name = input.read(cx).content.trim().chars().take(40).collect();
                     if let Some(id) = this.active.clone() {
-                        if let Some(pilot) = this.roster.get_mut(&id) {
+                        if let Some(pilot) = this.roster.get_mut(&id).filter(|p| !p.is_system()) {
                             pilot.name = name;
                         }
                         this.configure_chat(&id, cx);
@@ -1438,10 +1438,18 @@ impl Pilots {
         let Some(pilot) = self.roster.get(id).cloned() else {
             return;
         };
+        // A system Pilot has no look to edit, name to change or delete.
+        if pilot.is_system() {
+            return;
+        }
         let editor = cx.new(|cx| LookEditor::new(pilot, cx));
         let focus = editor.read(cx).name.focus_handle(cx);
         let changed = cx.subscribe(&editor, |this, _, event: &LookChanged, cx| {
-            if let Some(pilot) = this.roster.get_mut(&event.pilot.id) {
+            if let Some(pilot) = this
+                .roster
+                .get_mut(&event.pilot.id)
+                .filter(|pilot| !pilot.is_system())
+            {
                 pilot.name = event.pilot.name.clone();
                 pilot.mascot = event.pilot.mascot.clone();
                 pilot.color = event.pilot.color;

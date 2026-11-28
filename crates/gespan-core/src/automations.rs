@@ -1928,8 +1928,15 @@ pub fn event_watches(service: &mut Service, now: i64) -> Result<Vec<Watch>, Stri
             .events_since
             .unwrap_or(automation.created_at)
             .max(now.saturating_sub(catch_up_ms(&automation)));
+        // A repo's code review also reads its pull requests' comments, so
+        // its reviewer Pilot can learn from the user's corrections.
+        let learns = system::reviewed_repo(&automation)
+            .and_then(|repo| repo.split_once(':'))
+            .map(|(provider, _)| provider.to_string());
         for (provider, event) in WATCHED_EVENTS {
-            if has_event_trigger(&automation, provider, event) {
+            let learning = learns.as_deref() == Some(provider)
+                && matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT);
+            if learning || has_event_trigger(&automation, provider, event) {
                 watches.push(Watch {
                     provider: provider.into(),
                     event: event.into(),

@@ -618,6 +618,58 @@ mod tests {
     }
 
     #[test]
+    fn a_code_review_reads_comments_so_its_reviewer_can_learn() {
+        let (_dir, mut service) = service();
+        let now = crate::automations::now_millis();
+        let review = service
+            .ensure_code_review(
+                "github:acme/app",
+                "/work/app",
+                &settings(WhichPrs::ReviewRequested),
+            )
+            .unwrap();
+        let comment_watches = |service: &mut Service| {
+            crate::automations::event_watches(service, now)
+                .unwrap()
+                .into_iter()
+                .filter(|w| w.event == crate::automations::GITHUB_COMMENT_EVENT)
+                .map(|w| (w.provider, w.cwd))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            comment_watches(&mut service),
+            vec![("github".to_string(), "/work/app".to_string())]
+        );
+        // No review triggers on a comment: reading them only teaches.
+        assert!(review
+            .triggers()
+            .iter()
+            .all(|t| t.event != crate::automations::GITHUB_COMMENT_EVENT));
+        service.set_enabled(&review.id, false).unwrap();
+        assert!(
+            comment_watches(&mut service).is_empty(),
+            "paused reviews read nothing"
+        );
+        service
+            .ensure_code_review(
+                "gitlab:acme/platform",
+                "/work/platform",
+                &settings(WhichPrs::Opened),
+            )
+            .unwrap();
+        let gitlab: Vec<_> = crate::automations::event_watches(&mut service, now)
+            .unwrap()
+            .into_iter()
+            .map(|w| (w.provider, w.event))
+            .collect();
+        assert!(gitlab.contains(&(
+            "gitlab".to_string(),
+            crate::automations::GITLAB_COMMENT_EVENT.to_string()
+        )));
+        assert!(!gitlab.iter().any(|(p, _)| p == "github"));
+    }
+
+    #[test]
     fn only_github_and_gitlab_repos_can_be_reviewed() {
         let (_dir, mut service) = service();
         for repo in ["azuredevops:acme/app", "acme/app", "github:"] {

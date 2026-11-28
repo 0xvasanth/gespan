@@ -203,6 +203,11 @@ impl Pilots {
                     .get(&call.session)
                     .and_then(|r| self.roster.get(&r.pilot))
             })
+            .or_else(|| {
+                self.learning
+                    .get(&call.session)
+                    .and_then(|r| self.roster.get(&r.pilot))
+            })
             .cloned()
             .ok_or("This Pilot no longer owns an active app capability")?;
         if call.action.starts_with("habits.")
@@ -329,6 +334,10 @@ impl Pilots {
         .detach();
     }
     pub(super) fn app_call(&mut self, call: Call, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(refusal) = self.code_review_refusal(&call) {
+            let _ = call.reply.send(Err(refusal.into()));
+            return;
+        }
         if let Err(error) = self.app_caller(&call) {
             let _ = call.reply.send(Err(error));
             return;

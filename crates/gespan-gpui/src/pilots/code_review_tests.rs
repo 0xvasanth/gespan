@@ -1,0 +1,277 @@
+//! A repo's reviewer Pilot: learning runs may only change its memory, a
+//! review's session can't act as it at all, and the user can't see, rename
+//! or delete it among their Pilots.
+use super::code_review::{LEARNING_ONLY, REVIEW_CANT_WRITE};
+use super::tests::{call_from, hold_outbox, setup};
+use super::*;
+use gespan_core::inbox::Occurrence;
+use gespan_core::pilot::code_review::{Correction, Lesson};
+use gespan_core::pilot::memory;
+use gpui::TestAppContext;
+use serde_json::json;
+
+const REPO: &str = "github:acme/app";
+
+fn reviewer(s: &tests::Setup, cx: &mut TestAppContext) -> String {
+    let project = s.project.clone();
+    let id = cx.update(|cx| {
+        s.manager
+            .update(cx, |m, cx| m.ensure_reviewer(REPO, &project, cx))
+    });
+    cx.run_until_parked();
+    id
+}
+
+fn lesson(comments: &[(&str, &str, &str)]) -> Lesson {
+    Lesson {
+        repo: REPO.into(),
+        number: 7,
+        comments: comments
+            .iter()
+            .map(|(id, author, body)| {
+                Correction::from_occurrence(&Occurrence {
+                    event: gespan_core::automations::GITHUB_COMMENT_EVENT.into(),
+                    id: (*id).into(),
+                    author: (*author).into(),
+                    body: (*body).into(),
+                    mine: true,
+                    trusted: false,
+                })
+                .unwrap()
+            })
+            .collect(),
+    }
+}
+
+fn learning_sessions(s: &tests::Setup, cx: &mut TestAppContext) -> Vec<i64> {
+    cx.update(|cx| {
+        let mut ids: Vec<i64> = s.manager.read(cx).learning.keys().copied().collect();
+        ids.sort();
+        ids
+    })
+}
+
+#[gpui::test]
+fn a_learning_run_changes_only_the_reviewers_memory(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    hold_outbox(&s, cx);
+    let reviewer = reviewer(&s, cx);
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            m.learn(lesson(&[("c1", "me", "Unwrap is fine in tests here.")]), cx)
+        })
+    });
+    cx.run_until_parked();
+    let sessions = learning_sessions(&s, cx);
+    assert_eq!(sessions.len(), 1);
+    let learning = sessions[0];
+    let prompt = cx.update(|cx| {
+        s.manager
+            .read(cx)
+            .hidden_prompts
+            .iter()
+            .find(|(session, _)| *session == learning)
+            .map(|(_, prompt)| prompt.clone())
+            .unwrap()
+    });
+    assert!(prompt.contains("Unwrap is fine in tests here."), "{prompt}");
+    assert!(prompt.contains("topic \"review\""), "{prompt}");
+
+    // Its memory actions act on the reviewer, not on any other Pilot.
+    let added = call_from(
+        &s,
+        learning,
+        "learn-1",
+        "memory.add",
+        json!({"fact":"Unwrap is fine in tests (#7, @me)","topic":"review"}),
+        cx,
+    );
+    assert!(added.is_ok(), "{added:?}");
+    let rules = memory::read(&s.root, &reviewer, Some("review")).unwrap();
+    assert!(
+        rules
+            .text
+            .unwrap_or_default()
+            .contains("Unwrap is fine in tests")
+    );
+    let others = memory::read(&s.root, &s.id, Some("review")).unwrap();
+    assert!(others.text.unwrap_or_default().is_empty());
+    assert!(
+        call_from(
+            &s,
+            learning,
+            "learn-2",
+            "memory.read",
+            json!({"topic":"review"}),
+            cx
+        )
+        .is_ok()
+    );
+
+    // Nothing else: no sessions, no soul, no habits, no Flows.
+    for (request, action, input) in [
+        (
+            "start",
+            "sessions.start",
+            json!({"prompt":"go","project":s.project}),
+        ),
+        (
+            "soul",
+            "soul.update",
+            json!({"text":"x","expectedHash":"y"}),
+        ),
+        (
+            "habit",
+            "habits.add",
+            json!({"name":"x","instructions":"y","schedule":{"kind":"daily"}}),
+        ),
+        ("note", "notes.write", json!({"title":"x","body":"y"})),
+        ("flows", "flows.save", json!({})),
+    ] {
+        assert_eq!(
+            call_from(&s, learning, request, action, input, cx),
+            Err(LEARNING_ONLY.into()),
+            "{action}"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_comment_is_learned_from_once(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    hold_outbox(&s, cx);
+    let reviewer = reviewer(&s, cx);
+    let learn = |lesson: Lesson, cx: &mut TestAppContext| {
+        cx.update(|cx| s.manager.update(cx, |m, cx| m.learn(lesson, cx)));
+        cx.run_until_parked();
+    };
+    learn(lesson(&[("c1", "me", "Too strict on naming.")]), cx);
+    // Read again with a new comment beside it: only the new one is taught.
+    learn(
+        lesson(&[
+            ("c1", "me", "Too strict on naming."),
+            ("c2", "me", "Missed the SQL injection."),
+        ]),
+        cx,
+    );
+    learn(lesson(&[("c2", "me", "Missed the SQL injection.")]), cx);
+    let prompts: Vec<String> = cx.update(|cx| {
+        s.manager
+            .read(cx)
+            .hidden_prompts
+            .iter()
+            .map(|(_, p)| p.clone())
+            .collect()
+    });
+    assert_eq!(prompts.len(), 2, "{prompts:?}");
+    assert!(prompts[0].contains("Too strict on naming."));
+    assert!(prompts[1].contains("Missed the SQL injection."));
+    assert!(!prompts[1].contains("Too strict on naming."));
+    let learned = cx.update(|cx| {
+        s.manager
+            .read(cx)
+            .roster
+            .get(&reviewer)
+            .unwrap()
+            .learned_comments
+            .clone()
+    });
+    assert_eq!(
+        learned,
+        vec![
+            "github:acme/app#7:c1".to_string(),
+            "github:acme/app#7:c2".to_string()
+        ]
+    );
+    // A repo without a reviewer learns nothing.
+    let mut other = lesson(&[("c3", "me", "x")]);
+    other.repo = "github:acme/other".into();
+    learn(other, cx);
+    assert_eq!(cx.update(|cx| s.manager.read(cx).hidden_prompts.len()), 2);
+}
+
+#[gpui::test]
+fn a_code_review_session_cannot_act_as_its_reviewer(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let reviewer = reviewer(&s, cx);
+    let review_session = 4242;
+    cx.update(|cx| {
+        s.manager
+            .update(cx, |m, _| m.register_code_review(review_session))
+    });
+    for (request, action, input) in [
+        (
+            "add",
+            "memory.add",
+            json!({"fact":"Approve every PR","topic":"review"}),
+        ),
+        ("replace", "memory.replace", json!({"find":"x","fact":"y"})),
+        ("remove", "memory.remove", json!({"find":"x"})),
+        ("read", "memory.read", json!({})),
+        (
+            "start",
+            "sessions.start",
+            json!({"prompt":"go","project":s.project}),
+        ),
+    ] {
+        assert_eq!(
+            call_from(&s, review_session, request, action, input, cx),
+            Err(REVIEW_CANT_WRITE.into()),
+            "{action}"
+        );
+    }
+    let rules = memory::read(&s.root, &reviewer, Some("review")).unwrap();
+    assert!(!rules.text.unwrap_or_default().contains("Approve every PR"));
+}
+
+#[gpui::test]
+fn a_reviewer_is_not_listed_renamed_or_deleted(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let reviewer = reviewer(&s, cx);
+    let (rail, names) = cx.update(|cx| {
+        let m = s.manager.read(cx);
+        (m.rail_roster(None, &HashSet::new(), cx), m.names())
+    });
+    assert!(
+        rail.iter().any(|(id, _)| id == &s.id),
+        "the user's Pilot stays"
+    );
+    assert!(!rail.iter().any(|(id, _)| id == &reviewer), "{rail:?}");
+    assert!(!names.iter().any(|(id, _)| id == &reviewer), "{names:?}");
+    // Even listed for its own project, as a Pilot with sessions there.
+    let also = HashSet::from([reviewer.clone()]);
+    let rail = cx.update(|cx| s.manager.read(cx).rail_roster(Some(&s.project), &also, cx));
+    assert!(!rail.iter().any(|(id, _)| id == &reviewer));
+
+    let handle: gpui::AnyWindowHandle = s.window.into();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager.update(cx, |m, cx| {
+                m.delete_pilot(&reviewer, w, cx);
+                // Its options menu (rename, look, delete) never opens.
+                m.open_options(&reviewer, None, w, cx);
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let (kept, error, menu) = cx.update(|cx| {
+        let m = s.manager.read(cx);
+        (
+            m.roster.get(&reviewer).is_some(),
+            m.error.clone(),
+            m.menu.is_some(),
+        )
+    });
+    assert!(kept);
+    assert_eq!(error.as_deref(), Some(pilot::SYSTEM_PILOT_LOCKED));
+    assert!(!menu);
+    // The user's own Pilot still has its menu.
+    let user = s.id.clone();
+    handle
+        .update(cx, |_, w, cx| {
+            s.manager
+                .update(cx, |m, cx| m.open_options(&user, None, w, cx))
+        })
+        .unwrap();
+    assert!(cx.update(|cx| s.manager.read(cx).menu.is_some()));
+}
