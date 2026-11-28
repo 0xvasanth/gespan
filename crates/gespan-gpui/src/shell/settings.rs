@@ -75,6 +75,7 @@ impl Shell {
                         id: automation.id.clone(),
                         cwd: automation.cwd.clone(),
                         enabled: automation.enabled,
+                        learns: gespan_core::automations::system::learns(automation),
                         reviewer: self
                             .pilots
                             .as_ref()

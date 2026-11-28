@@ -62,7 +62,10 @@ impl Pilots {
     pub(crate) fn reviewer_id(&self, repo: &str) -> Option<String> {
         self.roster.reviewer(repo).map(|pilot| pilot.id.clone())
     }
-    /// A system review's session: it may never act as its reviewer.
+    /// A system review's session: it may never act as its reviewer. Kept for
+    /// as long as the app runs, not just the run: a finished review session
+    /// can be picked up and continued, and it must stay refused then too.
+    /// One id per review is all it costs.
     pub(crate) fn register_code_review(&mut self, session: i64) {
         self.code_reviews.insert(session);
     }

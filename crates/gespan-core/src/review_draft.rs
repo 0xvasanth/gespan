@@ -293,6 +293,10 @@ pub struct DraftReview {
     /// Findings that went into the summary because the diff does not show
     /// their line.
     pub outside: usize,
+    /// Already submitted when it was left: a posted GitHub review, made in
+    /// one call so a pending review the user has open doesn't block it.
+    #[serde(default)]
+    pub submitted: bool,
 }
 
 impl DraftReview {
@@ -344,7 +348,7 @@ pub fn is_posted_review(body: &str) -> bool {
 
 /// The request body of a pending GitHub review: no `event`, so GitHub keeps
 /// it as a draft only its author sees.
-pub fn github_payload(plan: &Plan, head_sha: &str) -> Value {
+pub fn github_payload(plan: &Plan, head_sha: &str, submit: bool) -> Value {
     let comments: Vec<Value> = plan
         .inline
         .iter()
@@ -360,17 +364,25 @@ pub fn github_payload(plan: &Plan, head_sha: &str) -> Value {
             })
         })
         .collect();
-    json!({
+    let mut payload = json!({
         "commit_id": head_sha,
         "body": marked(&plan.body()),
         "comments": comments,
-    })
+    });
+    // With an event the review is submitted as it is made; without one it
+    // stays pending.
+    if submit {
+        payload["event"] = "COMMENT".into();
+    }
+    payload
 }
 
-/// Leaves `findings` as a pending review on GitHub pull request `target`.
+/// Leaves `findings` as a review on GitHub pull request `target`: pending,
+/// or submitted at once when `submit`.
 pub fn github_create(
     target: &ReviewTarget,
     findings: Findings,
+    submit: bool,
     gh: &mut GhRunner<'_>,
 ) -> Result<DraftReview, String> {
     if target.forge != Forge::GitHub {
@@ -407,13 +419,14 @@ pub fn github_create(
     let mut plan = Plan::new(findings, &map);
     let endpoint = format!("repos/{}/pulls/{}/reviews", target.repo, target.number);
     let post = |gh: &mut GhRunner<'_>, plan: &Plan| {
-        let payload = github_payload(plan, &head).to_string();
+        let payload = github_payload(plan, &head, submit).to_string();
         gh(&["api", "--method", "POST", &endpoint], Some(&payload))
     };
     let response = match post(gh, &plan) {
         Ok(response) => response,
-        // GitHub allows one pending review per author: say so plainly.
-        Err(error) if error.to_ascii_lowercase().contains("pending review") => {
+        // GitHub allows one pending review per author: say so plainly. A
+        // submitted review is never pending, so it can't hit this.
+        Err(error) if !submit && error.to_ascii_lowercase().contains("pending review") => {
             return Err(
                 "You already have a pending review on this pull request. Submit or discard it on GitHub, then ask for the review again."
                     .into(),
@@ -453,6 +466,7 @@ pub fn github_create(
         body: plan.body(),
         inline: shown(&plan),
         outside: plan.general.len(),
+        submitted: submit,
     })
 }
 
@@ -597,6 +611,7 @@ pub fn gitlab_create(
         body: plan.body(),
         inline: shown(&plan),
         outside: plan.general.len(),
+        submitted: false,
     })
 }
 
@@ -619,15 +634,18 @@ fn gitlab_submit(
 /// Opens the connected GitLab account's API.
 pub type GitlabOpener<'a> = dyn FnMut() -> Result<Box<dyn GitlabHttp>, String> + 'a;
 
-/// Leaves `findings` as a draft review on `target`.
+/// Leaves `findings` as a draft review on `target`. With `submit`, a GitHub
+/// review is submitted as it is made; GitLab draft notes are always left as
+/// drafts, for [`submit`] to publish.
 pub fn create(
     target: &ReviewTarget,
     findings: Findings,
+    submit: bool,
     gh: &mut GhRunner<'_>,
     gitlab: &mut GitlabOpener<'_>,
 ) -> Result<DraftReview, String> {
     match target.forge {
-        Forge::GitHub => github_create(target, findings, gh),
+        Forge::GitHub => github_create(target, findings, submit, gh),
         Forge::GitLab => gitlab_create(target, findings, &mut *gitlab()?),
     }
 }

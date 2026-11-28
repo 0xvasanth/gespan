@@ -353,7 +353,38 @@ impl FakeGh {
 }
 
 fn create_github(gh: &mut FakeGh, findings: Findings) -> Result<DraftReview, String> {
-    github_create(&github(), findings, &mut |args, input| gh.run(args, input))
+    github_create(&github(), findings, false, &mut |args, input| {
+        gh.run(args, input)
+    })
+}
+
+#[test]
+fn a_posted_github_review_is_submitted_in_the_one_call_that_makes_it() {
+    // One call with an event: no pending review is left between making and
+    // submitting it, so a pending review the user has open can't block it.
+    let submitted = r#"{"id":43,"html_url":"https://github.com/acme/app/pull/7#pullrequestreview-43","state":"COMMENTED"}"#;
+    let mut gh = FakeGh::new(vec![Ok(HEAD), Ok(PR_DIFF), Ok(submitted)]);
+    let draft =
+        github_create(&github(), sample_findings(), true, &mut |a, i| gh.run(a, i)).unwrap();
+    assert_eq!(gh.calls.len(), 3, "no separate submit");
+    let payload = gh.calls[2].1.clone().unwrap();
+    assert_eq!(payload["event"], "COMMENT");
+    assert_eq!(
+        payload["comments"].as_array().unwrap().len(),
+        4,
+        "still line by line"
+    );
+    assert!(draft.submitted);
+    assert_eq!(draft.handle, Handle::Github { review_id: 43 });
+    // A refusal that names a pending review is shown as GitHub said it.
+    let mut gh = FakeGh::new(vec![
+        Ok(HEAD),
+        Ok(PR_DIFF),
+        Err("HTTP 422: pending review conflict"),
+    ]);
+    let error =
+        github_create(&github(), sample_findings(), true, &mut |a, i| gh.run(a, i)).unwrap_err();
+    assert!(!error.contains("Submit or discard it"), "{error}");
 }
 
 fn sample_findings() -> Findings {
@@ -478,7 +509,7 @@ fn github_refuses_a_bad_head_or_a_gitlab_target_before_writing() {
         forge: Forge::GitLab,
         ..github()
     };
-    assert!(github_create(&gitlab, sample_findings(), &mut |a, i| gh.run(a, i)).is_err());
+    assert!(github_create(&gitlab, sample_findings(), false, &mut |a, i| gh.run(a, i)).is_err());
     assert!(gh.calls.is_empty());
 }
 

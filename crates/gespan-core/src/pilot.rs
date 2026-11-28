@@ -74,7 +74,9 @@ pub struct Pilot {
     #[serde(default)]
     pub goals: Vec<flow_notes::Goal>,
     /// Set on a Pilot Gespan made and keeps for a job of its own: the user
-    /// can't rename or delete it, and it is left out of the Pilot lists.
+    /// can't rename, delete or give it work. It shows in the Pilots rail with
+    /// a lock; only `Pilots::names` (the automation picker) and the floating
+    /// window leave it out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<PilotRole>,
     /// A code reviewer's comments it has already learned from, newest last,

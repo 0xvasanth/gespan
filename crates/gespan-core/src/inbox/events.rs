@@ -561,6 +561,22 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn a_comment_item_is_timed_by_the_comment_not_the_pull_request() {
+        // A reviewer's posting window compares this time with when its
+        // review ran, so it must be when the comment was made, on either
+        // forge, however recently the pull request itself changed.
+        for provider in ["github", "gitlab"] {
+            let pr = pr(provider, 7, "2026-11-28T17:00:00Z");
+            let item = comment_items(&pr, &[said("c1", "comment", "alice", "x")], "").remove(0);
+            assert_eq!(item.updated_at, "2026-11-11T10:00:00Z", "{provider}");
+            assert_eq!(
+                item.updated_ms(),
+                crate::inbox::timestamp_ms("2026-11-11T10:00:00Z"),
+                "{provider}"
+            );
+        }
+    }
     fn watch(provider: &str, event: &str, since: i64) -> Watch {
         Watch {
             provider: provider.into(),

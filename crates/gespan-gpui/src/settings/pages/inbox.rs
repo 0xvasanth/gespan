@@ -415,13 +415,7 @@ impl SettingsView {
                 .split_once(':')
                 .unwrap_or(("", repo.repo.as_str()));
             let host = gespan_core::inbox::provider_label(host);
-            let description: SharedString = match (&repo.folder, repo.folders.len()) {
-                (_, 0) => format!("{host} · needs a project folder to review in").into(),
-                (Some(folder), _) => format!("{host} · reviews in {}", folder_name(folder)).into(),
-                (None, n) => {
-                    format!("{host} · {n} folders point here: pick the one that reviews").into()
-                }
-            };
+            let description: SharedString = review_description(host, repo, review).into();
             let mut controls: Vec<AnyElement> = Vec::new();
             // Two clones: one chip per folder, the picked one lit.
             if repo.folders.len() > 1 {
@@ -552,9 +546,71 @@ impl SettingsView {
 }
 
 /// A folder's last part, as projects are named.
+/// The line under a repo in Code review: where it reviews and, for a review
+/// that is off but still learns (the Review button made it), that it does.
+fn review_description(
+    host: &str,
+    repo: &gespan_core::code_review::RepoFolder,
+    review: Option<&crate::settings::CodeReviewRow>,
+) -> String {
+    let place = match (&repo.folder, repo.folders.len()) {
+        (_, 0) => format!("{host} · needs a project folder to review in"),
+        (Some(folder), _) => format!("{host} · reviews in {}", folder_name(folder)),
+        (None, n) => format!("{host} · {n} folders point here: pick the one that reviews"),
+    };
+    match review {
+        Some(review) if !review.enabled && review.learns => {
+            format!("{place} · only when you press Review, and learns from your comments")
+        }
+        _ => place,
+    }
+}
+
 fn folder_name(path: &str) -> String {
     std::path::Path::new(path.trim_end_matches('/'))
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| path.into())
+}
+
+#[cfg(test)]
+mod review_description_tests {
+    use super::review_description;
+    use crate::settings::CodeReviewRow;
+    use gespan_core::code_review::RepoFolder;
+
+    #[test]
+    fn a_review_that_is_off_but_learning_says_so() {
+        let repo = RepoFolder {
+            repo: "github:acme/app".into(),
+            folders: vec!["/work/app".into()],
+            folder: Some("/work/app".into()),
+        };
+        let row = |enabled, learns| CodeReviewRow {
+            repo: repo.repo.clone(),
+            id: "r".into(),
+            cwd: "/work/app".into(),
+            enabled,
+            learns,
+            reviewer: None,
+        };
+        assert_eq!(
+            review_description("GitHub", &repo, None),
+            "GitHub · reviews in app"
+        );
+        assert_eq!(
+            review_description("GitHub", &repo, Some(&row(true, true))),
+            "GitHub · reviews in app"
+        );
+        // Made by the Review button: off, but its reviewer still learns.
+        assert_eq!(
+            review_description("GitHub", &repo, Some(&row(false, true))),
+            "GitHub · reviews in app · only when you press Review, and learns from your comments"
+        );
+        // Off in Settings: off, and learning stopped with it.
+        assert_eq!(
+            review_description("GitHub", &repo, Some(&row(false, false))),
+            "GitHub · reviews in app"
+        );
+    }
 }

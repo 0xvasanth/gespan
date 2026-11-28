@@ -20,6 +20,8 @@ pub(crate) enum DraftJob {
         data_dir: PathBuf,
         target: ReviewTarget,
         reply: String,
+        /// Post: submit it as it is made where the forge can.
+        submit: bool,
     },
     Submit {
         cwd: String,
@@ -44,9 +46,14 @@ pub(crate) fn live_forge() -> DraftForge {
                 .map(|api| Box::new(api) as Box<dyn GitlabHttp>)
         };
         match job {
-            DraftJob::Create { target, reply, .. } => {
+            DraftJob::Create {
+                target,
+                reply,
+                submit,
+                ..
+            } => {
                 let findings = review_draft::parse_reply(&reply);
-                review_draft::create(&target, findings, &mut gh, &mut gitlab).map(Some)
+                review_draft::create(&target, findings, submit, &mut gh, &mut gitlab).map(Some)
             }
             DraftJob::Submit { draft, .. } => {
                 review_draft::submit(&draft, &mut gh, &mut gitlab).map(|()| None)
@@ -115,6 +122,7 @@ impl Shell {
                 data_dir: data_dir.clone(),
                 target,
                 reply,
+                submit,
             })?
             .ok_or("No draft review was left")?;
             let service = || {
@@ -130,7 +138,7 @@ impl Shell {
                 &draft,
                 gespan_core::time::now_ms() as i64,
             )?;
-            if submit {
+            if submit && !draft.submitted {
                 // Saved first: if submitting fails, the draft is on the pull
                 // request and waits in My tasks instead of being lost.
                 forge(DraftJob::Submit {
@@ -141,6 +149,8 @@ impl Shell {
                 .map_err(|error| {
                     format!("its draft is on the pull request, waiting in My tasks: {error}")
                 })?;
+            }
+            if submit {
                 service()?.settle_review_draft(
                     &run.run_id,
                     SUBMITTED,

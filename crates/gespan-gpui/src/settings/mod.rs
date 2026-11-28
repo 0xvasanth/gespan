@@ -90,6 +90,9 @@ pub(crate) struct CodeReviewRow {
     pub id: String,
     pub cwd: String,
     pub enabled: bool,
+    /// Its reviewer learns from comments: off once the switch turns it off,
+    /// on for a review the Review button made.
+    pub learns: bool,
     /// The repo's reviewer Pilot, which learns from your corrections.
     pub reviewer: Option<String>,
 }

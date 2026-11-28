@@ -42,6 +42,7 @@ fn draft() -> DraftReview {
             body: "Off by one".into(),
         }],
         outside: 0,
+        submitted: false,
     }
 }
 
@@ -326,5 +327,25 @@ fn a_post_github_refuses_to_submit_waits_as_a_draft(cx: &mut TestAppContext) {
             Kind::DraftReview,
             "Submit the review on acme/app#7, or keep it as a draft?".to_string()
         )]
+    );
+}
+
+#[gpui::test]
+fn a_review_github_submitted_as_it_was_made_is_not_submitted_again(cx: &mut TestAppContext) {
+    let submitted = DraftReview {
+        submitted: true,
+        ..draft()
+    };
+    let rig = rig(cx, Ok(submitted));
+    finish_as(&rig, ReviewResults::Post, cx);
+    assert_eq!(jobs(&rig), ["create github:acme/app#7 reply=true"]);
+    assert_eq!(run_status(&rig).0, "succeeded");
+    assert!(tasks(&rig, cx).is_empty());
+    assert!(
+        Service::open(&rig.db)
+            .unwrap()
+            .waiting_review_drafts()
+            .unwrap()
+            .is_empty()
     );
 }
