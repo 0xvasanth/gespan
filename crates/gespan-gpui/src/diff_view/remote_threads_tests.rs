@@ -202,6 +202,80 @@ fn reply_opens_inside_the_thread_and_posts_now_not_as_a_draft(cx: &mut gpui::Tes
 }
 
 #[gpui::test]
+fn with_two_threads_on_a_line_the_box_names_who_it_answers(cx: &mut gpui::TestAppContext) {
+    let (window, mut visual, events, _s) = with_threads(
+        cx,
+        vec![
+            thread(
+                "t1",
+                2,
+                false,
+                vec![comment("marko", "Cache this per project?")],
+            ),
+            thread(
+                "t2",
+                2,
+                false,
+                vec![
+                    comment("cubic", "deleteThread can fail silently"),
+                    comment("cat-bot", "Kept it silent on purpose"),
+                ],
+            ),
+        ],
+    );
+    click(&mut visual, "diff-thread-reply-t2");
+    let author = window
+        .update(&mut visual, |v, _, _| v.reply_author())
+        .unwrap();
+    assert_eq!(
+        author.as_deref(),
+        Some("cat-bot"),
+        "the second thread's last comment, not the first thread's"
+    );
+    let first = visual.debug_bounds("diff-remote-thread-0").unwrap();
+    let second = visual.debug_bounds("diff-remote-thread-1").unwrap();
+    let label = visual.debug_bounds("diff-review-editor-label").unwrap();
+    assert!(
+        second.contains(&label.origin) && !first.contains(&label.origin),
+        "the header sits in the thread it answers"
+    );
+    assert!(
+        shown(&mut visual, "diff-thread-reply-t1"),
+        "the other thread keeps its own Reply"
+    );
+    assert!(
+        !shown(&mut visual, "diff-thread-reply-t2"),
+        "the open thread's Reply gives way to its box"
+    );
+
+    // Reply on the first thread instead: the one box moves there and names
+    // marko.
+    click(&mut visual, "diff-thread-reply-t1");
+    let author = window
+        .update(&mut visual, |v, _, _| v.reply_author())
+        .unwrap();
+    assert_eq!(author.as_deref(), Some("marko"));
+    let first = visual.debug_bounds("diff-remote-thread-0").unwrap();
+    let label = visual.debug_bounds("diff-review-editor-label").unwrap();
+    assert!(first.contains(&label.origin));
+    window
+        .update(&mut visual, |view, _, cx| {
+            let input = view.review.editor.as_ref().unwrap().input.clone();
+            input.update(cx, |input, cx| input.set_text("It is".into(), cx));
+        })
+        .unwrap();
+    settle(&mut visual);
+    click(&mut visual, "diff-review-save");
+    assert_eq!(*events.borrow(), vec!["reply t1 It is".to_string()]);
+}
+
+#[test]
+fn a_reply_sends_and_a_review_comment_saves() {
+    assert!(super::super::review_threads::shortcut_hint(true).contains("to send"));
+    assert!(super::super::review_threads::shortcut_hint(false).contains("to save"));
+}
+
+#[gpui::test]
 fn resolved_threads_start_folded_and_resolve_folds_by_hand(cx: &mut gpui::TestAppContext) {
     let (window, mut visual, events, _s) = with_threads(
         cx,

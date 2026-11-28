@@ -592,22 +592,27 @@ impl DiffView {
 
     /// The open comment box: a new or edited draft under its lines, or a
     /// reply inside a review thread.
+    /// Who the open box answers: the last comment's author in the thread it
+    /// replies to, or `None` for a review comment.
+    pub(super) fn reply_author(&self) -> Option<String> {
+        let root = self.review.editor.as_ref()?.reply.as_ref()?;
+        self.review
+            .threads
+            .iter()
+            .find(|t| &t.root == root)
+            .and_then(|t| t.comments.last())
+            .map(|c| c.author.clone())
+    }
+
     pub(super) fn editor_box(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let editor = self.review.editor.as_ref()?;
         {
             let diff = &self.files[editor.pick.file];
             let (start, end) = editor.pick.range();
             let reply = editor.reply.is_some();
-            let replying_to = editor.reply.as_ref().and_then(|root| {
-                self.review
-                    .threads
-                    .iter()
-                    .find(|t| &t.root == root)
-                    .and_then(|t| t.comments.last())
-                    .map(|c| c.author.clone())
-            });
+            let replying_to = self.reply_author();
             let label = match (
-                replying_to,
+                replying_to.clone(),
                 line_ref(&diff.blocks, start),
                 line_ref(&diff.blocks, end),
             ) {
@@ -769,8 +774,29 @@ impl DiffView {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(
-                                div()
+                            .child(match replying_to {
+                                // A reply names who it answers, not the file:
+                                // the box already sits inside that thread.
+                                Some(author) => div()
+                                    .debug_selector(|| "diff-review-editor-label".into())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(12.))
+                                    .text_color(content(0.55))
+                                    .child("Reply to ")
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .text_color(content(0.9))
+                                            .child(author),
+                                    )
+                                    .child(" · in this thread")
+                                    .flex()
+                                    .items_center()
+                                    .whitespace_nowrap(),
+                                None => div()
+                                    .debug_selector(|| "diff-review-editor-label".into())
                                     .flex_1()
                                     .min_w_0()
                                     .truncate()
@@ -778,18 +804,14 @@ impl DiffView {
                                     .text_size(px(11.))
                                     .text_color(content(0.55))
                                     .child(format!("{} · {label}", diff.path)),
-                            )
+                            })
                             .when(!narrow, |d| {
                                 d.child(
                                     div()
                                         .flex_none()
                                         .text_size(px(10.5))
                                         .text_color(content(0.4))
-                                        .child(if cfg!(target_os = "macos") {
-                                            "⌘↩ to save · Esc to cancel"
-                                        } else {
-                                            "Ctrl+↩ to save · Esc to cancel"
-                                        }),
+                                        .child(shortcut_hint(reply)),
                                 )
                             }),
                     )
@@ -1099,6 +1121,17 @@ trait Opacity {
 impl Opacity for gpui::Rgba {
     fn into_hsla_opacity(self, alpha: f32) -> Hsla {
         Hsla::from(self).opacity(alpha)
+    }
+}
+
+/// The keys under a comment box: a reply sends now, a review comment is
+/// saved for the review.
+pub(super) fn shortcut_hint(reply: bool) -> &'static str {
+    match (reply, cfg!(target_os = "macos")) {
+        (true, true) => "⌘↩ to send · Esc to cancel",
+        (true, false) => "Ctrl+↩ to send · Esc to cancel",
+        (false, true) => "⌘↩ to save · Esc to cancel",
+        (false, false) => "Ctrl+↩ to save · Esc to cancel",
     }
 }
 
