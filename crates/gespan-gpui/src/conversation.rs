@@ -4572,6 +4572,32 @@ impl Render for HintTooltip {
             .child(self.0)
     }
 }
+/// [`HintTooltip`] with lines worked out at hover time: the first in full
+/// ink, the rest fainter.
+pub(crate) struct LinesTooltip(pub(crate) Vec<SharedString>);
+impl Render for LinesTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let mut background = shell_fill();
+        background.a = 1.;
+        div()
+            .max_w(px(320.))
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(background)
+            .border_1()
+            .border_color(content(0.12))
+            .flex()
+            .flex_col()
+            .text_size(px(11.))
+            .line_height(px(16.))
+            .children(self.0.iter().enumerate().map(|(ix, line)| {
+                div()
+                    .text_color(content(if ix == 0 { 0.85 } else { 0.6 }))
+                    .child(line.clone())
+            }))
+    }
+}
 fn tool_pill(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)

@@ -557,6 +557,15 @@ impl Shell {
             sessions,
             self.workspace.preferences.groups_by_worktree(),
         );
+        // Which machine and where, so two projects with one name differ:
+        // the same chip and path as the switcher's own rows.
+        let place = crate::pickers::project_place(&project);
+        let line = rail_plan::switcher_line(&place.path, sessions);
+        let hint: Vec<SharedString> = vec![
+            SWITCHER_HINT.into(),
+            format!("{} · {}", place.machine(), place.path).into(),
+            summary.into(),
+        ];
         let fill = if is_light() { white(0.7) } else { white(0.07) };
         div()
             .id("workspace-project")
@@ -604,13 +613,26 @@ impl Shell {
                     .flex_col()
                     .child(
                         div()
-                            .debug_selector(|| "sidebar-project-name".into())
-                            .truncate()
-                            .text_size(px(13.5))
-                            .line_height(px(17.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(content(1.))
-                            .child(label),
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .debug_selector(|| "sidebar-project-name".into())
+                                    .flex_shrink(1.)
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(13.5))
+                                    .line_height(px(17.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(content(1.))
+                                    .child(label),
+                            )
+                            .child(crate::pickers::machine_chip(
+                                &place,
+                                "sidebar-project-machine".into(),
+                            )),
                     )
                     .child(
                         div()
@@ -619,14 +641,14 @@ impl Shell {
                             .text_size(px(11.5))
                             .line_height(px(16.))
                             .text_color(faint_ink())
-                            .child(summary),
+                            .child(line),
                     ),
             )
             .child(self.rail_project_actions(cx))
             .child(self.project_anchor.probe())
-            .tooltip(|_, cx| {
-                cx.new(|_| crate::conversation::HintTooltip(SWITCHER_HINT))
-                    .into()
+            .tooltip(move |_, cx| {
+                let hint = hint.clone();
+                cx.new(|_| crate::conversation::LinesTooltip(hint)).into()
             })
             .on_click(cx.listener(|this, _, window, cx| this.toggle_project_switcher(window, cx)))
             .on_mouse_down(

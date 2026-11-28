@@ -256,6 +256,14 @@ pub(super) fn switcher_summary(folders: usize, sessions: usize, by_worktree: boo
     )
 }
 
+/// The switcher's second line: the project's folder, then its sessions.
+/// The machine is the chip beside the name.
+/// The worktree or folder count moves to the tooltip to make room.
+pub(super) fn switcher_line(place: &str, sessions: usize) -> String {
+    let noun = if sessions == 1 { "session" } else { "sessions" };
+    format!("{place} · {sessions} {noun}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +485,16 @@ mod tests {
         assert_eq!(age(0, now), "");
         // A clock that ran backwards still reads as now.
         assert_eq!(age(now + 5_000, now), "now");
+    }
+
+    #[test]
+    fn the_switcher_line_puts_the_folder_before_the_sessions() {
+        assert_eq!(
+            switcher_line("~/repo/ae", 1),
+            "~/repo/ae · 1 session"
+        );
+        assert_eq!(switcher_line("~/farm/ae", 0), "~/farm/ae · 0 sessions");
+        assert_eq!(switcher_line("~", 12), "~ · 12 sessions");
     }
 
     #[test]

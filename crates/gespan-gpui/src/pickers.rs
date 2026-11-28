@@ -1554,6 +1554,123 @@ pub(crate) fn pretty_parent(path: &str) -> String {
         _ => parent,
     }
 }
+/// The tag for a project on this computer, as Setup › Projects says it.
+pub(crate) const THIS_MACHINE: &str = if cfg!(target_os = "macos") {
+    "This Mac"
+} else {
+    "This PC"
+};
+/// The chip beside a project that lives on another machine.
+pub(crate) const OTHER_MACHINE: &str = "Other machine";
+
+/// Where a project lives, so two projects with one name can be told apart:
+/// the switcher and its picker show the same chip and path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectPlace {
+    /// On a connected machine (`remote://`), not this computer.
+    pub other_machine: bool,
+    /// The project's folder, its home folder as `~`.
+    pub path: String,
+}
+impl ProjectPlace {
+    /// The machine chip's words: "This Mac" or "Other machine".
+    pub(crate) fn machine(&self) -> &'static str {
+        if self.other_machine {
+            OTHER_MACHINE
+        } else {
+            THIS_MACHINE
+        }
+    }
+}
+
+/// [`ProjectPlace`] for `path`, with this computer's home folder.
+pub(crate) fn project_place(path: &str) -> ProjectPlace {
+    project_place_in(path, std::env::var("HOME").ok().as_deref())
+}
+
+pub(crate) fn project_place_in(path: &str, home: Option<&str>) -> ProjectPlace {
+    match gespan_core::remote::parse_remote_path(path) {
+        Some(remote) => ProjectPlace {
+            other_machine: true,
+            path: remote_tilde(&remote.host_path),
+        },
+        None => ProjectPlace {
+            other_machine: false,
+            path: tilde(path, home),
+        },
+    }
+}
+
+/// `path` with `home` as `~`, only on a whole folder name: `/Users/al` is
+/// not inside `/Users/a`.
+fn tilde(path: &str, home: Option<&str>) -> String {
+    let Some(home) = home.map(|h| h.trim_end_matches('/')).filter(|h| !h.is_empty()) else {
+        return path.into();
+    };
+    match path.strip_prefix(home) {
+        Some("") => "~".into(),
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => path.into(),
+    }
+}
+
+/// A connected machine's home folder isn't known here, so its usual
+/// places stand for it: `/home/<user>`, `/Users/<user>` and `/root`.
+fn remote_tilde(path: &str) -> String {
+    let user_home = |prefix: &str| {
+        let rest = path.strip_prefix(prefix)?;
+        let end = rest.find('/').unwrap_or(rest.len());
+        (end > 0).then(|| format!("{prefix}{}", &rest[..end]))
+    };
+    let home = user_home("/home/")
+        .or_else(|| user_home("/Users/"))
+        .or_else(|| (path == "/root" || path.starts_with("/root/")).then(|| "/root".into()));
+    tilde(path, home.as_deref())
+}
+
+/// The chip beside every project's name: grey "This Mac", or green
+/// "Other machine", the same shape so the two read alike.
+pub(crate) fn machine_chip(place: &ProjectPlace, selector: String) -> AnyElement {
+    let (dot, ink): (gpui::Hsla, gpui::Hsla) = if place.other_machine {
+        let ink = if is_light() {
+            OTHER_MACHINE_INK.1
+        } else {
+            OTHER_MACHINE_INK.0
+        };
+        (gpui::rgb(OTHER_MACHINE_GREEN).into(), gpui::rgb(ink).into())
+    } else {
+        (content(0.55), content(0.8))
+    };
+    let (edge, fill) = if place.other_machine {
+        (dot.opacity(0.55), dot.opacity(0.12))
+    } else {
+        (content(0.24), content(0.06))
+    };
+    div()
+        .debug_selector(move || selector.clone())
+        .flex_shrink_0()
+        .h(px(18.))
+        .px(px(6.))
+        .rounded(px(5.))
+        .border_1()
+        .border_color(edge)
+        .bg(fill)
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .text_size(px(11.))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(ink)
+        .child(div().size(px(6.)).rounded_full().bg(dot))
+        .child(place.machine())
+        .into_any_element()
+}
+/// A switcher row: name, chip and branch over its place.
+pub(crate) const PICKER_ROW_HEIGHT: f32 = 44.;
+/// The chip's green dot and border; its ink, light-theme variant second.
+const OTHER_MACHINE_GREEN: u32 = 0x84cc16;
+const OTHER_MACHINE_INK: (u32, u32) = (0xa3e635, 0x3f6212);
+
 impl ProjectPicker {
     /// Rail F1's switcher: a search field, Pinned and Recent with each
     /// project's branch and live work, then "All N projects" and
@@ -1585,16 +1702,17 @@ impl ProjectPicker {
             let label = self.label(&path);
             let project = info.get(&path).cloned().unwrap_or_default();
             let appearance = self.appearance.get(&path).cloned().unwrap_or_default();
+            let place = project_place(&path);
             div()
                 .id(("project-option", ix))
                 .debug_selector(move || format!("project-picker-project-{ix}"))
                 .role(Role::ListBoxOption)
-                .aria_label(label.clone())
+                .aria_label(format!("{label}, {}", place.machine()))
                 .aria_description(path.clone())
                 .aria_selected(current)
                 .cursor_pointer()
                 .flex_shrink_0()
-                .h(px(34.))
+                .h(px(PICKER_ROW_HEIGHT))
                 .px(px(10.))
                 .gap(px(10.))
                 .rounded(px(8.))
@@ -1604,18 +1722,47 @@ impl ProjectPicker {
                 .text_color(content(0.9))
                 .when(active, |d| d.bg(content(0.10)))
                 .when(!active, |d| d.hover(|s| s.bg(content(0.05))))
-                .child(crate::shell::project_tile(&appearance, &path, 20., 5., 10.))
-                .child(div().flex_shrink(1.).min_w_0().truncate().child(label))
-                .children(project.branch.clone().map(|branch| {
+                .child(crate::shell::project_tile(&appearance, &path, 24., 6., 12.))
+                .child(
                     div()
-                        .flex_shrink(1.)
+                        .flex_1()
                         .min_w_0()
-                        .max_w(px(110.))
-                        .truncate()
-                        .text_size(px(11.5))
-                        .text_color(faint)
-                        .child(branch)
-                }))
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .h(px(18.))
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(div().flex_shrink(1.).min_w_0().truncate().child(label))
+                                .child(machine_chip(
+                                    &place,
+                                    format!("project-picker-machine-{ix}"),
+                                ))
+                                .children(project.branch.clone().map(|branch| {
+                                    div()
+                                        .flex_shrink(1.)
+                                        .min_w_0()
+                                        .max_w(px(170.))
+                                        .truncate()
+                                        .font_family("Menlo")
+                                        .text_size(px(11.))
+                                        .text_color(faint)
+                                        .child(branch)
+                                })),
+                        )
+                        .child(
+                            div()
+                                .debug_selector(move || format!("project-picker-place-{ix}"))
+                                .truncate()
+                                .text_size(px(11.5))
+                                .line_height(px(16.))
+                                .text_color(faint)
+                                .child(place.path.clone()),
+                        ),
+                )
                 .child(
                     div()
                         .debug_selector(move || format!("project-picker-live-{ix}"))
@@ -2038,6 +2185,63 @@ impl Render for ProjectPicker {
 #[cfg(test)]
 mod switcher_tests {
     use super::*;
+
+    #[test]
+    fn a_project_here_reads_this_mac_and_its_home_relative_path() {
+        let place = project_place_in("/Users/al/repo/ae", Some("/Users/al"));
+        assert_eq!(
+            place,
+            ProjectPlace {
+                other_machine: false,
+                path: "~/repo/ae".into()
+            }
+        );
+        assert_eq!(place.machine(), THIS_MACHINE);
+        // The home folder itself, and a trailing slash on HOME.
+        assert_eq!(project_place_in("/Users/al", Some("/Users/al/")).path, "~");
+    }
+
+    #[test]
+    fn a_neighbouring_home_is_not_mistaken_for_ours() {
+        // `/Users/alex` starts with `/Users/al` but is not inside it.
+        assert_eq!(
+            project_place_in("/Users/alex/ae", Some("/Users/al")).path,
+            "/Users/alex/ae"
+        );
+        assert_eq!(project_place_in("/srv/ae", None).path, "/srv/ae");
+        assert_eq!(project_place_in("/srv/ae", Some("")).path, "/srv/ae");
+    }
+
+    #[test]
+    fn a_project_on_another_machine_is_tagged_and_shows_only_its_path() {
+        // Same name as the local one: the chip and path tell them apart.
+        let here = project_place_in("/Users/al/repo/ae", Some("/Users/al"));
+        let there = project_place_in(
+            &gespan_core::remote::remote_path("env1", "/home/ubuntu/farm/ae"),
+            Some("/Users/al"),
+        );
+        assert!(there.other_machine);
+        assert_eq!(there.path, "~/farm/ae");
+        assert_eq!(there.machine(), OTHER_MACHINE);
+        assert_ne!(here.machine(), there.machine(), "the chips tell them apart");
+    }
+
+    #[test]
+    fn a_remote_home_is_guessed_from_the_usual_places_only() {
+        let remote = |host: &str| {
+            project_place_in(&gespan_core::remote::remote_path("env1", host), None).path
+        };
+        assert_eq!(remote("/Users/dev/code/ae"), "~/code/ae");
+        assert_eq!(remote("/root/ae"), "~/ae");
+        assert_eq!(remote("/root"), "~");
+        assert_eq!(remote("/home/ubuntu"), "~");
+        // Anywhere else keeps its whole path, and `/home/` alone has no user.
+        assert_eq!(remote("/srv/farm/ae"), "/srv/farm/ae");
+        assert_eq!(remote("/rootless/ae"), "/rootless/ae");
+        assert_eq!(remote("/home/"), "/home/");
+        // A Windows host keeps its drive.
+        assert_eq!(remote("C:/work/ae"), "C:/work/ae");
+    }
 
     fn paths(list: &[&str]) -> Vec<String> {
         list.iter().map(|p| (*p).to_owned()).collect()
