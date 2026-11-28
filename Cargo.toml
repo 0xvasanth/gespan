@@ -68,7 +68,7 @@ rayon = "1"
 rcgen = { version = "0.14", default-features = false }
 reflink-copy = "0.1"
 regex = "1"
-rmcp = { version = "=3.8.0", default-features = false }
+rmcp = { version = "=3.11.0", default-features = false }
 rquickjs = "0.14.0"
 # One bundled SQLite for every crate; Toasty's SQLite driver links this rusqlite too.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"] }
