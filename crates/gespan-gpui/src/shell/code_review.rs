@@ -14,14 +14,32 @@ impl Shell {
             self.initialize_automations(cx);
             return;
         };
-        let work = cx
-            .background_executor()
-            .spawn(async move { service_lock(&service)?.code_reviews() });
+        let work = cx.background_executor().spawn(async move {
+            let mut service = service_lock(&service)?;
+            let reviews = service.code_reviews()?;
+            // Each repo's runs, newest first, for its reviewer's Reviews tab.
+            let mut runs = std::collections::HashMap::new();
+            for review in &reviews {
+                if let Some(repo) = system::reviewed_repo(review) {
+                    let mut rows: Vec<crate::pilots::ReviewRunRow> = service
+                        .runs(&review.id)?
+                        .iter()
+                        .map(crate::pilots::ReviewRunRow::of)
+                        .collect();
+                    rows.sort_by_key(|row| std::cmp::Reverse(row.at));
+                    runs.insert(repo.to_string(), rows);
+                }
+            }
+            Ok::<_, String>((reviews, runs))
+        });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| match result {
-                Ok(reviews) => {
+                Ok((reviews, runs)) => {
                     this.automation_state.code_reviews = reviews;
+                    if let Some(pilots) = this.pilots.clone() {
+                        pilots.update(cx, |pilots, cx| pilots.set_review_runs(runs, cx));
+                    }
                     this.sync_settings(cx);
                 }
                 Err(error) => tracing::warn!(%error, "code reviews unavailable"),

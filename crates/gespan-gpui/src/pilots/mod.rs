@@ -68,6 +68,9 @@ use std::{
 pub(crate) struct Changed;
 pub(crate) struct TabOpened(pub String);
 pub(crate) struct ShowDetails(pub String);
+/// A reviewer's Reviews tab asked to open the session of one of its runs.
+pub(crate) struct OpenRunSession(pub String);
+pub(crate) use code_review::ReviewRunRow;
 /// The sidebar asked to turn Pilots off, as Settings › Appearance › Sidebar › Pilots does.
 pub(crate) struct HidePilots;
 pub(crate) use notifications::{NotificationChanged, NotificationFinished};
@@ -207,6 +210,9 @@ pub(crate) struct Pilots {
     /// Comments a learning run is starting for: marked learned only once it
     /// dispatches, so a run that fails to start is tried again.
     learning_pending: HashSet<String>,
+    /// Each reviewed repo's review runs, newest first, as the Shell last
+    /// read them, for its reviewer's Reviews tab.
+    review_runs: HashMap<String, Vec<code_review::ReviewRunRow>>,
     /// Prompts hidden runs were given; tests never send them.
     #[cfg(test)]
     pub(crate) hidden_prompts: Vec<(i64, String)>,
@@ -224,6 +230,7 @@ impl EventEmitter<Changed> for Pilots {}
 impl EventEmitter<TabOpened> for Pilots {}
 impl EventEmitter<ShowDetails> for Pilots {}
 impl EventEmitter<HidePilots> for Pilots {}
+impl EventEmitter<OpenRunSession> for Pilots {}
 impl Pilots {
     pub(crate) fn resource_sessions(
         &self,
@@ -453,6 +460,7 @@ impl Pilots {
             code_reviews: HashSet::new(),
             learning: HashMap::new(),
             learning_pending: HashSet::new(),
+            review_runs: HashMap::new(),
             #[cfg(test)]
             hidden_prompts: Vec::new(),
             #[cfg(test)]
@@ -1353,9 +1361,13 @@ impl Pilots {
                 .map(|v| v.read(cx).pilot_status(cx).to_owned())
                 .unwrap_or_else(|| "idle".to_owned())
         };
+        // System Pilots (a repo's reviewer) show here too, with a lock: the
+        // user opens one to see what it learned. Only the automation picker
+        // (`names`) leaves them out, since they take no other work.
         let mut roster: Vec<(String, String)> = self
             .roster
-            .listed()
+            .pilots
+            .iter()
             .filter(|m| project.is_none_or(|p| m.works_on(p)) || also.contains(&m.id))
             .map(|m| (m.id.clone(), status(&m.id)))
             .collect();
@@ -1408,7 +1420,7 @@ impl Pilots {
         // With no Pilot yet, the card stands in for the section. A project
         // without Pilots of its own, when others exist, offers one under the
         // label instead.
-        if self.roster.listed().next().is_none() {
+        if self.roster.pilots.is_empty() {
             return self.intro_card(project.into_iter().collect(), cx);
         }
         let add_project = project.clone();
@@ -1627,7 +1639,25 @@ impl Pilots {
                             .group_hover("pilot-rail-row", |s| s.pr(px(24.)))
                             .flex()
                             .flex_col()
-                            .child(div().truncate().child(pilot.label()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(5.))
+                                    .child(div().truncate().child(pilot.label()))
+                                    .when(pilot.is_system(), |d| {
+                                        d.child(
+                                            div()
+                                                .debug_selector({
+                                                    let id = pilot.id.clone();
+                                                    move || format!("pilot-rail-system-{id}")
+                                                })
+                                                .flex_none()
+                                                .text_color(content(0.5))
+                                                .child(icon("lock", 11.)),
+                                        )
+                                    }),
+                            )
                             // `.prow` grows to 40px for the question, in
                             // the waiting yellow, under the name.
                             .when_some(question, |d, question| {

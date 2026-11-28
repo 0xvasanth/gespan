@@ -1,6 +1,6 @@
 //! A repo's reviewer Pilot: learning runs may only change its memory, a
-//! review's session can't act as it at all, and the user can't see, rename
-//! or delete it among their Pilots.
+//! review's session can't act as it at all, and the user sees it among their
+//! Pilots with what it learned, but can't rename, delete or give it work.
 use super::code_review::{LEARNING_ONLY, REVIEW_CANT_WRITE};
 use super::tests::{call_from, hold_outbox, setup};
 use super::*;
@@ -287,7 +287,7 @@ fn a_code_review_session_cannot_act_as_its_reviewer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_reviewer_is_not_listed_renamed_or_deleted(cx: &mut TestAppContext) {
+fn a_reviewer_is_listed_but_not_renamed_deleted_or_given_work(cx: &mut TestAppContext) {
     let s = setup(cx);
     let reviewer = reviewer(&s, cx);
     let (rail, names) = cx.update(|cx| {
@@ -298,12 +298,13 @@ fn a_reviewer_is_not_listed_renamed_or_deleted(cx: &mut TestAppContext) {
         rail.iter().any(|(id, _)| id == &s.id),
         "the user's Pilot stays"
     );
-    assert!(!rail.iter().any(|(id, _)| id == &reviewer), "{rail:?}");
+    // In the Pilots list, so the user can open it and see what it learned.
+    assert!(rail.iter().any(|(id, _)| id == &reviewer), "{rail:?}");
+    // Never offered to automations: it takes no other work.
     assert!(!names.iter().any(|(id, _)| id == &reviewer), "{names:?}");
-    // Even listed for its own project, as a Pilot with sessions there.
-    let also = HashSet::from([reviewer.clone()]);
-    let rail = cx.update(|cx| s.manager.read(cx).rail_roster(Some(&s.project), &also, cx));
-    assert!(!rail.iter().any(|(id, _)| id == &reviewer));
+    // Its Settings link finds it by its repo.
+    let found = cx.update(|cx| s.manager.read(cx).reviewer_id("github:acme/app"));
+    assert_eq!(found.as_deref(), Some(reviewer.as_str()));
 
     let handle: gpui::AnyWindowHandle = s.window.into();
     handle
@@ -336,4 +337,106 @@ fn a_reviewer_is_not_listed_renamed_or_deleted(cx: &mut TestAppContext) {
         })
         .unwrap();
     assert!(cx.update(|cx| s.manager.read(cx).menu.is_some()));
+}
+
+#[test]
+fn the_learned_tab_lists_live_rules_with_their_day() {
+    let text = "- 2026-11-28 · Unwrap is fine in tests (#7, @me)\n\
+                - ~~2026-11-20 · Flag every unwrap~~ · superseded 2026-11-28\n\
+                - Write findings as questions (#9, @maint)\n\n";
+    assert_eq!(
+        super::code_review::learned_rule_lines(text),
+        vec![
+            (
+                "Unwrap is fine in tests (#7, @me)".to_string(),
+                Some("2026-11-28".to_string())
+            ),
+            ("Write findings as questions (#9, @maint)".to_string(), None),
+        ]
+    );
+    assert!(super::code_review::learned_rule_lines("").is_empty());
+}
+
+#[gpui::test]
+fn a_reviewer_opens_on_what_it_learned(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let reviewer = reviewer(&s, cx);
+    memory::edit(&s.root, &reviewer, Some("review"), |old| {
+        Ok(memory::add(
+            old,
+            &memory::entry("Unwrap is fine in tests (#7, @me)", "2026-11-28", None).unwrap(),
+        ))
+    })
+    .unwrap();
+    let (tabs, shown) = cx.update(|cx| {
+        let m = s.manager.read(cx);
+        let pilot = m.roster.get(&reviewer).unwrap();
+        (
+            super::panels::tabs_for(pilot)
+                .iter()
+                .map(|(_, label)| *label)
+                .collect::<Vec<_>>(),
+            // Whatever tab the panel was on, a reviewer shows Learned.
+            super::panels::shown_tab(pilot, super::panels::OverviewTab::Pipeline),
+        )
+    });
+    assert_eq!(tabs, ["Learned", "Reviews"]);
+    assert!(shown == super::panels::OverviewTab::Learned);
+    // The user's own Pilot keeps its tabs.
+    let own = cx.update(|cx| {
+        let m = s.manager.read(cx);
+        super::panels::tabs_for(m.roster.get(&s.id).unwrap()).len()
+    });
+    assert_eq!(own, 4);
+    let rules = memory::read(&s.root, &reviewer, Some("review"))
+        .unwrap()
+        .text
+        .unwrap_or_default();
+    assert_eq!(
+        super::code_review::learned_rule_lines(&rules)[0].0,
+        "Unwrap is fine in tests (#7, @me)"
+    );
+}
+
+#[gpui::test]
+fn the_reviews_tab_lists_the_pull_requests_its_repo_review_read(cx: &mut TestAppContext) {
+    use gespan_core::automations::AutomationRun;
+    let s = setup(cx);
+    let reviewer = reviewer(&s, cx);
+    let run: AutomationRun = serde_json::from_value(json!({
+        "id": "r1", "automationId": "a", "trigger": "manual", "scheduledFor": 0,
+        "createdAt": 10, "startedAt": 20, "status": "succeeded",
+        "sessionId": "s-1", "eventTitle": "Fix the seen-state (#585)"
+    }))
+    .unwrap();
+    let row = super::code_review::ReviewRunRow::of(&run);
+    assert_eq!(row.title, "Fix the seen-state (#585)");
+    assert_eq!((row.status.as_str(), row.at), ("succeeded", 20));
+    assert_eq!(row.session.as_deref(), Some("s-1"));
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            m.set_review_runs(HashMap::from([(REPO.to_string(), vec![row.clone()])]), cx)
+        })
+    });
+    let shown = cx.update(|cx| {
+        let m = s.manager.read(cx);
+        let pilot = m.roster.get(&reviewer).unwrap();
+        pilot
+            .reviewed_repo()
+            .and_then(|repo| m.review_runs.get(repo))
+            .cloned()
+            .unwrap_or_default()
+    });
+    assert_eq!(shown, vec![row]);
+    // A run with no title yet still reads as a review.
+    let untitled: AutomationRun = serde_json::from_value(json!({
+        "id": "r2", "automationId": "a", "trigger": "manual", "scheduledFor": 0,
+        "createdAt": 30, "status": "pending"
+    }))
+    .unwrap();
+    let row = super::code_review::ReviewRunRow::of(&untitled);
+    assert_eq!(
+        (row.title.as_str(), row.at, row.session),
+        ("Review", 30, None)
+    );
 }

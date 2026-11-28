@@ -90,6 +90,8 @@ pub(crate) struct CodeReviewRow {
     pub id: String,
     pub cwd: String,
     pub enabled: bool,
+    /// The repo's reviewer Pilot, which learns from your corrections.
+    pub reviewer: Option<String>,
 }
 /// Which sidebar entries the workspace shows. Notes, Board and Pilots are
 /// the `notes`, `board` and `pilots` preferences and travel with the
@@ -136,6 +138,8 @@ pub(crate) enum SettingsEvent {
     },
     /// Open a system automation in Automations.
     OpenAutomation(String),
+    /// Open a Pilot (a repo's reviewer), leaving Settings.
+    OpenPilot(String),
     WhatsNew,
     CheckAppUpdates,
     CheckHarnessUpdates,

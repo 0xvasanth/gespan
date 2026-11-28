@@ -627,7 +627,7 @@ impl Conversation {
             let greeting = div().flex().flex_col().items_center().justify_center().px_6().py_12()
                 .child(crate::pilots::avatar::avatar(&pilot.mascot, pilot.color, status, 56., false))
                 .child(div().mt(px(-8.)).h(px(32.)).px(px(14.)).flex().items_center().rounded_full().border_1().border_color(content(0.14)).bg(content(0.06)).text_size(px(13.)).font_weight(gpui::FontWeight::SEMIBOLD).child(name))
-                .child(div().mt_3().max_w(px(384.)).text_center().text_size(px(13.)).line_height(px(21.)).text_color(content(0.5)).child(if pilot.projects.is_empty(){"Add the projects I should work on in my settings, or just ask me something.".into()}else{format!("I can see every session, note and folder in {}. Ask what’s going on, or hand me work.",pilot.projects.iter().map(|p|std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(", "))}));
+                .child(div().mt_3().max_w(px(384.)).text_center().text_size(px(13.)).line_height(px(21.)).text_color(content(0.5)).child(if let Some(repo)=pilot.reviewed_repo(){format!("I review pull requests for {}. I learn from your comments on the ones I reviewed; see what I learned in Learned.",repo.split_once(':').map_or(repo,|(_,name)|name))}else if pilot.projects.is_empty(){"Add the projects I should work on in my settings, or just ask me something.".into()}else{format!("I can see every session, note and folder in {}. Ask what’s going on, or hand me work.",pilot.projects.iter().map(|p|std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy()).collect::<Vec<_>>().join(", "))}));
             div()
                 .flex_1()
                 .flex()

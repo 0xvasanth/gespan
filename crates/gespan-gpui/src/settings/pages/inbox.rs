@@ -455,6 +455,24 @@ impl SettingsView {
                 });
                 controls.push(div().flex().gap(px(6.)).children(chips).into_any_element());
             }
+            // The reviewer Pilot: what it learned from your corrections.
+            if let Some(pilot) = review.and_then(|review| review.reviewer.clone()) {
+                controls.push(
+                    crate::glass::button(
+                        SharedString::from(format!("settings-review-pilot-{ix}")),
+                        "Reviewer",
+                        crate::glass::Button::Ghost,
+                    )
+                    .debug_selector(move || format!("settings-review-pilot-{ix}"))
+                    .role(gpui::Role::Button)
+                    .aria_label(format!("Open the reviewer Pilot of {name}"))
+                    .h(px(28.))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(SettingsEvent::OpenPilot(pilot.clone()))
+                    }))
+                    .into_any_element(),
+                );
+            }
             if let Some(review) = review {
                 let id = review.id.clone();
                 controls.push(

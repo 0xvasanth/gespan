@@ -75,6 +75,10 @@ impl Shell {
                         id: automation.id.clone(),
                         cwd: automation.cwd.clone(),
                         enabled: automation.enabled,
+                        reviewer: self
+                            .pilots
+                            .as_ref()
+                            .and_then(|pilots| pilots.read(cx).reviewer_id(repo)),
                     }
                 })
             })
@@ -155,6 +159,12 @@ impl Shell {
             |this, _, event: &SettingsEvent, window, cx| match event {
                 SettingsEvent::CodeReview { repo, folder, on } => {
                     this.set_code_review(repo.clone(), folder.clone(), *on, cx)
+                }
+                SettingsEvent::OpenPilot(id) => {
+                    this.close_settings(window, cx);
+                    if let Some(pilots) = this.pilots.clone() {
+                        pilots.update(cx, |pilots, cx| pilots.open(id, window, cx));
+                    }
                 }
                 SettingsEvent::OpenAutomation(id) => {
                     this.open_automations(window, cx);

@@ -57,6 +57,10 @@ impl Pilots {
             .reviewer(repo)
             .map(|pilot| (self.root.clone(), pilot.id.clone()))
     }
+    /// The id of `repo`'s reviewer Pilot, if one was made.
+    pub(crate) fn reviewer_id(&self, repo: &str) -> Option<String> {
+        self.roster.reviewer(repo).map(|pilot| pilot.id.clone())
+    }
     /// A system review's session: it may never act as its reviewer.
     pub(crate) fn register_code_review(&mut self, session: i64) {
         self.code_reviews.insert(session);
@@ -184,5 +188,210 @@ impl Pilots {
                 run.view.update(cx, |v, cx| v.pilot_stop(cx));
             }
         }
+    }
+}
+
+impl Pilots {
+    /// A reviewer's Learned tab: each review rule it learned from the user's
+    /// and pushers' corrections, newest last, with where it came from.
+    pub(super) fn learned_rules(&self, pilot: &Pilot) -> AnyElement {
+        let text = gespan_core::pilot::memory::read(
+            &self.root,
+            &pilot.id,
+            Some(gespan_core::pilot::code_review::REVIEW_TOPIC),
+        )
+        .ok()
+        .and_then(|file| file.text)
+        .unwrap_or_default();
+        let rules = learned_rule_lines(&text);
+        let intro = div()
+            .text_size(px(12.))
+            .line_height(px(17.))
+            .text_color(content(0.62))
+            .child(
+                "Learned from your comments, and those of people who can push, on pull requests it reviewed. \
+                 Every review reads these; only a learning run changes them, never a review.",
+            );
+        let body = if rules.is_empty() {
+            div()
+                .debug_selector(|| "pilot-learned-empty".into())
+                .text_size(px(12.5))
+                .text_color(content(0.72))
+                .child(
+                    "No rules yet. Comment on a pull request it reviewed, saying what it got wrong or missed, and it learns.",
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .children(rules.into_iter().enumerate().map(|(ix, (rule, day))| {
+                    div()
+                        .debug_selector(move || format!("pilot-learned-rule-{ix}"))
+                        .p(px(10.))
+                        .rounded(px(10.))
+                        .bg(content(0.04))
+                        .border_1()
+                        .border_color(crate::glass::edge())
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.))
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .line_height(px(18.))
+                                .text_color(content(0.92))
+                                .child(rule),
+                        )
+                        .when_some(day, |d, day| {
+                            d.child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(content(0.5))
+                                    .child(format!("Learned {day}")),
+                            )
+                        })
+                }))
+                .into_any_element()
+        };
+        div()
+            .debug_selector(|| "pilot-learned".into())
+            .id("pilot-learned")
+            .size_full()
+            .overflow_y_scroll()
+            .p(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(intro)
+            .child(body)
+            .into_any_element()
+    }
+}
+
+/// The rules in a review topic's text: each live `- <day> · <rule>` entry,
+/// leaving out struck-through (replaced) ones.
+pub(super) fn learned_rule_lines(text: &str) -> Vec<(String, Option<String>)> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("- "))
+        .filter(|entry| !entry.starts_with("~~"))
+        .map(|entry| match entry.split_once(" · ") {
+            Some((day, rule)) if day.len() == 10 && day.as_bytes()[4] == b'-' => {
+                (rule.trim().to_string(), Some(day.to_string()))
+            }
+            _ => (entry.trim().to_string(), None),
+        })
+        .filter(|(rule, _)| !rule.is_empty())
+        .collect()
+}
+
+/// One run of a repo's code review, for its reviewer's Reviews tab.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReviewRunRow {
+    /// The pull request it reviewed, as the run named it.
+    pub title: String,
+    /// `queued`, `running`, `succeeded`, `failed` and so on.
+    pub status: String,
+    /// When it started (or was queued), in ms.
+    pub at: i64,
+    /// The session it ran in, once it has one.
+    pub session: Option<String>,
+}
+
+impl ReviewRunRow {
+    pub(crate) fn of(run: &gespan_core::automations::AutomationRun) -> Self {
+        Self {
+            title: run
+                .event_title
+                .clone()
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or_else(|| "Review".into()),
+            status: run.status.replace('_', " "),
+            at: run.started_at.unwrap_or(run.created_at),
+            session: run.session_id.clone(),
+        }
+    }
+}
+
+impl Pilots {
+    /// What the Shell read of each reviewed repo's runs.
+    pub(crate) fn set_review_runs(
+        &mut self,
+        runs: HashMap<String, Vec<ReviewRunRow>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.review_runs != runs {
+            self.review_runs = runs;
+            cx.notify();
+        }
+    }
+
+    /// A reviewer's Reviews tab: each pull request its repo's review read,
+    /// newest first; one opens its review session.
+    pub(super) fn reviews_list(&self, pilot: &Pilot, cx: &mut Context<Self>) -> AnyElement {
+        let runs = pilot
+            .reviewed_repo()
+            .and_then(|repo| self.review_runs.get(repo))
+            .cloned()
+            .unwrap_or_default();
+        let body = if runs.is_empty() {
+            div()
+                .debug_selector(|| "pilot-reviews-empty".into())
+                .text_size(px(12.5))
+                .text_color(content(0.72))
+                .child("No reviews yet. Press Review on a pull request, or turn the repo's review on in Settings › Git.")
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .children(runs.into_iter().enumerate().map(|(ix, run)| {
+                    let tone = match run.status.as_str() {
+                        "succeeded" => crate::glass::Tone::Ok,
+                        "failed" => crate::glass::Tone::Bad,
+                        "running" | "pending" | "queued" => crate::glass::Tone::Running,
+                        _ => crate::glass::Tone::Muted,
+                    };
+                    let session = run.session.clone();
+                    div()
+                        .id(SharedString::from(format!("pilot-review-run-{ix}")))
+                        .debug_selector(move || format!("pilot-review-run-{ix}"))
+                        .role(Role::Button)
+                        .aria_label(format!("Open the review of {}", run.title))
+                        .cursor_pointer()
+                        .p(px(8.))
+                        .rounded(px(8.))
+                        .hover(|s| s.bg(content(0.05)))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(crate::glass::status(run.status.clone(), tone).flex_none())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.5))
+                                .text_color(content(0.9))
+                                .child(run.title.clone()),
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            if let Some(id) = &session {
+                                cx.emit(OpenRunSession(id.clone()));
+                            }
+                        }))
+                }))
+                .into_any_element()
+        };
+        div()
+            .debug_selector(|| "pilot-reviews".into())
+            .id("pilot-reviews")
+            .size_full()
+            .overflow_y_scroll()
+            .p(px(12.))
+            .child(body)
+            .into_any_element()
     }
 }

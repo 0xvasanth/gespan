@@ -769,6 +769,10 @@ impl Shell {
             view.update(cx, |view, cx| view.refresh(cx));
         }
         self.refresh_rail_runs(cx);
+        // A reviewer's Reviews tab follows its repo's runs.
+        if self.automation_state.service.is_some() {
+            self.refresh_code_reviews(cx);
+        }
     }
 
     /// Reloads what the rail's bolt shows: a dot while a run is going, a

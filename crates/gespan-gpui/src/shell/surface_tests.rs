@@ -803,6 +803,11 @@ mod inbox_settings {
             [("github:acme/app".to_string(), true, "/work/app".to_string())]
         );
         assert!(visual.debug_bounds("settings-review-open-0").is_some());
+        // Its reviewer Pilot is one click away, to see what it learned.
+        assert!(
+            visual.debug_bounds("settings-review-pilot-0").is_some(),
+            "the review links its reviewer Pilot"
+        );
 
         // Picking a clone lets two be turned on, in the picked folder.
         click(visual, "settings-review-folder-1-1".into());

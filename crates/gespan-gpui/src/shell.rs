@@ -1586,6 +1586,23 @@ impl Shell {
             ));
             this.observations.push(cx.subscribe(
                 &pilots,
+                |_, _, open: &crate::pilots::OpenRunSession, cx| {
+                    let id = open.0.clone();
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            let native = locked(&this.store)
+                                .ok()
+                                .and_then(|store| store.resolve_existing_session_id(&id));
+                            if let Some(native) = native {
+                                this.open(native, window, cx);
+                            }
+                        });
+                    })
+                    .detach();
+                },
+            ));
+            this.observations.push(cx.subscribe(
+                &pilots,
                 |_, _, _: &crate::pilots::HidePilots, cx| {
                     cx.spawn(async move |this, cx| {
                         let _ = this.update_in(cx, |this, window, cx| {

@@ -18,6 +18,10 @@ pub(super) enum OverviewTab {
     Schedule,
     /// Each step a message took, reached from History.
     Activity,
+    /// A reviewer Pilot's learned review rules, with where each came from.
+    Learned,
+    /// The pull requests a reviewer Pilot's repo review has reviewed.
+    Reviews,
 }
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum SettingsSection {
@@ -49,6 +53,26 @@ pub(super) const OVERVIEW_TABS: [(OverviewTab, &str); 4] = [
     (OverviewTab::Docs, "Docs"),
     (OverviewTab::Schedule, "Schedule"),
 ];
+/// A reviewer Pilot's tabs: what it learned, and the runs it made.
+pub(super) const REVIEWER_TABS: [(OverviewTab, &str); 2] = [
+    (OverviewTab::Learned, "Learned"),
+    (OverviewTab::Reviews, "Reviews"),
+];
+/// The tabs `pilot` shows, and the tab actually shown for `tab`.
+pub(super) fn tabs_for(pilot: &Pilot) -> &'static [(OverviewTab, &'static str)] {
+    if pilot.is_system() {
+        &REVIEWER_TABS
+    } else {
+        &OVERVIEW_TABS
+    }
+}
+pub(super) fn shown_tab(pilot: &Pilot, tab: OverviewTab) -> OverviewTab {
+    match tab {
+        OverviewTab::Activity => OverviewTab::Activity,
+        tab if tabs_for(pilot).iter().any(|(t, _)| *t == tab) => tab,
+        _ => tabs_for(pilot)[0].0,
+    }
+}
 pub(super) struct OpenPicker {
     pub(super) menu: Entity<Menu>,
     pub(super) anchor: Anchor,
@@ -610,7 +634,7 @@ impl Pilots {
         let Some(pilot) = self.current() else {
             return div().into_any_element();
         };
-        let selected_tab = match self.overview_tab {
+        let selected_tab = match shown_tab(pilot, self.overview_tab) {
             // Activity is History's step view.
             OverviewTab::Activity => OverviewTab::History,
             tab => tab,
@@ -632,7 +656,7 @@ impl Pilots {
                     .flex_1()
                     .min_w_0()
                     .overflow_hidden()
-                    .children(OVERVIEW_TABS.into_iter().map(|(tab, label)| {
+                    .children(tabs_for(pilot).iter().copied().map(|(tab, label)| {
                         let selected = selected_tab == tab;
                         crate::glass::segment(
                             SharedString::from(format!("pilot-tab-{label}")),
@@ -708,7 +732,9 @@ impl Pilots {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let body = match self.overview_tab {
+        let body = match shown_tab(pilot, self.overview_tab) {
+            OverviewTab::Learned => self.learned_rules(pilot),
+            OverviewTab::Reviews => self.reviews_list(pilot, cx),
             OverviewTab::History => self.history_list(pilot, cx),
             OverviewTab::Schedule => self.habits_list(pilot, cx),
             OverviewTab::Docs => self.document_list(pilot, cx),
