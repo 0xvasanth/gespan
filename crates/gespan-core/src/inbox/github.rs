@@ -1501,16 +1501,13 @@ pub(super) fn git_github_pr_diff_for(
         let (base, head) = parse_github_pr_oids(&json)?;
         git_diff_full_context(root, &base, &head)?
     } else {
-        (
-            gh_run(root, &["pr", "diff", &number, "--repo", &repo], true)?,
-            false,
-        )
+        github_pr_patch(&repo, &number, |args, allow_empty| {
+            gh_run(root, args, allow_empty)
+        })?
     };
-    if truncated || patch.len() > MAX_PR_DIFF_BYTES {
-        diff.truncated = true;
-    } else {
-        diff.patch = patch;
-    }
+    let (patch, cut) = cap_patch(patch, MAX_PR_DIFF_BYTES);
+    diff.truncated = truncated || cut;
+    diff.patch = patch;
     if diff.additions == 0 && diff.deletions == 0 {
         diff.additions = diff.files.iter().map(|file| file.additions).sum();
         diff.deletions = diff.files.iter().map(|file| file.deletions).sum();
@@ -1878,11 +1875,104 @@ fn git_diff_full_context(root: &Path, base: &str, head: &str) -> Result<(String,
             &format!("{base}...{head}"),
         ],
     )?;
-    if output.len() > MAX_PR_DIFF_BYTES {
-        Ok((String::new(), true))
-    } else {
-        Ok((output, false))
+    Ok((output, false))
+}
+
+/// A pull request's patch, and whether files are missing from it. GitHub
+/// refuses the whole diff past 20,000 lines; then it is put together file by
+/// file from the pull request's files, where only a file whose own patch is
+/// too big goes without.
+fn github_pr_patch(
+    repo: &str,
+    number: &str,
+    mut gh: impl FnMut(&[&str], bool) -> Result<String, String>,
+) -> Result<(String, bool), String> {
+    match gh(&["pr", "diff", number, "--repo", repo], true) {
+        Ok(patch) => Ok((patch, false)),
+        Err(error) if diff_too_large(&error) => {
+            let path = format!("repos/{repo}/pulls/{number}/files?per_page=100");
+            let lines = gh(
+                &[
+                    "api",
+                    "--paginate",
+                    &path,
+                    "--jq",
+                    ".[] | {filename, previous_filename, status, patch}",
+                ],
+                true,
+            )?;
+            patch_from_files(&lines)
+        }
+        Err(error) => Err(error),
     }
+}
+
+/// GitHub's answer when a pull request's diff is past what it will send.
+fn diff_too_large(error: &str) -> bool {
+    error.contains("too_large") || (error.contains("HTTP 406") && error.contains("exceeded"))
+}
+
+/// A unified patch from the files API, one JSON object per line. A file
+/// GitHub sends no patch for (too big, or binary) is left out and counted as
+/// missing.
+fn patch_from_files(lines: &str) -> Result<(String, bool), String> {
+    #[derive(Deserialize)]
+    struct File {
+        filename: String,
+        #[serde(default)]
+        previous_filename: Option<String>,
+        #[serde(default)]
+        status: String,
+        #[serde(default)]
+        patch: Option<String>,
+    }
+    let mut out = String::new();
+    let mut missing = false;
+    for line in lines.lines().filter(|l| !l.trim().is_empty()) {
+        let file: File = serde_json::from_str(line).map_err(|error| error.to_string())?;
+        let Some(patch) = file.patch.filter(|p| !p.is_empty()) else {
+            missing = true;
+            continue;
+        };
+        let old = file.previous_filename.as_deref().unwrap_or(&file.filename);
+        let new = &file.filename;
+        out.push_str(&format!("diff --git a/{old} b/{new}\n"));
+        match file.status.as_str() {
+            "added" => out.push_str(&format!(
+                "new file mode 100644\n--- /dev/null\n+++ b/{new}\n"
+            )),
+            "removed" => out.push_str(&format!(
+                "deleted file mode 100644\n--- a/{old}\n+++ /dev/null\n"
+            )),
+            _ => out.push_str(&format!("--- a/{old}\n+++ b/{new}\n")),
+        }
+        out.push_str(&patch);
+        if !patch.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    Ok((out, missing))
+}
+
+/// `patch` within `max` bytes, cut between files so every file it keeps is
+/// whole, and whether any were cut.
+fn cap_patch(patch: String, max: usize) -> (String, bool) {
+    if patch.len() <= max {
+        return (patch, false);
+    }
+    let mut end = 0;
+    let mut at = 0;
+    while let Some(next) = patch[at..].find("diff --git ").map(|i| at + i) {
+        if next > max {
+            break;
+        }
+        // A file starts at the top or right after a newline.
+        if next == 0 || patch.as_bytes()[next - 1] == b'\n' {
+            end = next;
+        }
+        at = next + 1;
+    }
+    (patch[..end].to_owned(), true)
 }
 
 /// `user`'s permission on `repo`: `admin`, `maintain`, `write`, `triage`,
@@ -2440,5 +2530,131 @@ mod reply_tests {
         assert!(reopen[3].contains("unresolveReviewThread("));
         assert!(github_resolve_args("", true).is_err());
         assert!(github_resolve_args("x; rm -rf /", true).is_err());
+    }
+}
+
+#[cfg(test)]
+mod large_diff_tests {
+    use super::{cap_patch, github_pr_patch, patch_from_files};
+
+    const TOO_LARGE: &str = "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of lines (20000) (https://api.github.com/repos/acme/app/pulls/32)\nPullRequest.diff too_large";
+
+    fn files() -> String {
+        [
+            r#"{"filename":"src/lib.rs","previous_filename":null,"status":"modified","patch":"@@ -1,2 +1,2 @@\n fn a() {}\n-let x = 1;\n+let x = 2;"}"#,
+            r#"{"filename":"src/new.rs","status":"added","patch":"@@ -0,0 +1 @@\n+fn new() {}"}"#,
+            r#"{"filename":"src/gone.rs","status":"removed","patch":"@@ -1 +0,0 @@\n-fn gone() {}"}"#,
+            r#"{"filename":"src/moved.rs","previous_filename":"src/old.rs","status":"renamed","patch":"@@ -1 +1 @@\n-a\n+b"}"#,
+            r#"{"filename":"Cargo.lock","status":"modified"}"#,
+            r#"{"filename":"logo.png","status":"added","patch":null}"#,
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn a_diff_github_calls_too_large_loads_file_by_file() {
+        let mut asked = vec![];
+        let (patch, missing) = github_pr_patch("acme/app", "32", |args, _| {
+            asked.push(args.join(" "));
+            match args {
+                ["pr", "diff", ..] => Err(TOO_LARGE.into()),
+                ["api", "--paginate", path, ..] => {
+                    assert_eq!(*path, "repos/acme/app/pulls/32/files?per_page=100");
+                    Ok(files())
+                }
+                other => panic!("unexpected gh {other:?}"),
+            }
+        })
+        .unwrap();
+        assert_eq!(asked.len(), 2, "the whole diff, then its files: {asked:?}");
+        assert!(
+            missing,
+            "the lock file and the picture came without a patch"
+        );
+        assert!(patch.contains("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,2 +1,2 @@\n fn a() {}\n-let x = 1;\n+let x = 2;\n"));
+        assert!(patch.contains("--- /dev/null\n+++ b/src/new.rs\n"), "added");
+        assert!(
+            patch.contains("--- a/src/gone.rs\n+++ /dev/null\n"),
+            "removed"
+        );
+        assert!(
+            patch.contains(
+                "diff --git a/src/old.rs b/src/moved.rs\n--- a/src/old.rs\n+++ b/src/moved.rs\n"
+            ),
+            "renamed"
+        );
+        assert!(!patch.contains("Cargo.lock") && !patch.contains("logo.png"));
+        assert_eq!(patch.matches("diff --git ").count(), 4);
+    }
+
+    #[test]
+    fn a_diff_github_sends_is_used_as_it_is() {
+        let (patch, missing) = github_pr_patch("acme/app", "7", |args, _| match args {
+            ["pr", "diff", "7", "--repo", "acme/app"] => Ok("diff --git a/x b/x\n+hi".into()),
+            other => panic!("unexpected gh {other:?}"),
+        })
+        .unwrap();
+        assert_eq!(
+            (patch.as_str(), missing),
+            ("diff --git a/x b/x\n+hi", false)
+        );
+    }
+
+    #[test]
+    fn any_other_failure_is_reported_not_papered_over() {
+        let error = github_pr_patch("acme/app", "7", |args, _| match args {
+            ["pr", "diff", ..] => Err("HTTP 404: Not Found".into()),
+            other => panic!("the files aren't asked for: {other:?}"),
+        })
+        .unwrap_err();
+        assert_eq!(error, "HTTP 404: Not Found");
+    }
+
+    #[test]
+    fn a_patch_past_the_cap_keeps_whole_files_only() {
+        let file = |name: &str, body: usize| {
+            format!(
+                "diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n+{}\n",
+                "x".repeat(body)
+            )
+        };
+        let patch = [file("a", 100), file("b", 100), file("c", 100)].concat();
+        let (kept, cut) = cap_patch(patch.clone(), patch.len());
+        assert_eq!(
+            (kept.len(), cut),
+            (patch.len(), false),
+            "at the cap: all of it"
+        );
+
+        let two = file("a", 100).len() + file("b", 100).len();
+        let (kept, cut) = cap_patch(patch.clone(), two + 10);
+        assert!(cut);
+        assert_eq!(kept, [file("a", 100), file("b", 100)].concat());
+
+        // A line inside a file that reads like a header doesn't split it.
+        let tricky = format!(
+            "{}{}",
+            file("a", 10).replace("+xx", "+ diff --git a/z b/z"),
+            file("b", 400)
+        );
+        let (kept, _) = cap_patch(tricky.clone(), 200);
+        assert_eq!(kept.matches("\ndiff --git ").count() + 1, 1);
+        assert!(kept.starts_with("diff --git a/a b/a"));
+
+        let (kept, cut) = cap_patch(file("huge", 500), 100);
+        assert_eq!(
+            (kept.as_str(), cut),
+            ("", true),
+            "one file past the cap: none"
+        );
+    }
+
+    #[test]
+    fn a_file_without_a_patch_is_missing_not_empty() {
+        let (patch, missing) =
+            patch_from_files(r#"{"filename":"a.bin","status":"added","patch":""}"#).unwrap();
+        assert_eq!((patch.as_str(), missing), ("", true));
+        let (_, missing) = patch_from_files("").unwrap();
+        assert!(!missing, "no files: nothing missing");
     }
 }
