@@ -27,6 +27,10 @@ pub const MAX_BODY: usize = 6_000;
 /// Appended to a pending-review run's prompt.
 pub const INSTRUCTION: &str = "When your review is ready, end your final reply with one fenced block tagged gespan-review holding JSON in exactly this shape:\n\n```gespan-review\n{\"summary\": \"<verdict and overall review, in Markdown>\", \"comments\": [{\"path\": \"<file path as the diff names it>\", \"side\": \"new\", \"line\": 12, \"body\": \"<one finding>\"}]}\n```\n\nPut each finding on the line it is about. Use side \"new\" with the line number in the changed file for an added or unchanged line, and side \"old\" with the line number in the original file for a removed line. Only lines inside the diff's hunks can carry a comment; put anything else in the summary. Gespan leaves this as a draft review on the pull request, and the user decides whether to submit it. Do not post anything yourself, and do not change any files.";
 
+/// Appended to a posting run's prompt: the same findings, which Gespan posts
+/// on the pull request and submits straight away.
+pub const POST_INSTRUCTION: &str = "When your review is ready, end your final reply with one fenced block tagged gespan-review holding JSON in exactly this shape:\n\n```gespan-review\n{\"summary\": \"<verdict and overall review, in Markdown>\", \"comments\": [{\"path\": \"<file path as the diff names it>\", \"side\": \"new\", \"line\": 12, \"body\": \"<one finding>\"}]}\n```\n\nPut each finding on the line it is about, as its own comment. Use side \"new\" with the line number in the changed file for an added or unchanged line, and side \"old\" with the line number in the original file for a removed line. Only lines inside the diff's hunks can carry a comment; put anything else in the summary. Gespan posts this review on the pull request with each finding on its line, and submits it. Do not post anything yourself, and do not change any files.";
+
 /// One finding the agent made.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {

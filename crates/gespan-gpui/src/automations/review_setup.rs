@@ -49,11 +49,15 @@ pub(super) const RESULTS: [(ReviewResults, &str, &str); 4] = [
         "draft",
         "drafts a review for you to approve",
     ),
-    (ReviewResults::Post, "post", "posts the review on the PR"),
+    (
+        ReviewResults::Post,
+        "post",
+        "posts the review on the PR, each finding on its line",
+    ),
     (
         ReviewResults::Pending,
         "pending",
-        "leaves a draft review on the PR for you to submit",
+        "leaves a draft review on the PR, each finding on its line, for you to submit",
     ),
 ];
 

@@ -6,6 +6,7 @@
 //! reviewer the user picked, the review policy and the run bookkeeping. It
 //! is given the rules this Pilot learned in its prompt and holds no Pilot
 //! capability: any app call from it is refused here.
+use super::panels::Route;
 use super::*;
 use gespan_core::pilot::bridge::Call;
 use gespan_core::pilot::code_review::{Lesson, learning_prompt};
@@ -297,6 +298,8 @@ pub(crate) struct ReviewRunRow {
     pub at: i64,
     /// The session it ran in, once it has one.
     pub session: Option<String>,
+    /// That session's handle here, so the Reviews tab opens it in place.
+    pub native: Option<i64>,
 }
 
 impl ReviewRunRow {
@@ -310,6 +313,7 @@ impl ReviewRunRow {
             status: run.status.replace('_', " "),
             at: run.started_at.unwrap_or(run.created_at),
             session: run.session_id.clone(),
+            native: None,
         }
     }
 }
@@ -355,6 +359,7 @@ impl Pilots {
                         _ => crate::glass::Tone::Muted,
                     };
                     let session = run.session.clone();
+                    let native = run.native;
                     div()
                         .id(SharedString::from(format!("pilot-review-run-{ix}")))
                         .debug_selector(move || format!("pilot-review-run-{ix}"))
@@ -377,8 +382,14 @@ impl Pilots {
                                 .text_color(content(0.9))
                                 .child(run.title.clone()),
                         )
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            if let Some(id) = &session {
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            // The review opens inside its reviewer's page,
+                            // like a History session; one not resolved yet
+                            // opens in the workspace.
+                            if let Some(id) = native {
+                                this.route = Some(Route::Session(id));
+                                cx.notify();
+                            } else if let Some(id) = &session {
                                 cx.emit(OpenRunSession(id.clone()));
                             }
                         }))

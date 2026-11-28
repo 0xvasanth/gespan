@@ -1929,15 +1929,22 @@ cat >/dev/null"#,
         .unwrap();
         let r: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(r["result"]["decision"], "approved");
-        // Post is allowed outright.
+        // Under Post a read is allowed outright; the post itself is Gespan's.
         let mut p = codex_review_protocol(ReviewResults::Post);
+        let (events, r) = codex_request(
+            &mut p,
+            "execCommandApproval",
+            json!({"command":["gh","pr","diff","7","-R","acme/app"]}),
+        );
+        assert!(events.is_empty());
+        assert_eq!(r["result"]["decision"], "approved");
         let (events, r) = codex_request(
             &mut p,
             "execCommandApproval",
             json!({"command":["gh","pr","review","7","-R","acme/app","--comment","-b","x"]}),
         );
         assert!(events.is_empty());
-        assert_eq!(r["result"]["decision"], "approved");
+        assert_ne!(r["result"]["decision"], "approved");
     }
     #[test]
     fn codex_review_denies_file_changes_and_permission_requests() {
@@ -2688,10 +2695,11 @@ cat >/dev/null"#,
                 .count(),
             1
         );
+        // Gespan posts a Post review itself, so the agent's post is refused.
         let mut p = with(ReviewResults::Post, true);
         let (events, response) = claude_bash(&mut p, post);
         assert!(events.is_empty());
-        assert_eq!(response["behavior"], "allow");
+        assert_eq!(response["behavior"], "deny");
         let mut p = with(ReviewResults::Gespan, true);
         let (events, response) = claude_bash(&mut p, post);
         assert!(events.is_empty());

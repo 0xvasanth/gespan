@@ -5,7 +5,7 @@ use super::automation_runs::Running;
 use super::*;
 use gespan_core::automations::review_drafts::{KEPT, SUBMITTED};
 use gespan_core::review_draft::{self, DraftReview, GitlabHttp};
-use gespan_core::review_policy::ReviewTarget;
+use gespan_core::review_policy::{ReviewResults, ReviewTarget};
 use std::path::{Path, PathBuf};
 
 /// Runs a forge write off the UI thread. Tests swap it so they never reach
@@ -102,26 +102,51 @@ impl Shell {
             .and_then(|store| store.data_dir().map(Path::to_path_buf));
         let forge = self.draft_forge();
         let run_id = run.run_id.clone();
+        // A Post review is submitted as soon as it is placed; a Pending one
+        // waits in My tasks for the user.
+        let submit = run
+            .review
+            .as_ref()
+            .is_some_and(|policy| policy.results == ReviewResults::Post);
         let work = cx.background_executor().spawn(async move {
             let data_dir = data_dir.ok_or("Gespan has no data folder")?;
             let draft = forge(DraftJob::Create {
                 cwd: run.cwd.clone(),
-                data_dir,
+                data_dir: data_dir.clone(),
                 target,
                 reply,
             })?
             .ok_or("No draft review was left")?;
-            service
-                .lock()
-                .map_err(|_| "Automations are busy".to_string())?
-                .save_review_draft(
+            let service = || {
+                service
+                    .lock()
+                    .map_err(|_| "Automations are busy".to_string())
+            };
+            service()?.save_review_draft(
+                &run.run_id,
+                &run.automation_id,
+                &run.cwd,
+                &run.title,
+                &draft,
+                gespan_core::time::now_ms() as i64,
+            )?;
+            if submit {
+                // Saved first: if submitting fails, the draft is on the pull
+                // request and waits in My tasks instead of being lost.
+                forge(DraftJob::Submit {
+                    cwd: run.cwd.clone(),
+                    data_dir,
+                    draft: draft.clone(),
+                })
+                .map_err(|error| {
+                    format!("its draft is on the pull request, waiting in My tasks: {error}")
+                })?;
+                service()?.settle_review_draft(
                     &run.run_id,
-                    &run.automation_id,
-                    &run.cwd,
-                    &run.title,
-                    &draft,
+                    SUBMITTED,
                     gespan_core::time::now_ms() as i64,
                 )?;
+            }
             Ok::<_, String>(draft)
         });
         cx.spawn(async move |this, cx| {
@@ -136,11 +161,19 @@ impl Shell {
                     this.finish_automation_run(
                         run_id,
                         "failed",
-                        Some(format!(
-                            "The review is in its session, but Gespan could not leave it as a draft: {error}"
-                        )),
+                        Some(if submit {
+                            format!(
+                                "The review is in its session, but Gespan could not post it: {error}"
+                            )
+                        } else {
+                            format!(
+                                "The review is in its session, but Gespan could not leave it as a draft: {error}"
+                            )
+                        }),
                         cx,
                     );
+                    // A Post whose submit failed left its draft waiting.
+                    this.load_review_drafts(cx);
                 }
             });
         })

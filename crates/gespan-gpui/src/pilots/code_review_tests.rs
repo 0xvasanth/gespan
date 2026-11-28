@@ -440,3 +440,33 @@ fn the_reviews_tab_lists_the_pull_requests_its_repo_review_read(cx: &mut TestApp
         ("Review", 30, None)
     );
 }
+
+#[gpui::test]
+fn a_review_opens_inside_its_reviewers_page(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    let reviewer = reviewer(&s, cx);
+    let visual = &mut gpui::VisualTestContext::from_window(s.window.into(), cx);
+    let row = super::code_review::ReviewRunRow {
+        title: "Fix the seen-state (#585)".into(),
+        status: "succeeded".into(),
+        at: 20,
+        session: Some("s-1".into()),
+        native: Some(s.session),
+    };
+    s.manager.update_in(visual, |m, window, cx| {
+        m.set_review_runs(HashMap::from([(REPO.to_string(), vec![row])]), cx);
+        m.open(&reviewer, window, cx);
+        m.select_overview(OverviewTab::Reviews, cx);
+    });
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    let review = visual
+        .debug_bounds("pilot-review-run-0")
+        .expect("the Reviews tab lists the review");
+    visual.simulate_click(review.center(), Default::default());
+    visual.run_until_parked();
+    s.manager.read_with(visual, |m, _| {
+        assert_eq!(m.route, Some(Route::Session(s.session)), "opened in place");
+        assert_eq!(m.active.as_deref(), Some(reviewer.as_str()));
+    });
+}

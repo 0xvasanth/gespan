@@ -133,11 +133,15 @@ fn rig(cx: &mut TestAppContext, create: Result<DraftReview, String>) -> Rig {
 }
 
 fn finish(rig: &Rig, cx: &mut TestAppContext) {
+    finish_as(rig, ReviewResults::Pending, cx);
+}
+
+fn finish_as(rig: &Rig, results: ReviewResults, cx: &mut TestAppContext) {
     let target = ReviewTarget::from_event_key(KEY).unwrap();
     let running = Running::for_test(
         &rig.run,
         ReviewPolicy {
-            results: ReviewResults::Pending,
+            results,
             target: Some(target.clone()),
         },
         &rig.automation,
@@ -270,4 +274,57 @@ fn a_draft_the_forge_refuses_fails_the_run_with_the_reason(cx: &mut TestAppConte
     assert!(error.contains("could not leave it as a draft"), "{error}");
     assert!(error.contains("already have a pending review"), "{error}");
     assert!(tasks(&rig, cx).is_empty());
+}
+
+#[gpui::test]
+fn a_posted_review_is_placed_line_by_line_and_submitted_without_asking(cx: &mut TestAppContext) {
+    let rig = rig(cx, Ok(draft()));
+    finish_as(&rig, ReviewResults::Post, cx);
+    // The same inline placement as a draft, then submitted at once.
+    assert_eq!(
+        jobs(&rig),
+        [
+            "create github:acme/app#7 reply=true",
+            "submit Github { review_id: 42 }"
+        ]
+    );
+    assert_eq!(run_status(&rig).0, "succeeded");
+    assert!(tasks(&rig, cx).is_empty(), "nothing to decide");
+    assert!(
+        Service::open(&rig.db)
+            .unwrap()
+            .waiting_review_drafts()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[gpui::test]
+fn a_post_github_refuses_to_submit_waits_as_a_draft(cx: &mut TestAppContext) {
+    let rig = rig(cx, Ok(draft()));
+    let jobs_seen = rig.jobs.clone();
+    let refusing: DraftForge = Arc::new(move |job| match job {
+        DraftJob::Create { .. } => {
+            jobs_seen.lock().unwrap().push("create".into());
+            Ok(Some(draft()))
+        }
+        DraftJob::Submit { .. } => Err("GitHub is down".into()),
+    });
+    rig.window
+        .update(cx, |shell, _, _| shell.set_draft_forge_for_test(refusing))
+        .unwrap();
+    finish_as(&rig, ReviewResults::Post, cx);
+    let (status, error) = run_status(&rig);
+    assert_eq!(status, "failed");
+    let error = error.unwrap();
+    assert!(error.contains("could not post it"), "{error}");
+    assert!(error.contains("GitHub is down"), "{error}");
+    // The findings are on the pull request as a draft, and My tasks asks.
+    assert_eq!(
+        tasks(&rig, cx),
+        [(
+            Kind::DraftReview,
+            "Submit the review on acme/app#7, or keep it as a draft?".to_string()
+        )]
+    );
 }

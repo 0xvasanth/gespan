@@ -1156,13 +1156,15 @@ fn review_lessons(
     }
 }
 
-/// Where a finished run leaves its draft review: only a pending-review run
-/// with a pull or merge request to leave it on.
+/// Where a finished run places its findings, each on its line: a Pending
+/// run (left as a draft) or a Post run (submitted) with a pull or merge
+/// request to place them on.
 pub(super) fn pending_review_target(
     policy: Option<&gespan_core::review_policy::ReviewPolicy>,
 ) -> Option<gespan_core::review_policy::ReviewTarget> {
+    use gespan_core::review_policy::ReviewResults;
     let policy = policy?;
-    (policy.results == gespan_core::review_policy::ReviewResults::Pending)
+    matches!(policy.results, ReviewResults::Pending | ReviewResults::Post)
         .then(|| policy.target.clone())
         .flatten()
 }
@@ -1328,11 +1330,16 @@ mod tests {
         // Without the event's pull request there is nowhere to leave it.
         let untargeted = review_launch(&pending, &review_run(None)).unwrap();
         assert_eq!(pending_review_target(Some(&untargeted)), None);
-        for results in [
-            ReviewResults::Gespan,
-            ReviewResults::Draft,
-            ReviewResults::Post,
-        ] {
+        // A Post run places its findings the same way, then submits them.
+        let posted = ReviewPolicy {
+            results: ReviewResults::Post,
+            target: ReviewTarget::from_event_key(key),
+        };
+        assert_eq!(
+            pending_review_target(Some(&posted)),
+            ReviewTarget::from_event_key(key)
+        );
+        for results in [ReviewResults::Gespan, ReviewResults::Draft] {
             let other = ReviewPolicy {
                 results,
                 target: ReviewTarget::from_event_key(key),
@@ -1340,10 +1347,18 @@ mod tests {
             assert_eq!(pending_review_target(Some(&other)), None, "{results:?}");
         }
         assert_eq!(pending_review_target(None), None);
-        // Posting is clamped on GitLab, where only `gh` could post.
+        // Gespan posts on GitLab too; only Draft's approved `gh` post is
+        // clamped there.
         let post = review_automation("claude", Some(ReviewResults::Post));
         assert_eq!(
             review_launch(&post, &review_run(Some(key)))
+                .unwrap()
+                .results,
+            ReviewResults::Post
+        );
+        let draft = review_automation("claude", Some(ReviewResults::Draft));
+        assert_eq!(
+            review_launch(&draft, &review_run(Some(key)))
                 .unwrap()
                 .results,
             ReviewResults::Gespan
@@ -1354,11 +1369,13 @@ mod tests {
     fn review_runs_carry_results_the_harness_cannot_honour_clamp_to_gespan() {
         use gespan_core::review_policy::ReviewResults;
         let key = "github:pull_request_review_requested:acme/app:7:abc";
-        for results in [ReviewResults::Draft, ReviewResults::Post] {
-            let pi = review_automation("pi", Some(results));
-            let policy = review_launch(&pi, &review_run(Some(key))).unwrap();
-            assert_eq!(policy.results, ReviewResults::Gespan, "{results:?}");
-        }
+        let pi = review_automation("pi", Some(ReviewResults::Draft));
+        let policy = review_launch(&pi, &review_run(Some(key))).unwrap();
+        assert_eq!(policy.results, ReviewResults::Gespan);
+        // Gespan posts for a shell-less harness, so Post stands.
+        let pi = review_automation("pi", Some(ReviewResults::Post));
+        let policy = review_launch(&pi, &review_run(Some(key))).unwrap();
+        assert_eq!(policy.results, ReviewResults::Post);
         let claude = review_automation("claude", Some(ReviewResults::Post));
         assert_eq!(
             review_launch(&claude, &review_run(Some(key)))

@@ -693,8 +693,8 @@ fn results_row_only_for_review_automations(cx: &mut TestAppContext) {
         [
             "keeps the review in Gespan",
             "drafts a review for you to approve",
-            "posts the review on the PR",
-            "leaves a draft review on the PR for you to submit"
+            "posts the review on the PR, each finding on its line",
+            "leaves a draft review on the PR, each finding on its line, for you to submit"
         ]
     );
     window
@@ -726,15 +726,20 @@ fn results_row_respects_harness(cx: &mut TestAppContext) {
                 "keeps the review in Gespan".to_string()
             ),
             (
+                "post".to_string(),
+                "posts the review on the PR, each finding on its line".to_string()
+            ),
+            (
                 "pending".to_string(),
-                "leaves a draft review on the PR for you to submit".to_string()
+                "leaves a draft review on the PR, each finding on its line, for you to submit"
+                    .to_string()
             )
         ]
     );
     // A forced choice the harness can't deliver is ignored.
     window
         .update(&mut visual, |view, _, cx| {
-            view.apply_choice(Choice::Results, "post".into(), cx)
+            view.apply_choice(Choice::Results, "draft".into(), cx)
         })
         .unwrap();
     let results = window
@@ -748,7 +753,7 @@ fn results_row_respects_harness(cx: &mut TestAppContext) {
 #[gpui::test]
 fn changing_to_a_harness_that_cannot_deliver_results_falls_back_to_gespan(cx: &mut TestAppContext) {
     let page = page();
-    let review = save_review(&page, "codex", Some(ReviewResults::Post));
+    let review = save_review(&page, "codex", Some(ReviewResults::Draft));
     let (window, mut visual) = open(&page, "/work/app", cx);
     click(&mut visual, &format!("automation-card-{}", review.id));
     let results = |visual: &VisualTestContext| {
@@ -767,8 +772,8 @@ fn changing_to_a_harness_that_cannot_deliver_results_falls_back_to_gespan(cx: &m
                 .set_model(Kind::Claude, Some("sonnet".into()), cx)
         })
         .unwrap();
-    assert_eq!(results(&visual), Some(ReviewResults::Post));
-    // Pi can only keep the review in Gespan.
+    assert_eq!(results(&visual), Some(ReviewResults::Draft));
+    // Pi can't hold an approved `gh` post.
     window
         .update(&mut visual, |view, _, cx| {
             view.editor

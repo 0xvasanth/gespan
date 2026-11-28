@@ -14,9 +14,11 @@ impl Shell {
             self.initialize_automations(cx);
             return;
         };
+        let store = self.store.clone();
         let work = cx.background_executor().spawn(async move {
             let mut service = service_lock(&service)?;
             let reviews = service.code_reviews()?;
+            let store = locked(&store).ok();
             // Each repo's runs, newest first, for its reviewer's Reviews tab.
             let mut runs = std::collections::HashMap::new();
             for review in &reviews {
@@ -24,7 +26,14 @@ impl Shell {
                     let mut rows: Vec<crate::pilots::ReviewRunRow> = service
                         .runs(&review.id)?
                         .iter()
-                        .map(crate::pilots::ReviewRunRow::of)
+                        .map(|run| {
+                            let mut row = crate::pilots::ReviewRunRow::of(run);
+                            row.native = row
+                                .session
+                                .as_deref()
+                                .and_then(|id| store.as_ref()?.resolve_existing_session_id(id));
+                            row
+                        })
                         .collect();
                     rows.sort_by_key(|row| std::cmp::Reverse(row.at));
                     runs.insert(repo.to_string(), rows);

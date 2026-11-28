@@ -1322,10 +1322,11 @@ mod tool_tests {
                 other => panic!("{other:?}"),
             }
 
+            // Gespan posts a Post review itself, so the agent's post is refused.
             let mut posting = review_state(ReviewResults::Post, access);
             let (events, reply) = review_permission(&mut posting, bash(post), true);
             assert!(events.is_empty());
-            assert!(reply.unwrap().contains("\"once\""));
+            assert!(reply.unwrap().contains("\"reject\""));
 
             let (events, reply) =
                 review_permission(&mut posting, bash("gh pr merge 7 --repo acme/app"), true);
