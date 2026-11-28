@@ -1,42 +1,108 @@
-//! The contract every code host meets. A host adapter knows its host's REST
-//! endpoints and JSON and nothing else: it sends through whatever
-//! [`Transport`](super::Transport) it was given, so the same adapter works
-//! over a CLI or a token.
-use super::{error::Result, model::*};
+use crate::inbox::{Checks, Details, Diff, Filters, Item, LineComment, Status, Thread, Verdict};
+use std::path::Path;
 
-pub trait PullRequestHost: Send + Sync {
-    fn kind(&self) -> HostKind;
-    fn capabilities(&self) -> Capabilities;
+/// An open pull request with its head commit's checks.
+pub type OpenPullRequest = (Item, Checks);
+/// A merged pull request, when it merged and who merged it.
+pub type MergedPullRequest = (Item, String, String);
 
-    /// The signed-in account's name on the host.
-    fn current_user(&self) -> Result<String>;
+/// One git host's pull requests and issues. Rows come back with their
+/// `provider` set; a call a host can't make fails with a sentence the app can
+/// show.
+pub trait PullRequestHost {
+    /// `github`, `gitlab` or `azuredevops`.
+    fn provider(&self) -> &'static str;
 
-    /// Repositories the account can see, most recently active first.
-    fn repositories(&self) -> Result<Vec<Repository>>;
-    fn pull_requests(&self, repo: &str, filter: StateFilter) -> Result<Vec<PullRequest>>;
-    fn pull_request(&self, pr: &PrRef) -> Result<PullRequest>;
-    /// Open pull requests anywhere that ask the account for a review.
-    fn review_requests(&self) -> Result<Vec<PullRequest>>;
+    /// Whether the host is set up and signed in.
+    fn status(&self) -> Result<Status, String>;
+    /// Saves `url` and `token` for the host after checking them.
+    fn connect(&self, url: String, token: String) -> Result<Status, String>;
+    /// The signed-in account's login, as seen from `project`.
+    fn current_user(&self, project: &Path) -> Result<String, String>;
+    /// What `author` may do in `item`'s repository: `admin`, `maintain`,
+    /// `write`, `read` or `none`.
+    fn permission(&self, item: &Item, author: &str) -> Result<String, String>;
 
-    /// Every conversation on the pull request: general comments and review
-    /// threads on lines, each with its replies.
-    fn threads(&self, pr: &PrRef) -> Result<Vec<Thread>>;
-    /// A general comment on the pull request.
-    fn add_comment(&self, pr: &PrRef, body: &str) -> Result<Comment>;
-    /// A reply in an existing thread, by the id [`threads`](Self::threads)
-    /// gave.
-    fn reply(&self, pr: &PrRef, thread_id: &str, body: &str) -> Result<Comment>;
-    /// New words for a comment, by the id [`threads`](Self::threads) gave.
-    fn edit_comment(&self, pr: &PrRef, comment_id: &str, body: &str) -> Result<Comment>;
+    /// The repositories `project`'s checkout points at, its own first.
+    fn repositories(&self, project: &Path) -> Result<Vec<String>, String>;
+    /// Repositories the account can reach whose name matches `query`, with
+    /// their descriptions.
+    fn search_repos(&self, query: &str) -> Result<Vec<(String, String)>, String>;
+
+    /// `kind` (`issue` or `pr`) rows of `repo`, as `project` sees them.
+    fn work_items(
+        &self,
+        project: &Path,
+        repo: &str,
+        kind: &str,
+        filters: &Filters,
+        state: &str,
+        limit: u32,
+    ) -> Result<Vec<Item>, String>;
+    /// `kind` rows assigned to you anywhere, or `None` when the host lists
+    /// them per repository instead.
+    fn assigned(&self, kind: &str, limit: u32) -> Option<Result<Vec<Item>, String>>;
+    /// The open pull requests of a repository no project points at.
+    fn repo_pull_requests(&self, repo: &str) -> Result<Vec<Item>, String>;
+    /// Open pull requests anywhere that ask for your review.
+    fn review_requests(&self) -> Result<Vec<Item>, String>;
+
+    /// The body, branches and review state.
+    fn details(&self, item: &Item) -> Result<Details, String>;
+    /// Comments, reviews, review threads and commits.
+    fn thread(&self, item: &Item) -> Result<Thread, String>;
+    /// Posts `body`, as a reply to `reply_to` when it isn't empty, and
+    /// returns the new comment's URL.
+    fn comment(&self, item: &Item, body: String, reply_to: String) -> Result<String, String>;
     /// Marks a review thread resolved, or open again.
-    fn resolve_thread(&self, pr: &PrRef, thread_id: &str, resolved: bool) -> Result<()>;
+    fn resolve_thread(&self, item: &Item, thread_id: &str, resolved: bool) -> Result<(), String>;
 
-    /// The pull request's commits, as the host lists them.
-    fn commits(&self, pr: &PrRef) -> Result<Vec<Commit>>;
-    fn files(&self, pr: &PrRef) -> Result<Vec<ChangedFile>>;
-    fn reviews(&self, pr: &PrRef) -> Result<Vec<Review>>;
-    /// Sends a review. The service has checked it against
-    /// [`capabilities`](Self::capabilities) first.
-    fn submit_review(&self, pr: &PrRef, review: &ReviewSubmission) -> Result<()>;
-    fn checks(&self, pr: &PrRef) -> Result<Vec<Check>>;
+    /// The pull request's files and patch; `full_context` asks for whole
+    /// files where the host can.
+    fn diff(&self, item: &Item, full_context: bool) -> Result<Diff, String>;
+    /// The head commit's checks.
+    fn checks(&self, item: &Item) -> Result<Checks, String> {
+        let _ = item;
+        Err("Checks are not available for this host".into())
+    }
+    /// Merges, closes, reopens or changes a pull request's draft state.
+    fn action(&self, item: &Item, action: &str) -> Result<Item, String> {
+        let _ = (item, action);
+        Err("This host can't do that from Gespan yet".into())
+    }
+    /// Sends a review: a verdict, a body, and comments on lines.
+    fn submit_review(
+        &self,
+        item: &Item,
+        verdict: Verdict,
+        body: &str,
+        comments: &[LineComment],
+    ) -> Result<(), String>;
+    /// Reruns a pull request's failed pipeline jobs, and says what started.
+    fn rerun_failed(&self, item: &Item) -> Result<String, String> {
+        let _ = item;
+        Err("Rerun GitHub checks with their workflow runs".into())
+    }
+
+    /// Open pull requests of `repo` with their checks, for automations.
+    fn open_pull_requests(
+        &self,
+        project: &Path,
+        repo: &str,
+        review_requested: bool,
+        limit: u32,
+    ) -> Result<Vec<OpenPullRequest>, String> {
+        let _ = (project, repo, review_requested, limit);
+        Err("This host's pull requests can't start automations yet".into())
+    }
+    /// Recently merged pull requests of `repo`, for automations.
+    fn merged_pull_requests(
+        &self,
+        project: &Path,
+        repo: &str,
+        limit: u32,
+    ) -> Result<Vec<MergedPullRequest>, String> {
+        let _ = (project, repo, limit);
+        Err("This host's pull requests can't start automations yet".into())
+    }
 }

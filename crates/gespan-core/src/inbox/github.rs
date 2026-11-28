@@ -145,7 +145,7 @@ pub struct GitHubPrChecks {
     pub checks: Vec<GitHubPrCheck>,
 }
 
-pub(super) fn git_github_repositories_for(root: &Path) -> Result<Vec<String>, String> {
+pub(crate) fn git_github_repositories_for(root: &Path) -> Result<Vec<String>, String> {
     let json = gh_checked(root, &["repo", "view", "--json", "nameWithOwner,parent"])?;
     parse_github_repositories(&json)
 }
@@ -182,7 +182,7 @@ fn parse_github_repositories(json: &str) -> Result<Vec<String>, String> {
     Ok(repos)
 }
 
-pub(super) fn git_github_work_items_for(
+pub(crate) fn git_github_work_items_for(
     root: &Path,
     repo: &str,
     kind: &str,
@@ -358,7 +358,7 @@ fn github_review_args(
 /// request for changes or a comment without a body.
 /// The reviews API's body: the verdict, its summary and each line comment on
 /// its file, line and side.
-pub(super) fn github_review_payload(
+pub(crate) fn github_review_payload(
     verdict: Verdict,
     body: &str,
     comments: &[LineComment],
@@ -393,7 +393,7 @@ pub(super) fn github_review_payload(
     payload
 }
 
-pub(super) fn git_github_pr_review_for(
+pub(crate) fn git_github_pr_review_for(
     root: &Path,
     repo: &str,
     number: i64,
@@ -436,7 +436,7 @@ pub(super) fn git_github_pr_review_for(
 }
 
 /// Open pull requests anywhere that ask for your review: one `gh search`.
-pub(super) fn git_github_review_requests_for(root: &Path) -> Result<Vec<GitHubWorkItem>, String> {
+pub(crate) fn git_github_review_requests_for(root: &Path) -> Result<Vec<GitHubWorkItem>, String> {
     let json = gh_checked(
         root,
         &[
@@ -466,7 +466,7 @@ pub(super) fn git_github_review_requests_for(root: &Path) -> Result<Vec<GitHubWo
 /// Repositories you can reach whose name matches `query`: an `owner/name`
 /// is looked up directly; anything else is searched among your own and
 /// your organizations' repositories, at most 20.
-pub(super) fn git_github_search_repos_for(
+pub(crate) fn git_github_search_repos_for(
     root: &Path,
     query: &str,
 ) -> Result<Vec<(String, String)>, String> {
@@ -560,7 +560,7 @@ fn parse_github_repo_hits(json: &str) -> Result<Vec<(String, String)>, String> {
         .collect())
 }
 
-pub(super) fn git_github_work_item_for(
+pub(crate) fn git_github_work_item_for(
     root: &Path,
     repo: &str,
     kind: &str,
@@ -608,7 +608,7 @@ fn github_pr_action_args(repo: &str, number: i64, action: &str) -> Result<Vec<St
     Ok(args.into_iter().map(str::to_string).collect())
 }
 
-pub(super) fn git_github_pr_action_for(
+pub(crate) fn git_github_pr_action_for(
     root: &Path,
     repo: &str,
     number: i64,
@@ -622,7 +622,7 @@ pub(super) fn git_github_pr_action_for(
     git_github_work_item_for(root, repo, "pr", number)
 }
 
-pub(super) fn git_github_work_item_details_for(
+pub(crate) fn git_github_work_item_details_for(
     root: &Path,
     repo: &str,
     kind: &str,
@@ -812,7 +812,7 @@ mutation InboxReviewReply($threadId: ID!, $body: String!) {
 }
 "#;
 
-pub(super) fn git_github_work_item_thread_for(
+pub(crate) fn git_github_work_item_thread_for(
     root: &Path,
     repo: &str,
     kind: &str,
@@ -871,7 +871,7 @@ fn github_comment_input<'a>(
     Ok((kind, body))
 }
 
-pub(super) fn git_github_work_item_comment_for(
+pub(crate) fn git_github_work_item_comment_for(
     root: &Path,
     repo: &str,
     kind: &str,
@@ -937,7 +937,7 @@ pub(super) fn github_resolve_args(thread_id: &str, resolved: bool) -> Result<Vec
     ])
 }
 
-pub(super) fn git_github_resolve_thread_for(
+pub(crate) fn git_github_resolve_thread_for(
     root: &Path,
     thread_id: &str,
     resolved: bool,
@@ -948,7 +948,7 @@ pub(super) fn git_github_resolve_thread_for(
     Ok(())
 }
 
-pub(super) fn git_github_review_reply_for(
+pub(crate) fn git_github_review_reply_for(
     root: &Path,
     thread_id: &str,
     body: &str,
@@ -1474,7 +1474,7 @@ pub(crate) fn github_avatar_url(login: &str) -> String {
     format!("https://avatars.githubusercontent.com/{encoded}?s=64")
 }
 
-pub(super) fn git_github_pr_diff_for(
+pub(crate) fn git_github_pr_diff_for(
     root: &Path,
     repo: &str,
     number: i64,
@@ -1977,7 +1977,7 @@ fn cap_patch(patch: String, max: usize) -> (String, bool) {
 
 /// `user`'s permission on `repo`: `admin`, `maintain`, `write`, `triage`,
 /// `read` or `none`. Only a login GitHub could have issued is asked about.
-pub(super) fn git_github_permission_for(
+pub(crate) fn git_github_permission_for(
     root: &Path,
     repo: &str,
     user: &str,
@@ -1999,7 +1999,7 @@ pub(super) fn git_github_permission_for(
 }
 
 /// The login of the account `gh` is signed in with.
-pub(super) fn git_github_login_for(root: &Path) -> Result<String, String> {
+pub(crate) fn git_github_login_for(root: &Path) -> Result<String, String> {
     let login = gh_checked(root, &["api", "user", "--jq", ".login"])?;
     let login = login.trim();
     if login.is_empty() {
@@ -2021,7 +2021,7 @@ pub struct GitHubPrState {
 /// Open pull requests with their head commit and checks, or (`state`
 /// `merged`) merged ones with who merged them and when. `search` narrows
 /// the list the way GitHub's search box does.
-pub(super) fn git_github_pr_states_for(
+pub(crate) fn git_github_pr_states_for(
     root: &Path,
     repo: &str,
     state: &str,

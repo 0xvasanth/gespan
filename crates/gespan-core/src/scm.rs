@@ -412,13 +412,23 @@ pub use crate::inbox::github::{GitHubPrCheck as PrCheck, GitHubPrChecks as PrChe
 /// with `gh` (no HTTP client of our own) from `cwd`. Blocking; call it off the
 /// UI thread. A remote workspace asks `gh` on its own machine.
 pub fn pr_checks(cwd: &Path, repo: &str, number: i64) -> Result<PrChecks, String> {
-    if remote_workspace::is_remote(cwd) {
-        return remote_workspace::command(
-            "git_github_pr_checks",
-            json!({"cwd":cwd,"repo":repo,"number":number}),
-        );
-    }
-    crate::inbox::github::git_github_pr_checks_for(&expand_home(cwd), repo, number)
+    let project = if remote_workspace::is_remote(cwd) {
+        cwd.to_path_buf()
+    } else {
+        expand_home(cwd)
+    };
+    let pr = crate::inbox::Item {
+        provider: "github".into(),
+        kind: "pr".into(),
+        repo: repo.into(),
+        number,
+        project_path: project.to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    let checks = crate::pull_requests::HostFactory::new(std::path::PathBuf::new(), project)
+        .require("github")?
+        .checks(&pr)?;
+    crate::inbox::convert(checks)
 }
 
 /// The working copy's GitHub `owner/name`, via `gh`.

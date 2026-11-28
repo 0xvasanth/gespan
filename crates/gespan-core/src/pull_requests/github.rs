@@ -1,458 +1,383 @@
-//! GitHub's REST API (v3), the same through `gh api` or a token.
-//!
-//! Comment ids carry their kind, because GitHub keeps general comments
-//! (`issue:<id>`) and line comments (`review:<id>`) in separate APIs. A line
-//! thread's id is its first comment's.
-use super::{
-    error::{HostError, Result},
-    host::PullRequestHost,
-    model::*,
-    rest::{array, first_line, number, paged, some_text, text, with_query},
-    transport::{ApiRequest, Method, Transport},
+//! GitHub through `gh`. A project on another machine is asked on that
+//! machine, with its account, through the remote host's `git_github_*`
+//! commands; everything else runs the local `gh`.
+use super::{MergedPullRequest, OpenPullRequest, PullRequestHost};
+use crate::files::remote as remote_workspace;
+use crate::inbox::{
+    self, github as gh, review::TtlCache, Checks, Details, Diff, Filters, Item, LineComment,
+    Status, Thread, Verdict,
 };
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-pub struct GitHub {
-    transport: Box<dyn Transport>,
+/// The `gh --search` that lists only pull requests asking for your review.
+pub const REVIEW_REQUESTED_SEARCH: &str = "review-requested:@me";
+
+pub(super) struct GitHub {
+    /// Where `gh` runs when a call names no project.
+    cwd: PathBuf,
 }
 
 impl GitHub {
-    pub fn new(transport: Box<dyn Transport>) -> Self {
-        Self { transport }
+    pub(super) fn new(cwd: PathBuf) -> Self {
+        Self { cwd }
     }
-    fn get(&self, path: &str) -> Result<Value> {
-        self.transport.send(&ApiRequest::get(path))?.json()
-    }
-    fn send(&self, method: Method, path: &str, body: Value) -> Result<Value> {
-        self.transport
-            .send(&ApiRequest::with_body(method, path, body))?
-            .json()
+
+    /// The project an item belongs to, or the default folder.
+    fn project<'a>(&'a self, item: &'a Item) -> &'a Path {
+        if item.project_path.is_empty() {
+            &self.cwd
+        } else {
+            Path::new(&item.project_path)
+        }
     }
 }
 
-fn split_repo(repo: &str) -> Result<(&str, &str)> {
-    repo.split_once('/')
-        .filter(|(owner, name)| !owner.is_empty() && !name.is_empty() && !name.contains('/'))
-        .ok_or_else(|| HostError::Invalid(format!("\"{repo}\" isn't an owner/name repository")))
+/// Runs a GitHub operation with the project's own `gh`: a remote project's
+/// checkout and account are on its machine.
+pub(crate) fn call<T: DeserializeOwned, L: Serialize>(
+    project: &Path,
+    command: &str,
+    mut args: Value,
+    local: impl FnOnce() -> Result<L, String>,
+) -> Result<T, String> {
+    if remote_workspace::is_remote(project) {
+        args["cwd"] = json!(project);
+        return remote_workspace::command(command, args);
+    }
+    inbox::convert(local()?)
 }
 
-fn pull_request(value: &Value, repo: &str) -> PullRequest {
-    let state = if !value["merged_at"].is_null() || value["merged"] == json!(true) {
-        PrState::Merged
-    } else if value["state"] == "closed" {
-        PrState::Closed
-    } else {
-        PrState::Open
-    };
-    let repo = some_text(&value["base"]["repo"]["full_name"])
-        .or_else(|| {
-            // Search results name the repository only by its API URL.
-            value["repository_url"]
-                .as_str()
-                .and_then(|url| url.split("/repos/").nth(1))
-                .map(str::to_owned)
+/// The login of the `gh` account on a remote project's machine, cached per
+/// machine for a few minutes; empty when its host can't say.
+fn remote_login(project: &Path) -> String {
+    static LOGINS: TtlCache<String> =
+        TtlCache::new(Duration::from_secs(300), Duration::from_secs(120));
+    LOGINS
+        .get(inbox::github_account(project), || {
+            remote_workspace::command::<String>("git_github_login", json!({"cwd": project}))
         })
-        .unwrap_or_else(|| repo.to_owned());
-    PullRequest {
-        repo,
-        number: value["number"].as_u64().unwrap_or_default(),
-        title: text(&value["title"]),
-        body: text(&value["body"]),
-        state,
-        draft: value["draft"].as_bool().unwrap_or(false),
-        author: text(&value["user"]["login"]),
-        source_branch: text(&value["head"]["ref"]),
-        target_branch: text(&value["base"]["ref"]),
-        url: text(&value["html_url"]),
-        created_at: text(&value["created_at"]),
-        updated_at: text(&value["updated_at"]),
-        head_sha: some_text(&value["head"]["sha"]),
-        reviewers: array(value["requested_reviewers"].clone())
-            .iter()
-            .filter_map(|r| some_text(&r["login"]))
-            .collect(),
+        .unwrap_or_default()
+}
+
+/// What `gh` searches for `kind` under `filters`, or `None` when nothing of
+/// that kind can match: review requests are never issues.
+pub(crate) fn search_for(filters: &Filters, kind: &str) -> Option<&'static str> {
+    match (filters.review_requested, kind) {
+        (true, "pr") => Some(REVIEW_REQUESTED_SEARCH),
+        (true, _) => None,
+        (false, _) => Some(""),
     }
 }
 
-fn comment(value: &Value, kind: &str) -> Comment {
-    Comment {
-        id: format!("{kind}:{}", value["id"]),
-        author: text(&value["user"]["login"]),
-        body: text(&value["body"]),
-        created_at: text(&value["created_at"]),
-        updated_at: text(&value["updated_at"]),
-        system: false,
+/// `project` on this machine, or why the call can't reach it.
+fn local(project: &Path) -> Result<&Path, String> {
+    if remote_workspace::is_remote(project) {
+        return Err(format!(
+            "{} is on another machine: only its comments are watched",
+            project.display()
+        ));
     }
+    Ok(project)
 }
 
-fn side(value: &Value) -> Side {
-    if value == "LEFT" {
-        Side::Old
-    } else {
-        Side::New
+fn with_provider(mut items: Vec<Item>) -> Vec<Item> {
+    for item in &mut items {
+        item.provider = "github".into();
     }
-}
-
-fn side_name(side: Side) -> &'static str {
-    match side {
-        Side::Old => "LEFT",
-        Side::New => "RIGHT",
-    }
-}
-
-/// `issue:12` or `review:34`: which API a comment lives in, and its number.
-fn comment_id(id: &str) -> Result<(&str, u64)> {
-    let (kind, number) = id
-        .split_once(':')
-        .ok_or_else(|| HostError::Invalid(format!("\"{id}\" isn't a GitHub comment id")))?;
-    let number = number
-        .parse()
-        .map_err(|_| HostError::Invalid(format!("\"{id}\" isn't a GitHub comment id")))?;
-    match kind {
-        "issue" | "review" => Ok((kind, number)),
-        _ => Err(HostError::Invalid(format!(
-            "\"{id}\" isn't a GitHub comment id"
-        ))),
-    }
-}
-
-fn check_status(status: &str, conclusion: &str) -> CheckStatus {
-    if status != "completed" && !status.is_empty() {
-        return CheckStatus::Pending;
-    }
-    match conclusion {
-        "success" | "neutral" => CheckStatus::Success,
-        "skipped" => CheckStatus::Skipped,
-        "cancelled" | "stale" => CheckStatus::Cancelled,
-        "" => CheckStatus::Pending,
-        _ => CheckStatus::Failure,
-    }
+    items
 }
 
 impl PullRequestHost for GitHub {
-    fn kind(&self) -> HostKind {
-        HostKind::GitHub
-    }
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            line_ranges: true,
-            request_changes: true,
-            file_patches: true,
-            edit_comments: true,
-            // Resolving is GraphQL-only on GitHub.
-            resolve_threads: false,
-        }
+    fn provider(&self) -> &'static str {
+        "github"
     }
 
-    fn current_user(&self) -> Result<String> {
-        Ok(text(&self.get("user")?["login"]))
+    fn status(&self) -> Result<Status, String> {
+        let installed = crate::scm::resolve_gui_binary("gh").is_some();
+        let authenticated = installed
+            && inbox::run_gh(
+                &inbox::gh_root(&self.cwd),
+                &["auth", "status", "--active", "--hostname", "github.com"],
+                true,
+            )
+            .is_ok();
+        Ok(Status {
+            installed,
+            authenticated,
+            connected: authenticated,
+            ..Default::default()
+        })
     }
 
-    fn repositories(&self) -> Result<Vec<Repository>> {
-        Ok(paged(&*self.transport, "user/repos?sort=updated", array)?
-            .iter()
-            .map(|repo| Repository {
-                full_name: text(&repo["full_name"]),
-                url: text(&repo["html_url"]),
-                default_branch: some_text(&repo["default_branch"]),
-            })
-            .collect())
+    /// `gh` keeps its own sign-in: there is nothing to save.
+    fn connect(&self, _url: String, _token: String) -> Result<Status, String> {
+        self.status()
     }
 
-    fn pull_requests(&self, repo: &str, filter: StateFilter) -> Result<Vec<PullRequest>> {
-        let (owner, name) = split_repo(repo)?;
-        let state = match filter {
-            StateFilter::Open => "open",
-            StateFilter::Closed | StateFilter::Merged => "closed",
-            StateFilter::All => "all",
+    fn current_user(&self, project: &Path) -> Result<String, String> {
+        gh::git_github_login_for(&inbox::gh_root(local(project)?))
+    }
+
+    fn permission(&self, item: &Item, author: &str) -> Result<String, String> {
+        let project = local(Path::new(&item.project_path))?;
+        gh::git_github_permission_for(&inbox::gh_root(project), &item.repo, author)
+    }
+
+    fn repositories(&self, project: &Path) -> Result<Vec<String>, String> {
+        call(project, "git_github_repositories", json!({}), || {
+            gh::git_github_repositories_for(project)
+        })
+    }
+
+    fn search_repos(&self, query: &str) -> Result<Vec<(String, String)>, String> {
+        gh::git_github_search_repos_for(&inbox::gh_root(&self.cwd), query)
+    }
+
+    fn work_items(
+        &self,
+        project: &Path,
+        repo: &str,
+        kind: &str,
+        filters: &Filters,
+        state: &str,
+        limit: u32,
+    ) -> Result<Vec<Item>, String> {
+        let Some(search) = search_for(filters, kind) else {
+            return Ok(vec![]);
         };
-        let rows = paged(
-            &*self.transport,
-            &format!("repos/{owner}/{name}/pulls?state={state}"),
-            array,
-        )?;
-        Ok(rows
-            .iter()
-            .map(|row| pull_request(row, repo))
-            .filter(|pr| match filter {
-                StateFilter::Closed => pr.state == PrState::Closed,
-                StateFilter::Merged => pr.state == PrState::Merged,
-                _ => true,
-            })
-            .collect())
-    }
-
-    fn pull_request(&self, pr: &PrRef) -> Result<PullRequest> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        Ok(pull_request(
-            &self.get(&format!("repos/{owner}/{name}/pulls/{}", pr.number))?,
-            &pr.repo,
-        ))
-    }
-
-    fn review_requests(&self) -> Result<Vec<PullRequest>> {
-        let rows = paged(
-            &*self.transport,
-            "search/issues?q=is%3Apr+is%3Aopen+review-requested%3A%40me",
-            |page| array(page["items"].clone()),
-        )?;
-        Ok(rows.iter().map(|row| pull_request(row, "")).collect())
-    }
-
-    fn threads(&self, pr: &PrRef) -> Result<Vec<Thread>> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let general = paged(
-            &*self.transport,
-            &format!("repos/{owner}/{name}/issues/{}/comments", pr.number),
-            array,
-        )?;
-        let mut threads: Vec<Thread> = general
-            .iter()
-            .map(|row| {
-                let comment = comment(row, "issue");
-                Thread {
-                    id: comment.id.clone(),
-                    location: None,
-                    resolved: None,
-                    comments: vec![comment],
-                }
-            })
-            .collect();
-        let line_comments = paged(
-            &*self.transport,
-            &format!("repos/{owner}/{name}/pulls/{}/comments", pr.number),
-            array,
-        )?;
-        // Replies point at the thread's first comment.
-        let mut by_root: BTreeMap<u64, Thread> = BTreeMap::new();
-        let mut order = Vec::new();
-        for row in &line_comments {
-            let id = row["id"].as_u64().unwrap_or_default();
-            let root = row["in_reply_to_id"].as_u64().unwrap_or(id);
-            let thread = by_root.entry(root).or_insert_with(|| {
-                order.push(root);
-                Thread {
-                    id: format!("review:{root}"),
-                    location: None,
-                    resolved: None,
-                    comments: Vec::new(),
-                }
-            });
-            if root == id {
-                let line = number(&row["line"]).or_else(|| number(&row["original_line"]));
-                thread.location = line.map(|line| LineLocation {
-                    path: text(&row["path"]),
-                    side: side(&row["side"]),
-                    line,
-                    start_line: number(&row["start_line"])
-                        .or_else(|| number(&row["original_start_line"])),
-                });
-            }
-            thread.comments.push(comment(row, "review"));
-        }
-        threads.extend(order.into_iter().filter_map(|root| by_root.remove(&root)));
-        Ok(threads)
-    }
-
-    fn add_comment(&self, pr: &PrRef, body: &str) -> Result<Comment> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let row = self.send(
-            Method::Post,
-            &format!("repos/{owner}/{name}/issues/{}/comments", pr.number),
-            json!({ "body": body }),
-        )?;
-        Ok(comment(&row, "issue"))
-    }
-
-    fn reply(&self, pr: &PrRef, thread_id: &str, body: &str) -> Result<Comment> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        match comment_id(thread_id)? {
-            // General comments aren't threaded on GitHub: a reply is a new one.
-            ("issue", _) => self.add_comment(pr, body),
-            (_, root) => {
-                let row = self.send(
-                    Method::Post,
-                    &format!(
-                        "repos/{owner}/{name}/pulls/{}/comments/{root}/replies",
-                        pr.number
-                    ),
-                    json!({ "body": body }),
-                )?;
-                Ok(comment(&row, "review"))
-            }
-        }
-    }
-
-    fn edit_comment(&self, pr: &PrRef, comment_id_text: &str, body: &str) -> Result<Comment> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let (kind, id) = comment_id(comment_id_text)?;
-        let path = match kind {
-            "issue" => format!("repos/{owner}/{name}/issues/comments/{id}"),
-            _ => format!("repos/{owner}/{name}/pulls/comments/{id}"),
-        };
-        let row = self.send(Method::Patch, &path, json!({ "body": body }))?;
-        Ok(comment(&row, kind))
-    }
-
-    fn resolve_thread(&self, _: &PrRef, _: &str, _: bool) -> Result<()> {
-        Err(HostError::Unsupported("resolving threads"))
-    }
-
-    fn commits(&self, pr: &PrRef) -> Result<Vec<Commit>> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let rows = paged(
-            &*self.transport,
-            &format!("repos/{owner}/{name}/pulls/{}/commits", pr.number),
-            array,
-        )?;
-        Ok(rows
-            .iter()
-            .map(|row| {
-                let message = text(&row["commit"]["message"]);
-                Commit {
-                    sha: text(&row["sha"]),
-                    title: first_line(&message),
-                    author: some_text(&row["author"]["login"])
-                        .unwrap_or_else(|| text(&row["commit"]["author"]["name"])),
-                    authored_at: text(&row["commit"]["author"]["date"]),
-                    url: text(&row["html_url"]),
-                    message,
-                }
-            })
-            .collect())
-    }
-
-    fn files(&self, pr: &PrRef) -> Result<Vec<ChangedFile>> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let rows = paged(
-            &*self.transport,
-            &format!("repos/{owner}/{name}/pulls/{}/files", pr.number),
-            array,
-        )?;
-        Ok(rows
-            .iter()
-            .map(|row| ChangedFile {
-                path: text(&row["filename"]),
-                previous_path: some_text(&row["previous_filename"]),
-                status: match row["status"].as_str().unwrap_or_default() {
-                    "added" => FileStatus::Added,
-                    "removed" => FileStatus::Deleted,
-                    "renamed" => FileStatus::Renamed,
-                    _ => FileStatus::Modified,
-                },
-                additions: number(&row["additions"]),
-                deletions: number(&row["deletions"]),
-                patch: some_text(&row["patch"]),
-            })
-            .collect())
-    }
-
-    fn reviews(&self, pr: &PrRef) -> Result<Vec<Review>> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let rows = paged(
-            &*self.transport,
-            &format!("repos/{owner}/{name}/pulls/{}/reviews", pr.number),
-            array,
-        )?;
-        Ok(rows
-            .iter()
-            .filter_map(|row| {
-                let state = match row["state"].as_str().unwrap_or_default() {
-                    "APPROVED" => ReviewState::Approved,
-                    "CHANGES_REQUESTED" => ReviewState::ChangesRequested,
-                    "COMMENTED" => ReviewState::Commented,
-                    "DISMISSED" => ReviewState::Dismissed,
-                    // A pending review is the viewer's own unsent draft.
-                    _ => return None,
-                };
-                Some(Review {
-                    author: text(&row["user"]["login"]),
+        let assigned_to_me = filters.assigned_to_me;
+        let mut items: Vec<Item> = call(
+            project,
+            "git_github_work_items",
+            json!({
+                "repo": repo,
+                "kind": kind,
+                "assignedToMe": assigned_to_me,
+                "state": state,
+                "search": search,
+                "limit": limit,
+            }),
+            || {
+                gh::git_github_work_items_for(
+                    project,
+                    repo,
+                    kind,
+                    assigned_to_me,
                     state,
-                    body: text(&row["body"]),
-                    submitted_at: some_text(&row["submitted_at"]),
-                })
-            })
-            .collect())
-    }
-
-    fn submit_review(&self, pr: &PrRef, review: &ReviewSubmission) -> Result<()> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let comments: Vec<Value> = review
-            .comments
-            .iter()
-            .map(|draft| {
-                let location = &draft.location;
-                let mut comment = json!({
-                    "path": location.path,
-                    "body": draft.body,
-                    "line": location.line,
-                    "side": side_name(location.side),
-                });
-                if location.is_range() {
-                    comment["start_line"] = json!(location.start_line);
-                    comment["start_side"] = json!(side_name(location.side));
-                }
-                comment
-            })
-            .collect();
-        let event = match review.verdict {
-            Verdict::Comment => "COMMENT",
-            Verdict::Approve => "APPROVE",
-            Verdict::RequestChanges => "REQUEST_CHANGES",
-        };
-        let mut body = json!({ "event": event, "comments": comments });
-        if !review.body.trim().is_empty() {
-            body["body"] = json!(review.body);
+                    search,
+                    limit,
+                )
+            },
+        )?;
+        // Another machine signs in with its own account; a host that can't
+        // say which leaves `viewer` empty rather than failing the list.
+        if kind == "pr"
+            && remote_workspace::is_remote(project)
+            && items.iter().any(|i| i.viewer.is_empty())
+        {
+            let viewer = remote_login(project);
+            for item in items.iter_mut().filter(|i| i.viewer.is_empty()) {
+                item.viewer = viewer.clone();
+            }
         }
-        self.send(
-            Method::Post,
-            &format!("repos/{owner}/{name}/pulls/{}/reviews", pr.number),
-            body,
-        )?;
-        Ok(())
+        Ok(items)
     }
 
-    fn checks(&self, pr: &PrRef) -> Result<Vec<Check>> {
-        let (owner, name) = split_repo(&pr.repo)?;
-        let head = self
-            .pull_request(pr)?
-            .head_sha
-            .ok_or_else(|| HostError::Parse("the pull request has no head commit".into()))?;
-        let runs = paged(
-            &*self.transport,
-            &with_query(
-                &format!("repos/{owner}/{name}/commits/{head}/check-runs"),
-                "filter=latest",
-            ),
-            |page| array(page["check_runs"].clone()),
-        )?;
-        let mut checks: Vec<Check> = runs
-            .iter()
-            .map(|run| Check {
-                name: text(&run["name"]),
-                status: check_status(
-                    run["status"].as_str().unwrap_or_default(),
-                    run["conclusion"].as_str().unwrap_or_default(),
-                ),
-                url: some_text(&run["html_url"]),
-            })
-            .collect();
-        // Older CI reports commit statuses instead of check runs.
-        let statuses = self.get(&format!("repos/{owner}/{name}/commits/{head}/status"))?;
-        checks.extend(
-            array(statuses["statuses"].clone())
-                .iter()
-                .map(|status| Check {
-                    name: text(&status["context"]),
-                    status: match status["state"].as_str().unwrap_or_default() {
-                        "success" => CheckStatus::Success,
-                        "pending" => CheckStatus::Pending,
-                        _ => CheckStatus::Failure,
-                    },
-                    url: some_text(&status["target_url"]),
-                }),
-        );
-        Ok(checks)
+    /// GitHub lists what's assigned to you per repository.
+    fn assigned(&self, _kind: &str, _limit: u32) -> Option<Result<Vec<Item>, String>> {
+        None
     }
+
+    fn repo_pull_requests(&self, repo: &str) -> Result<Vec<Item>, String> {
+        let rows = gh::git_github_work_items_for(
+            &inbox::gh_root(&self.cwd),
+            repo,
+            "pr",
+            false,
+            "open",
+            "",
+            40,
+        )?;
+        inbox::convert(rows).map(with_provider)
+    }
+
+    fn review_requests(&self) -> Result<Vec<Item>, String> {
+        gh::git_github_review_requests_for(&inbox::gh_root(&self.cwd))
+            .and_then(inbox::convert)
+            .map(with_provider)
+    }
+
+    fn details(&self, item: &Item) -> Result<Details, String> {
+        let project = self.project(item);
+        call(
+            project,
+            "git_github_work_item_details",
+            json!({"repo": item.repo, "kind": item.kind, "number": item.number}),
+            || gh::git_github_work_item_details_for(project, &item.repo, &item.kind, item.number),
+        )
+    }
+
+    fn thread(&self, item: &Item) -> Result<Thread, String> {
+        let project = self.project(item);
+        call(
+            project,
+            "git_github_work_item_thread",
+            json!({"repo": item.repo, "kind": item.kind, "number": item.number}),
+            || gh::git_github_work_item_thread_for(project, &item.repo, &item.kind, item.number),
+        )
+    }
+
+    fn comment(&self, item: &Item, body: String, reply_to: String) -> Result<String, String> {
+        let project = self.project(item);
+        call(
+            project,
+            "git_github_work_item_comment",
+            json!({
+                "repo": item.repo,
+                "kind": item.kind,
+                "number": item.number,
+                "body": body,
+                "inReplyTo": reply_to,
+            }),
+            || {
+                gh::git_github_work_item_comment_for(
+                    project,
+                    &item.repo,
+                    &item.kind,
+                    item.number,
+                    &body,
+                    &reply_to,
+                )
+            },
+        )
+    }
+
+    fn resolve_thread(&self, item: &Item, thread_id: &str, resolved: bool) -> Result<(), String> {
+        if item.kind != "pr" {
+            return Err("This host has no resolving".into());
+        }
+        let project = self.project(item);
+        if remote_workspace::is_remote(project) {
+            return Err("Resolve this thread on GitHub: the project is on another machine".into());
+        }
+        gh::git_github_resolve_thread_for(&inbox::gh_root(project), thread_id, resolved)
+    }
+
+    fn diff(&self, item: &Item, full_context: bool) -> Result<Diff, String> {
+        let project = self.project(item);
+        call(
+            project,
+            "git_github_pr_diff",
+            json!({"repo": item.repo, "number": item.number, "fullContext": full_context}),
+            || gh::git_github_pr_diff_for(project, &item.repo, item.number, full_context),
+        )
+    }
+
+    fn checks(&self, item: &Item) -> Result<Checks, String> {
+        let project = self.project(item);
+        call(
+            project,
+            "git_github_pr_checks",
+            json!({"repo": item.repo, "number": item.number}),
+            || gh::git_github_pr_checks_for(project, &item.repo, item.number),
+        )
+    }
+
+    fn action(&self, item: &Item, action: &str) -> Result<Item, String> {
+        let project = self.project(item);
+        let mut updated: Item = call(
+            project,
+            "git_github_pr_action",
+            json!({"repo": item.repo, "number": item.number, "action": action}),
+            || gh::git_github_pr_action_for(project, &item.repo, item.number, action),
+        )?;
+        updated.provider = item.provider.clone();
+        updated.project_path = item.project_path.clone();
+        Ok(updated)
+    }
+
+    fn submit_review(
+        &self,
+        item: &Item,
+        verdict: Verdict,
+        body: &str,
+        comments: &[LineComment],
+    ) -> Result<(), String> {
+        let project = self.project(item);
+        let root = inbox::gh_root(project);
+        call::<Value, _>(
+            project,
+            "git_github_pr_review",
+            json!({
+                "repo": item.repo,
+                "number": item.number,
+                "verdict": verdict.as_str(),
+                "body": body,
+                "comments": comments,
+            }),
+            || {
+                gh::git_github_pr_review_for(
+                    &root,
+                    &item.repo,
+                    item.number,
+                    verdict,
+                    body,
+                    comments,
+                )
+                .map(|()| Value::Null)
+            },
+        )
+        .map(drop)
+    }
+
+    fn open_pull_requests(
+        &self,
+        project: &Path,
+        repo: &str,
+        review_requested: bool,
+        limit: u32,
+    ) -> Result<Vec<OpenPullRequest>, String> {
+        let root = inbox::gh_root(local(project)?);
+        let search = if review_requested {
+            REVIEW_REQUESTED_SEARCH
+        } else {
+            ""
+        };
+        gh::git_github_pr_states_for(&root, repo, "open", search, limit)?
+            .into_iter()
+            .map(|pr| {
+                Ok((
+                    inbox::convert(pr.item)?,
+                    Checks {
+                        head_oid: pr.head_oid,
+                        checks: inbox::convert(pr.checks)?,
+                    },
+                ))
+            })
+            .collect()
+    }
+
+    fn merged_pull_requests(
+        &self,
+        project: &Path,
+        repo: &str,
+        limit: u32,
+    ) -> Result<Vec<MergedPullRequest>, String> {
+        let root = inbox::gh_root(local(project)?);
+        gh::git_github_pr_states_for(&root, repo, "merged", "", limit)?
+            .into_iter()
+            .map(|pr| Ok((inbox::convert(pr.item)?, pr.merged_at, pr.merged_by)))
+            .collect()
+    }
+}
+
+/// Issues assigned to you in `repo`, for automations.
+pub(crate) fn assigned_issues(project: &Path, repo: &str, limit: u32) -> Result<Vec<Item>, String> {
+    let root = inbox::gh_root(local(project)?);
+    inbox::convert(gh::git_github_work_items_for(
+        &root, repo, "issue", true, "open", "", limit,
+    )?)
 }
