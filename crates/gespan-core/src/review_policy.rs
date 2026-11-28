@@ -282,6 +282,22 @@ fn context_text(
 
 /// The text appended to the run's prompt.
 pub fn instruction(policy: &ReviewPolicy) -> String {
+    // How to read the pull request in a way the policy allows: without it an
+    // agent tries `gh pr view <n>` with no `--repo`, or pipes it, and every
+    // read is refused.
+    let reads = match &policy.target {
+        Some(target) if target.forge == Forge::GitHub => format!(
+            "Read the pull request with exactly these commands, each on its own line with nothing piped or chained: gh pr view {n} --repo {repo} --comments, gh pr view {n} --repo {repo} --json title,body,files,headRefName,baseRefName, and gh pr diff {n} --repo {repo}. Always pass --repo {repo}. Read the surrounding code with your file tools. ",
+            n = target.number,
+            repo = target.repo
+        ),
+        _ => String::new(),
+    };
+    reads + &delivery(policy)
+}
+
+/// What to do with the finished review.
+fn delivery(policy: &ReviewPolicy) -> String {
     if policy.results == ReviewResults::Pending && policy.target.is_some() {
         return crate::review_draft::INSTRUCTION.to_string();
     }
@@ -1310,7 +1326,8 @@ mod tests {
         assert!(text.contains("```gespan-review"), "{text}");
         assert!(text.contains("Do not post anything yourself"), "{text}");
         assert!(!text.contains("gh pr review"), "{text}");
-        assert_eq!(text, instruction(&gitlab_policy(ReviewResults::Pending)));
+        // GitLab gets the same findings instruction, without GitHub's reads.
+        assert!(text.ends_with(&instruction(&gitlab_policy(ReviewResults::Pending))));
         // Without a target there is nowhere to leave a draft.
         let none = ReviewPolicy {
             results: ReviewResults::Pending,
@@ -1384,6 +1401,57 @@ mod tests {
         assert!(prefetches(Kind::Claude, &gitlab));
         assert!(!prefetches(Kind::Claude, &github));
         assert!(prefetches(Kind::Pi, &github));
+    }
+
+    #[test]
+    fn every_read_the_instruction_names_is_allowed() {
+        for results in [
+            ReviewResults::Gespan,
+            ReviewResults::Draft,
+            ReviewResults::Post,
+            ReviewResults::Pending,
+        ] {
+            let p = policy(results);
+            let text = instruction(&p);
+            let reads: Vec<&str> = text
+                .match_indices("gh pr ")
+                .map(|(at, _)| {
+                    let rest = &text[at..];
+                    let end = rest.find([',', '.']).unwrap_or(rest.len());
+                    rest[..end].trim_end_matches(" and").trim()
+                })
+                .filter(|command| !command.starts_with("gh pr review"))
+                .collect();
+            assert_eq!(reads.len(), 3, "{results:?}: {text}");
+            for command in reads {
+                // `--json` fields hold commas: rebuild that one whole.
+                let command = if command.ends_with("--json title") {
+                    "gh pr view 7 --repo acme/app --json title,body,files,headRefName,baseRefName"
+                } else {
+                    command
+                };
+                assert_eq!(
+                    verdict(&p, command),
+                    Verdict::Allow,
+                    "{results:?}: {command}"
+                );
+            }
+        }
+        // What a live review tried before it was told: refused, so the
+        // instruction has to name the scoped form.
+        let p = policy(ReviewResults::Gespan);
+        assert_eq!(verdict(&p, "gh pr view 7"), Verdict::Deny);
+        assert_eq!(
+            verdict(&p, "gh pr view 7 --repo acme/app | head -c 2000"),
+            Verdict::Deny
+        );
+        // GitLab and untargeted runs are not told to run gh.
+        assert!(!instruction(&gitlab_policy(ReviewResults::Gespan)).contains("gh pr view"));
+        let untargeted = ReviewPolicy {
+            results: ReviewResults::Gespan,
+            target: None,
+        };
+        assert!(!instruction(&untargeted).contains("gh pr view"));
     }
 
     #[test]
