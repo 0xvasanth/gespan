@@ -952,6 +952,9 @@ pub(crate) struct Shell {
     focus: FocusHandle,
     sidebar_focus: FocusHandle,
     tab_hover: Option<i64>,
+    /// The tab whose tooltip waits or shows, and whether it shows yet.
+    tab_tip: Option<(i64, bool)>,
+    tab_tip_task: Option<gpui::Task<()>>,
     /// The pinned deck at the strip's left edge: how far it has fanned out,
     /// and the card under the pointer.
     pin_fan: pinned_tabs::PinFan,
@@ -1426,6 +1429,8 @@ impl Shell {
             focus: cx.focus_handle(),
             sidebar_focus: cx.focus_handle(),
             tab_hover: None,
+            tab_tip: None,
+            tab_tip_task: None,
             pin_fan: Default::default(),
             pin_deck: Default::default(),
             pin_card_hover: None,
@@ -8026,8 +8031,9 @@ impl Shell {
                 } else {
                     TAB_TILE.w
                 };
-                let tip =
-                    self.tab_tooltip(id, copy.headline.clone().into(), project.as_deref(), cx);
+                let tip = self
+                    .tab_tip_shown(id)
+                    .then(|| self.tab_tooltip(id, project.as_deref(), cx).under_tab());
                 let tab = div()
                     .id(("tab", id as usize))
                     .debug_selector(move || format!("title-tab-{id}"))
@@ -8035,7 +8041,6 @@ impl Shell {
                     .role(Role::Tab)
                     .aria_label(copy.headline.clone())
                     .aria_selected(active)
-                    .tooltip(move |_, cx| cx.new(|_| tip.clone()).into())
                     .cursor_pointer()
                     .w(px(tab_width(&TitleTab::Session(id))))
                     .flex_shrink_0()
@@ -8176,11 +8181,16 @@ impl Shell {
                             this.start_tab_drag(TitleTab::Session(id), event, cx)
                         }),
                     )
+                    .children(tip)
                     .on_hover(cx.listener(move |this, hovered, _, cx| {
                         if *hovered {
                             this.tab_hover = Some(id);
-                        } else if this.tab_hover == Some(id) {
-                            this.tab_hover = None;
+                            this.arm_tab_tip(id, cx);
+                        } else {
+                            if this.tab_hover == Some(id) {
+                                this.tab_hover = None;
+                            }
+                            this.disarm_tab_tip(id);
                         }
                         this.tabs_frame.update(cx, |_, cx| cx.notify());
                     }))
