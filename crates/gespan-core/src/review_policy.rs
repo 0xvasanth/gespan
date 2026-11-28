@@ -117,7 +117,11 @@ pub fn supported_results(kind: crate::provider::Kind) -> &'static [ReviewResults
     match kind {
         // A pending review needs no shell: the agent replies with findings
         // and Gespan posts them.
-        Kind::Pi | Kind::Omp => &[ReviewResults::Gespan, ReviewResults::Pending],
+        Kind::Pi | Kind::Omp => &[
+            ReviewResults::Gespan,
+            ReviewResults::Post,
+            ReviewResults::Pending,
+        ],
         _ => &[
             ReviewResults::Gespan,
             ReviewResults::Draft,
@@ -140,15 +144,17 @@ pub fn prefetches(kind: crate::provider::Kind, target: &ReviewTarget) -> bool {
 }
 
 /// The results a run can honour: what the harness supports, and on GitLab
-/// only keeping the review in Gespan or leaving draft notes, since posting
-/// goes through `gh`.
+/// anything but Draft, whose approved post goes through `gh`. Gespan itself
+/// places Post and Pending reviews on either forge.
 pub fn effective_results(
     kind: crate::provider::Kind,
     stored: ReviewResults,
     target: Option<&ReviewTarget>,
 ) -> ReviewResults {
     let gitlab = target.is_some_and(|t| t.forge == Forge::GitLab);
-    let posts = matches!(stored, ReviewResults::Draft | ReviewResults::Post);
+    // Gespan places a Post review itself, on GitLab too; only Draft's gated
+    // post needs `gh`.
+    let posts = stored == ReviewResults::Draft;
     if !supported_results(kind).contains(&stored) || (gitlab && posts) {
         ReviewResults::Gespan
     } else {
@@ -282,8 +288,28 @@ fn context_text(
 
 /// The text appended to the run's prompt.
 pub fn instruction(policy: &ReviewPolicy) -> String {
-    if policy.results == ReviewResults::Pending && policy.target.is_some() {
-        return crate::review_draft::INSTRUCTION.to_string();
+    // How to read the pull request in a way the policy allows: without it an
+    // agent tries `gh pr view <n>` with no `--repo`, or pipes it, and every
+    // read is refused.
+    let reads = match &policy.target {
+        Some(target) if target.forge == Forge::GitHub => format!(
+            "Read the pull request with exactly these commands, each on its own line with nothing piped or chained: gh pr view {n} --repo {repo} --comments, gh pr view {n} --repo {repo} --json title,body,files,headRefName,baseRefName, and gh pr diff {n} --repo {repo}. Always pass --repo {repo}. Read the surrounding code with your file tools. ",
+            n = target.number,
+            repo = target.repo
+        ),
+        _ => String::new(),
+    };
+    reads + &delivery(policy)
+}
+
+/// What to do with the finished review.
+fn delivery(policy: &ReviewPolicy) -> String {
+    if policy.target.is_some() {
+        match policy.results {
+            ReviewResults::Pending => return crate::review_draft::INSTRUCTION.to_string(),
+            ReviewResults::Post => return crate::review_draft::POST_INSTRUCTION.to_string(),
+            _ => {}
+        }
     }
     match (&policy.target, policy.results) {
         (Some(target), _) if target.forge != Forge::GitHub => {
@@ -292,8 +318,10 @@ pub fn instruction(policy: &ReviewPolicy) -> String {
         }
         (Some(target), results @ (ReviewResults::Draft | ReviewResults::Post)) => {
             let mut text = format!(
-                "When your review is ready, post it with exactly: gh pr review {} --repo {} --comment --body '<your review>'. Write any apostrophe in the review as '\\''. Post nothing else, and do not change any files.",
-                target.number, target.repo
+                "When your review is ready, post it with exactly: gh pr review {} --repo {} --comment --body '<your review>\n\n{}'. Write any apostrophe in the review as '\\''. Keep the last line exactly as given. Post nothing else, and do not change any files.",
+                target.number,
+                target.repo,
+                crate::review_draft::POSTED_MARKER
             );
             if results == ReviewResults::Draft {
                 text.push_str(" The user approves the post before it reaches GitHub.");
@@ -760,10 +788,10 @@ fn post(policy: &ReviewPolicy, args: &[&str], review: bool) -> Verdict {
         return Verdict::Deny;
     }
     match policy.results {
-        // Gespan itself posts a pending review; the agent never does.
-        ReviewResults::Gespan | ReviewResults::Pending => Verdict::Deny,
+        // Gespan itself places a pending or posted review, each finding on
+        // its line; the agent never writes to the forge.
+        ReviewResults::Gespan | ReviewResults::Pending | ReviewResults::Post => Verdict::Deny,
         ReviewResults::Draft => Verdict::Ask,
-        ReviewResults::Post => Verdict::Allow,
     }
 }
 
@@ -790,13 +818,17 @@ mod tests {
     }
 
     #[test]
-    fn pi_supports_gespan_and_pending_only() {
+    fn pi_supports_everything_but_the_approved_post() {
         use crate::provider::Kind;
         for kind in [Kind::Pi, Kind::Omp] {
-            // A pending review needs no shell: Gespan posts it.
+            // Post and Pending need no shell: Gespan places them.
             assert_eq!(
                 supported_results(kind),
-                &[ReviewResults::Gespan, ReviewResults::Pending]
+                &[
+                    ReviewResults::Gespan,
+                    ReviewResults::Post,
+                    ReviewResults::Pending
+                ]
             );
             assert!(needs_prefetch(kind));
         }
@@ -928,7 +960,7 @@ mod tests {
             Verdict::Allow
         );
         let post = r#"bash -c "gh pr review 7 --repo acme/app --comment --body 'x'""#;
-        assert_eq!(v(ReviewResults::Post, post), Verdict::Allow);
+        assert_eq!(v(ReviewResults::Post, post), Verdict::Deny);
         assert_eq!(v(ReviewResults::Draft, post), Verdict::Ask);
         assert_eq!(v(ReviewResults::Gespan, post), Verdict::Deny);
         for c in [
@@ -1010,19 +1042,22 @@ mod tests {
         let c = r#"gh pr review 7 -R acme/app --comment --body "Looks good; one blocker""#;
         assert_eq!(verdict(&policy(ReviewResults::Gespan), c), Verdict::Deny);
         assert_eq!(verdict(&policy(ReviewResults::Draft), c), Verdict::Ask);
-        assert_eq!(verdict(&policy(ReviewResults::Post), c), Verdict::Allow);
+        // Gespan posts a Post review itself, each finding on its line.
+        assert_eq!(verdict(&policy(ReviewResults::Post), c), Verdict::Deny);
+        assert_eq!(verdict(&policy(ReviewResults::Pending), c), Verdict::Deny);
         let c = r#"gh pr comment 7 --repo acme/app --body "x""#;
-        assert_eq!(verdict(&policy(ReviewResults::Post), c), Verdict::Allow);
+        assert_eq!(verdict(&policy(ReviewResults::Draft), c), Verdict::Ask);
+        assert_eq!(verdict(&policy(ReviewResults::Post), c), Verdict::Deny);
     }
 
     #[test]
     fn target_matches_spelling_variants_only() {
-        let p = policy(ReviewResults::Post);
+        let p = policy(ReviewResults::Draft);
         for ok in [
             r#"gh pr review 7 --repo=Acme/App --comment -b "x""#,
             r#"gh pr review https://github.com/acme/app/pull/7 --comment -b "x""#,
         ] {
-            assert_eq!(verdict(&p, ok), Verdict::Allow, "{ok}");
+            assert_eq!(verdict(&p, ok), Verdict::Ask, "{ok}");
         }
         for bad in [
             r#"gh pr review 8 -R acme/app --comment -b "x""#,
@@ -1084,10 +1119,10 @@ mod tests {
         // Single quotes are literal.
         assert_eq!(
             verdict(
-                &policy(ReviewResults::Post),
+                &policy(ReviewResults::Draft),
                 "gh pr review 7 -R acme/app --comment -b 'costs $5; `ok`'"
             ),
-            Verdict::Allow
+            Verdict::Ask
         );
     }
 
@@ -1264,7 +1299,7 @@ mod tests {
 
     #[test]
     fn a_posted_review_cannot_carry_a_slash_command_line() {
-        for results in [ReviewResults::Draft, ReviewResults::Post] {
+        for results in [ReviewResults::Draft] {
             let p = policy(results);
             for c in [
                 "gh pr review 7 --repo acme/app --comment --body '/gespan review'",
@@ -1310,7 +1345,8 @@ mod tests {
         assert!(text.contains("```gespan-review"), "{text}");
         assert!(text.contains("Do not post anything yourself"), "{text}");
         assert!(!text.contains("gh pr review"), "{text}");
-        assert_eq!(text, instruction(&gitlab_policy(ReviewResults::Pending)));
+        // GitLab gets the same findings instruction, without GitHub's reads.
+        assert!(text.ends_with(&instruction(&gitlab_policy(ReviewResults::Pending))));
         // Without a target there is nowhere to leave a draft.
         let none = ReviewPolicy {
             results: ReviewResults::Pending,
@@ -1341,7 +1377,7 @@ mod tests {
                 Kind::Claude,
                 ReviewResults::Post,
                 Some(&gitlab),
-                ReviewResults::Gespan,
+                ReviewResults::Post,
             ),
             (
                 Kind::Claude,
@@ -1358,6 +1394,12 @@ mod tests {
             (
                 Kind::Pi,
                 ReviewResults::Post,
+                Some(&github),
+                ReviewResults::Post,
+            ),
+            (
+                Kind::Pi,
+                ReviewResults::Draft,
                 Some(&github),
                 ReviewResults::Gespan,
             ),
@@ -1384,6 +1426,100 @@ mod tests {
         assert!(prefetches(Kind::Claude, &gitlab));
         assert!(!prefetches(Kind::Claude, &github));
         assert!(prefetches(Kind::Pi, &github));
+    }
+
+    #[test]
+    fn every_read_the_instruction_names_is_allowed() {
+        for results in [
+            ReviewResults::Gespan,
+            ReviewResults::Draft,
+            ReviewResults::Post,
+            ReviewResults::Pending,
+        ] {
+            let p = policy(results);
+            let text = instruction(&p);
+            let reads: Vec<&str> = text
+                .match_indices("gh pr ")
+                .map(|(at, _)| {
+                    let rest = &text[at..];
+                    let end = rest.find([',', '.']).unwrap_or(rest.len());
+                    rest[..end].trim_end_matches(" and").trim()
+                })
+                .filter(|command| !command.starts_with("gh pr review"))
+                .collect();
+            assert_eq!(reads.len(), 3, "{results:?}: {text}");
+            for command in reads {
+                // `--json` fields hold commas: rebuild that one whole.
+                let command = if command.ends_with("--json title") {
+                    "gh pr view 7 --repo acme/app --json title,body,files,headRefName,baseRefName"
+                } else {
+                    command
+                };
+                assert_eq!(
+                    verdict(&p, command),
+                    Verdict::Allow,
+                    "{results:?}: {command}"
+                );
+            }
+        }
+        // What a live review tried before it was told: refused, so the
+        // instruction has to name the scoped form.
+        let p = policy(ReviewResults::Gespan);
+        assert_eq!(verdict(&p, "gh pr view 7"), Verdict::Deny);
+        assert_eq!(
+            verdict(&p, "gh pr view 7 --repo acme/app | head -c 2000"),
+            Verdict::Deny
+        );
+        // GitLab and untargeted runs are not told to run gh.
+        assert!(!instruction(&gitlab_policy(ReviewResults::Gespan)).contains("gh pr view"));
+        let untargeted = ReviewPolicy {
+            results: ReviewResults::Gespan,
+            target: None,
+        };
+        assert!(!instruction(&untargeted).contains("gh pr view"));
+    }
+
+    #[test]
+    fn the_post_the_instruction_asks_for_is_marked_and_allowed() {
+        let p = policy(ReviewResults::Draft);
+        let text = instruction(&p);
+        assert!(text.contains(crate::review_draft::POSTED_MARKER), "{text}");
+        let command = format!(
+            "gh pr review 7 --repo acme/app --comment --body 'Looks fine.\n\n{}'",
+            crate::review_draft::POSTED_MARKER
+        );
+        let plain = "gh pr review 7 --repo acme/app --comment --body 'Looks fine.'";
+        assert_eq!(verdict(&p, &command), verdict(&p, plain), "{command}");
+    }
+
+    #[test]
+    fn a_posted_review_comes_back_as_line_findings_that_gespan_posts() {
+        // Post and Pending both ask for findings on their lines; Gespan
+        // places them, submitting a Post review and leaving a Pending one as
+        // a draft. Neither lets the agent write to the pull request.
+        for (results, says) in [
+            (ReviewResults::Post, "submits it"),
+            (ReviewResults::Pending, "draft review"),
+        ] {
+            let p = policy(results);
+            let text = instruction(&p);
+            assert!(text.contains("```gespan-review"), "{results:?}: {text}");
+            assert!(text.contains(says), "{results:?}: {text}");
+            assert!(!text.contains("gh pr review"), "{results:?}: {text}");
+            for c in [
+                "gh pr review 7 --repo acme/app --comment --body 'x'",
+                "gh pr comment 7 --repo acme/app --body 'x'",
+            ] {
+                assert_eq!(verdict(&p, c), Verdict::Deny, "{results:?} {c}");
+            }
+            assert_eq!(
+                verdict(&p, "gh pr diff 7 --repo acme/app"),
+                Verdict::Allow,
+                "it still reads the diff"
+            );
+        }
+        let gitlab = instruction(&gitlab_policy(ReviewResults::Post));
+        assert!(gitlab.contains("```gespan-review"), "{gitlab}");
     }
 
     #[test]
@@ -1553,7 +1689,6 @@ mod tests {
     #[test]
     fn instructed_body_form_is_allowed() {
         let c = r"gh pr review 7 --repo acme/app --comment --body 'Use `foo()`; costs $5 | it'\''s fine'";
-        assert_eq!(verdict(&policy(ReviewResults::Post), c), Verdict::Allow);
         assert_eq!(verdict(&policy(ReviewResults::Draft), c), Verdict::Ask);
         // A bare backslash elsewhere is still refused.
         assert_eq!(
@@ -1604,10 +1739,10 @@ mod tests {
         // `#` and `=` are plain text inside quotes.
         assert_eq!(
             verdict(
-                &policy(ReviewResults::Post),
+                &policy(ReviewResults::Draft),
                 "gh pr review 7 -R acme/app -c -b '#1 =x'"
             ),
-            Verdict::Allow
+            Verdict::Ask
         );
     }
 

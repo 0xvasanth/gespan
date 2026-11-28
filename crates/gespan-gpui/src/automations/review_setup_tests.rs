@@ -78,10 +78,14 @@ fn default_repo_only_when_single() {
 
 #[test]
 fn results_follow_the_harness() {
-    // Pi has no shell, but a pending review needs none: Gespan posts it.
+    // Pi has no shell, but Post and Pending need none: Gespan places them.
     assert_eq!(
         results_for("pi"),
-        [ReviewResults::Gespan, ReviewResults::Pending]
+        [
+            ReviewResults::Gespan,
+            ReviewResults::Post,
+            ReviewResults::Pending
+        ]
     );
     assert_eq!(
         results_for("claude"),
@@ -391,17 +395,23 @@ fn results_menu_respects_harness(cx: &mut TestAppContext) {
         vec![
             ("gespan".into(), "keeps the review in Gespan".into()),
             ("draft".into(), "drafts a review for you to approve".into()),
-            ("post".into(), "posts the review on the PR".into()),
+            (
+                "post".into(),
+                "posts the review on the PR, each finding on its line".into()
+            ),
             (
                 "pending".into(),
-                "leaves a draft review on the PR for you to submit".into()
+                "leaves a draft review on the PR, each finding on its line, for you to submit"
+                    .into()
             ),
         ]
     );
     choose(&window, &mut visual, Choice::SetupResults, "post");
     assert_eq!(input(&window, &visual).results, ReviewResults::Post);
+    choose(&window, &mut visual, Choice::SetupResults, "draft");
+    assert_eq!(input(&window, &visual).results, ReviewResults::Draft);
 
-    // Pi can only keep the review in Gespan, so the choice falls back to it.
+    // Pi can't hold an approved `gh` post, so Draft falls back to Gespan.
     pick_model(&window, &mut visual, Kind::Pi, "pi-model");
     let setup = input(&window, &visual);
     assert_eq!(
@@ -414,13 +424,18 @@ fn results_menu_respects_harness(cx: &mut TestAppContext) {
         vec![
             ("gespan".into(), "keeps the review in Gespan".into()),
             (
+                "post".into(),
+                "posts the review on the PR, each finding on its line".into()
+            ),
+            (
                 "pending".into(),
-                "leaves a draft review on the PR for you to submit".into()
+                "leaves a draft review on the PR, each finding on its line, for you to submit"
+                    .into()
             ),
         ]
     );
     // A value the harness can't do is refused even if asked for directly.
-    choose(&window, &mut visual, Choice::SetupResults, "post");
+    choose(&window, &mut visual, Choice::SetupResults, "draft");
     assert_eq!(input(&window, &visual).results, ReviewResults::Gespan);
 }
 
@@ -448,7 +463,7 @@ fn turn_on_saves_the_shown_values(cx: &mut TestAppContext) {
         "{sentence}"
     );
     assert!(
-        sentence.ends_with("and posts the review on the PR."),
+        sentence.ends_with("and posts the review on the PR, each finding on its line."),
         "{sentence}"
     );
 

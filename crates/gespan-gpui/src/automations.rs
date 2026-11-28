@@ -11,7 +11,7 @@ use crate::{
 use gespan_core::{
     automations::{
         self, Automation, AutomationAction, AutomationRun, AutomationTrigger, AutomationUpsert,
-        DueAutomationRun, Service, TriggerProperty,
+        DueAutomationRun, Service, TriggerProperty, system,
     },
     provider::Kind,
     session_groups::Folder,
@@ -138,6 +138,8 @@ enum Choice {
     SetupResults,
     /// What a review automation does with its review.
     Results,
+    /// When a system code review reviews.
+    ReviewWhen,
 }
 struct ChoiceMenu {
     field: Choice,
@@ -202,6 +204,8 @@ pub(crate) struct Automations {
     request_generation: u64,
     /// The two-click review setup, shown in place of the gallery.
     review_setup: Option<review_setup::ReviewSetup>,
+    /// An automation to open once the next list arrives (Settings › Git's Open).
+    open_after_refresh: Option<String>,
     review_generation: u64,
     github_probe: review_setup::GithubProbe,
     /// "All runs" is chosen in the list: the right pane is the run feed.
@@ -292,6 +296,7 @@ impl Automations {
             trigger_connections: HashMap::new(),
             request_generation: 0,
             review_setup: None,
+            open_after_refresh: None,
             review_generation: 0,
             github_probe: review_setup::github_probe(),
             all_runs: true,
@@ -561,6 +566,11 @@ impl Automations {
                         if this.selected == selected {
                             this.runs = runs;
                         }
+                        if let Some(id) = this.open_after_refresh.take()
+                            && this.automations.iter().any(|a| a.id == id)
+                        {
+                            this.select(id, cx);
+                        }
                         if this
                             .selected
                             .as_ref()
@@ -658,6 +668,11 @@ impl Automations {
     }
     /// The Inbox's "Review with an agent" when the project has no review
     /// automation: the review setup sheet.
+    /// Opens `id` in the editor once the list holds it.
+    pub(crate) fn show_automation(&mut self, id: String, cx: &mut Context<Self>) {
+        self.open_after_refresh = Some(id);
+        self.refresh(cx);
+    }
     pub(crate) fn start_review_setup(&mut self, cx: &mut Context<Self>) {
         self.open_review_setup(cx);
     }

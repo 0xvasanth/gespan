@@ -353,7 +353,38 @@ impl FakeGh {
 }
 
 fn create_github(gh: &mut FakeGh, findings: Findings) -> Result<DraftReview, String> {
-    github_create(&github(), findings, &mut |args, input| gh.run(args, input))
+    github_create(&github(), findings, false, &mut |args, input| {
+        gh.run(args, input)
+    })
+}
+
+#[test]
+fn a_posted_github_review_is_submitted_in_the_one_call_that_makes_it() {
+    // One call with an event: no pending review is left between making and
+    // submitting it, so a pending review the user has open can't block it.
+    let submitted = r#"{"id":43,"html_url":"https://github.com/acme/app/pull/7#pullrequestreview-43","state":"COMMENTED"}"#;
+    let mut gh = FakeGh::new(vec![Ok(HEAD), Ok(PR_DIFF), Ok(submitted)]);
+    let draft =
+        github_create(&github(), sample_findings(), true, &mut |a, i| gh.run(a, i)).unwrap();
+    assert_eq!(gh.calls.len(), 3, "no separate submit");
+    let payload = gh.calls[2].1.clone().unwrap();
+    assert_eq!(payload["event"], "COMMENT");
+    assert_eq!(
+        payload["comments"].as_array().unwrap().len(),
+        4,
+        "still line by line"
+    );
+    assert!(draft.submitted);
+    assert_eq!(draft.handle, Handle::Github { review_id: 43 });
+    // A refusal that names a pending review is shown as GitHub said it.
+    let mut gh = FakeGh::new(vec![
+        Ok(HEAD),
+        Ok(PR_DIFF),
+        Err("HTTP 422: pending review conflict"),
+    ]);
+    let error =
+        github_create(&github(), sample_findings(), true, &mut |a, i| gh.run(a, i)).unwrap_err();
+    assert!(!error.contains("Submit or discard it"), "{error}");
 }
 
 fn sample_findings() -> Findings {
@@ -402,10 +433,10 @@ fn github_leaves_a_pending_review_on_the_triggering_pull_request_only() {
     assert_eq!(
         payload["comments"],
         json!([
-            {"path": "src/lib.rs", "line": 3, "side": "RIGHT", "body": "Added line"},
-            {"path": "src/lib.rs", "line": 30, "side": "LEFT", "body": "Removed line"},
-            {"path": "src/lib.rs", "line": 5, "side": "RIGHT", "body": "Context line"},
-            {"path": "src/after.rs", "line": 6, "side": "RIGHT", "body": "Renamed file"},
+            {"path": "src/lib.rs", "line": 3, "side": "RIGHT", "body": super::marked("Added line")},
+            {"path": "src/lib.rs", "line": 30, "side": "LEFT", "body": super::marked("Removed line")},
+            {"path": "src/lib.rs", "line": 5, "side": "RIGHT", "body": super::marked("Context line")},
+            {"path": "src/after.rs", "line": 6, "side": "RIGHT", "body": super::marked("Renamed file")},
         ])
     );
     let body = payload["body"].as_str().unwrap();
@@ -419,7 +450,8 @@ fn github_leaves_a_pending_review_on_the_triggering_pull_request_only() {
         "https://github.com/acme/app/pull/7#pullrequestreview-42"
     );
     assert_eq!((draft.inline.len(), draft.outside), (4, 1));
-    assert_eq!(draft.body, body);
+    // The draft keeps the review's own text; what GitHub got is marked.
+    assert_eq!(super::marked(&draft.body), body);
 }
 
 #[test]
@@ -477,7 +509,7 @@ fn github_refuses_a_bad_head_or_a_gitlab_target_before_writing() {
         forge: Forge::GitLab,
         ..github()
     };
-    assert!(github_create(&gitlab, sample_findings(), &mut |a, i| gh.run(a, i)).is_err());
+    assert!(github_create(&gitlab, sample_findings(), false, &mut |a, i| gh.run(a, i)).is_err());
     assert!(gh.calls.is_empty());
 }
 
@@ -498,7 +530,8 @@ fn github_submit_sends_the_pending_review_as_a_comment_review() {
     );
     let payload = gh.calls[3].1.clone().unwrap();
     assert_eq!(payload["event"], "COMMENT");
-    assert_eq!(payload["body"], draft.body);
+    // Posted marked, so the reviewer never learns from its own review.
+    assert_eq!(payload["body"], super::marked(&draft.body));
 }
 
 // ------------------------------------------------------------ GitLab
@@ -581,13 +614,13 @@ fn gitlab_positions_each_draft_note_with_both_paths_and_the_right_lines() {
         bodies[..4],
         [
             // Added: new_line only.
-            json!({"note": "Added line", "position": position(json!({"old_path": "src/lib.rs", "new_path": "src/lib.rs", "new_line": 3}))}),
+            json!({"note": super::marked("Added line"), "position": position(json!({"old_path": "src/lib.rs", "new_path": "src/lib.rs", "new_line": 3}))}),
             // Removed: old_line only.
-            json!({"note": "Removed line", "position": position(json!({"old_path": "src/lib.rs", "new_path": "src/lib.rs", "old_line": 30}))}),
+            json!({"note": super::marked("Removed line"), "position": position(json!({"old_path": "src/lib.rs", "new_path": "src/lib.rs", "old_line": 30}))}),
             // Unchanged: both.
-            json!({"note": "Context line", "position": position(json!({"old_path": "src/lib.rs", "new_path": "src/lib.rs", "old_line": 5, "new_line": 5}))}),
+            json!({"note": super::marked("Context line"), "position": position(json!({"old_path": "src/lib.rs", "new_path": "src/lib.rs", "old_line": 5, "new_line": 5}))}),
             // Renamed: old and new paths differ.
-            json!({"note": "Renamed file", "position": position(json!({"old_path": "src/before.rs", "new_path": "src/after.rs", "new_line": 6}))}),
+            json!({"note": super::marked("Renamed file"), "position": position(json!({"old_path": "src/before.rs", "new_path": "src/after.rs", "new_line": 6}))}),
         ]
     );
     // The summary note has no position and carries the off-diff finding.
@@ -687,4 +720,12 @@ fn drafts_round_trip_through_json() {
     let draft = gitlab_create(&gitlab(), sample_findings(), &mut fake).unwrap();
     let text = serde_json::to_string(&draft).unwrap();
     assert_eq!(serde_json::from_str::<DraftReview>(&text).unwrap(), draft);
+}
+
+#[test]
+fn every_review_text_gespan_posts_carries_the_marker_once() {
+    let once = super::marked("Summary");
+    assert!(super::is_posted_review(&once));
+    assert_eq!(super::marked(&once), once, "marking twice adds nothing");
+    assert!(!super::is_posted_review("A person's reply"));
 }

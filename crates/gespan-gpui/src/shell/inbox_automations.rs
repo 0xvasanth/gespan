@@ -23,7 +23,7 @@ pub(super) fn item_automations(list: &[Automation], item: &Item) -> Vec<ItemAuto
 }
 
 impl Shell {
-    fn inbox_menu_failed(&self, error: String, cx: &mut Context<Self>) {
+    pub(super) fn inbox_menu_failed(&self, error: String, cx: &mut Context<Self>) {
         if let Some(inbox) = &self.inbox {
             inbox.update(cx, |inbox, cx| inbox.menu_failed(error, cx));
         }
@@ -107,12 +107,25 @@ impl Shell {
             );
             return;
         };
-        let review = service_lock(&service)
-            .and_then(|mut service| service.list())
-            .map(|list| {
-                find_review_automation(&list, &item.project_path)
-                    .map(|automation| automation.id.clone())
-            });
+        let (kind, model) = crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(&item.project_path),
+            cx,
+        );
+        let folders = self
+            .inbox
+            .as_ref()
+            .map(|inbox| inbox.read(cx).git_settings().review_repos)
+            .unwrap_or_default();
+        let review = service_lock(&service).and_then(|mut service| {
+            review_for(
+                &mut service,
+                &item,
+                &folders,
+                kind.id().into(),
+                model.unwrap_or_default(),
+            )
+        });
         match review {
             Ok(Some(id)) => self.run_inbox_automation(item, id, cx),
             Ok(None) => {
@@ -159,5 +172,267 @@ impl Shell {
             let cwd = item.project_path.clone();
             view.update(cx, |view, cx| view.set_context(cwd, projects, cx));
         }
+    }
+}
+
+/// Why the Review button won't make a review for a repo cloned twice.
+const PICK_A_FOLDER: &str = "This repository is open in more than one folder. Pick the one that reviews it in Settings › Git › Code review.";
+
+/// The automation that reviews `item`: its repo's system code review, else
+/// the project's own review automation. With neither, and a project folder to
+/// review in, the repo's code review is made paused, so this review runs now
+/// and nothing reviews on its own until Settings › Git turns it on. `folders`
+/// is Settings › Git's repo-to-folder list: a repo open in two folders with
+/// no pick yet gets no review, as there.
+fn review_for(
+    service: &mut gespan_core::automations::Service,
+    item: &gespan_core::inbox::Item,
+    folders: &[gespan_core::code_review::RepoFolder],
+    harness: String,
+    model: String,
+) -> Result<Option<String>, String> {
+    use gespan_core::automations::system::{self, ReviewSettings};
+    let repo = gespan_core::inbox::queue::repo_key(&item.provider, &item.repo);
+    let list = service.list()?;
+    if let Some(review) = list
+        .iter()
+        .find(|automation| system::reviewed_repo(automation) == Some(repo.as_str()))
+    {
+        return Ok(Some(review.id.clone()));
+    }
+    if let Some(own) = find_review_automation(&list, &item.project_path) {
+        return Ok(Some(own.id.clone()));
+    }
+    if item.project_path.is_empty() || !matches!(item.provider.as_str(), "github" | "gitlab") {
+        return Ok(None);
+    }
+    let row = folders.iter().find(|row| row.repo == repo);
+    if row.is_some_and(|row| row.needs_choice()) {
+        return Err(PICK_A_FOLDER.into());
+    }
+    let folder = row
+        .and_then(|row| row.folder.clone())
+        .unwrap_or_else(|| item.project_path.clone());
+    let made = service.ensure_code_review(
+        &repo,
+        &folder,
+        &ReviewSettings {
+            which: system::which_choices(&repo)[0],
+            harness,
+            model,
+            results: gespan_core::review_policy::ReviewResults::Gespan,
+            enabled: false,
+        },
+    )?;
+    Ok(Some(made.id))
+}
+
+#[cfg(test)]
+mod review_for_tests {
+    use super::review_for;
+    use gespan_core::{
+        automations::{
+            Service,
+            review_setup::{ReviewSetupInput, WhichPrs, review_draft},
+            system::{self, ReviewSettings},
+        },
+        inbox::Item,
+        review_policy::ReviewResults,
+    };
+
+    fn service() -> (tempfile::TempDir, Service) {
+        let dir = tempfile::tempdir().unwrap();
+        let service = Service::open(&dir.path().join("gespan.db")).unwrap();
+        (dir, service)
+    }
+    fn pr(provider: &str, repo: &str, project: &str) -> Item {
+        Item {
+            provider: provider.into(),
+            kind: "pr".into(),
+            number: 9,
+            repo: repo.into(),
+            project_path: project.into(),
+            title: "Fix".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_repos_system_review_wins() {
+        let (_dir, mut service) = service();
+        // The project's own hand-made review exists too.
+        let mut own = review_draft(&ReviewSetupInput {
+            cwd: "/work/app".into(),
+            repo: None,
+            which: WhichPrs::Opened,
+            harness: "codex".into(),
+            model: "m".into(),
+            results: ReviewResults::Gespan,
+        });
+        own.name = "My review".into();
+        service.upsert(own).unwrap();
+        let system = service
+            .ensure_code_review(
+                "github:acme/app",
+                "/work/app",
+                &ReviewSettings {
+                    which: WhichPrs::ReviewRequested,
+                    harness: "codex".into(),
+                    model: "m".into(),
+                    results: ReviewResults::Gespan,
+                    enabled: true,
+                },
+            )
+            .unwrap();
+        let picked = review_for(
+            &mut service,
+            &pr("github", "Acme/App", "/work/app"),
+            &[],
+            "claude".into(),
+            String::new(),
+        );
+        assert_eq!(picked, Ok(Some(system.id)));
+    }
+
+    #[test]
+    fn without_one_the_projects_own_review_runs() {
+        let (_dir, mut service) = service();
+        let own = review_draft(&ReviewSetupInput {
+            cwd: "/work/app".into(),
+            repo: None,
+            which: WhichPrs::Opened,
+            harness: "codex".into(),
+            model: "m".into(),
+            results: ReviewResults::Gespan,
+        });
+        let own = service.upsert(own).unwrap();
+        let picked = review_for(
+            &mut service,
+            &pr("github", "acme/app", "/work/app"),
+            &[],
+            "claude".into(),
+            String::new(),
+        );
+        assert_eq!(picked, Ok(Some(own.id)));
+        assert!(
+            service.code_reviews().unwrap().is_empty(),
+            "nothing new is made"
+        );
+    }
+
+    #[test]
+    fn the_first_review_makes_the_repos_review_paused() {
+        let (_dir, mut service) = service();
+        let picked = review_for(
+            &mut service,
+            &pr("github", "acme/app", "/work/app"),
+            &[],
+            "claude".into(),
+            "opus".into(),
+        )
+        .unwrap()
+        .unwrap();
+        let reviews = service.code_reviews().unwrap();
+        assert_eq!(reviews.len(), 1);
+        assert_eq!(reviews[0].id, picked);
+        assert_eq!(system::reviewed_repo(&reviews[0]), Some("github:acme/app"));
+        assert!(
+            !reviews[0].enabled,
+            "a click reviews once; nothing reviews on its own"
+        );
+        assert_eq!(reviews[0].harness, "claude");
+        // The run it makes is for this pull request.
+        let due = gespan_core::automations::run_on_item(
+            &mut service,
+            &picked,
+            &pr("github", "acme/app", "/work/app"),
+            1,
+        )
+        .unwrap();
+        assert_eq!(due.automation.id, picked);
+    }
+
+    #[test]
+    fn nothing_is_made_without_a_folder_or_on_other_hosts() {
+        let (_dir, mut service) = service();
+        assert_eq!(
+            review_for(
+                &mut service,
+                &pr("github", "acme/web", ""),
+                &[],
+                "claude".into(),
+                String::new()
+            ),
+            Ok(None)
+        );
+        assert_eq!(
+            review_for(
+                &mut service,
+                &pr("azuredevops", "acme/app", "/work/app"),
+                &[],
+                "claude".into(),
+                String::new()
+            ),
+            Ok(None)
+        );
+        assert!(service.code_reviews().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod review_for_folder_tests {
+    use super::{PICK_A_FOLDER, review_for};
+    use gespan_core::{automations::Service, code_review::RepoFolder, inbox::Item};
+
+    fn pr(project: &str) -> Item {
+        Item {
+            provider: "github".into(),
+            kind: "pr".into(),
+            number: 9,
+            repo: "acme/app".into(),
+            project_path: project.into(),
+            title: "Fix".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_repo_open_in_two_folders_waits_for_the_pick() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut service = Service::open(&dir.path().join("gespan.db")).unwrap();
+        let mut row = RepoFolder {
+            repo: "github:acme/app".into(),
+            folders: vec!["/work/app".into(), "/work/app-fork".into()],
+            folder: None,
+        };
+        let picked = review_for(
+            &mut service,
+            &pr("/work/app-fork"),
+            std::slice::from_ref(&row),
+            "claude".into(),
+            String::new(),
+        );
+        assert_eq!(picked, Err(PICK_A_FOLDER.to_string()));
+        assert!(service.code_reviews().unwrap().is_empty(), "nothing made");
+
+        // Once picked, the review is made in the picked folder, whichever
+        // clone the pull request was listed from.
+        row.folder = Some("/work/app".into());
+        let id = review_for(
+            &mut service,
+            &pr("/work/app-fork"),
+            &[row],
+            "claude".into(),
+            String::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let review = service
+            .code_reviews()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == id)
+            .unwrap();
+        assert_eq!(review.cwd, "/work/app");
     }
 }

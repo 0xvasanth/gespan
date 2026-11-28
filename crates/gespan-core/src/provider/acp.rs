@@ -3067,7 +3067,7 @@ mod tests {
         let mut p = acp_review_protocol(ReviewResults::Post, AccessMode::Supervised);
         let (events, mut out) = acp_permission(
             &mut p,
-            json!({"kind":"execute","rawInput":{"command":"gh pr review 7 -R acme/app --comment -b x"}}),
+            json!({"kind":"execute","rawInput":{"command":"gh pr diff 7 -R acme/app"}}),
         );
         assert!(events.is_empty());
         assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
@@ -3156,10 +3156,16 @@ mod tests {
         let mut p = acp_review_protocol(ReviewResults::Post, AccessMode::FullAccess);
         let (events, mut out) = acp_permission(
             &mut p,
-            json!({"kind":"read","rawInput":{"command":"gh pr review 7 -R acme/app --comment --body 'x'"}}),
+            json!({"kind":"read","rawInput":{"command":"gh pr diff 7 -R acme/app"}}),
         );
         assert!(events.is_empty());
         assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "yes");
+        // Gespan posts a Post review itself, so the agent's own post is refused.
+        let (_, mut out) = acp_permission(
+            &mut p,
+            json!({"kind":"read","rawInput":{"command":"gh pr review 7 -R acme/app --comment --body 'x'"}}),
+        );
+        assert_eq!(last(&mut out)["result"]["outcome"]["optionId"], "no");
         let (_, mut out) = acp_permission(
             &mut p,
             json!({"kind":"read","rawInput":{"command":"gh pr merge 7 -R acme/app"}}),

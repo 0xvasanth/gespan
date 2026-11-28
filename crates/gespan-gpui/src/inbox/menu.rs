@@ -63,7 +63,6 @@ pub(super) fn run_pill(run: &ItemRun, now: i64) -> (String, glass::Tone) {
 /// One line of the ⋯ menu.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Entry {
-    Review,
     Open(String),
     Copy,
     /// A pull request action, confirmed before it runs: its action name,
@@ -91,10 +90,8 @@ pub(crate) fn new_automation_event(provider: &str) -> Option<&'static str> {
 pub(super) fn entries(item: &Item, automations: usize) -> Vec<Entry> {
     let pr = item.kind == "pr";
     let github_pr = pr && item.provider == "github";
+    // Review is the header's button now, not a menu entry.
     let mut entries = vec![];
-    if github_pr {
-        entries.push(Entry::Review);
-    }
     if !item.url.is_empty() {
         entries.push(Entry::Open(format!(
             "Open on {}",
@@ -236,10 +233,6 @@ impl Inbox {
             return;
         };
         match entry {
-            Entry::Review => {
-                self.action_menu = false;
-                cx.emit(Event::ReviewWithAgent(Box::new(item)));
-            }
             Entry::Open(_) => {
                 self.action_menu = false;
                 cx.open_url(&item.url);
@@ -319,25 +312,6 @@ impl Inbox {
             let pick = entry.clone();
             let on_click = cx.listener(move |this, _, _, cx| this.menu_pick(pick.clone(), cx));
             match entry {
-                Entry::Review => row("inbox-menu-review".into(), "Review with an agent".into())
-                    .bg(content(0.07))
-                    .child(glyph("message-square", rgb(0xc0affc).into()))
-                    .child(div().flex_1().child("Review with an agent"))
-                    .child(
-                        div()
-                            .px(px(5.))
-                            .h(px(18.))
-                            .flex()
-                            .items_center()
-                            .rounded(px(5.))
-                            .border_1()
-                            .border_color(glass::edge())
-                            .text_size(px(11.))
-                            .text_color(content(0.55))
-                            .child("R"),
-                    )
-                    .on_click(on_click)
-                    .into_any_element(),
                 Entry::Open(label) => row("inbox-menu-open".into(), label.clone().into())
                     .child(glyph("external-link", content(0.7)))
                     .child(label)
@@ -511,7 +485,6 @@ mod tests {
         entries
             .iter()
             .map(|entry| match entry {
-                Entry::Review => "review".into(),
                 Entry::Open(label) => label.clone(),
                 Entry::Copy => "copy".into(),
                 Entry::Pr(name, ..) => format!("pr:{name}"),
@@ -525,12 +498,11 @@ mod tests {
 
     #[test]
     fn the_menu_offers_what_each_provider_and_state_can_do() {
-        // An open GitHub pull request: review, links, its actions, then the
-        // automations to run on it.
+        // An open GitHub pull request: links, its actions, then the
+        // automations to run on it. Review is the header's button.
         assert_eq!(
             names(&entries(&pr("github"), 2)),
             [
-                "review",
                 "Open on GitHub",
                 "copy",
                 "-",
@@ -585,8 +557,8 @@ mod tests {
             ..pr("github")
         };
         assert_eq!(
-            names(&entries(&linkless, 0))[..3],
-            ["review", "-", "pr:merge"]
+            names(&entries(&linkless, 0))[..2],
+            ["pr:merge", "pr:squash"]
         );
         // A tracker's issue cannot start a pull request automation.
         assert_eq!(new_automation_event("linear"), None);
@@ -757,8 +729,11 @@ mod tests {
         settle(visual);
         assert!(visual.debug_bounds("inbox-menu-automation-0").is_none());
 
+        // Review is the header's button, not a menu entry.
         click(visual, "inbox-more");
-        click(visual, "inbox-menu-review");
+        assert!(visual.debug_bounds("inbox-menu-review").is_none());
+        click(visual, "inbox-more");
+        click(visual, "inbox-review");
         assert_eq!(seen.borrow().last().unwrap(), &format!("review {key}"));
         click(visual, "inbox-more");
         click(visual, "inbox-menu-new-automation");

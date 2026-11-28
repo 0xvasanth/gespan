@@ -10,6 +10,7 @@ mod automation_runs;
 mod automation_runs_tests;
 #[cfg(test)]
 mod browser_tabs_tests;
+mod code_review;
 #[cfg(test)]
 mod content_selection_tests;
 mod continue_outside;
@@ -1581,6 +1582,23 @@ impl Shell {
                 &pilots,
                 |this, _, opened: &crate::pilots::TabOpened, cx| {
                     this.pilot_opened(opened.0.clone(), cx);
+                },
+            ));
+            this.observations.push(cx.subscribe(
+                &pilots,
+                |_, _, open: &crate::pilots::OpenRunSession, cx| {
+                    let id = open.0.clone();
+                    cx.spawn(async move |this, cx| {
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            let native = locked(&this.store)
+                                .ok()
+                                .and_then(|store| store.resolve_existing_session_id(&id));
+                            if let Some(native) = native {
+                                this.open(native, window, cx);
+                            }
+                        });
+                    })
+                    .detach();
                 },
             ));
             this.observations.push(cx.subscribe(

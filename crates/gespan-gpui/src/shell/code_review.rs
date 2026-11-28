@@ -1,0 +1,139 @@
+//! Settings › Git › Code review on the Shell side: turning a repo's system
+//! code review on or off, and keeping the list Settings shows.
+use super::automation_runs::service_lock;
+use super::*;
+use gespan_core::{
+    automations::system::{self, ReviewSettings},
+    review_policy::ReviewResults,
+};
+
+impl Shell {
+    /// Reads the system code reviews again and shows them in Settings.
+    pub(super) fn refresh_code_reviews(&mut self, cx: &mut Context<Self>) {
+        let Some(service) = self.automation_state.service.clone() else {
+            self.initialize_automations(cx);
+            return;
+        };
+        let store = self.store.clone();
+        let work = cx.background_executor().spawn(async move {
+            let mut service = service_lock(&service)?;
+            let reviews = service.code_reviews()?;
+            let store = locked(&store).ok();
+            // Each repo's runs, newest first, for its reviewer's Reviews tab.
+            let mut runs = std::collections::HashMap::new();
+            for review in &reviews {
+                if let Some(repo) = system::reviewed_repo(review) {
+                    let mut rows: Vec<crate::pilots::ReviewRunRow> = service
+                        .runs(&review.id)?
+                        .iter()
+                        .map(|run| {
+                            let mut row = crate::pilots::ReviewRunRow::of(run);
+                            row.native = row
+                                .session
+                                .as_deref()
+                                .and_then(|id| store.as_ref()?.resolve_existing_session_id(id));
+                            row
+                        })
+                        .collect();
+                    rows.sort_by_key(|row| std::cmp::Reverse(row.at));
+                    runs.insert(repo.to_string(), rows);
+                }
+            }
+            Ok::<_, String>((reviews, runs))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| match result {
+                Ok((reviews, runs)) => {
+                    this.automation_state.code_reviews = reviews;
+                    if let Some(pilots) = this.pilots.clone() {
+                        pilots.update(cx, |pilots, cx| pilots.set_review_runs(runs, cx));
+                    }
+                    this.sync_settings(cx);
+                }
+                Err(error) => tracing::warn!(%error, "code reviews unavailable"),
+            });
+        })
+        .detach();
+    }
+
+    /// Turns `repo`'s code review on (in `folder`) or off. Turning it on the
+    /// first time makes it with the project's default reviewer, waiting to
+    /// be asked on GitHub and on new merge requests on GitLab; turning it off
+    /// keeps it, paused, with its history.
+    pub(super) fn set_code_review(
+        &mut self,
+        repo: String,
+        folder: String,
+        on: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(service) = self.automation_state.service.clone() else {
+            // Applied once automations open, so the click isn't lost.
+            self.automation_state.pending_code_review = Some((repo, folder, on));
+            self.initialize_automations(cx);
+            return;
+        };
+        let (kind, model) = crate::installed_providers::new_session_choice(
+            &self.workspace.preferences,
+            Some(&folder),
+            cx,
+        );
+        let defaults = ReviewSettings {
+            which: system::which_choices(&repo)[0],
+            harness: kind.id().into(),
+            model: model.unwrap_or_default(),
+            results: ReviewResults::Gespan,
+            enabled: true,
+        };
+        let reviewed = (repo.clone(), folder.clone());
+        let work = cx.background_executor().spawn(async move {
+            let mut service = service_lock(&service)?;
+            let id = system::review_id(&repo);
+            let existing = service.list()?.into_iter().find(|a| a.id == id);
+            match (existing, on) {
+                (Some(existing), true) => {
+                    let mut settings = system::settings_of(&existing).unwrap_or(defaults);
+                    settings.enabled = true;
+                    service.ensure_code_review(&repo, &folder, &settings)?;
+                    service.set_code_review_learning(&repo, true)?;
+                }
+                (Some(existing), false) => {
+                    // Off in Settings stops reviews and learning both; a
+                    // review the Review button made stays paused but learns.
+                    service.set_enabled(&existing.id, false)?;
+                    service.set_code_review_learning(&repo, false)?;
+                }
+                (None, true) => {
+                    service.ensure_code_review(&repo, &folder, &defaults)?;
+                }
+                (None, false) => {}
+            }
+            Ok::<_, String>(())
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Err(error) => {
+                        tracing::warn!(%error, "code review change failed");
+                        this.inbox_menu_failed(error, cx);
+                    }
+                    // The repo's reviewer Pilot is ready before its first review.
+                    Ok(()) if on => {
+                        if let Some(pilots) = this.pilots.clone() {
+                            let (repo, folder) = &reviewed;
+                            pilots.update(cx, |pilots, cx| {
+                                pilots.ensure_reviewer(repo, folder, cx);
+                            });
+                        }
+                    }
+                    Ok(()) => {}
+                }
+                this.refresh_code_reviews(cx);
+                this.refresh_run_views(cx);
+            });
+        })
+        .detach();
+    }
+}

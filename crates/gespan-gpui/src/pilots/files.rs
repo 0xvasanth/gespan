@@ -422,6 +422,11 @@ impl Pilots {
         .detach();
     }
     pub(super) fn delete_pilot(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.roster.get(id).is_some_and(Pilot::is_system) {
+            self.error = Some(pilot::SYSTEM_PILOT_LOCKED.into());
+            cx.notify();
+            return;
+        }
         let prompt = window.prompt(
             gpui::PromptLevel::Warning,
             "Delete pilot?",
@@ -442,7 +447,7 @@ impl Pilots {
                 for run in this.running.values().filter(|r| r.pilot == id) {
                     run.view.update(cx, |v, cx| v.pilot_stop(cx));
                 }
-                this.roster.pilots.retain(|m| m.id != id);
+                this.roster.pilots.retain(|m| m.id != id || m.is_system());
                 this.roadmaps.remove(&id);
                 if this.active.as_ref() == Some(&id) {
                     this.active = None;

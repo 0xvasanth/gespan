@@ -29,6 +29,95 @@ fn identity_projects_order_and_hidden_sessions_survive_restart() {
     assert_ne!(saved.pilots[0].mascot, saved.pilots[1].mascot);
 }
 #[test]
+fn a_repo_has_one_reviewer_pilot_that_follows_its_folder() {
+    let mut roster = Roster::default();
+    let mine = roster.create(vec!["/work/app".into()]).id.clone();
+    let id = roster.ensure_reviewer("GitHub:Acme/App", "/work/app");
+    assert_eq!(
+        roster.ensure_reviewer("github:acme/app", "/work/app"),
+        id,
+        "turning reviews on again keeps the reviewer and what it learned"
+    );
+    let other = roster.ensure_reviewer("gitlab:acme/platform", "/work/platform");
+    assert_ne!(other, id, "each repo has its own reviewer");
+    assert_eq!(roster.pilots.len(), 3);
+    let reviewer = roster.get(&id).unwrap();
+    assert_eq!(reviewer.name, "Reviewer · app");
+    assert_eq!(
+        reviewer.system,
+        Some(PilotRole::CodeReviewer {
+            repo: "github:acme/app".into()
+        })
+    );
+    assert_eq!(reviewer.projects, vec!["/work/app".to_string()]);
+    assert_eq!(roster.reviewer("github:ACME/app").map(|p| &p.id), Some(&id));
+    // The repo moved to another folder: the same reviewer works there now.
+    assert_eq!(
+        roster.ensure_reviewer("github:acme/app", "/work/app-clone"),
+        id
+    );
+    assert_eq!(
+        roster.get(&id).unwrap().projects,
+        vec!["/work/app-clone".to_string()]
+    );
+    // The user's own Pilots are the only ones listed.
+    let listed: Vec<_> = roster.listed().map(|p| p.id.clone()).collect();
+    assert_eq!(listed, vec![mine.clone()]);
+    assert!(!roster.get(&mine).unwrap().is_system());
+}
+
+#[test]
+fn a_system_pilot_stays_one_across_restart_and_old_rosters_read_as_users() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Store::open(&temp.path().join("native.sqlite")).unwrap();
+    let mut roster = Roster::default();
+    let user = roster.create(vec!["/work/app".into()]).id.clone();
+    let reviewer = roster.ensure_reviewer("github:acme/app", "/work/app");
+    assert!(roster
+        .get_mut(&reviewer)
+        .unwrap()
+        .learn_comment("github:acme/app#7:c1"));
+    roster.save(&db).unwrap();
+    let saved = Roster::load(&db).unwrap();
+    assert!(saved.get(&reviewer).unwrap().is_system());
+    assert_eq!(
+        saved.get(&reviewer).unwrap().reviewed_repo(),
+        Some("github:acme/app")
+    );
+    assert_eq!(
+        saved.get(&reviewer).unwrap().learned_comments,
+        vec!["github:acme/app#7:c1".to_string()]
+    );
+    assert!(!saved.get(&user).unwrap().is_system());
+    // A user's Pilot saves without the new fields, as before.
+    let json = serde_json::to_value(saved.get(&user).unwrap()).unwrap();
+    assert!(json.get("system").is_none());
+    assert!(json.get("learnedComments").is_none());
+    // A roster written before system Pilots existed reads as the user's.
+    let old: Pilot = serde_json::from_str(r#"{"id":"abc","name":"Old"}"#).unwrap();
+    assert!(!old.is_system());
+}
+
+#[test]
+fn a_learned_comment_is_learned_once_and_the_list_stays_bounded() {
+    let mut pilot = Pilot::default();
+    assert!(pilot.learn_comment("a"));
+    assert!(!pilot.learn_comment("a"));
+    for i in 0..600 {
+        pilot.learn_comment(&format!("k{i}"));
+    }
+    assert_eq!(pilot.learned_comments.len(), 500);
+    assert_eq!(
+        pilot.learned_comments.last().map(String::as_str),
+        Some("k599")
+    );
+    assert!(
+        !pilot.learned_comments.iter().any(|k| k == "a"),
+        "oldest go first"
+    );
+}
+
+#[test]
 fn memory_supersedes_uniquely_redacts_and_archives_before_prompt_budget() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();

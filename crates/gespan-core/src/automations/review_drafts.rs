@@ -158,6 +158,7 @@ mod tests {
                 body: "Off by one".into(),
             }],
             outside: 1,
+            submitted: false,
         }
     }
 

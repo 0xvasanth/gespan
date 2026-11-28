@@ -64,7 +64,28 @@ impl Shell {
                 catalogs.insert(session.summary.provider.clone(), models);
             }
         }
+        let code_reviews = self
+            .automation_state
+            .code_reviews
+            .iter()
+            .filter_map(|automation| {
+                gespan_core::automations::system::reviewed_repo(automation).map(|repo| {
+                    crate::settings::CodeReviewRow {
+                        repo: repo.to_string(),
+                        id: automation.id.clone(),
+                        cwd: automation.cwd.clone(),
+                        enabled: automation.enabled,
+                        learns: gespan_core::automations::system::learns(automation),
+                        reviewer: self
+                            .pilots
+                            .as_ref()
+                            .and_then(|pilots| pilots.read(cx).reviewer_id(repo)),
+                    }
+                })
+            })
+            .collect();
         SettingsContext {
+            code_reviews,
             remote: Some(self.remote.clone()),
             mobile: self.mobile_status(),
             mobile_invite: self.mobile.invite.clone(),
@@ -137,6 +158,21 @@ impl Shell {
             &view,
             window,
             |this, _, event: &SettingsEvent, window, cx| match event {
+                SettingsEvent::CodeReview { repo, folder, on } => {
+                    this.set_code_review(repo.clone(), folder.clone(), *on, cx)
+                }
+                SettingsEvent::OpenPilot(id) => {
+                    this.close_settings(window, cx);
+                    if let Some(pilots) = this.pilots.clone() {
+                        pilots.update(cx, |pilots, cx| pilots.open(id, window, cx));
+                    }
+                }
+                SettingsEvent::OpenAutomation(id) => {
+                    this.open_automations(window, cx);
+                    if let Some(view) = &this.automations {
+                        view.update(cx, |view, cx| view.show_automation(id.clone(), cx));
+                    }
+                }
                 SettingsEvent::Section(section) => {
                     this.load_inbox_for_settings(*section, window, cx);
                     this.select_settings(*section, cx)
@@ -286,6 +322,9 @@ impl Shell {
     ) {
         if !matches!(section, Section::Inbox | Section::Services) {
             return;
+        }
+        if section == Section::Inbox {
+            self.refresh_code_reviews(cx);
         }
         let first = self.inbox.is_none();
         self.ensure_background_inbox(window, cx);

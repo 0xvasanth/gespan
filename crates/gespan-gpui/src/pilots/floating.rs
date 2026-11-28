@@ -339,7 +339,7 @@ impl gpui::Render for Floating {
         }
         let owner = self.owner.read(cx);
         let chat = owner.chats.get(&self.selected).cloned();
-        let roster = owner.roster.pilots.clone();
+        let roster: Vec<Pilot> = owner.roster.listed().cloned().collect();
         let pilot = owner.roster.get(&self.selected).cloned();
         let failure = owner.error.clone();
         let (state, busy) = chat.as_ref().map_or(("idle".to_owned(), false), |c| {

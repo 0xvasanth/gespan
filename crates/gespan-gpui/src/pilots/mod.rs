@@ -2,6 +2,9 @@
 //! overview, settings and floating windows.
 pub(crate) mod avatar;
 pub(crate) mod cards;
+mod code_review;
+#[cfg(test)]
+mod code_review_tests;
 mod color_picker;
 #[cfg(test)]
 mod dictation_tests;
@@ -65,6 +68,9 @@ use std::{
 pub(crate) struct Changed;
 pub(crate) struct TabOpened(pub String);
 pub(crate) struct ShowDetails(pub String);
+/// A reviewer's Reviews tab asked to open the session of one of its runs.
+pub(crate) struct OpenRunSession(pub String);
+pub(crate) use code_review::ReviewRunRow;
 /// The sidebar asked to turn Pilots off, as Settings › Appearance › Sidebar › Pilots does.
 pub(crate) struct HidePilots;
 pub(crate) use notifications::{NotificationChanged, NotificationFinished};
@@ -196,6 +202,17 @@ pub(crate) struct Pilots {
     /// Completed steps waiting for a review slot, oldest first.
     review_queue: std::collections::VecDeque<flow_reviews::QueuedReview>,
     flow_watch: flow_reviews::Watch,
+    /// Sessions of system code reviews: they read a reviewer's rules from
+    /// their prompt and may never act as it.
+    pub(crate) code_reviews: HashSet<i64>,
+    /// Hidden runs teaching a reviewer from trusted comments, by session.
+    learning: HashMap<i64, code_review::LearningRun>,
+    /// Comments a learning run is starting for: marked learned only once it
+    /// dispatches, so a run that fails to start is tried again.
+    learning_pending: HashSet<String>,
+    /// Each reviewed repo's review runs, newest first, as the Shell last
+    /// read them, for its reviewer's Reviews tab.
+    review_runs: HashMap<String, Vec<code_review::ReviewRunRow>>,
     /// Prompts hidden runs were given; tests never send them.
     #[cfg(test)]
     pub(crate) hidden_prompts: Vec<(i64, String)>,
@@ -213,6 +230,7 @@ impl EventEmitter<Changed> for Pilots {}
 impl EventEmitter<TabOpened> for Pilots {}
 impl EventEmitter<ShowDetails> for Pilots {}
 impl EventEmitter<HidePilots> for Pilots {}
+impl EventEmitter<OpenRunSession> for Pilots {}
 impl Pilots {
     pub(crate) fn resource_sessions(
         &self,
@@ -222,6 +240,7 @@ impl Pilots {
             .values()
             .chain(self.running.values().map(|r| &r.view))
             .chain(self.reviews.values().map(|r| &r.view))
+            .chain(self.learning.values().map(|r| &r.view))
             .map(|v| {
                 let s = &v.read(cx).summary;
                 (
@@ -240,6 +259,7 @@ impl Pilots {
             .values()
             .chain(self.running.values().map(|r| &r.view))
             .chain(self.reviews.values().map(|r| &r.view))
+            .chain(self.learning.values().map(|r| &r.view))
             .find(|v| v.read(cx).summary.id == id)
         {
             view.update(cx, |v, cx| v.stop_if_busy(cx));
@@ -437,6 +457,10 @@ impl Pilots {
             reviews: HashMap::new(),
             review_queue: Default::default(),
             flow_watch: Default::default(),
+            code_reviews: HashSet::new(),
+            learning: HashMap::new(),
+            learning_pending: HashSet::new(),
+            review_runs: HashMap::new(),
             #[cfg(test)]
             hidden_prompts: Vec::new(),
             #[cfg(test)]
@@ -491,7 +515,8 @@ impl Pilots {
             .reviews
             .values()
             .map(|review| (review.view.clone(), false));
-        chats.chain(habits).chain(reviews).collect()
+        let learning = self.learning.values().map(|run| (run.view.clone(), false));
+        chats.chain(habits).chain(reviews).chain(learning).collect()
     }
     pub(crate) fn is_pilot_session(&self, id: i64) -> bool {
         self.roster.hidden_sessions.contains(&id)
@@ -657,8 +682,7 @@ impl Pilots {
     /// Every Pilot's id and name, in roster order.
     pub(crate) fn names(&self) -> Vec<(String, String)> {
         self.roster
-            .pilots
-            .iter()
+            .listed()
             .map(|pilot| (pilot.id.clone(), pilot.label()))
             .collect()
     }
@@ -1337,6 +1361,9 @@ impl Pilots {
                 .map(|v| v.read(cx).pilot_status(cx).to_owned())
                 .unwrap_or_else(|| "idle".to_owned())
         };
+        // System Pilots (a repo's reviewer) show here too, with a lock: the
+        // user opens one to see what it learned. Only the automation picker
+        // (`names`) leaves them out, since they take no other work.
         let mut roster: Vec<(String, String)> = self
             .roster
             .pilots
@@ -1612,7 +1639,25 @@ impl Pilots {
                             .group_hover("pilot-rail-row", |s| s.pr(px(24.)))
                             .flex()
                             .flex_col()
-                            .child(div().truncate().child(pilot.label()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(5.))
+                                    .child(div().truncate().child(pilot.label()))
+                                    .when(pilot.is_system(), |d| {
+                                        d.child(
+                                            div()
+                                                .debug_selector({
+                                                    let id = pilot.id.clone();
+                                                    move || format!("pilot-rail-system-{id}")
+                                                })
+                                                .flex_none()
+                                                .text_color(content(0.5))
+                                                .child(icon("lock", 11.)),
+                                        )
+                                    }),
+                            )
                             // `.prow` grows to 40px for the question, in
                             // the waiting yellow, under the name.
                             .when_some(question, |d, question| {

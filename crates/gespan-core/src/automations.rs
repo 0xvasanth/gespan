@@ -11,6 +11,7 @@ use toasty::Executor;
 
 pub mod review_drafts;
 pub mod review_setup;
+pub mod system;
 
 fn now_millis() -> i64 {
     crate::time::now_ms().min(i64::MAX as u64) as i64
@@ -88,6 +89,11 @@ pub struct Automation {
     /// Set on automations made by the review setup; where the review goes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_results: Option<crate::review_policy::ReviewResults>,
+    /// Made and kept by Gespan, not by the user: shown with a lock, never
+    /// deleted by hand, and only the settings its role allows change. See
+    /// [`system`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<system::SystemRole>,
     /// With the Pilot action the session settings above are kept but unused.
     #[serde(default, skip_serializing_if = "AutomationAction::is_session")]
     pub action: AutomationAction,
@@ -891,6 +897,17 @@ impl Service {
     }
 
     pub fn upsert(&mut self, automation: AutomationUpsert) -> Result<Automation, String> {
+        self.save(automation, None)
+    }
+
+    /// Saves `automation`. `system` is set only by Gespan's own code (see
+    /// [`system`]); a save without it keeps a system automation's role and
+    /// may change only what that role allows.
+    pub(crate) fn save(
+        &mut self,
+        automation: AutomationUpsert,
+        system: Option<system::SystemRole>,
+    ) -> Result<Automation, String> {
         let now = now_millis();
         validate_upsert(&automation, now)?;
         let triggers = Some(normalize_triggers(&automation));
@@ -898,12 +915,21 @@ impl Service {
         let previous = self
             .db
             .run(|mut db| async move { get(&mut db, &id).await })?;
+        if system.is_none() {
+            if let Some(previous) = &previous {
+                system::check_user_change(previous, &automation)?;
+            }
+        }
+        let system = system.or_else(|| previous.as_ref().and_then(|value| value.system.clone()));
         // An automation belongs to one project for its whole life, so an event
         // always maps to the one automation set up for it there. Running it
         // somewhere else is a new automation (the editor's Duplicate).
-        if previous.as_ref().is_some_and(|previous| {
+        let moved = previous.as_ref().is_some_and(|previous| {
             crate::files::path_key(&previous.cwd) != crate::files::path_key(&automation.cwd)
-        }) {
+        });
+        // A system review follows its repo to the folder the user picks, in
+        // place, so its runs stay with it; a user's automation never moves.
+        if moved && system.is_none() {
             return Err(PROJECT_FROZEN.into());
         }
         let created_at = previous
@@ -914,7 +940,8 @@ impl Service {
         // from now: items that already exist are backlog.
         let events_since = match &previous {
             Some(previous)
-                if (previous.enabled || !automation.enabled)
+                if !moved
+                    && (previous.enabled || !automation.enabled)
                     && event_signature(&previous.triggers())
                         == event_signature(triggers.as_deref().unwrap_or_default()) =>
             {
@@ -941,6 +968,7 @@ impl Service {
             reuse_session: automation.reuse_session,
             runtime_mode: automation.runtime_mode,
             review_results: automation.review_results,
+            system,
             action: automation.action,
             trigger_kind: automation.trigger_kind,
             trigger_event: automation.trigger_event.trim().to_string(),
@@ -972,6 +1000,18 @@ impl Service {
 
     pub fn delete(&mut self, id: &str) -> Result<(), String> {
         validate_id(id, "automation")?;
+        if self
+            .db
+            .run(|mut db| async move { get(&mut db, id).await })?
+            .is_some_and(|automation| automation.system.is_some())
+        {
+            return Err(system::CANT_DELETE.into());
+        }
+        self.delete_row(id)
+    }
+
+    /// Deletes the automation, system or not, with its runs and claims.
+    pub(crate) fn delete_row(&mut self, id: &str) -> Result<(), String> {
         self.db.run(
             |mut db| async move { AutomationRow::filter_by_id(id).delete().exec(&mut db).await },
         )
@@ -1885,15 +1925,26 @@ pub struct Watch {
 pub fn event_watches(service: &mut Service, now: i64) -> Result<Vec<Watch>, String> {
     let mut watches = Vec::new();
     for automation in service.list()? {
-        if !automation.enabled {
+        // A paused code review still reads comments, so a review made by the
+        // Review button learns too; reading them never starts a review.
+        let paused = !automation.enabled;
+        if paused && system::reviewed_repo(&automation).is_none() {
             continue;
         }
         let since = automation
             .events_since
             .unwrap_or(automation.created_at)
             .max(now.saturating_sub(catch_up_ms(&automation)));
+        // A repo's code review also reads its pull requests' comments, so
+        // its reviewer Pilot can learn from the user's corrections.
+        let learns = system::reviewed_repo(&automation)
+            .filter(|_| system::learns(&automation))
+            .and_then(|repo| repo.split_once(':'))
+            .map(|(provider, _)| provider.to_string());
         for (provider, event) in WATCHED_EVENTS {
-            if has_event_trigger(&automation, provider, event) {
+            let learning = learns.as_deref() == Some(provider)
+                && matches!(event, GITHUB_COMMENT_EVENT | GITLAB_COMMENT_EVENT);
+            if learning || (!paused && has_event_trigger(&automation, provider, event)) {
                 watches.push(Watch {
                     provider: provider.into(),
                     event: event.into(),
@@ -2070,10 +2121,12 @@ fn pull_request_trigger(
     automation: &Automation,
     item: &crate::inbox::Item,
 ) -> Option<AutomationTrigger> {
-    automation
-        .triggers()
-        .into_iter()
-        .find(|trigger| trigger.kind == item.provider && is_pull_request_event(&trigger.event))
+    // A review that waits for the `/gespan review` comment can still be run
+    // on a pull request by hand.
+    automation.triggers().into_iter().find(|trigger| {
+        trigger.kind == item.provider
+            && (is_pull_request_event(&trigger.event) || is_review_command_event(&trigger.event))
+    })
 }
 
 /// The project's automations a pull request can be run through by hand:

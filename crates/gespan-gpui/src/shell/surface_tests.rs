@@ -712,6 +712,207 @@ mod inbox_settings {
         assert!(visual.debug_bounds("inbox-connect-dialog").is_none());
     }
 
+    /// The system code reviews the Shell holds, as (repo, enabled, folder).
+    fn reviews(
+        window: WindowHandle<Shell>,
+        visual: &mut VisualTestContext,
+    ) -> Vec<(String, bool, String)> {
+        window
+            .update(visual, |shell, _, _| {
+                let service = shell
+                    .automation_state
+                    .service
+                    .clone()
+                    .expect("automations open");
+                let reviews = service.lock().unwrap().code_reviews().unwrap();
+                reviews
+                    .into_iter()
+                    .map(|a| {
+                        let repo = gespan_core::automations::system::reviewed_repo(&a)
+                            .unwrap()
+                            .to_string();
+                        (repo, a.enabled, a.cwd)
+                    })
+                    .collect()
+            })
+            .unwrap()
+    }
+
+    #[gpui::test]
+    fn a_switch_flipped_before_automations_open_still_turns_review_on(cx: &mut TestAppContext) {
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        window
+            .update(visual, |shell, _, cx| {
+                // As at launch: automations have not opened yet.
+                shell.automation_state.service = None;
+                shell.set_code_review("github:acme/app".into(), "/work/app".into(), true, cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        assert_eq!(
+            reviews(window, visual),
+            [("github:acme/app".to_string(), true, "/work/app".to_string())]
+        );
+    }
+
+    #[gpui::test]
+    fn code_review_is_turned_on_per_repo_in_one_folder(cx: &mut TestAppContext) {
+        use gespan_core::inbox::ProjectRepo;
+        let (window, mut visual) = inbox_page(cx);
+        let visual = &mut visual;
+        let repo = |name: &str, path: &str| ProjectRepo {
+            provider: "github".into(),
+            repo: name.into(),
+            project_path: path.into(),
+        };
+        window
+            .update(visual, |shell, _, cx| {
+                shell.inbox.as_ref().unwrap().update(cx, |inbox, cx| {
+                    inbox.seed_repos(
+                        vec![
+                            repo("acme/app", "/work/app"),
+                            repo("acme/two", "/work/two-a"),
+                            repo("acme/two", "/work/two-b"),
+                            repo("acme/web", ""),
+                        ],
+                        cx,
+                    )
+                });
+                shell.sync_settings(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        // Rows in repo order: app (one folder), two (two clones), web (none).
+        assert!(visual.debug_bounds("settings-review-0").is_some());
+        assert!(
+            visual.debug_bounds("settings-review-1").is_none(),
+            "two clones: no switch until one is picked"
+        );
+        assert!(visual.debug_bounds("settings-review-folder-1-0").is_some());
+        assert!(
+            visual.debug_bounds("settings-review-2").is_none(),
+            "no folder, nothing to review in"
+        );
+
+        // Turning app on makes its system review in its folder.
+        click(visual, "settings-review-0".into());
+        assert_eq!(
+            reviews(window, visual),
+            [("github:acme/app".to_string(), true, "/work/app".to_string())]
+        );
+        assert!(visual.debug_bounds("settings-review-open-0").is_some());
+        // Its reviewer Pilot is one click away, to see what it learned.
+        assert!(
+            visual.debug_bounds("settings-review-pilot-0").is_some(),
+            "the review links its reviewer Pilot"
+        );
+
+        // Picking a clone lets two be turned on, in the picked folder.
+        click(visual, "settings-review-folder-1-1".into());
+        assert!(visual.debug_bounds("settings-review-1").is_some());
+        click(visual, "settings-review-1".into());
+        let made = reviews(window, visual);
+        assert!(
+            made.contains(&(
+                "github:acme/two".to_string(),
+                true,
+                "/work/two-b".to_string()
+            )),
+            "{made:?}"
+        );
+
+        // Switching to the other clone moves the running review there.
+        click(visual, "settings-review-folder-1-0".into());
+        let moved = reviews(window, visual);
+        assert!(
+            moved.contains(&(
+                "github:acme/two".to_string(),
+                true,
+                "/work/two-a".to_string()
+            )),
+            "{moved:?}"
+        );
+        assert_eq!(moved.len(), 2, "moving never leaves a second review behind");
+
+        // Each repo got one reviewer Pilot, working in the review's folder,
+        // and none of them is listed with the user's Pilots.
+        let reviewers = |window: WindowHandle<Shell>, visual: &mut VisualTestContext| {
+            window
+                .update(visual, |shell, _, cx| {
+                    let pilots = shell.pilot_manager().read(cx);
+                    let names: Vec<String> = pilots.names().into_iter().map(|(id, _)| id).collect();
+                    pilots
+                        .roster
+                        .pilots
+                        .iter()
+                        .filter_map(|p| {
+                            assert!(!names.contains(&p.id), "a reviewer was listed");
+                            Some((p.reviewed_repo()?.to_string(), p.projects.clone()))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap()
+        };
+        assert_eq!(
+            reviewers(window, visual),
+            [
+                ("github:acme/app".to_string(), vec!["/work/app".to_string()]),
+                (
+                    "github:acme/two".to_string(),
+                    vec!["/work/two-a".to_string()]
+                ),
+            ]
+        );
+
+        // Off pauses it: kept, with its history, but not running.
+        click(visual, "settings-review-0".into());
+        assert!(reviews(window, visual).contains(&(
+            "github:acme/app".to_string(),
+            false,
+            "/work/app".to_string()
+        )));
+        assert_eq!(
+            reviewers(window, visual).len(),
+            2,
+            "pausing keeps the reviewer and what it learned"
+        );
+
+        // A second clone of app appears: its folder needs a pick again, but
+        // the review it has keeps its switch, so it can still be turned on
+        // or off here.
+        window
+            .update(visual, |shell, _, cx| {
+                shell.inbox.as_ref().unwrap().update(cx, |inbox, cx| {
+                    inbox.seed_repos(
+                        vec![
+                            repo("acme/app", "/work/app"),
+                            repo("acme/app", "/work/app-clone"),
+                            repo("acme/two", "/work/two-a"),
+                            repo("acme/two", "/work/two-b"),
+                        ],
+                        cx,
+                    )
+                });
+                shell.sync_settings(cx);
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        assert!(visual.debug_bounds("settings-review-folder-0-1").is_some());
+        assert!(
+            visual.debug_bounds("settings-review-0").is_some(),
+            "a review that exists always keeps its switch"
+        );
+        click(visual, "settings-review-0".into());
+        assert!(reviews(window, visual).contains(&(
+            "github:acme/app".to_string(),
+            true,
+            "/work/app".to_string()
+        )));
+    }
+
     #[gpui::test]
     fn linear_teams_are_picked_in_settings_once_connected(cx: &mut TestAppContext) {
         let (window, mut visual) = connections_page(cx);

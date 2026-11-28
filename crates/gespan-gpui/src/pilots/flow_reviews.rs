@@ -690,6 +690,7 @@ impl Pilots {
     /// Every Pilot gets its waiting alerts and reviews on the clock.
     pub(super) fn tick_flows(&mut self, cx: &mut Context<Self>) {
         self.check_review_timeouts(cx);
+        self.check_learning_timeouts(cx);
         self.pump_reviews(cx);
         let ids: Vec<String> = self.roster.pilots.iter().map(|p| p.id.clone()).collect();
         for id in ids {

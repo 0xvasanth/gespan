@@ -258,6 +258,7 @@ impl SettingsView {
             repo_rows,
         );
 
+        let code_review = self.code_review_group(&git, &inbox, cx);
         let pref_toggle =
             |this: &Self,
              id: &'static str,
@@ -377,9 +378,239 @@ impl SettingsView {
         vec![
             pointer,
             repos,
+            code_review,
             other,
             opening,
             self.project_notification_settings(cx),
         ]
+    }
+
+    /// Settings › Git › Code review: each GitHub and GitLab repo, the one
+    /// folder that reviews it, and its review switch. Turning a repo on makes
+    /// its system code review; the rest of its settings live in Automations.
+    fn code_review_group(
+        &self,
+        git: &crate::inbox::GitSettings,
+        inbox: &gpui::Entity<crate::inbox::Inbox>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut rows: Vec<AnyElement> = Vec::new();
+        if git.review_repos.is_empty() {
+            rows.push(
+                div()
+                    .debug_selector(|| "settings-review-no-repos".into())
+                    .px_4()
+                    .py_3()
+                    .text_size(px(12.))
+                    .text_color(content(0.55))
+                    .child("Open a project with a GitHub or GitLab remote to review its pull requests.")
+                    .into_any_element(),
+            );
+        }
+        for (ix, repo) in git.review_repos.iter().enumerate() {
+            let review = self.ctx.code_reviews.iter().find(|r| r.repo == repo.repo);
+            let on = review.is_some_and(|r| r.enabled);
+            let (host, name) = repo
+                .repo
+                .split_once(':')
+                .unwrap_or(("", repo.repo.as_str()));
+            let host = gespan_core::inbox::provider_label(host);
+            let description: SharedString = review_description(host, repo, review).into();
+            let mut controls: Vec<AnyElement> = Vec::new();
+            // Two clones: one chip per folder, the picked one lit.
+            if repo.folders.len() > 1 {
+                let chips = repo.folders.iter().enumerate().map(|(fx, folder)| {
+                    let picked = repo.folder.as_deref() == Some(folder.as_str());
+                    let (key, folder) = (repo.repo.clone(), folder.clone());
+                    let inbox = inbox.clone();
+                    crate::glass::chip(
+                        SharedString::from(format!("settings-review-folder-{ix}-{fx}")),
+                        folder_name(&folder),
+                        picked,
+                    )
+                    .debug_selector(move || format!("settings-review-folder-{ix}-{fx}"))
+                    .role(gpui::Role::Button)
+                    .aria_label(format!("Review {name} in {folder}"))
+                    .aria_selected(picked)
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        inbox.update(cx, |inbox, cx| {
+                            inbox.pick_review_folder(key.clone(), folder.clone(), cx)
+                        });
+                        // A review that runs moves with the pick.
+                        if on {
+                            cx.emit(SettingsEvent::CodeReview {
+                                repo: key.clone(),
+                                folder: folder.clone(),
+                                on: true,
+                            });
+                        }
+                    }))
+                    .into_any_element()
+                });
+                controls.push(div().flex().gap(px(6.)).children(chips).into_any_element());
+            }
+            // The reviewer Pilot: what it learned from your corrections.
+            if let Some(pilot) = review.and_then(|review| review.reviewer.clone()) {
+                controls.push(
+                    crate::glass::button(
+                        SharedString::from(format!("settings-review-pilot-{ix}")),
+                        "Reviewer",
+                        crate::glass::Button::Ghost,
+                    )
+                    .debug_selector(move || format!("settings-review-pilot-{ix}"))
+                    .role(gpui::Role::Button)
+                    .aria_label(format!("Open the reviewer Pilot of {name}"))
+                    .h(px(28.))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(SettingsEvent::OpenPilot(pilot.clone()))
+                    }))
+                    .into_any_element(),
+                );
+            }
+            if let Some(review) = review {
+                let id = review.id.clone();
+                controls.push(
+                    crate::glass::button(
+                        SharedString::from(format!("settings-review-open-{ix}")),
+                        "Open",
+                        crate::glass::Button::Ghost,
+                    )
+                    .debug_selector(move || format!("settings-review-open-{ix}"))
+                    .role(gpui::Role::Button)
+                    .aria_label(format!("Open the code review of {name} in Automations"))
+                    .h(px(28.))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(SettingsEvent::OpenAutomation(id.clone()))
+                    }))
+                    .into_any_element(),
+                );
+            }
+            // A review that exists keeps its switch while the folder pick is
+            // open again (a second clone appeared), so it can still be turned
+            // off here. With its project closed the repo has no row; Automations
+            // still pauses it.
+            if let Some(folder) = repo
+                .folder
+                .clone()
+                .or_else(|| review.map(|review| review.cwd.clone()))
+            {
+                let key = repo.repo.clone();
+                controls.push(
+                    div()
+                        .id(SharedString::from(format!("settings-review-{ix}")))
+                        .debug_selector(move || format!("settings-review-{ix}"))
+                        .role(gpui::Role::Switch)
+                        .aria_label(format!("Review pull requests of {name}"))
+                        .aria_toggled(if on {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
+                        .relative()
+                        .flex_shrink_0()
+                        .rounded_full()
+                        .h(px(18.))
+                        .w(px(30.))
+                        .cursor_pointer()
+                        .bg(if on { accent_color() } else { content(0.16) })
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(2.))
+                                .left(px(if on { 14. } else { 2. }))
+                                .size(px(14.))
+                                .rounded_full()
+                                .bg(gpui::rgb(0xffffff)),
+                        )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SettingsEvent::CodeReview {
+                                repo: key.clone(),
+                                folder: folder.clone(),
+                                on: !on,
+                            })
+                        }))
+                        .into_any_element(),
+                );
+            }
+            rows.push(self.row(None, ix == 0, name.to_string(), Some(description), controls));
+        }
+        self.glass_group(
+            Some("git-code-review"),
+            "Code review",
+            Some("Gespan reviews a repo in the one project folder its remote points at. Turning a repo on makes its review: a system automation you can tune in Automations but not delete.".into()),
+            None,
+            None,
+            rows,
+        )
+    }
+}
+
+/// A folder's last part, as projects are named.
+/// The line under a repo in Code review: where it reviews and, for a review
+/// that is off but still learns (the Review button made it), that it does.
+fn review_description(
+    host: &str,
+    repo: &gespan_core::code_review::RepoFolder,
+    review: Option<&crate::settings::CodeReviewRow>,
+) -> String {
+    let place = match (&repo.folder, repo.folders.len()) {
+        (_, 0) => format!("{host} · needs a project folder to review in"),
+        (Some(folder), _) => format!("{host} · reviews in {}", folder_name(folder)),
+        (None, n) => format!("{host} · {n} folders point here: pick the one that reviews"),
+    };
+    match review {
+        Some(review) if !review.enabled && review.learns => {
+            format!("{place} · only when you press Review, and learns from your comments")
+        }
+        _ => place,
+    }
+}
+
+fn folder_name(path: &str) -> String {
+    std::path::Path::new(path.trim_end_matches('/'))
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.into())
+}
+
+#[cfg(test)]
+mod review_description_tests {
+    use super::review_description;
+    use crate::settings::CodeReviewRow;
+    use gespan_core::code_review::RepoFolder;
+
+    #[test]
+    fn a_review_that_is_off_but_learning_says_so() {
+        let repo = RepoFolder {
+            repo: "github:acme/app".into(),
+            folders: vec!["/work/app".into()],
+            folder: Some("/work/app".into()),
+        };
+        let row = |enabled, learns| CodeReviewRow {
+            repo: repo.repo.clone(),
+            id: "r".into(),
+            cwd: "/work/app".into(),
+            enabled,
+            learns,
+            reviewer: None,
+        };
+        assert_eq!(
+            review_description("GitHub", &repo, None),
+            "GitHub · reviews in app"
+        );
+        assert_eq!(
+            review_description("GitHub", &repo, Some(&row(true, true))),
+            "GitHub · reviews in app"
+        );
+        // Made by the Review button: off, but its reviewer still learns.
+        assert_eq!(
+            review_description("GitHub", &repo, Some(&row(false, true))),
+            "GitHub · reviews in app · only when you press Review, and learns from your comments"
+        );
+        // Off in Settings: off, and learning stopped with it.
+        assert_eq!(
+            review_description("GitHub", &repo, Some(&row(false, false))),
+            "GitHub · reviews in app"
+        );
     }
 }

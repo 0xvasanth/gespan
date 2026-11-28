@@ -4,6 +4,7 @@ pub mod actions;
 pub mod api;
 pub mod bridge;
 pub mod cards;
+pub mod code_review;
 mod desktop;
 pub mod files;
 pub mod flow_notes;
@@ -72,7 +73,31 @@ pub struct Pilot {
     /// The goals this Pilot's Flow runs serve.
     #[serde(default)]
     pub goals: Vec<flow_notes::Goal>,
+    /// Set on a Pilot Gespan made and keeps for a job of its own: the user
+    /// can't rename, delete or give it work. It shows in the Pilots rail with
+    /// a lock; only `Pilots::names` (the automation picker) and the floating
+    /// window leave it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<PilotRole>,
+    /// A code reviewer's comments it has already learned from, newest last,
+    /// so a comment read again is not learned twice. Bounded.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub learned_comments: Vec<String>,
 }
+/// What a system Pilot is for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PilotRole {
+    /// Reviews `repo`'s pull or merge requests and keeps the review rules
+    /// the user taught it. `repo` is a [`crate::inbox::queue::repo_key`].
+    #[serde(rename_all = "camelCase")]
+    CodeReviewer { repo: String },
+}
+/// Why a system Pilot can't be renamed or deleted.
+pub const SYSTEM_PILOT_LOCKED: &str =
+    "Gespan keeps this Pilot for the repo's code review, so it can't be renamed or deleted.";
+/// How many learned comment ids a reviewer keeps.
+const MAX_LEARNED_COMMENTS: usize = 500;
 impl Default for Pilot {
     fn default() -> Self {
         Self {
@@ -97,10 +122,40 @@ impl Default for Pilot {
             flow_notes: Vec::new(),
             flow_alerts: Vec::new(),
             goals: Vec::new(),
+            system: None,
+            learned_comments: Vec::new(),
         }
     }
 }
 impl Pilot {
+    /// Made and kept by Gespan, not by the user.
+    pub fn is_system(&self) -> bool {
+        self.system.is_some()
+    }
+    /// The repo this Pilot reviews, when it is a code reviewer.
+    pub fn reviewed_repo(&self) -> Option<&str> {
+        match &self.system {
+            Some(PilotRole::CodeReviewer { repo }) => Some(repo),
+            None => None,
+        }
+    }
+    /// Whether `key` was learned from already.
+    pub fn has_learned(&self, key: &str) -> bool {
+        self.learned_comments.iter().any(|k| k == key)
+    }
+    /// Notes `key` as learned. False when it already was.
+    pub fn learn_comment(&mut self, key: &str) -> bool {
+        if self.learned_comments.iter().any(|k| k == key) {
+            return false;
+        }
+        self.learned_comments.push(key.to_string());
+        let over = self
+            .learned_comments
+            .len()
+            .saturating_sub(MAX_LEARNED_COMMENTS);
+        self.learned_comments.drain(..over);
+        true
+    }
     pub fn label(&self) -> String {
         if !self.name.trim().is_empty() {
             return self.name.clone();
@@ -280,6 +335,52 @@ impl Roster {
     }
     pub fn get(&self, id: &str) -> Option<&Pilot> {
         self.pilots.iter().find(|m| m.id == id)
+    }
+    /// The Pilots the user made, in roster order: system Pilots are left out.
+    pub fn listed(&self) -> impl Iterator<Item = &Pilot> {
+        self.pilots.iter().filter(|m| !m.is_system())
+    }
+    /// The Pilot that reviews `repo`, if one was made.
+    pub fn reviewer(&self, repo: &str) -> Option<&Pilot> {
+        let repo = repo.trim().to_lowercase();
+        self.pilots
+            .iter()
+            .find(|m| m.reviewed_repo() == Some(repo.as_str()))
+    }
+    /// The id of `repo`'s reviewer Pilot, made the first time, working on
+    /// `project`: a repo has one reviewer wherever its folder moves, so what
+    /// it learned stays with it.
+    pub fn ensure_reviewer(&mut self, repo: &str, project: &str) -> String {
+        let repo = repo.trim().to_lowercase();
+        if let Some(pilot) = self
+            .pilots
+            .iter_mut()
+            .find(|m| m.reviewed_repo() == Some(repo.as_str()))
+        {
+            if pilot.projects.len() != 1 || !pilot.works_on(project) {
+                pilot.projects = vec![project.to_string()];
+                pilot.normalize();
+            }
+            return pilot.id.clone();
+        }
+        let name = repo
+            .rsplit(['/', ':'])
+            .find(|part| !part.trim().is_empty())
+            .unwrap_or(repo.as_str())
+            .to_string();
+        let (mascot, color) = self.next_look();
+        let mut pilot = Pilot {
+            name: format!("Reviewer · {name}"),
+            mascot: mascot.to_string(),
+            color,
+            projects: vec![project.to_string()],
+            system: Some(PilotRole::CodeReviewer { repo }),
+            ..Default::default()
+        };
+        pilot.normalize();
+        let id = pilot.id.clone();
+        self.pilots.push(pilot);
+        id
     }
     pub fn get_mut(&mut self, id: &str) -> Option<&mut Pilot> {
         self.pilots.iter_mut().find(|m| m.id == id)
