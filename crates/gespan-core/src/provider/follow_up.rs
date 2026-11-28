@@ -79,6 +79,7 @@ impl Protocol {
                 } else {
                     self.activities.steered_in_turn = true;
                 }
+                self.claude.unechoed.push_back(!self.claude.result_seen);
                 self.text_key = None;
                 return Ok(vec![Event::FollowUp(message)]);
             }
@@ -262,6 +263,135 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A Claude turn whose prompt was written and echoed back, then a steer.
+    fn claude_steered() -> (Protocol, Message) {
+        let mut p = protocol(Kind::Claude);
+        p.follow_up_ready = false;
+        let mut out = Vec::new();
+        p.claude_prompt(&mut out).unwrap();
+        p.frame(
+            json!({"type":"system","subtype":"init","session_id":"s"}),
+            &mut out,
+        )
+        .unwrap();
+        p.frame(replay("hello"), &mut out).unwrap();
+        let message = Message {
+            id: "late".into(),
+            text: "also mention BBR".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            p.steer(message.clone(), &mut out).unwrap(),
+            vec![Event::FollowUp(message.clone())]
+        );
+        (p, message)
+    }
+
+    /// What `--replay-user-messages` prints when Claude takes up a message.
+    fn replay(text: &str) -> Value {
+        json!({"type":"user","isReplay":true,"session_id":"s","parent_tool_use_id":null,
+            "message":{"role":"user","content":text}})
+    }
+
+    fn result(text: &str) -> Value {
+        json!({"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":text,"session_id":"s"})
+    }
+
+    fn reply(id: &str, text: &str) -> Value {
+        json!({"type":"assistant","message":{"id":id,"role":"assistant","content":[{"type":"text","text":text}]}})
+    }
+
+    #[test]
+    fn claude_is_launched_to_echo_the_messages_it_takes_up() {
+        let request = protocol(Kind::Claude).request;
+        let mut command = Command::new("claude");
+        super::super::claude::configure(&mut command, &request, None).unwrap();
+        assert!(command
+            .get_args()
+            .any(|arg| arg == "--replay-user-messages"));
+    }
+
+    #[test]
+    fn a_steer_claude_takes_up_after_its_result_is_answered_in_the_same_turn() {
+        let (mut p, _) = claude_steered();
+        let mut out = Vec::new();
+        p.frame(reply("m1", "TCP backs off on loss."), &mut out)
+            .unwrap();
+        // Claude ended its turn before reading the steer.
+        let events = p.frame(result("TCP backs off on loss."), &mut out).unwrap();
+        assert!(!events.contains(&Event::Done), "{events:?}");
+        assert!(events.contains(&Event::Status("Answering your follow-up…".into())));
+        assert!(!p.done);
+        // It answers the steer as its next turn, still read by this one.
+        p.frame(
+            json!({"type":"system","subtype":"init","session_id":"s"}),
+            &mut out,
+        )
+        .unwrap();
+        p.frame(replay("also mention BBR"), &mut out).unwrap();
+        let events = p
+            .frame(reply("m2", "BBR models the path."), &mut out)
+            .unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Text(text) if text.contains("BBR models"))),
+            "{events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::Interjection { .. })),
+            "the answer is the user's, not a background wake: {events:?}"
+        );
+        let events = p.frame(result("BBR models the path."), &mut out).unwrap();
+        assert!(events.contains(&Event::Done), "{events:?}");
+        assert!(p.done);
+    }
+
+    #[test]
+    fn a_steer_claude_folds_into_the_turn_ends_it_at_its_result() {
+        let (mut p, _) = claude_steered();
+        let mut out = Vec::new();
+        // Taken up at a tool boundary, before the turn's result.
+        p.frame(replay("also mention BBR"), &mut out).unwrap();
+        p.frame(reply("m1", "Done, with BBR."), &mut out).unwrap();
+        let events = p.frame(result("Done, with BBR."), &mut out).unwrap();
+        assert!(events.contains(&Event::Done), "{events:?}");
+        assert!(p.done);
+    }
+
+    #[test]
+    fn a_turn_without_a_steer_ends_at_its_result() {
+        let mut p = protocol(Kind::Claude);
+        let mut out = Vec::new();
+        p.claude_prompt(&mut out).unwrap();
+        p.frame(replay("hello"), &mut out).unwrap();
+        p.frame(reply("m1", "Hi."), &mut out).unwrap();
+        let events = p.frame(result("Hi."), &mut out).unwrap();
+        assert!(events.contains(&Event::Done), "{events:?}");
+    }
+
+    #[test]
+    fn a_steer_claude_never_takes_up_ends_the_turn_after_the_grace() {
+        let (mut p, _) = claude_steered();
+        let mut out = Vec::new();
+        let events = p.frame(result("Partial answer."), &mut out).unwrap();
+        assert!(!p.done, "{events:?}");
+        let started = Instant::now();
+        assert!(!p
+            .lifecycle_tick(started, &mut out)
+            .unwrap()
+            .contains(&Event::Done));
+        // The window passes with no next turn from Claude.
+        p.claude.resume_at = Some(Instant::now() - Duration::from_millis(1));
+        assert!(p
+            .lifecycle_tick(started, &mut out)
+            .unwrap()
+            .contains(&Event::Done));
+        assert!(p.done);
     }
 
     #[cfg(unix)]

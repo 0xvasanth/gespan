@@ -78,6 +78,7 @@ fn push(turns: &mut Vec<OutsideTurn>, role: TurnRole, text: &str, sent_at: Optio
             role,
             text: text.to_string(),
             sent_at,
+            by_program: false,
         });
     }
 }

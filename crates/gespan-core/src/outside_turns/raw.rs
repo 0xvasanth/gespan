@@ -229,6 +229,10 @@ pub(super) struct ClaudeLine<'a> {
     pub(super) message: Option<ClaudeMessage<'a>>,
     #[serde(borrow, default)]
     pub(super) timestamp: Str<'a>,
+    /// What wrote the entry: `cli` for Claude Code's own terminal UI,
+    /// `sdk-cli` for a program driving `claude -p`, as Gespan does.
+    #[serde(borrow, default)]
+    pub(super) entrypoint: Str<'a>,
 }
 
 #[derive(Debug, Deserialize)]

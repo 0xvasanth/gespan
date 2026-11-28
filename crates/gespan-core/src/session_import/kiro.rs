@@ -140,6 +140,7 @@ fn parse(log: &[u8]) -> Vec<OutsideTurn> {
             role,
             text,
             sent_at: line.timestamp.as_deref().and_then(unix_ms),
+            by_program: false,
         });
     }
     turns

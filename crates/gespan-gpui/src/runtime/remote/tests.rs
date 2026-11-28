@@ -894,3 +894,99 @@ fn stop_during_remote_setup_logs_no_failure() {
         "{lines:?}"
     );
 }
+
+/// Sends the queued message `queued-1` to a bound host session and collects
+/// every update until the worker finishes.
+fn send_queued_message(
+    handler: impl FnMut(Value) -> Option<Value> + Send + 'static,
+) -> Vec<Update> {
+    let dir = Directory::new();
+    let store = dir.store();
+    let mut binding = binding(&store);
+    binding.session_id = Some("host-session".into());
+    journal(&store, &binding).unwrap();
+    let host = Host::new(handler);
+    let (tx, rx) = async_channel::unbounded();
+    let (_controls_tx, controls) = std::sync::mpsc::channel();
+    run_with_client(
+        host.client.clone(),
+        binding.summary.clone(),
+        "queued while the last turn ran".into(),
+        Settings {
+            model: Some("fixture".into()),
+            pilot_message_id: Some("queued-1".into()),
+            ..Default::default()
+        },
+        controls,
+        store,
+        Arc::new(AtomicBool::new(false)),
+        tx,
+    );
+    let mut updates = Vec::new();
+    while let Ok(update) = rx.try_recv() {
+        updates.push(update);
+    }
+    assert!(updates.last().is_some_and(|update| update.finished));
+    updates
+}
+
+fn delivered(updates: &[Update]) -> Vec<&str> {
+    updates
+        .iter()
+        .filter_map(|update| update.delivered.as_deref())
+        .collect()
+}
+
+#[test]
+fn a_queued_message_the_host_accepts_is_reported_delivered_once() {
+    let mut sent = Vec::new();
+    let mut polls = 0;
+    let updates = send_queued_message(move |request| {
+        if request["method"] == "commands.dispatch" {
+            sent.push(request["params"]["type"].clone());
+            Some(receipt(&request["params"]))
+        } else {
+            polls += 1;
+            let status = if polls < 3 { "running" } else { "idle" };
+            Some(json!({"kind":"snapshot","value":snapshot(status, polls)}))
+        }
+    });
+    assert!(updates.len() >= 3, "{} updates", updates.len());
+    // The first update after the receipt clears the queue, before the turn
+    // ends and would otherwise fail the still-sending message.
+    assert_eq!(updates[0].delivered.as_deref(), Some("queued-1"));
+    assert_eq!(delivered(&updates), ["queued-1"]);
+    assert_eq!(updates.last().unwrap().status, "Ready");
+}
+
+#[test]
+fn a_queued_message_the_host_rejects_is_never_reported_delivered() {
+    let updates = send_queued_message(|request| {
+        assert_eq!(request["method"], "commands.dispatch");
+        Some(json!({"error":"Invalid model"}))
+    });
+    assert!(delivered(&updates).is_empty());
+    assert!(
+        updates
+            .last()
+            .unwrap()
+            .status
+            .starts_with("Host rejected request:"),
+        "{}",
+        updates.last().unwrap().status
+    );
+}
+
+#[test]
+fn a_queued_message_stays_delivered_when_observing_the_turn_fails() {
+    let updates = send_queued_message(|request| {
+        if request["method"] == "commands.dispatch" {
+            Some(receipt(&request["params"]))
+        } else {
+            Some(json!({"error":"Session sync failed"}))
+        }
+    });
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].delivered.as_deref(), Some("queued-1"));
+    assert!(updates[0].finished);
+}

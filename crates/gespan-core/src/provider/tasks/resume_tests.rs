@@ -685,8 +685,10 @@ fn a_user_steer_during_a_wake_does_not_get_the_next_wake_marker() {
     assert!(matches!(sent.as_slice(), [Event::FollowUp(_)]), "{sent:?}");
     let result = replay(&mut p, &[wake_result()]);
     assert!(markers(&result[0]).is_empty());
-    // No window for another wake, so the reply is not mistaken for one.
-    assert!(p.claude.resume_at.is_none());
+    // Claude never echoed the steer, so it answers it next: the turn keeps
+    // reading for that reply, which is the user's, not another wake.
+    assert!(!p.done);
+    assert!(p.activities.user_turn_pending);
     let reply = replay(&mut p, &[init]);
     assert!(markers(&reply[0]).is_empty(), "{:?}", reply[0]);
     // The second summary is kept for a genuine wake.

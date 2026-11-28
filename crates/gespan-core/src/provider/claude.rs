@@ -4,12 +4,20 @@ use super::*;
 
 pub(crate) mod read_only;
 
+/// How long a turn waits past its `result` for Claude to start answering a
+/// message it took up too late to fold in.
+pub(super) const STEER_GRACE: Duration = Duration::from_secs(15);
+
 #[derive(Default)]
 pub(super) struct State {
     pub(super) prompt_sent: bool,
     pub(super) result_seen: bool,
     pub(super) usage_limit: Option<crate::usage::Limit>,
     pub(super) resume_at: Option<Instant>,
+    /// User messages written to Claude that it hasn't echoed back yet, oldest
+    /// first: `true` for one written mid-turn. Claude echoes a message when it
+    /// takes it up, so one still here at `result` runs as Claude's next turn.
+    pub(super) unechoed: std::collections::VecDeque<bool>,
     pub(super) message: usize,
     /// Streaming tool id and its partial input JSON, by content block index.
     pub(super) tools: HashMap<u64, (String, String)>,
@@ -28,6 +36,9 @@ pub(super) fn configure(
         "--output-format",
         "stream-json",
         "--include-partial-messages",
+        // Echoes each user message when Claude takes it up, so a message
+        // written mid-turn is known to be answered or still waiting.
+        "--replay-user-messages",
         "--permission-prompt-tool",
         "stdio",
     ]);
@@ -344,6 +355,9 @@ impl Protocol {
                     .collect::<String>();
                 self.text(&self.claude.message.to_string(), &text, true, &mut events);
             }
+            "user" if v["isReplay"] == true => {
+                self.claude.unechoed.pop_front();
+            }
             "user" => {
                 for block in v["message"]["content"].as_array().into_iter().flatten() {
                     if block["type"] == "tool_result" {
@@ -471,12 +485,22 @@ impl Protocol {
                     );
                 }
                 self.claude.result_seen = true;
+                // A message written near the end of the turn came too late to
+                // join it: Claude answers it as its next turn, which this turn
+                // keeps reading. The window ends it should that never start.
+                let steer_waiting = self.claude.unechoed.iter().any(|mid_turn| *mid_turn);
+                if steer_waiting {
+                    self.activities.user_turn_pending = true;
+                    self.claude.resume_at = Some(Instant::now() + STEER_GRACE);
+                }
                 if self.activities.claude_background.is_empty()
                     && self.activities.claude_pending.is_empty()
                     && self.claude.resume_at.is_none()
                 {
                     events.push(Event::Done);
                     self.done = true;
+                } else if steer_waiting {
+                    events.push(Event::Status("Answering your follow-up…".into()));
                 } else {
                     events.push(Event::Status("Waiting for background tasks…".into()));
                 }

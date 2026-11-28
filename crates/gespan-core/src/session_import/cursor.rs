@@ -238,6 +238,7 @@ fn turn(message: &Value) -> Option<OutsideTurn> {
         role,
         text,
         sent_at,
+        by_program: false,
     })
 }
 
