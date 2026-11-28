@@ -522,6 +522,9 @@ pub(crate) fn run_with_client(
 ) {
     let _session = crate::runtime::enter_turn(&summary, true);
     let mut latest_rows = Vec::new();
+    // A queued message is delivered once the host's receipt commits its send,
+    // so the conversation clears it instead of failing it at turn end.
+    let mut delivered = None;
     let result = (|| -> Result<(), String> {
         if tx.is_closed() {
             return Ok(());
@@ -656,6 +659,7 @@ pub(crate) fn run_with_client(
         if !attaching {
             upload_pending(&client, &machine.id, &store, &mut binding)?;
             dispatch_outbox(&client, &machine.id, &store, &mut binding)?;
+            delivered = settings.pilot_message_id.take();
         }
         drop(guard);
         let id = binding
@@ -680,6 +684,7 @@ pub(crate) fn run_with_client(
             let current_approvals = approvals(&snapshot);
             let current_question = question(&snapshot);
             let mut next = update(if running { "Working…" } else { "Ready" }, !running);
+            next.delivered = delivered.take();
             next.start = latest_rows.len();
             if revision != last_revision {
                 let mut projected = snapshot.clone();
@@ -805,6 +810,7 @@ pub(crate) fn run_with_client(
             crate::runtime::log_turn_failure(&error);
         }
         let mut next = update(error, true);
+        next.delivered = delivered;
         // Every valid snapshot was already published. An empty error patch
         // preserves any optimistic prompt awaiting a host receipt.
         next.start = latest_rows.len();
