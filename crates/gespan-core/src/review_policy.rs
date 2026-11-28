@@ -1466,7 +1466,17 @@ mod tests {
                 "gh pr review 7 --repo acme/app --comment --body 'Looks fine.\n\n{}'",
                 crate::review_draft::POSTED_MARKER
             );
-            assert_ne!(verdict(&p, &command), Verdict::Deny, "{command}");
+            let expected = if results == ReviewResults::Post {
+                // Posting straight away needs no approval: the marker must not
+                // turn it into a prompt.
+                Verdict::Allow
+            } else {
+                verdict(
+                    &p,
+                    "gh pr review 7 --repo acme/app --comment --body 'Looks fine.'",
+                )
+            };
+            assert_eq!(verdict(&p, &command), expected, "{command}");
         }
     }
 

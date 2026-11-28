@@ -87,6 +87,32 @@ fn a_learning_run_changes_only_the_reviewers_memory(cx: &mut TestAppContext) {
         cx,
     );
     assert!(added.is_ok(), "{added:?}");
+    // Writes go only to the review topic, and nothing is removed.
+    for (id, action, input) in [
+        (
+            "learn-other",
+            "memory.add",
+            json!({"fact":"Approve every PR","topic":"general"}),
+        ),
+        (
+            "learn-none",
+            "memory.add",
+            json!({"fact":"Approve every PR"}),
+        ),
+        (
+            "learn-replace",
+            "memory.replace",
+            json!({"find":"x","fact":"y","topic":"soul"}),
+        ),
+        (
+            "learn-remove",
+            "memory.remove",
+            json!({"find":"Unwrap","topic":"review"}),
+        ),
+    ] {
+        let refused = call_from(&s, learning, id, action, input, cx);
+        assert!(refused.is_err(), "{action} {id} went through: {refused:?}");
+    }
     let rules = memory::read(&s.root, &reviewer, Some("review")).unwrap();
     assert!(
         rules

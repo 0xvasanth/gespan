@@ -5,8 +5,8 @@
 //! Settings › Git makes it; the user sees it in Automations with a lock and
 //! can change only when it reviews, the reviewer, where findings go and
 //! whether it is on. Its prompt, folder, run mode and name stay Gespan's, and
-//! it can't be deleted by hand: it goes when reviews are turned off for the
-//! repo or the repo has no folder any more.
+//! it can't be deleted by hand. Turning reviews off pauses it and keeps its
+//! history; picking another folder for the repo moves it there in place.
 //!
 //! Stored like any automation: the role lives in the definition JSON, so no
 //! table changes.

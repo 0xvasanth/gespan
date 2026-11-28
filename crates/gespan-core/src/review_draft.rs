@@ -319,8 +319,6 @@ fn shown(plan: &Plan) -> Vec<ShownComment> {
 /// sent with `--input`.
 pub type GhRunner<'a> = dyn FnMut(&[&str], Option<&str>) -> Result<String, String> + 'a;
 
-/// The request body of a pending GitHub review: no `event`, so GitHub keeps
-/// it as a draft only its author sees.
 /// Ends every review text Gespan posts, so a reviewer never learns from
 /// its own posted review as if the user had written it. Invisible on
 /// GitHub and GitLab, which render it as an HTML comment.
@@ -340,6 +338,8 @@ pub fn is_posted_review(body: &str) -> bool {
     body.contains(POSTED_MARKER)
 }
 
+/// The request body of a pending GitHub review: no `event`, so GitHub keeps
+/// it as a draft only its author sees.
 pub fn github_payload(plan: &Plan, head_sha: &str) -> Value {
     let comments: Vec<Value> = plan
         .inline

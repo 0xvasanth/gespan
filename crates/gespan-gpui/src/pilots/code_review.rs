@@ -11,16 +11,18 @@ use gespan_core::pilot::bridge::Call;
 use gespan_core::pilot::code_review::{Lesson, learning_prompt};
 use gespan_core::time::now_ms;
 
-/// The only app actions a learning run may call.
-pub(super) const LEARNING_ACTIONS: [&str; 5] = [
+/// The only app actions a learning run may call. No `memory.remove`: a rule
+/// a comment contradicts is replaced (kept, struck through), so a comment
+/// can't wipe what the reviewer learned.
+pub(super) const LEARNING_ACTIONS: [&str; 4] = [
     "memory.read",
     "memory.search",
     "memory.add",
     "memory.replace",
-    "memory.remove",
 ];
-pub(super) const LEARNING_ONLY: &str =
-    "A learning run can only read and change this reviewer's memory";
+/// The actions above that change memory: only ever in the review topic.
+const LEARNING_WRITES: [&str; 2] = ["memory.add", "memory.replace"];
+pub(super) const LEARNING_ONLY: &str = "A learning run can only read this reviewer's memory and add or replace rules in its \"review\" topic";
 pub(crate) const REVIEW_CANT_WRITE: &str = "A code review can't use the reviewer's app actions or change its memory; say what should become a rule in your review instead";
 
 /// One hidden run teaching a reviewer from a pull request's comments.
@@ -64,9 +66,15 @@ impl Pilots {
         if self.code_reviews.contains(&call.session) {
             return Some(REVIEW_CANT_WRITE);
         }
-        (self.learning.contains_key(&call.session)
-            && !LEARNING_ACTIONS.contains(&call.action.as_str()))
-        .then_some(LEARNING_ONLY)
+        if !self.learning.contains_key(&call.session) {
+            return None;
+        }
+        let action = call.action.as_str();
+        let topic = call.input.get("topic").and_then(|topic| topic.as_str());
+        let allowed = LEARNING_ACTIONS.contains(&action)
+            && (!LEARNING_WRITES.contains(&action)
+                || topic == Some(gespan_core::pilot::code_review::REVIEW_TOPIC));
+        (!allowed).then_some(LEARNING_ONLY)
     }
     /// Starts a hidden learning run for `lesson`'s comments the reviewer has
     /// not learned from yet. Each comment is learned from once.
