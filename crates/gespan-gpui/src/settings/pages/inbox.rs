@@ -473,9 +473,10 @@ impl SettingsView {
                     .into_any_element(),
                 );
             }
-            // A review that runs keeps its switch even while the folder pick is
-            // open (a second clone appeared) or its project is closed, so it
-            // can always be turned off here.
+            // A review that exists keeps its switch while the folder pick is
+            // open again (a second clone appeared), so it can still be turned
+            // off here. With its project closed the repo has no row; Automations
+            // still pauses it.
             if let Some(folder) = repo
                 .folder
                 .clone()

@@ -218,6 +218,8 @@ impl Service {
     }
 
     /// Removes `repo`'s code review, if it has one.
+    /// Test only: the app never removes a review, it pauses it.
+    #[cfg(test)]
     pub fn remove_code_review(&mut self, repo: &str) -> Result<(), String> {
         let id = review_id(repo);
         self.delete_row(&id)
