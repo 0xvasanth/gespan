@@ -1,0 +1,51 @@
+crates/gespan-gpui/src/settings/mod.rs
+  s_1bcc683081d4e9::t_b0a4a30203ac2b 93-94,141-142
+crates/gespan-gpui/src/pilots/mod.rs
+  s_1bcc683081d4e9::t_28aec2cbc631cc 71-72,213-215,233,463
+  s_1bcc683081d4e9::t_081055abc09560 1364-1366,1369-1370,1423,1642-1660
+  s_1bcc683081d4e9::t_19bfbad4676eb4 73
+crates/gespan-gpui/src/shell/code_review.rs
+  s_1bcc683081d4e9::t_19bfbad4676eb4 17-34,38,40-42
+crates/gespan-gpui/src/shell.rs
+  s_1bcc683081d4e9::t_19bfbad4676eb4 1589-1603
+  s_1bcc683081d4e9::t_1d48eaa5da1563 1587-1588
+crates/gespan-gpui/src/pilots/code_review.rs
+  s_1bcc683081d4e9::t_cdec3a27b94b0d 193-287
+  s_1bcc683081d4e9::t_b0a4a30203ac2b 60-63
+  s_1bcc683081d4e9::t_28aec2cbc631cc 288-397
+crates/gespan-gpui/src/shell/settings.rs
+  s_1bcc683081d4e9::t_b0a4a30203ac2b 78-81,163-167
+  s_1bcc683081d4e9::t_96d1fe27d42bda 168
+crates/gespan-gpui/src/shell/app_views.rs
+  s_1bcc683081d4e9::t_19bfbad4676eb4 772-775
+crates/gespan-gpui/src/pilots/panels.rs
+  s_1bcc683081d4e9::t_28aec2cbc631cc 23-24,59,737
+  s_1bcc683081d4e9::t_cdec3a27b94b0d 21-22,56-58,60-75,637,659,735-736
+crates/gespan-gpui/src/shell/surface_tests.rs
+  s_1bcc683081d4e9::t_de8019e0748cd1 806-810
+crates/gespan-gpui/src/conversation/pilot.rs
+  s_1bcc683081d4e9::t_a4c005f4c75139 630
+crates/gespan-gpui/src/pilots/code_review_tests.rs
+  s_1bcc683081d4e9::t_508829f75ec043 2-3,341-382,384-390,395-397,441-442
+  s_1bcc683081d4e9::t_1c134fa9453047 391-394
+  s_1bcc683081d4e9::t_2bca6a004ede6e 383,398-440
+  s_1bcc683081d4e9::t_662d794610eb0f 290,301-303,305-307
+crates/gespan-gpui/src/settings/pages/inbox.rs
+  s_1bcc683081d4e9::t_b0a4a30203ac2b 458-475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e0143208d4d52c40a6149290e6f22f3aa672d862",
+  "prompts": {},
+  "sessions": {
+    "s_1bcc683081d4e9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0c8bf419-4d47-4626-8050-bbc05a1848bc",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
