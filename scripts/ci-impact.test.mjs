@@ -30,7 +30,7 @@ test("no changed files, or an unreadable diff, runs every piece", () => {
 test("the crates other pieces read run every piece", () => {
   // host/ tests read crates/gespan-core/src/remote, and the mobile protocol
   // follows crates/mobile-link.
-  for (const file of ["crates/gespan-core/src/remote/remote_bootstrap.sh", "crates/mobile-link/src/lib.rs", "crates/gespan-gpui/Cargo.toml", "crates/gespan-gpui/Cargo.lock", "crates/gespan-gpui/packaging/icon.icns", "crates/gespan-gpui/.config/nextest.toml"])
+  for (const file of ["crates/gespan-core/src/remote/remote_bootstrap.sh", "crates/mobile-link/src/lib.rs", "crates/gespan-gpui/Cargo.toml", "crates/gespan-gpui/packaging/icon.icns", ".config/nextest.toml"])
     assert.deepEqual(affected(file), all, file);
 });
 
@@ -74,9 +74,10 @@ test("shared crates and vendored GPUI run both Native jobs", () => {
   assert.deepEqual(affected("crates/board-store/src/ops.rs", "vendor/gpui-pre/src/lib.rs"), ["core", "desktop"]);
 });
 
-test("the graph crate runs only Core until gespan-core depends on it", async () => {
-  // Only the root workspace builds it, through Core's Shared crates step.
-  assert.deepEqual(affected("crates/gespan-graph/src/store.rs", "crates/gespan-graph/tests/scale.rs"), ["core"]);
+test("the graph crate runs both Native jobs, since gespan-core depends on it", async () => {
+  assert.deepEqual(affected("crates/gespan-graph/src/store.rs", "crates/gespan-graph/tests/scale.rs"), ["core", "desktop"]);
+  assert.match(await read("crates/gespan-core/Cargo.toml"), /^gespan-graph\.workspace = true$/m);
+  // Its own tests run in Core's Shared crates step.
   const ci = await read(".github/workflows/ci.yml");
   assert.match(ci, /SHARED=\([^)]*-p gespan-graph[ )]/);
 });

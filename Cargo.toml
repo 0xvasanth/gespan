@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/mobile-link", "crates/keep-awake", "crates/gespan-redact", "crates/gespan-mcp-config", "crates/mcp-hub", "crates/herdr-link", "crates/tracker-secrets", "crates/tracker-client", "crates/board-store", "crates/gespan-models", "crates/gespan-speech", "crates/gespan-graph", "crates/gespan-browser"]
-exclude = ["vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-linux", "vendor/gpui-pre-windows", "crates/gespan-core", "crates/gespan-first-launch", "crates/gespan-gpui"]
+members = ["crates/*"]
+# The vendored GPUI crates are patched in below, not workspace members.
+exclude = ["vendor/gpui-pre", "vendor/gpui-pre-apple", "vendor/gpui-pre-linux", "vendor/gpui-pre-windows"]
 
 [workspace.package]
 version = "0.3.4"
@@ -9,6 +10,173 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
+# Every crate takes its dependency versions from here (`dep.workspace = true`)
+# and adds only its own features. Crates that turn default features off here
+# list `"default"` to keep them.
+aho-corasick = "1"
+alacritty_terminal = "0.26"
+async-channel = "2"
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false }
+base64 = "0.23"
+block2 = "0.6"
+chrono = { version = "0.4", default-features = false }
+cpal = "0.18"
+dirs = "7"
+embed-resource = "3"
+fastembed = { version = "7.7", default-features = false }
+flate2 = "1"
+gpui = { package = "gpui-pre", version = "=0.3.9", default-features = false }
+gpui_apple = { package = "gpui-pre-apple", version = "=0.3.9" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", default-features = false }
+gtk = "0.18"
+hmac = "0.13"
+hostname = "0.4"
+http-body-util = "0.1"
+if-addrs = "0.15"
+igd-next = "0.18"
+ignore = "0.4"
+image = { version = "0.25", default-features = false }
+jni = "0.22"
+# Held at 3.x; see the deferred dependency upgrades.
+keyring = { version = "3.6", default-features = false }
+libc = "0.2"
+log = "0.4"
+mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+mimalloc = { version = "0.1", default-features = false }
+minisign-verify = "0.3"
+natpmp = "0.5"
+notify = "8.2"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false }
+objc2-foundation = { version = "0.3", default-features = false }
+objc2-user-notifications = "0.3"
+objc2-web-kit = { version = "0.3", default-features = false }
+ort = { version = "=2.0.0-rc.15", default-features = false }
+p256 = "0.14"
+# Must match the parking_lot the vendored GPUI exposes in its API (0.12).
+parking_lot = "0.12"
+petgraph = "0.8"
+proptest = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
+qrcode = { version = "0.14", default-features = false }
+quick-xml = { version = "0.42", default-features = false }
+quinn = { version = "0.11", default-features = false }
+rand = "0.10"
+raw-window-handle = "0.6"
+rayon = "1"
+rcgen = { version = "0.14", default-features = false }
+reflink-copy = "0.1"
+regex = "1"
+rmcp = { version = "=3.8.0", default-features = false }
+rquickjs = "0.14.0"
+# One bundled SQLite for every crate; Toasty's SQLite driver links this rusqlite too.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "hooks"] }
+rustls = { version = "0.23", default-features = false }
+rusty-leveldb = "4"
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_path_to_error = "0.1.20"
+sha1 = "0.11"
+sha2 = "0.11"
+sherpa-onnx = "2.0.0"
+sherpa-onnx-sys = "2.0.0"
+shlex = "2"
+similar = "3.2"
+socket2 = "0.6"
+sqlite-vec = "0.1.9"
+streaming-iterator = "0.1"
+syntect = { version = "5.3", default-features = false }
+tar = "0.4"
+tempfile = "3"
 thiserror = "2"
+# The ORM every Gespan database goes through (CLAUDE.md). The three pins move together.
+toasty = { version = "=0.11.0", features = ["sqlite"] }
+toasty-core = "=0.11.0"
+toasty-driver-sqlite = "=0.11.0"
+tokio = "1"
+tokio-util = "0.7"
+toml = "1.1.8"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-log = { version = "0.2", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false }
+tray-icon = { version = "0.25", default-features = false }
+tree-sitter = "0.27"
+tree-sitter-bash = "0.25"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-html = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-language = "0.1"
+tree-sitter-python = "0.25"
+tree-sitter-ruby = "0.23"
+tree-sitter-rust = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml = "0.7"
+tungstenite = { version = "0.30", default-features = false }
+unicode-normalization = "0.1"
+unicode-properties = { version = "0.1", default-features = false }
+unicode-segmentation = "1"
+unicode-width = "0.2"
+# Held at 2.x; ureq 3 is a separate upgrade.
+ureq = { version = "2.12", default-features = false }
+url = "2.5"
+uuid = "1"
+webpki-roots = "1.0.11"
+windows = "0.62"
+windows-sys = "0.61"
+wry = "0.57"
+x509-parser = "0.18"
+zip = { version = "9.1", default-features = false }
+zstd = "0.14"
+zune-jpeg = "0.5"
+
+# The workspace's own crates.
+gespan-board-store = { path = "crates/board-store" }
+gespan-browser = { path = "crates/gespan-browser" }
+gespan-core = { path = "crates/gespan-core" }
+gespan-graph = { path = "crates/gespan-graph" }
+gespan-keep-awake = { path = "crates/keep-awake" }
+gespan-mcp-config = { path = "crates/gespan-mcp-config" }
+gespan-mobile-link = { path = "crates/mobile-link" }
+gespan-models = { path = "crates/gespan-models" }
+gespan-redact = { path = "crates/gespan-redact" }
+gespan-speech = { path = "crates/gespan-speech" }
+gespan-tracker-client = { path = "crates/tracker-client" }
+gespan-tracker-secrets = { path = "crates/tracker-secrets" }
+herdr-link = { path = "crates/herdr-link" }
+mcp-hub = { path = "crates/mcp-hub" }
+
+# Exclude the unused screen-capture dependency from all native platforms.
+# Keep the Apple renderer's alpha and font-matching fixes.
+[patch.crates-io]
+gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
+gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+
+[profile.native-dev]
+inherits = "dev"
+debug = 0
+incremental = false
+
+[profile.native-dev.package."*"]
+opt-level = 1
+
+[profile.native-dev.package.gespan-gpui]
+opt-level = 1
+
+# The renderer debug-asserts its own layout quality, which depends on font
+# metrics and fails on Linux fonts for diagrams that render fine in release.
+[profile.dev.package.mermaid-rs-renderer]
+debug-assertions = false
+
+[profile.native-dev.package.mermaid-rs-renderer]
+debug-assertions = false

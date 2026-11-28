@@ -522,7 +522,7 @@ fn timing_tests_run_alone() {
         timed, TIMED,
         "a test with a time budget is missing from TIMED"
     );
-    let config = include_str!("../../../.config/nextest.toml");
+    let config = include_str!("../../../../../.config/nextest.toml");
     let alone = config
         .split("[[profile.ci.overrides]]")
         .find(|section| section.contains("native_load_of_1000_cards_meets_the_budget"))

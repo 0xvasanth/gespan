@@ -4,7 +4,6 @@ version.workspace = true
 edition = "2024"
 license.workspace = true
 publish = false
-workspace = "../gespan-gpui"
 
 [lib]
 test = false
@@ -12,4 +11,4 @@ doctest = false
 
 [dev-dependencies]
 rusqlite.workspace = true
-tempfile = "3"
+tempfile.workspace = true

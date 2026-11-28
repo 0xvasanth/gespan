@@ -203,18 +203,22 @@ fn printed_pid(started: &Report) -> u32 {
     }
     let deadline = Instant::now() + PID_WAIT;
     let mut report = started.clone();
+    // Each read returns only lines that are new since the last one, so keep
+    // everything seen, `start`'s own lines included, for the failure message.
+    let mut seen = started.output.clone();
     while Instant::now() < deadline {
         report = output(&started.run_id, Duration::from_millis(100)).unwrap();
         if let Some(pid) = pid_in(&report) {
             return pid;
         }
+        seen.extend(report.output.iter().cloned());
         if report.status != Status::Running {
             break;
         }
     }
     panic!(
         "no pid printed within {PID_WAIT:?}: status {:?}, exit {:?}, output {:?}",
-        report.status, report.exit_code, report.output
+        report.status, report.exit_code, seen
     );
 }
 
@@ -251,6 +255,26 @@ fn printed_pid_fails_at_once_with_the_output_of_a_run_that_printed_none() {
         began.elapsed()
     );
     assert!(message.contains("status Exited"), "{message}");
+    assert!(message.contains("no pid here"), "{message}");
+}
+
+/// CI's ordering: `start` waits long enough to return the run's only line
+/// itself, so every later read is empty. The failure still shows that line.
+#[test]
+fn printed_pid_failure_keeps_the_output_start_already_returned() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = start(
+        "p",
+        &action("test:no-pid-early", "echo no pid here", dir.path()),
+        Duration::from_secs(10),
+    );
+    assert!(
+        run.output.iter().any(|line| line.contains("no pid here")),
+        "start returned {:?}",
+        run.output
+    );
+    let panic = std::panic::catch_unwind(|| printed_pid(&run)).unwrap_err();
+    let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
     assert!(message.contains("no pid here"), "{message}");
 }
 

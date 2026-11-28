@@ -461,4 +461,58 @@ mod tests {
             "a user stop is not a failure: {lines:?}"
         );
     }
+
+    /// A test turn never starts the machine's own CLI: on the test thread
+    /// its updates would fill a channel no one drains, and the test would
+    /// hang (and spend a real prompt). Even a CLI named the way users name
+    /// one, through `GESPAN_CODEX_BINARY`, stays unstarted.
+    #[cfg(unix)]
+    #[test]
+    fn a_test_turn_never_starts_an_installed_cli() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("ran");
+        let cli = dir.path().join("codex");
+        std::fs::write(&cli, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let saved = std::env::var_os("GESPAN_CODEX_BINARY");
+        // SAFETY: nextest runs each test in its own process, and the value
+        // is restored before the test returns.
+        unsafe { std::env::set_var("GESPAN_CODEX_BINARY", &cli) };
+        assert_eq!(
+            gespan_core::provider::resolve(Kind::Codex),
+            Some(cli.clone())
+        );
+
+        let (store, _, _) = conversation();
+        let summary = locked(&store).unwrap().sessions().unwrap().pop().unwrap();
+        let (tx, rx) = async_channel::unbounded();
+        let (_control, controls) = std::sync::mpsc::channel();
+        run_turn(
+            summary,
+            "Hello".into(),
+            Settings::default(),
+            controls,
+            store,
+            Arc::new(AtomicBool::new(false)),
+            tx,
+        );
+        unsafe {
+            match saved {
+                Some(value) => std::env::set_var("GESPAN_CODEX_BINARY", value),
+                None => std::env::remove_var("GESPAN_CODEX_BINARY"),
+            }
+        }
+        let updates: Vec<Update> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let last = updates.last().expect("the turn reports how it ended");
+        assert!(last.finished);
+        assert!(!last.succeeded);
+        let shown: String = updates
+            .iter()
+            .flat_map(|update| update.rows.iter().map(|row| row.text.as_str()))
+            .chain(std::iter::once(last.status.as_str()))
+            .collect();
+        assert!(shown.contains("GESPAN_CODEX_BINARY"), "{shown}");
+        assert!(!ran.exists(), "the test turn started the CLI");
+    }
 }

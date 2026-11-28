@@ -10,7 +10,7 @@ because Native opens the databases it left behind.
 | --- | --- |
 | `crates/gespan-core/` | Provider transports, persistence, accounts, Git/files, remote connections and shared services |
 | `crates/gespan-gpui/` | Native shell, composer, transcript, editor, settings and platform UI |
-| `crates/gespan-gpui/Cargo.toml` | Independent native Cargo workspace, profiles and dependency patches |
+| `Cargo.toml` (root) | The one Cargo workspace: shared dependency versions, profiles and the GPUI patches |
 | `scripts/dev.mjs` | Development build and manual restart runner |
 | `scripts/build.mjs` | Optimized build and macOS packaging |
 | `scripts/editor-bundle/`, `scripts/arcade-bundle/` | Generators for embedded JavaScript assets |

@@ -10,7 +10,9 @@ import { fileURLToPath } from "node:url";
 const scripts = fileURLToPath(new URL("./", import.meta.url));
 const setup = join(scripts, "worktree-setup.sh");
 const prune = join(scripts, "worktree-prune-builds.sh");
-const TARGETS = ["target", "crates/gespan-gpui/target"];
+const TARGETS = ["target"];
+// gespan-gpui's target folder from when it was a workspace of its own.
+const LEGACY = "crates/gespan-gpui/target";
 const DAY = 86400;
 const skip = process.platform === "win32" ? "bash scripts" : false;
 
@@ -164,14 +166,12 @@ test("an old build only seeds a worktree when nothing recent exists", { skip: cl
   const recent = await repo.worktree("recent");
   await build(old, "target", 10, "old", { rlibs: 10 });
   await build(recent, "target", 1, "recent", { rlibs: 2 });
-  await build(old, "crates/gespan-gpui/target", 10, "old", { rlibs: 10 });
   const fresh = await repo.worktree("fresh");
 
   const result = runSetup(fresh, repo.bin);
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await marker(fresh, "target"), "recent");
-  assert.equal(await marker(fresh, "crates/gespan-gpui/target"), "old");
 });
 
 test("downloads kept beside the profiles come along, editor check folders don't", { skip: cloneSkip }, async (t) => {
@@ -192,12 +192,12 @@ test("downloads kept beside the profiles come along, editor check folders don't"
   assert.deepEqual(await readdir(join(fresh, "target/debug")), ["deps"]);
 });
 
-test("an existing target folder is left alone, and a missing one beside it is still seeded", {
+test("an existing target folder is left alone, and the old gespan-gpui one is never seeded", {
   skip: cloneSkip,
 }, async (t) => {
   const repo = await repository(t);
   const source = await repo.worktree("source");
-  for (const relative of TARGETS) await build(source, relative, 1, "source");
+  for (const relative of [...TARGETS, LEGACY]) await build(source, relative, 1, "source");
   const fresh = await repo.worktree("fresh");
   await build(fresh, "target", 5, "mine");
 
@@ -205,26 +205,25 @@ test("an existing target folder is left alone, and a missing one beside it is st
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(await marker(fresh, "target"), "mine");
-  assert.equal(await marker(fresh, "crates/gespan-gpui/target"), "source");
+  assert.equal(existsSync(join(fresh, LEGACY)), false);
 });
 
 test("the main checkout's target folder can seed a worktree, but the main checkout is never seeded", {
   skip: cloneSkip,
 }, async (t) => {
   const repo = await repository(t);
-  await build(repo.main, "target", 1, "main");
   const linked = await repo.worktree("linked");
-  await build(linked, "crates/gespan-gpui/target", 1, "linked");
+  await build(linked, "target", 1, "linked");
 
   const inMain = runSetup(repo.main, repo.bin);
   assert.equal(inMain.status, 0, inMain.stderr);
-  assert.equal(existsSync(join(repo.main, "crates/gespan-gpui/target")), false);
+  assert.equal(existsSync(join(repo.main, "target")), false);
 
+  await build(repo.main, "target", 0, "main");
   const fresh = await repo.worktree("fresh");
   const inFresh = runSetup(fresh, repo.bin);
   assert.equal(inFresh.status, 0, inFresh.stderr);
   assert.equal(await marker(fresh, "target"), "main");
-  assert.equal(await marker(fresh, "crates/gespan-gpui/target"), "linked");
 });
 
 test("a clone that fails part-way leaves no target folder behind and doesn't fail the hook", { skip }, async (t) => {
@@ -358,13 +357,12 @@ test("pruning removes idle build output but keeps recent builds, the copies seed
   await build(repo.main, "target", 60, "main");
   const idle = await repo.worktree("idle");
   await build(idle, "target", 30, "idle");
-  await build(idle, "crates/gespan-gpui/target", 30, "idle");
+  await build(idle, LEGACY, 30, "idle");
   const recent = await repo.worktree("recent");
   await build(recent, "target", 2, "recent");
-  // Older than `idle`'s gpui build, but more complete and nothing is recent,
-  // so it's what seeding would clone: it stays.
+  // The best copy of an old gespan-gpui folder still goes: nothing seeds from it.
   const complete = await repo.worktree("complete");
-  await build(complete, "crates/gespan-gpui/target", 40, "complete", { rlibs: 3 });
+  await build(complete, LEGACY, 40, "complete", { rlibs: 3 });
   const current = await repo.worktree("current");
   await build(current, "target", 90, "current");
 
@@ -372,9 +370,9 @@ test("pruning removes idle build output but keeps recent builds, the copies seed
 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(join(idle, "target")), false);
-  assert.equal(existsSync(join(idle, "crates/gespan-gpui/target")), false);
+  assert.equal(existsSync(join(idle, LEGACY)), false);
   assert.equal(await marker(recent, "target"), "recent");
-  assert.equal(await marker(complete, "crates/gespan-gpui/target"), "complete");
+  assert.equal(existsSync(join(complete, LEGACY)), false);
   assert.equal(await marker(repo.main, "target"), "main");
   assert.equal(await marker(current, "target"), "current");
   // The worktree itself is never touched, only its build output.

@@ -65,9 +65,10 @@ test("crates taking the workspace version are found from their manifests", async
   assert.ok(!versioned.has("mcp-hub"));
 });
 
-test("the root workspace holds the mobile link and no Tauri crates", async () => {
+test("one workspace holds every crate, with the mobile link and no Tauri crates", async () => {
   const { packages } = cargoMetadata(root, "--no-deps");
-  assert.ok(packages.some(({ name }) => name === "gespan-mobile-link"));
+  for (const name of ["gespan-mobile-link", "gespan-core", "gespan-gpui", "gespan-first-launch", "gespan-fake-agent"])
+    assert.ok(packages.some((p) => p.name === name), name);
   const lock = await readFile(join(root, "Cargo.lock"), "utf8");
   assert.doesNotMatch(lock, /^name = "(gespan|tauri)"$/m);
 });
@@ -76,15 +77,13 @@ for (const [label, eol] of [
   ["LF", "\n"],
   ["CRLF", "\r\n"],
 ])
-  test(`set-version reaches both workspaces (${label})`, async (t) => {
+  test(`set-version reaches the workspace and its lockfile (${label})`, async (t) => {
     const checkout = await mkdtemp(join(tmpdir(), "gespan-set-version-"));
     t.after(() => rm(checkout, { recursive: true, force: true }));
     const files = [
       "package.json",
       "Cargo.toml",
       "Cargo.lock",
-      "crates/gespan-gpui/Cargo.toml",
-      "crates/gespan-gpui/Cargo.lock",
       "scripts/bump-version.mjs",
       "scripts/package.mjs",
       "scripts/fetch-herdr.mjs",
@@ -111,8 +110,6 @@ for (const [label, eol] of [
     const locked = (name) =>
       new RegExp(`^name = "${name}"\\nversion = "9\\.8\\.7-beta\\.6"$`, "m");
     assert.match(await read("Cargo.toml"), /^version = "9\.8\.7-beta\.6"$/m);
-    for (const name of ["gespan-browser", "gespan-models", "gespan-speech"])
-      assert.match(await read("Cargo.lock"), locked(name));
     for (const name of [
       "gespan-browser",
       "gespan-core",
@@ -121,12 +118,12 @@ for (const [label, eol] of [
       "gespan-models",
       "gespan-speech",
     ])
-      assert.match(await read("crates/gespan-gpui/Cargo.lock"), locked(name));
+      assert.match(await read("Cargo.lock"), locked(name));
     // Not just the crates named above: every local crate that takes the
     // workspace version must move in every lockfile that records it, or the
     // next `--locked` build fails.
     const versioned = await workspaceVersionedCrates();
-    for (const lockfile of ["Cargo.lock", "crates/gespan-gpui/Cargo.lock"]) {
+    for (const lockfile of ["Cargo.lock"]) {
       const lock = await read(lockfile);
       const due = localPackages(lock).filter((name) => versioned.has(name));
       assert.ok(due.length > 0, `${lockfile} records no workspace-versioned crate`);
