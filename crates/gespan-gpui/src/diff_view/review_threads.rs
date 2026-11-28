@@ -970,7 +970,10 @@ impl DiffView {
             .py(px(PAD))
             .pl(px(gutter + 12.))
             .pr(px(24.))
-            .max_w(px(gutter + 760.));
+            // The cards run across the pane, as wide as a long comment reads
+            // comfortably.
+            .w_full()
+            .max_w(px(gutter + 900.));
         for ix in self.remote_at(file, at) {
             column = column.child(self.remote_card(file, at, ix, window, cx));
         }

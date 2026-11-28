@@ -131,6 +131,13 @@ pub(super) fn parse_bodies(threads: &[RemoteThread]) -> HashMap<String, Vec<Body
 
 /// A comment past this many characters (outside `<details>`) clamps.
 const LONG: usize = 480;
+/// Links in a thread: Show more, as the design draws them.
+const LINK: gpui::Rgba = gpui::Rgba {
+    r: 0x8c as f32 / 255.,
+    g: 0xc3 as f32 / 255.,
+    b: 0xff as f32 / 255.,
+    a: 1.,
+};
 /// The clamped height of a long comment.
 const CLAMP: f32 = 168.;
 const MD_LINE: f32 = 24.;
@@ -174,7 +181,7 @@ impl DiffView {
     fn text_chars(&self, inset: f32) -> f32 {
         let width = self.viewport.get().map_or(900., |b| b.size.width.as_f32());
         let gutter = self.gutter_width();
-        let column = width.min(gutter + 760.) - gutter - 36. - 28. - inset;
+        let column = width.min(gutter + 900.) - gutter - 36. - 28. - inset;
         (column / CHAR).max(20.)
     }
     fn text_height(&self, text: &str, inset: f32) -> f32 {
@@ -188,7 +195,7 @@ impl DiffView {
     fn comment_height(&self, thread: &RemoteThread, cix: usize) -> f32 {
         let comment = &thread.comments[cix];
         let key = format!("{}:{cix}", thread.root);
-        let inset = if cix == 0 { 0. } else { 18. };
+        let inset = if cix == 0 { 0. } else { 28. };
         let mut body = 0.;
         for (pix, segment) in split_details(&comment.body).iter().enumerate() {
             body += match segment {
@@ -424,9 +431,10 @@ impl DiffView {
             let mut rail = div()
                 .mx(px(14.))
                 .mb(px(10.))
+                .ml(px(24.))
                 .pl(px(14.))
                 .border_l_2()
-                .border_color(content(0.1))
+                .border_color(content(0.14))
                 .flex()
                 .flex_col()
                 .gap(px(10.));
@@ -469,6 +477,8 @@ impl DiffView {
                             format!("diff-thread-resolve-{root}"),
                             if resolved { "Unresolve" } else { "Resolve" },
                         )
+                        .gap(px(6.))
+                        .when(!resolved, |d| d.child(icon("check", 12.)))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(DiffEvent::Resolve {
                                 root: resolve_root.clone(),
@@ -608,6 +618,7 @@ impl DiffView {
                                 .text_size(px(12.5))
                                 .text_color(content(0.85))
                                 .cursor_pointer()
+                                .hover(|s| s.bg(gpui::black().opacity(0.32)))
                                 .child(icon(
                                     if open {
                                         "chevron-down"
@@ -619,6 +630,11 @@ impl DiffView {
                                 .child(summary)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     Self::toggle_key(&mut this.review.details, toggle.clone());
+                                    // An opened block shows: under the clamp it
+                                    // would open out of sight.
+                                    if this.review.details.contains(&toggle) {
+                                        this.review.more.insert(comment_key(&toggle));
+                                    }
                                     this.rebuild(cx);
                                 })),
                         )
@@ -664,15 +680,23 @@ impl DiffView {
             )
             .child(body)
             .when(long, |d| {
+                let id = format!("diff-comment-more-{key}");
                 d.child(
-                    small_action(
-                        format!("diff-comment-more-{key}"),
-                        if clamped { "Show more" } else { "Show less" },
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        Self::toggle_key(&mut this.review.more, more_key.clone());
-                        this.rebuild(cx);
-                    })),
+                    div().flex().child(
+                        div()
+                            .id(SharedString::from(id.clone()))
+                            .debug_selector(move || id.clone())
+                            .role(Role::Button)
+                            .text_size(px(12.))
+                            .text_color(LINK)
+                            .cursor_pointer()
+                            .hover(|s| s.underline())
+                            .child(if clamped { "Show more" } else { "Show less" })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                Self::toggle_key(&mut this.review.more, more_key.clone());
+                                this.rebuild(cx);
+                            })),
+                    ),
                 )
             })
             .into_any_element()
@@ -770,15 +794,33 @@ fn markdown_rows(rows: &[MarkdownRow], key: &str) -> AnyElement {
         .flex()
         .flex_col()
         .children(rows.iter().enumerate().map(|(ix, row)| {
+            let id = SharedString::from(format!("diff-md-{key}-{ix}"));
+            // Markdown leaves a fenced block for its caller to draw.
+            let body = match &row.part {
+                markdown::Part::Code { fence, lines } => {
+                    let selector = format!("diff-md-code-{key}-{ix}");
+                    div()
+                        .id(id)
+                        .debug_selector(move || selector.clone())
+                        .w_full()
+                        .min_w_0()
+                        .overflow_x_scroll()
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(content(0.1))
+                        .bg(gpui::black().opacity(0.22))
+                        .py(px(6.))
+                        .text_size(px(12.))
+                        .child(markdown::code_lines(fence, lines.clone(), None, "", false))
+                        .into_any_element()
+                }
+                _ => markdown::body(row, id, markdown::Tone::Normal, None, now),
+            };
             div()
+                .w_full()
+                .min_w_0()
                 .pt(px(if ix == 0 { 0. } else { row.gap }))
-                .child(markdown::body(
-                    row,
-                    SharedString::from(format!("diff-md-{key}-{ix}")),
-                    markdown::Tone::Normal,
-                    None,
-                    now,
-                ))
+                .child(body)
         }))
         .into_any_element()
 }
@@ -797,6 +839,15 @@ fn chip(label: &'static str, ink: Hsla) -> Div {
         .border_1()
         .border_color(ink.opacity(0.22))
         .child(label)
+}
+
+/// The comment a `<details>` block belongs to: `root:comment:part` →
+/// `root:comment`.
+pub(super) fn comment_key(details_key: &str) -> String {
+    details_key
+        .rsplit_once(':')
+        .map_or(details_key, |(comment, _)| comment)
+        .to_owned()
 }
 
 fn small_action(id: String, label: &'static str) -> gpui::Stateful<Div> {

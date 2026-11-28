@@ -310,7 +310,14 @@ fn remote_threads(
                         author: c.author.clone(),
                         when: ui::relative_time(&c.created_at),
                         body: c.body.trim().to_string(),
-                        avatar_url: c.author_avatar_url.clone(),
+                        // A host that gives no picture URL still has one by
+                        // login on GitHub, as the Overview shows it.
+                        avatar_url: avatar::source(
+                            item.map_or("", |i| i.provider.as_str()),
+                            &c.author,
+                            &c.author_avatar_url,
+                        )
+                        .unwrap_or_default(),
                         bot: c.author_bot || model::queue::is_bot(&c.author),
                     })
                     .collect(),
@@ -1699,11 +1706,20 @@ mod tests {
         );
         assert!(!threads[2].resolvable, "no host thread to resolve");
 
+        assert_eq!(
+            threads[0].comments[0].avatar_url, "https://avatars.githubusercontent.com/cubic?s=64",
+            "no URL from the host: the picture by login, as the Overview shows it"
+        );
+
         let gitlab = item("gitlab", 2);
         let threads = remote_threads(Some(&gitlab), &thread, &replies::Replies::default());
         assert!(
             !threads[2].outdated && threads[2].side == gespan_core::inbox::Side::New,
             "GitLab names no side: its lines are the new file's"
+        );
+        assert_eq!(
+            threads[0].comments[0].avatar_url, "",
+            "GitLab has no picture by login: its initial shows"
         );
     }
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};

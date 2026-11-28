@@ -907,8 +907,8 @@ fn settings_lists_your_repos_hides_them_and_adds_one_found_by_search(cx: &mut Te
 /// that names none.
 #[gpui::test]
 fn rows_show_the_authors_picture_and_keep_initials_without_one(cx: &mut TestAppContext) {
-    super::avatar::test_avatars::serve("https://github.com/dana.png?size=64");
-    super::avatar::test_avatars::serve("https://github.com/renovate.png?size=64");
+    super::avatar::test_avatars::serve("https://avatars.githubusercontent.com/dana?s=64");
+    super::avatar::test_avatars::serve("https://avatars.githubusercontent.com/renovate?s=64");
     let pictured = pr("acme/web", 1, "dana");
     let bot = pr("acme/web", 2, "app/renovate");
     let unpictured = pr("acme/web", 3, "nobody-here");

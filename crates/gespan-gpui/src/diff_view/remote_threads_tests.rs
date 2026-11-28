@@ -165,6 +165,113 @@ fn a_thread_shows_markdown_folds_details_and_clamps_a_long_comment(cx: &mut gpui
 }
 
 #[gpui::test]
+fn a_prompt_block_in_a_long_comment_opens_in_one_click(cx: &mut gpui::TestAppContext) {
+    // cubic's comments: a long finding, then its prompt for AI agents, which
+    // sits above the clamp's cut.
+    let body = format!(
+        "{}\n\n<details>\n<summary>Prompt for AI agents</summary>\n\nCheck if this issue is valid.\n</details>\n\n{}",
+        "deleteThread returns false when cleanup cannot reach the backend. ".repeat(2),
+        "Kept as silent best-effort cleanup. ".repeat(14),
+    );
+    let (window, mut visual, _, _s) = with_threads(
+        cx,
+        vec![thread("t1", 2, false, vec![comment("cubic-dev-ai", &body)])],
+    );
+    assert!(shown(&mut visual, "diff-comment-more-t1:0"), "it clamps");
+    let clamped = visual
+        .debug_bounds("diff-remote-comment-t1:0")
+        .unwrap()
+        .size
+        .height;
+    click(&mut visual, "diff-details-t1:0:1");
+    let (open, unclamped) = window
+        .update(&mut visual, |v, _, _| {
+            (
+                v.review.details.contains("t1:0:1"),
+                v.review.more.contains("t1:0"),
+            )
+        })
+        .unwrap();
+    assert!(
+        open && unclamped,
+        "the block opens and its comment shows whole"
+    );
+    let opened = visual
+        .debug_bounds("diff-remote-comment-t1:0")
+        .unwrap()
+        .size
+        .height;
+    assert!(
+        opened > clamped,
+        "the prompt's text is in sight: {clamped:?} → {opened:?}"
+    );
+
+    // Closing it leaves the comment as it is; Show less clamps it again.
+    click(&mut visual, "diff-details-t1:0:1");
+    let more = window
+        .update(&mut visual, |v, _, _| v.review.more.contains("t1:0"))
+        .unwrap();
+    assert!(more);
+    click(&mut visual, "diff-comment-more-t1:0");
+    let again = visual
+        .debug_bounds("diff-remote-comment-t1:0")
+        .unwrap()
+        .size
+        .height;
+    assert!(again < opened);
+}
+
+#[gpui::test]
+fn an_opened_prompt_shows_its_code(cx: &mut gpui::TestAppContext) {
+    // As cubic writes it: the prompt is a fenced block inside <details>.
+    let body = "P2: `deleteThread` returns `false`.\n\n<details>\n<summary>Prompt for AI agents</summary>\n\n```text\nCheck if this issue is valid.\n<file context>\n+ await deleteThread(id);\n</file context>\n```\n\n</details>";
+    let (_window, mut visual, _, _s) = with_threads(
+        cx,
+        vec![thread("t1", 2, false, vec![comment("cubic-dev-ai", body)])],
+    );
+    assert!(
+        !shown(&mut visual, "diff-md-code-t1:0:1-0"),
+        "folded: no code"
+    );
+    click(&mut visual, "diff-details-t1:0:1");
+    let code = visual
+        .debug_bounds("diff-md-code-t1:0:1-0")
+        .expect("the prompt's code shows");
+    assert!(
+        code.size.height > gpui::px(3. * 16.),
+        "all four lines: {:?}",
+        code.size.height
+    );
+}
+
+#[test]
+fn a_details_block_belongs_to_its_comment() {
+    assert_eq!(super::comment_key("t1:0:1"), "t1:0");
+    assert_eq!(super::comment_key("PRRC_kw:3:12"), "PRRC_kw:3");
+}
+
+#[gpui::test]
+fn thread_cards_run_across_the_pane(cx: &mut gpui::TestAppContext) {
+    let (window, _, _) = super::super::tests::review_window_sized(cx, 1600.);
+    window
+        .update(cx, |view, _, cx| {
+            view.set_threads(
+                vec![thread("t1", 2, false, vec![comment("marko", "Short.")])],
+                cx,
+            )
+        })
+        .unwrap();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    settle(&mut visual);
+    let card = visual.debug_bounds("diff-remote-thread-0").unwrap();
+    assert!(
+        card.size.width > gpui::px(820.),
+        "a short comment doesn't shrink its card: {:?}",
+        card.size.width
+    );
+}
+
+#[gpui::test]
 fn reply_opens_inside_the_thread_and_posts_now_not_as_a_draft(cx: &mut gpui::TestAppContext) {
     let (window, mut visual, events, _s) = with_threads(
         cx,
