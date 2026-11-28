@@ -1386,6 +1386,8 @@ pub(crate) struct ProjectPicker {
     switcher: Option<Switcher>,
     /// "All N projects" was clicked: list every project.
     show_all: bool,
+    /// The switcher's machine filter: all, this computer, or elsewhere.
+    machine_filter: MachineFilter,
     _changed: Subscription,
 }
 
@@ -1460,6 +1462,7 @@ impl ProjectPicker {
             search,
             switcher: None,
             show_all: false,
+            machine_filter: MachineFilter::All,
             _changed: changed,
         }
     }
@@ -1505,8 +1508,15 @@ impl ProjectPicker {
         if self.show_all || !self.search.read(cx).content.is_empty() {
             return None;
         }
+        let filter = self.machine_filter;
+        let projects: Vec<String> = self
+            .projects
+            .iter()
+            .filter(|path| filter.keeps(path))
+            .cloned()
+            .collect();
         Some(switcher_groups(
-            &self.projects,
+            &projects,
             &switcher.pinned,
             &switcher.recent,
         ))
@@ -1519,6 +1529,7 @@ impl ProjectPicker {
         let query = self.search.read(cx).content.to_lowercase();
         self.projects
             .iter()
+            .filter(|path| self.machine_filter.keeps(path))
             .filter(|path| {
                 query.is_empty()
                     || format!("{}\n{}", self.label(path), path)
@@ -1698,6 +1709,43 @@ pub(crate) fn machine_chip(place: &ProjectPlace, selector: String) -> AnyElement
         .child(div().min_w_0().truncate().child(place.machine.clone()))
         .into_any_element()
 }
+/// The switcher's filter above its list, by where each project lives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum MachineFilter {
+    #[default]
+    All,
+    /// Only projects on this computer.
+    Here,
+    /// Only projects on connected machines.
+    Elsewhere,
+}
+impl MachineFilter {
+    pub(crate) const ALL: [Self; 3] = [Self::All, Self::Here, Self::Elsewhere];
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Here => THIS_MACHINE,
+            Self::Elsewhere => OTHER_MACHINE,
+        }
+    }
+    fn id(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Here => "here",
+            Self::Elsewhere => "elsewhere",
+        }
+    }
+    /// Whether a project at `path` shows under this filter.
+    pub(crate) fn keeps(self, path: &str) -> bool {
+        let remote = gespan_core::remote::parse_remote_path(path).is_some();
+        match self {
+            Self::All => true,
+            Self::Here => !remote,
+            Self::Elsewhere => remote,
+        }
+    }
+}
+
 /// A long machine name truncates in its chip past this width.
 const MACHINE_CHIP_MAX: f32 = 120.;
 /// A switcher row: name, chip and branch over its place.
@@ -1707,6 +1755,53 @@ const OTHER_MACHINE_GREEN: u32 = 0x84cc16;
 const OTHER_MACHINE_INK: (u32, u32) = (0xa3e635, 0x3f6212);
 
 impl ProjectPicker {
+    /// All, This Mac and Other machine: pills under the search field, the
+    /// machine ones with their chip's dot.
+    fn machine_filters(&self, cx: &mut Context<Self>) -> AnyElement {
+        let pills = MachineFilter::ALL.into_iter().map(|filter| {
+            let on = self.machine_filter == filter;
+            let dot: Option<gpui::Hsla> = match filter {
+                MachineFilter::All => None,
+                MachineFilter::Here => Some(content(0.55)),
+                MachineFilter::Elsewhere => Some(gpui::rgb(OTHER_MACHINE_GREEN).into()),
+            };
+            div()
+                .id(filter.id())
+                .debug_selector(move || format!("project-filter-{}", filter.id()))
+                .role(Role::Button)
+                .aria_label(format!("Show {} projects", filter.label()))
+                .aria_selected(on)
+                .cursor_pointer()
+                .h(px(24.))
+                .px(px(10.))
+                .rounded_full()
+                .border_1()
+                .border_color(content(0.14))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .text_size(px(12.))
+                .text_color(content(if on { 1. } else { 0.75 }))
+                .when(on, |d| d.bg(content(0.12)))
+                .when(!on, |d| d.hover(|s| s.bg(content(0.05))))
+                .children(dot.map(|dot| div().size(px(6.)).rounded_full().bg(dot)))
+                .child(filter.label())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.machine_filter = filter;
+                    this.active = 0;
+                    cx.notify();
+                }))
+        });
+        div()
+            .debug_selector(|| "project-filters".into())
+            .mb(px(4.))
+            .px(px(2.))
+            .flex()
+            .flex_wrap()
+            .gap(px(6.))
+            .children(pills)
+            .into_any_element()
+    }
     /// Rail F1's switcher: a search field, Pinned and Recent with each
     /// project's branch and live work, then "All N projects" and
     /// "+ Add project".
@@ -1869,6 +1964,11 @@ impl ProjectPicker {
         }
         let total = self.projects.len();
         let all = self.show_all;
+        // The filter only helps once some project lives elsewhere.
+        let has_remote = self
+            .projects
+            .iter()
+            .any(|path| MachineFilter::Elsewhere.keeps(path));
         div()
             .id("project-picker")
             .debug_selector(|| "project-picker".into())
@@ -1915,6 +2015,7 @@ impl ProjectPicker {
                     }))
                     .child(div().flex_1().min_w_0().child(self.search.clone())),
             )
+            .when(has_remote, |d| d.child(self.machine_filters(cx)))
             .child(
                 div()
                     .id("project-list")
@@ -2301,6 +2402,17 @@ mod switcher_tests {
         // This computer is never looked up.
         let local = project_place_in("/srv/ae", None, |_| panic!("not remote"));
         assert_eq!(local.machine, THIS_MACHINE);
+    }
+
+    #[test]
+    fn the_machine_filter_splits_projects_by_where_they_live() {
+        let here = "/Users/al/repo/ae";
+        let there = gespan_core::remote::remote_path("env1", "/home/ubuntu/ae");
+        assert!(MachineFilter::All.keeps(here) && MachineFilter::All.keeps(&there));
+        assert!(MachineFilter::Here.keeps(here) && !MachineFilter::Here.keeps(&there));
+        assert!(!MachineFilter::Elsewhere.keeps(here) && MachineFilter::Elsewhere.keeps(&there));
+        // Something only named like a remote path is still here.
+        assert!(MachineFilter::Here.keeps("/work/remote:/ae"));
     }
 
     #[test]

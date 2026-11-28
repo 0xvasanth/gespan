@@ -1527,6 +1527,72 @@ mod tests {
         );
     }
 
+    /// The popup's All / This Mac / Other machine pills narrow the list to
+    /// where projects live, and show only once a project lives elsewhere.
+    #[gpui::test]
+    fn the_picker_filters_projects_by_machine(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        click(visual, "sidebar-project-button");
+        assert!(
+            visual.debug_bounds("project-filters").is_none(),
+            "every project is here: nothing to filter"
+        );
+        // Close, add a project on a connected machine, open again.
+        click(visual, "sidebar-project-button");
+        let remote = gespan_core::remote::remote_path("box", "/home/dev/gespan");
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.projects.push(remote.clone());
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        if visual.debug_bounds("project-picker").is_none() {
+            click(visual, "sidebar-project-button");
+        }
+        let rows = |visual: &mut gpui::VisualTestContext| {
+            visual.refresh().unwrap();
+            (0..5)
+                .take_while(|ix| {
+                    visual
+                        .debug_bounds(Box::leak(
+                            format!("project-picker-project-{ix}").into_boxed_str(),
+                        ))
+                        .is_some()
+                })
+                .count()
+        };
+        let filters = visual.debug_bounds("project-filters").expect("the pills");
+        let list = visual.debug_bounds("project-picker-project-0").unwrap();
+        assert!(
+            filters.bottom() <= list.top(),
+            "the pills sit above the list"
+        );
+        assert_eq!(rows(visual), 3, "All");
+
+        click(visual, "project-filter-elsewhere");
+        assert_eq!(rows(visual), 1, "only the remote project");
+        let chip = visual.debug_bounds("project-picker-machine-0").unwrap();
+        let here_chip_width = {
+            click(visual, "project-filter-here");
+            assert_eq!(rows(visual), 2, "only this computer's projects");
+            visual
+                .debug_bounds("project-picker-machine-0")
+                .unwrap()
+                .size
+                .width
+        };
+        assert!(
+            chip.size.width > here_chip_width,
+            "the remote chip was the one shown"
+        );
+
+        click(visual, "project-filter-all");
+        assert_eq!(rows(visual), 3);
+    }
+
     fn click(visual: &mut gpui::VisualTestContext, selector: &'static str) {
         visual.refresh().unwrap();
         let bounds = visual
