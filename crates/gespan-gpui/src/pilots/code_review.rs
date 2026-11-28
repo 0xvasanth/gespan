@@ -76,19 +76,23 @@ impl Pilots {
         };
         let pilot_id = pilot.id.clone();
         let label = pilot.label();
-        let Some(pilot) = self.roster.get_mut(&pilot_id) else {
+        let Some(pilot) = self.roster.get(&pilot_id) else {
             return;
         };
         let fresh: Vec<_> = lesson
             .comments
             .iter()
-            .filter(|comment| pilot.learn_comment(&lesson.key(comment)))
+            .filter(|comment| {
+                let key = lesson.key(comment);
+                !pilot.has_learned(&key) && !self.learning_pending.contains(&key)
+            })
             .cloned()
             .collect();
         if fresh.is_empty() {
             return;
         }
-        self.save(cx);
+        let keys: Vec<String> = fresh.iter().map(|comment| lesson.key(comment)).collect();
+        self.learning_pending.extend(keys.iter().cloned());
         let prompt = learning_prompt(&lesson.repo, lesson.number, &fresh);
         let title = format!("{label} · learn · #{}", lesson.number);
         let pilot = pilot_id.clone();
@@ -114,20 +118,33 @@ impl Pilots {
             },
             cx,
         );
+        let learner = pilot_id.clone();
         cx.spawn(async move |this, cx| {
             let result = spawned.await;
-            let _ = this.update(cx, |this, cx| match result {
-                Err(error) => {
-                    tracing::warn!(%error, "a reviewer could not start learning");
+            let _ = this.update(cx, |this, cx| {
+                for key in &keys {
+                    this.learning_pending.remove(key);
                 }
-                Ok((session, _, true)) => {
-                    if let Some(run) = this.learning.get_mut(&session) {
-                        run.dispatched = true;
+                match result {
+                    Err(error) => {
+                        // Not marked learned: the next read of the comment tries again.
+                        tracing::warn!(%error, "a reviewer could not start learning");
                     }
-                    this.learning_changed(session, cx);
-                }
-                Ok((session, _, false)) => {
-                    this.learning.remove(&session);
+                    Ok((session, _, true)) => {
+                        if let Some(pilot) = this.roster.get_mut(&learner) {
+                            for key in &keys {
+                                pilot.learn_comment(key);
+                            }
+                        }
+                        this.save(cx);
+                        if let Some(run) = this.learning.get_mut(&session) {
+                            run.dispatched = true;
+                        }
+                        this.learning_changed(session, cx);
+                    }
+                    Ok((session, _, false)) => {
+                        this.learning.remove(&session);
+                    }
                 }
             });
         })

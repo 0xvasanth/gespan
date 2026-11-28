@@ -204,6 +204,9 @@ pub(crate) struct Pilots {
     pub(crate) code_reviews: HashSet<i64>,
     /// Hidden runs teaching a reviewer from trusted comments, by session.
     learning: HashMap<i64, code_review::LearningRun>,
+    /// Comments a learning run is starting for: marked learned only once it
+    /// dispatches, so a run that fails to start is tried again.
+    learning_pending: HashSet<String>,
     /// Prompts hidden runs were given; tests never send them.
     #[cfg(test)]
     pub(crate) hidden_prompts: Vec<(i64, String)>,
@@ -449,6 +452,7 @@ impl Pilots {
             flow_watch: Default::default(),
             code_reviews: HashSet::new(),
             learning: HashMap::new(),
+            learning_pending: HashSet::new(),
             #[cfg(test)]
             hidden_prompts: Vec::new(),
             #[cfg(test)]

@@ -924,9 +924,12 @@ impl Service {
         // An automation belongs to one project for its whole life, so an event
         // always maps to the one automation set up for it there. Running it
         // somewhere else is a new automation (the editor's Duplicate).
-        if previous.as_ref().is_some_and(|previous| {
+        let moved = previous.as_ref().is_some_and(|previous| {
             crate::files::path_key(&previous.cwd) != crate::files::path_key(&automation.cwd)
-        }) {
+        });
+        // A system review follows its repo to the folder the user picks, in
+        // place, so its runs stay with it; a user's automation never moves.
+        if moved && system.is_none() {
             return Err(PROJECT_FROZEN.into());
         }
         let created_at = previous
@@ -937,7 +940,8 @@ impl Service {
         // from now: items that already exist are backlog.
         let events_since = match &previous {
             Some(previous)
-                if (previous.enabled || !automation.enabled)
+                if !moved
+                    && (previous.enabled || !automation.enabled)
                     && event_signature(&previous.triggers())
                         == event_signature(triggers.as_deref().unwrap_or_default()) =>
             {

@@ -137,6 +137,10 @@ impl Pilot {
             None => None,
         }
     }
+    /// Whether `key` was learned from already.
+    pub fn has_learned(&self, key: &str) -> bool {
+        self.learned_comments.iter().any(|k| k == key)
+    }
     /// Notes `key` as learned. False when it already was.
     pub fn learn_comment(&mut self, key: &str) -> bool {
         if self.learned_comments.iter().any(|k| k == key) {

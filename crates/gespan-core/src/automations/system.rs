@@ -12,7 +12,6 @@
 //! table changes.
 
 use super::{
-    get,
     review_setup::{review_draft, ReviewSetupInput, WhichPrs},
     Automation, AutomationTrigger, AutomationUpsert, Service, GITHUB_REVIEW_COMMAND_EVENT,
     GITLAB_REVIEW_COMMAND_EVENT, REVIEW_REQUESTED_EVENT,
@@ -202,8 +201,7 @@ fn review_upsert(
 
 impl Service {
     /// Makes or updates `repo`'s code review in `cwd`. A review that was
-    /// in another folder is moved: its history stays with the old folder's
-    /// automation, which goes.
+    /// in another folder moves there in place, keeping its runs.
     pub fn ensure_code_review(
         &mut self,
         repo: &str,
@@ -211,15 +209,6 @@ impl Service {
         settings: &ReviewSettings,
     ) -> Result<Automation, String> {
         let draft = review_upsert(repo, cwd, settings)?;
-        let id = draft.id.clone();
-        if let Some(existing) = self
-            .db
-            .run(|mut db| async move { get(&mut db, &id).await })?
-        {
-            if crate::files::path_key(&existing.cwd) != crate::files::path_key(cwd) {
-                self.delete_row(&existing.id)?;
-            }
-        }
         self.save(
             draft,
             Some(SystemRole::CodeReview {
@@ -520,6 +509,44 @@ mod tests {
             .unwrap();
         assert_eq!(moved.cwd, "/work/app-clone");
         assert_eq!(service.code_reviews().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_moved_review_keeps_its_runs_so_its_reviewer_can_still_learn() {
+        let (_dir, mut service) = service();
+        let review = service
+            .ensure_code_review("github:acme/app", "/work/app", &settings(WhichPrs::Opened))
+            .unwrap();
+        let item = crate::inbox::Item {
+            provider: "github".into(),
+            kind: "pr".into(),
+            number: 7,
+            repo: "acme/app".into(),
+            project_path: "/work/app".into(),
+            title: "Fix it".into(),
+            ..Default::default()
+        };
+        crate::automations::run_on_item(&mut service, &review.id, &item, 1).unwrap();
+        let moved = service
+            .ensure_code_review(
+                "github:acme/app",
+                "/work/app-clone",
+                &settings(WhichPrs::Opened),
+            )
+            .unwrap();
+        assert_eq!(moved.id, review.id);
+        assert_eq!(service.runs(&review.id).unwrap().len(), 1, "history stays");
+        // A user's own automation still can't change project.
+        let mut own = AutomationUpsert::new("/work/app".into(), "claude".into(), "m".into());
+        own.name = "Mine".into();
+        own.prompt = "Do it".into();
+        let own = service.upsert(own).unwrap();
+        let mut elsewhere = AutomationUpsert::from_automation(&own);
+        elsewhere.cwd = "/work/other".into();
+        assert_eq!(
+            service.upsert(elsewhere).unwrap_err(),
+            crate::automations::PROJECT_FROZEN
+        );
     }
 
     #[test]

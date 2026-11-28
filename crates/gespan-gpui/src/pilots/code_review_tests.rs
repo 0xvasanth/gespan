@@ -137,6 +137,42 @@ fn a_learning_run_changes_only_the_reviewers_memory(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_comment_counts_as_learned_only_once_its_run_has_started(cx: &mut TestAppContext) {
+    let s = setup(cx);
+    hold_outbox(&s, cx);
+    let reviewer = reviewer(&s, cx);
+    let learned = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            s.manager
+                .read(cx)
+                .roster
+                .get(&reviewer)
+                .unwrap()
+                .learned_comments
+                .clone()
+        })
+    };
+    // Asked to learn, the run still starting: nothing is marked yet, so a
+    // run that fails to start leaves the comment to be tried again.
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            m.learn(lesson(&[("c1", "me", "Too strict on naming.")]), cx)
+        })
+    });
+    assert!(learned(cx).is_empty());
+    // The same comment read again meanwhile starts no second run.
+    cx.update(|cx| {
+        s.manager.update(cx, |m, cx| {
+            m.learn(lesson(&[("c1", "me", "Too strict on naming.")]), cx)
+        })
+    });
+    cx.run_until_parked();
+    let prompts = cx.update(|cx| s.manager.read(cx).hidden_prompts.len());
+    assert_eq!(prompts, 1);
+    assert_eq!(learned(cx), vec!["github:acme/app#7:c1".to_string()]);
+}
+
+#[gpui::test]
 fn a_comment_is_learned_from_once(cx: &mut TestAppContext) {
     let s = setup(cx);
     hold_outbox(&s, cx);
