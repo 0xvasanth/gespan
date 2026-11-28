@@ -245,6 +245,47 @@ impl Item {
         )
     }
 }
+/// A reply to a comment the host can't thread (a GitHub general comment):
+/// a new comment that quotes the start of it and mentions its author.
+/// Up to three lines are quoted, each cut at 200 characters, skipping the
+/// comment's own quotes and blank lines.
+pub fn quote_reply(author: &str, quoted: &str, reply: &str) -> String {
+    let lines: Vec<String> = quoted
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('>'))
+        .take(3)
+        .map(|line| {
+            if line.chars().count() > 200 {
+                format!("{}…", line.chars().take(199).collect::<String>())
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    let mut out = String::new();
+    for line in &lines {
+        out.push_str("> ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    let author = author.trim().trim_start_matches("app/");
+    let reply = reply.trim();
+    let mentioned = reply
+        .to_lowercase()
+        .starts_with(&format!("@{}", author.to_lowercase()));
+    if !author.is_empty() && author != "ghost" && !mentioned {
+        out.push('@');
+        out.push_str(author);
+        out.push(' ');
+    }
+    out.push_str(reply);
+    out
+}
+
 pub fn timestamp_ms(value: &str) -> i64 {
     chrono::DateTime::parse_from_rfc3339(value)
         .map(|at| at.timestamp_millis())
@@ -303,8 +344,15 @@ pub struct Comment {
     /// that aren't on a line, or whose line is outdated.
     pub side: String,
     pub resolved: bool,
+    /// The host's thread this comment starts or belongs to: where a reply
+    /// goes. Empty when the host can't thread it (a GitHub general comment),
+    /// so a reply quotes it in a new comment instead.
     pub thread_id: String,
     pub replies: Vec<Comment>,
+    /// Written by a bot account (GitHub's `Bot` type, or a known bot login).
+    pub author_bot: bool,
+    /// The thread can be marked resolved on its host.
+    pub resolvable: bool,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -1410,6 +1458,7 @@ impl Service {
                 item.kind.clone(),
                 item.number,
                 body,
+                reply_to,
             ),
             "azuredevops" => azure_devops::azure_devops_work_item_comment(
                 self.data_dir.clone(),
@@ -1417,6 +1466,7 @@ impl Service {
                 item.kind.clone(),
                 item.number,
                 body,
+                reply_to,
             ),
             _ => github_call(
                 self.project(item),
@@ -1439,6 +1489,44 @@ impl Service {
                     )
                 },
             ),
+        }
+    }
+    /// Marks a review thread resolved, or open again, on its host.
+    pub fn resolve_thread(
+        &self,
+        item: &Item,
+        thread_id: &str,
+        resolved: bool,
+    ) -> Result<(), String> {
+        match item.provider.as_str() {
+            "gitlab" => gitlab::gitlab_resolve_thread(
+                self.data_dir.clone(),
+                item.repo.clone(),
+                item.kind.clone(),
+                item.number,
+                thread_id.to_owned(),
+                resolved,
+            ),
+            "azuredevops" if item.kind == "pr" => azure_devops::azure_devops_resolve_thread(
+                self.data_dir.clone(),
+                item.repo.clone(),
+                item.number,
+                thread_id.to_owned(),
+                resolved,
+            ),
+            "github" if item.kind == "pr" => {
+                if remote_workspace::is_remote(self.project(item)) {
+                    return Err(
+                        "Resolve this thread on GitHub: the project is on another machine".into(),
+                    );
+                }
+                github::git_github_resolve_thread_for(
+                    &gh_root(self.project(item)),
+                    thread_id,
+                    resolved,
+                )
+            }
+            _ => Err("This host has no resolving".into()),
         }
     }
     pub fn diff(&self, item: &Item) -> Result<Diff, String> {
@@ -2809,5 +2897,35 @@ mod prompt_tests {
         let prompt = Item::default().prompt(&body, false);
         let (_, inner) = split_prompt(&prompt);
         assert_eq!(inner.chars().count(), MAX_PROMPT_TEXT);
+    }
+}
+
+#[cfg(test)]
+mod quote_reply_tests {
+    use super::quote_reply;
+
+    #[test]
+    fn a_quote_reply_quotes_the_start_and_mentions_the_author_once() {
+        let quoted = "> earlier quote\n\nDo previews get torn down?\nOtherwise Argo piles up.\nThird line\nFourth line";
+        assert_eq!(
+            quote_reply("lee", quoted, "  yes, on close  "),
+            "> Do previews get torn down?\n> Otherwise Argo piles up.\n> Third line\n\n@lee yes, on close"
+        );
+        assert_eq!(
+            quote_reply("lee", "Hi", "@Lee already done"),
+            "> Hi\n\n@Lee already done",
+            "no second mention"
+        );
+        assert_eq!(
+            quote_reply("app/renovate", "Bump x", "ok"),
+            "> Bump x\n\n@renovate ok"
+        );
+        assert_eq!(quote_reply("ghost", "", "ok"), "ok");
+        let long = "x".repeat(300);
+        let quoted = quote_reply("a", &long, "ok");
+        assert!(
+            quoted.starts_with(&format!("> {}…\n", "x".repeat(199))),
+            "{quoted}"
+        );
     }
 }

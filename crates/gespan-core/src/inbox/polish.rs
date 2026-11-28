@@ -1,6 +1,7 @@
-//! Polish: a review comment rewritten in a chosen tone by the pull request's
-//! Ask agent, which already knows the pull request. The agent answers inside
-//! `<polished>` tags so the rewrite can be lifted out of whatever else it says.
+//! Polish: a review comment rewritten in a chosen tone by a one-off agent turn
+//! that runs in the background, with no tools and no session of its own. The
+//! prompt names the pull request, and the agent answers inside `<polished>`
+//! tags so the rewrite can be lifted out of whatever else it says.
 use serde::{Deserialize, Serialize};
 
 /// How a polished comment should read.
@@ -39,15 +40,17 @@ impl Tone {
 const OPEN: &str = "<polished>";
 const CLOSE: &str = "</polished>";
 
-/// What the Ask agent is sent to polish `draft`.
-pub fn prompt(draft: &str, tone: Tone) -> String {
+/// What the agent is sent to polish `draft`, a comment on the pull request
+/// named by `pull_request` (its repository, number, title and link).
+pub fn prompt(pull_request: &str, draft: &str, tone: Tone) -> String {
     format!(
-        "Rewrite my review comment on this pull request in this tone. {}\n\n\
+        "Rewrite my review comment on the pull request {} in this tone. {}\n\n\
          Keep every technical point, file name, line and code reference exactly as written. \
          Do not add new requests or claims. Write it as me, in the first person, in GitHub \
          Markdown. Do not run tools or change any files.\n\n\
          Answer with only the rewritten comment between {OPEN} and {CLOSE}.\n\n\
          My comment:\n{}",
+        pull_request.trim(),
         tone.guidance(),
         draft.trim()
     )
@@ -68,11 +71,22 @@ mod tests {
 
     #[test]
     fn the_prompt_carries_the_tone_and_the_draft_and_asks_for_tags() {
-        let text = prompt("  this is wrong, add the index \n", Tone::Friendly);
+        let text = prompt(
+            "acme/web#562 \"Toasty\" (https://github.com/acme/web/pull/562)",
+            "  this is wrong, add the index \n",
+            Tone::Friendly,
+        );
+        assert!(text.starts_with(
+            "Rewrite my review comment on the pull request acme/web#562 \"Toasty\" \
+             (https://github.com/acme/web/pull/562) in this tone."
+        ));
         assert!(text.contains("Friendly: warm"));
         assert!(text.ends_with("My comment:\nthis is wrong, add the index"));
         assert!(text.contains("<polished> and </polished>"));
-        assert_ne!(prompt("x", Tone::Direct), prompt("x", Tone::Suggestion));
+        assert_ne!(
+            prompt("a/b#1", "x", Tone::Direct),
+            prompt("a/b#1", "x", Tone::Suggestion)
+        );
     }
 
     #[test]

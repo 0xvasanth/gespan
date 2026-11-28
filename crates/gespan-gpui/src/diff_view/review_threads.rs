@@ -9,6 +9,7 @@
 use super::*;
 use gespan_core::inbox::{LineComment, LineRef, polish::Tone};
 use gpui::Entity;
+use std::collections::{HashMap, HashSet};
 
 /// A line by where it sits in its file's diff: block, then line.
 pub(super) type At = (usize, usize);
@@ -38,6 +39,8 @@ pub(super) struct Editor {
     pub pick: Pick,
     /// The draft being edited, or `None` for a new one.
     pub editing: Option<usize>,
+    /// A reply in the remote thread with this root, instead of a draft.
+    pub reply: Option<String>,
     pub input: Entity<Input>,
     /// Polish: the tone asked for, a rewrite on its way, the one offered, or
     /// why there is none.
@@ -49,9 +52,11 @@ pub(super) struct Editor {
 }
 
 impl Editor {
-    /// The box grows by the rewrite card or the error line.
-    fn height(&self) -> f32 {
+    /// The box grows by the rewrite card or the error line, and by a second
+    /// row of controls when it is narrow.
+    pub(super) fn height(&self, narrow: bool) -> f32 {
         EDITOR
+            + if narrow { NARROW_ROW } else { 0. }
             + self
                 .polished
                 .as_ref()
@@ -68,37 +73,57 @@ pub(super) struct Review {
     /// A drag from a "+" in progress.
     pub picking: Option<Pick>,
     pub editor: Option<Editor>,
+    /// The box is too narrow for its controls in one row, as the diff was
+    /// last laid out.
+    pub narrow: bool,
+    /// Each remote comment's body, parsed once: `root:comment`.
+    pub bodies: HashMap<String, Vec<super::remote_threads::BodyPart>>,
+    /// Threads opened though resolved, by root.
+    pub opened: HashSet<String>,
+    /// Threads folded though open, by root.
+    pub closed: HashSet<String>,
+    /// Long comments shown whole: `root:comment`.
+    pub more: HashSet<String>,
+    /// `<details>` opened: `root:comment:part`.
+    pub details: HashSet<String>,
 }
 
-/// A review thread already on the pull request, read-only in the diff.
+/// A review thread already on the pull request, shown on its line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RemoteThread {
+    /// Its first comment's id: what replies, folds and resolving key on.
+    pub root: String,
     pub path: String,
     pub line: u32,
     pub side: gespan_core::inbox::Side,
     pub resolved: bool,
+    /// The host can resolve it.
+    pub resolvable: bool,
+    /// Its line changed after it was written: it sits at the top of its
+    /// file, saying where it was.
+    pub outdated: bool,
     pub comments: Vec<RemoteComment>,
+    /// Replies sent from here: on their way, sent, or failed.
+    pub pending: Vec<PendingReply>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RemoteComment {
     pub author: String,
     /// "12m ago": how long ago, already worded.
     pub when: String,
     pub body: String,
+    pub avatar_url: String,
+    pub bot: bool,
 }
-
-/// A thread card's height: its header and each comment's lines.
-fn remote_height(thread: &RemoteThread) -> f32 {
-    20. + thread
-        .comments
-        .iter()
-        .map(|c| CARD_LINE + card_height(&c.body) - CARD + CARD_LINE + 6.)
-        .sum::<f32>()
-        + 16.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingReply {
+    pub text: String,
+    pub error: Option<String>,
+    pub posted: bool,
 }
 
 /// The line a `side`/`line` pair sits on in a file's diff.
-fn line_at(blocks: &[Block], side: gespan_core::inbox::Side, number: u32) -> Option<At> {
+pub(super) fn line_at(blocks: &[Block], side: gespan_core::inbox::Side, number: u32) -> Option<At> {
     blocks.iter().enumerate().find_map(|(b, block)| {
         block.lines().iter().enumerate().find_map(|(i, line)| {
             let here = match side {
@@ -114,6 +139,11 @@ fn line_at(blocks: &[Block], side: gespan_core::inbox::Side, number: u32) -> Opt
 const PAD: f32 = 8.;
 const GAP: f32 = 6.;
 const EDITOR: f32 = 160.;
+/// The second row of controls a narrow box adds: the buttons and a gap.
+const NARROW_ROW: f32 = 36.;
+/// The width the box's controls need in one row: Tone, its three choices,
+/// Polish, Cancel and Add review comment.
+const ONE_ROW: f32 = 470.;
 /// The rewrite card above the box's field, for one line of text.
 const POLISHED: f32 = 98.;
 const CARD: f32 = 58.;
@@ -201,11 +231,9 @@ impl DiffView {
             .filter(|(_, draft)| draft_at(&diff.blocks, draft) == Some(at))
             .map(|(ix, _)| ix)
             .collect();
-        let editor = self
-            .review
-            .editor
-            .as_ref()
-            .is_some_and(|editor| editor.pick.file == file && editor.pick.range().1 == at);
+        let editor = self.review.editor.as_ref().is_some_and(|editor| {
+            editor.reply.is_none() && editor.pick.file == file && editor.pick.range().1 == at
+        });
         (drafts, editor)
     }
     /// A thread row's height, or `None` when nothing sits under the line.
@@ -219,14 +247,20 @@ impl DiffView {
             .iter()
             .enumerate()
             .filter(|(_, t)| {
-                t.path == diff.path && line_at(&diff.blocks, t.side, t.line) == Some(at)
+                t.path == diff.path
+                    && super::remote_threads::thread_anchor(&diff.blocks, t) == Some(at)
             })
             .map(|(ix, _)| ix)
             .collect()
     }
+    #[cfg(test)]
+    pub(crate) fn threads_for_test(&self) -> &[RemoteThread] {
+        &self.review.threads
+    }
     /// Shows the pull request's review threads on their lines.
     pub(crate) fn set_threads(&mut self, threads: Vec<RemoteThread>, cx: &mut Context<Self>) {
         if self.review.threads != threads {
+            self.review.bodies = super::remote_threads::parse_bodies(&threads);
             self.review.threads = threads;
             self.rebuild(cx);
         }
@@ -236,7 +270,7 @@ impl DiffView {
         let remote: f32 = self
             .remote_at(file, at)
             .iter()
-            .map(|ix| remote_height(&self.review.threads[*ix]) + GAP)
+            .map(|ix| self.remote_height(*ix) + GAP)
             .sum();
         let (drafts, editor) = self.thread_at(file, at);
         let editing = self.review.editor.as_ref().and_then(|e| e.editing);
@@ -253,7 +287,10 @@ impl DiffView {
             remote
                 + cards.iter().sum::<f32>()
                 + if editor {
-                    self.review.editor.as_ref().map_or(EDITOR, Editor::height)
+                    self.review
+                        .editor
+                        .as_ref()
+                        .map_or(EDITOR, |e| e.height(self.review.narrow))
                 } else {
                     0.
                 }
@@ -334,7 +371,7 @@ impl DiffView {
         self.open_editor(pick, None, String::new(), window, cx);
     }
 
-    fn open_editor(
+    pub(super) fn open_editor(
         &mut self,
         pick: Pick,
         editing: Option<usize>,
@@ -365,6 +402,7 @@ impl DiffView {
         self.review.editor = Some(Editor {
             pick,
             editing,
+            reply: None,
             input,
             tone,
             polishing: false,
@@ -448,6 +486,34 @@ impl DiffView {
         }
         self.rebuild(cx);
     }
+    /// The box's field takes the keyboard again, after a button took it.
+    pub(super) fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.review.editor.as_ref() {
+            window.focus(&editor.input.read(cx).focus_handle(cx), cx);
+        }
+    }
+    /// Whether the box at this diff width needs its controls in two rows:
+    /// the column's width less the gutter and the padding, under [`ONE_ROW`].
+    pub(super) fn narrow_at(&self, width: f32) -> bool {
+        let gutter = self.gutter_width();
+        let column = width.min(gutter + 760.);
+        // The column's padding (12 + 24) and the box's own (12 + 12).
+        column - gutter - 36. - 24. < ONE_ROW
+    }
+    /// Lays the diff out again when the box's width crosses [`ONE_ROW`], so
+    /// its row is as tall as its controls need.
+    pub(super) fn sync_narrow(&mut self, cx: &mut Context<Self>) {
+        let narrow = self
+            .viewport
+            .get()
+            .is_some_and(|b| self.narrow_at(b.size.width.as_f32()));
+        if narrow != self.review.narrow {
+            self.review.narrow = narrow;
+            if self.review.editor.is_some() {
+                self.rebuild(cx);
+            }
+        }
+    }
     pub(super) fn keep_mine(&mut self, cx: &mut Context<Self>) {
         if let Some(editor) = self.review.editor.as_mut() {
             editor.polished = None;
@@ -491,6 +557,13 @@ impl DiffView {
         if body.is_empty() {
             return;
         }
+        if let Some(root) = editor.reply.clone() {
+            self.review.editor = None;
+            window.focus(&self.focus, cx);
+            cx.emit(DiffEvent::Reply { root, body });
+            self.rebuild(cx);
+            return;
+        }
         let pick = editor.pick;
         let editing = editor.editing;
         let Some(file) = self.files.get(pick.file) else {
@@ -517,6 +590,344 @@ impl DiffView {
         self.rebuild(cx);
     }
 
+    /// The open comment box: a new or edited draft under its lines, or a
+    /// reply inside a review thread.
+    pub(super) fn editor_box(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let editor = self.review.editor.as_ref()?;
+        {
+            let diff = &self.files[editor.pick.file];
+            let (start, end) = editor.pick.range();
+            let reply = editor.reply.is_some();
+            let replying_to = editor.reply.as_ref().and_then(|root| {
+                self.review
+                    .threads
+                    .iter()
+                    .find(|t| &t.root == root)
+                    .and_then(|t| t.comments.last())
+                    .map(|c| c.author.clone())
+            });
+            let label = match (
+                replying_to,
+                line_ref(&diff.blocks, start),
+                line_ref(&diff.blocks, end),
+            ) {
+                (Some(author), _, _) => format!("Reply to {author} · in this thread"),
+                (None, Some(start), Some(end)) if start != end => {
+                    format!("Comment on lines {} to {}", start.line, end.line)
+                }
+                (None, _, Some(end)) => format!("Comment on line {}", end.line),
+                _ => "Comment".into(),
+            };
+            let can_save = !editor.input.read(cx).content.trim().is_empty();
+            let editing = editor.editing.is_some();
+            let narrow = self.review.narrow;
+            let box_height = editor.height(narrow);
+            let tone = editor.tone;
+            let polishing = editor.polishing;
+            let violet: Hsla = gpui::rgb(0xc0affc).into();
+            let polished = editor.polished.clone().map(|(tone, text)| {
+                div()
+                    .debug_selector(|| "diff-polished".into())
+                    .flex_none()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(violet.opacity(0.35))
+                    .bg(violet.opacity(0.08))
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(11.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(violet)
+                            .child(icon("sparkles", 12.).text_color(violet))
+                            .child(format!("Polished · {}", tone.label().to_lowercase())),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "diff-polished-text".into())
+                            .text_size(px(13.))
+                            .line_height(px(CARD_LINE))
+                            .text_color(content(0.95))
+                            .child(text),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(px(6.))
+                            .child(
+                                small_button("diff-polish-keep", "Keep mine", false).on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.keep_mine(cx);
+                                        this.focus_editor(window, cx);
+                                    }),
+                                ),
+                            )
+                            .child(
+                                small_button("diff-polish-again", "Try again", false)
+                                    .on_click(cx.listener(|this, _, _, cx| this.polish_editor(cx))),
+                            )
+                            .child(small_button("diff-polish-use", "Use", true).on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.use_polished(cx);
+                                    this.focus_editor(window, cx);
+                                }),
+                            )),
+                    )
+            });
+            let polish_error = editor.polish_error.clone();
+            let tones = div()
+                .id("diff-review-tone")
+                .debug_selector(|| "diff-review-tone".into())
+                .role(Role::RadioGroup)
+                .aria_label("Tone")
+                .flex()
+                .items_center()
+                .p(px(2.))
+                .gap(px(2.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(content(0.1))
+                .bg(content(0.03))
+                .children(Tone::ALL.into_iter().map(|option| {
+                    let on = option == tone;
+                    let id = format!("diff-tone-{}", option.label().to_lowercase());
+                    let selector = id.clone();
+                    div()
+                        .id(SharedString::from(id))
+                        .debug_selector(move || selector.clone())
+                        .role(Role::RadioButton)
+                        .aria_label(option.label())
+                        .aria_selected(on)
+                        .h(px(22.))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.))
+                        .text_size(px(11.5))
+                        .cursor_pointer()
+                        .text_color(content(if on { 1. } else { 0.6 }))
+                        .when(on, |d| d.bg(content(0.12)))
+                        .when(!on, |d| d.hover(|s| s.text_color(content(1.))))
+                        .child(option.label())
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.set_editor_tone(option, cx)),
+                        )
+                }));
+            let polish_button = div()
+                .id("diff-polish")
+                .debug_selector(|| "diff-polish".into())
+                .role(Role::Button)
+                .aria_label("Polish")
+                .h(px(26.))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .rounded(px(7.))
+                .border_1()
+                .border_color(content(0.1))
+                .text_size(px(12.))
+                .text_color(content(0.85))
+                .when(!can_save || polishing, |d| d.opacity(0.45))
+                .when(can_save && !polishing, |d| {
+                    d.cursor_pointer()
+                        .hover(|s| s.bg(content(0.08)))
+                        .on_click(cx.listener(|this, _, _, cx| this.polish_editor(cx)))
+                })
+                .child(if polishing { "Polishing…" } else { "Polish" })
+                .child(icon("sparkles", 12.).text_color(violet));
+            Some(
+                div()
+                    .debug_selector(|| "diff-review-editor".into())
+                    .h(px(box_height))
+                    .flex_none()
+                    .px(px(12.))
+                    .py(px(10.))
+                    .rounded(px(10.))
+                    .bg(crate::theme::background_base().opacity(0.9))
+                    .border_1()
+                    .border_color(accent_color().opacity(0.45))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "escape" {
+                            this.cancel_editor(window, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_family(crate::fonts::monospace())
+                                    .text_size(px(11.))
+                                    .text_color(content(0.55))
+                                    .child(format!("{} · {label}", diff.path)),
+                            )
+                            .when(!narrow, |d| {
+                                d.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(10.5))
+                                        .text_color(content(0.4))
+                                        .child(if cfg!(target_os = "macos") {
+                                            "⌘↩ to save · Esc to cancel"
+                                        } else {
+                                            "Ctrl+↩ to save · Esc to cancel"
+                                        }),
+                                )
+                            }),
+                    )
+                    .children(polished)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .px(px(10.))
+                            .py(px(6.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(content(0.1))
+                            .bg(content(0.03))
+                            .text_size(px(13.))
+                            .child(editor.input.clone()),
+                    )
+                    .map(|d| {
+                        // Narrow, the tones get a row of their own (the group
+                        // still says "Tone" to a screen reader) and Polish joins
+                        // the buttons on the next.
+                        let tone_row = div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .when(!narrow, |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(content(0.5))
+                                        .child("Tone"),
+                                )
+                            })
+                            .child(tones);
+                        let actions = div()
+                            .debug_selector(|| "diff-review-actions".into())
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .id("diff-review-cancel")
+                                    .debug_selector(|| "diff-review-cancel".into())
+                                    .role(Role::Button)
+                                    .aria_label("Cancel")
+                                    .h(px(28.))
+                                    .px(px(10.))
+                                    .flex()
+                                    .items_center()
+                                    .rounded_md()
+                                    .text_size(px(12.))
+                                    .text_color(content(0.7))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(content(0.08)))
+                                    .child("Cancel")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.cancel_editor(window, cx)
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("diff-review-save")
+                                    .debug_selector(|| "diff-review-save".into())
+                                    .role(Role::Button)
+                                    .aria_label(if reply {
+                                        "Reply"
+                                    } else if editing {
+                                        "Save comment"
+                                    } else {
+                                        "Add review comment"
+                                    })
+                                    .h(px(28.))
+                                    .px(px(10.))
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(6.))
+                                    .rounded_md()
+                                    .bg(content(1.))
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(crate::theme::background_base())
+                                    .when(!can_save, |d| d.opacity(0.4))
+                                    .child(
+                                        icon("comment-add", 14.)
+                                            .text_color(crate::theme::background_base()),
+                                    )
+                                    .child(if reply {
+                                        "Reply"
+                                    } else if editing {
+                                        "Save"
+                                    } else if narrow {
+                                        "Add"
+                                    } else {
+                                        "Add review comment"
+                                    })
+                                    .when(can_save, |d| {
+                                        d.cursor_pointer().on_click(cx.listener(
+                                            |this, _, window, cx| this.save_editor(window, cx),
+                                        ))
+                                    }),
+                            );
+                        if narrow {
+                            // Two rows, so nothing runs past the box.
+                            d.child(tone_row).child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(polish_button)
+                                    .child(div().flex_1())
+                                    .child(actions),
+                            )
+                        } else {
+                            d.child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(tone_row.child(polish_button))
+                                    .child(div().flex_1())
+                                    .child(actions),
+                            )
+                        }
+                    })
+                    .when_some(polish_error, |d, error| {
+                        d.child(
+                            div()
+                                .debug_selector(|| "diff-polish-error".into())
+                                .text_size(px(11.5))
+                                .text_color(gpui::rgb(0xfda4af))
+                                .child(error),
+                        )
+                    })
+                    .into_any_element(),
+            )
+        }
+    }
+
     /// The row under a line: its pending drafts, then the box when it is open
     /// there.
     pub(super) fn thread_row(
@@ -524,6 +935,7 @@ impl DiffView {
         file: usize,
         at: At,
         height: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let (drafts, editor_here) = self.thread_at(file, at);
@@ -538,78 +950,7 @@ impl DiffView {
             .pr(px(24.))
             .max_w(px(gutter + 760.));
         for ix in self.remote_at(file, at) {
-            let thread = &self.review.threads[ix];
-            column = column.child(
-                div()
-                    .debug_selector(move || format!("diff-remote-thread-{ix}"))
-                    .h(px(remote_height(thread)))
-                    .flex_none()
-                    .overflow_hidden()
-                    .px(px(12.))
-                    .py(px(8.))
-                    .rounded(px(10.))
-                    .bg(content(0.035))
-                    .border_1()
-                    .border_color(content(0.08))
-                    .when(thread.resolved, |d| d.opacity(0.7))
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .text_size(px(11.))
-                            .text_color(content(0.5))
-                            .child(icon("message-square", 11.).text_color(content(0.5)))
-                            .child(format!(
-                                "{} comment{} on line {}",
-                                thread.comments.len(),
-                                if thread.comments.len() == 1 { "" } else { "s" },
-                                thread.line
-                            ))
-                            .when(thread.resolved, |d| {
-                                d.child(
-                                    div()
-                                        .px(px(6.))
-                                        .rounded_full()
-                                        .bg(content(0.08))
-                                        .text_color(content(0.65))
-                                        .child("Resolved"),
-                                )
-                            }),
-                    )
-                    .children(thread.comments.iter().map(|comment| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .text_size(px(11.5))
-                                    .line_height(px(CARD_LINE))
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(content(0.9))
-                                            .child(comment.author.clone()),
-                                    )
-                                    .child(
-                                        div().text_color(content(0.45)).child(comment.when.clone()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .line_height(px(CARD_LINE))
-                                    .text_color(content(0.88))
-                                    .child(comment.body.clone()),
-                            )
-                    })),
-            );
+            column = column.child(self.remote_card(file, at, ix, window, cx));
         }
         for ix in drafts {
             if Some(ix) == editing {
@@ -686,282 +1027,13 @@ impl DiffView {
                     ),
             );
         }
-        if editor_here && let Some(editor) = self.review.editor.as_ref() {
-            let diff = &self.files[editor.pick.file];
-            let (start, end) = editor.pick.range();
-            let label = match (line_ref(&diff.blocks, start), line_ref(&diff.blocks, end)) {
-                (Some(start), Some(end)) if start != end => {
-                    format!("Comment on lines {} to {}", start.line, end.line)
-                }
-                (_, Some(end)) => format!("Comment on line {}", end.line),
-                _ => "Comment".into(),
-            };
-            let can_save = !editor.input.read(cx).content.trim().is_empty();
-            let editing = editor.editing.is_some();
-            let box_height = editor.height();
-            let tone = editor.tone;
-            let polishing = editor.polishing;
-            let violet: Hsla = gpui::rgb(0xc0affc).into();
-            let polished = editor.polished.clone().map(|(tone, text)| {
-                div()
-                    .debug_selector(|| "diff-polished".into())
-                    .flex_none()
-                    .px(px(12.))
-                    .py(px(8.))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(violet.opacity(0.35))
-                    .bg(violet.opacity(0.08))
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .text_size(px(11.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(violet)
-                            .child(icon("sparkles", 12.).text_color(violet))
-                            .child(format!("Polished · {}", tone.label().to_lowercase())),
-                    )
-                    .child(
-                        div()
-                            .debug_selector(|| "diff-polished-text".into())
-                            .text_size(px(13.))
-                            .line_height(px(CARD_LINE))
-                            .text_color(content(0.95))
-                            .child(text),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap(px(6.))
-                            .child(
-                                small_button("diff-polish-keep", "Keep mine", false)
-                                    .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx))),
-                            )
-                            .child(
-                                small_button("diff-polish-again", "Try again", false)
-                                    .on_click(cx.listener(|this, _, _, cx| this.polish_editor(cx))),
-                            )
-                            .child(
-                                small_button("diff-polish-use", "Use", true)
-                                    .on_click(cx.listener(|this, _, _, cx| this.use_polished(cx))),
-                            ),
-                    )
-            });
-            let polish_error = editor.polish_error.clone();
-            let tones = div()
-                .id("diff-review-tone")
-                .debug_selector(|| "diff-review-tone".into())
-                .role(Role::RadioGroup)
-                .aria_label("Tone")
-                .flex()
-                .items_center()
-                .p(px(2.))
-                .gap(px(2.))
-                .rounded(px(8.))
-                .border_1()
-                .border_color(content(0.1))
-                .bg(content(0.03))
-                .children(Tone::ALL.into_iter().map(|option| {
-                    let on = option == tone;
-                    let id = format!("diff-tone-{}", option.label().to_lowercase());
-                    let selector = id.clone();
-                    div()
-                        .id(SharedString::from(id))
-                        .debug_selector(move || selector.clone())
-                        .role(Role::RadioButton)
-                        .aria_label(option.label())
-                        .aria_selected(on)
-                        .h(px(22.))
-                        .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .rounded(px(6.))
-                        .text_size(px(11.5))
-                        .cursor_pointer()
-                        .text_color(content(if on { 1. } else { 0.6 }))
-                        .when(on, |d| d.bg(content(0.12)))
-                        .when(!on, |d| d.hover(|s| s.text_color(content(1.))))
-                        .child(option.label())
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.set_editor_tone(option, cx)),
-                        )
-                }));
-            let polish_button = div()
-                .id("diff-polish")
-                .debug_selector(|| "diff-polish".into())
-                .role(Role::Button)
-                .aria_label("Polish")
-                .h(px(26.))
-                .px(px(9.))
-                .flex()
-                .items_center()
-                .gap(px(5.))
-                .rounded(px(7.))
-                .border_1()
-                .border_color(content(0.1))
-                .text_size(px(12.))
-                .text_color(content(0.85))
-                .when(!can_save || polishing, |d| d.opacity(0.45))
-                .when(can_save && !polishing, |d| {
-                    d.cursor_pointer()
-                        .hover(|s| s.bg(content(0.08)))
-                        .on_click(cx.listener(|this, _, _, cx| this.polish_editor(cx)))
-                })
-                .child(if polishing { "Polishing…" } else { "Polish" })
-                .child(icon("sparkles", 12.).text_color(violet));
-            column = column.child(
-                div()
-                    .debug_selector(|| "diff-review-editor".into())
-                    .h(px(box_height))
-                    .flex_none()
-                    .px(px(12.))
-                    .py(px(10.))
-                    .rounded(px(10.))
-                    .bg(crate::theme::background_base().opacity(0.9))
-                    .border_1()
-                    .border_color(accent_color().opacity(0.45))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "escape" {
-                            this.cancel_editor(window, cx);
-                            cx.stop_propagation();
-                        }
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_family(crate::fonts::monospace())
-                                    .text_size(px(11.))
-                                    .text_color(content(0.55))
-                                    .child(format!("{} · {label}", diff.path)),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_size(px(10.5))
-                                    .text_color(content(0.4))
-                                    .child(if cfg!(target_os = "macos") {
-                                        "⌘↩ to save · Esc to cancel"
-                                    } else {
-                                        "Ctrl+↩ to save · Esc to cancel"
-                                    }),
-                            ),
-                    )
-                    .children(polished)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .px(px(10.))
-                            .py(px(6.))
-                            .rounded(px(8.))
-                            .border_1()
-                            .border_color(content(0.1))
-                            .bg(content(0.03))
-                            .text_size(px(13.))
-                            .child(editor.input.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(11.5))
-                                    .text_color(content(0.5))
-                                    .child("Tone"),
-                            )
-                            .child(tones)
-                            .child(polish_button)
-                            .child(div().flex_1())
-                            .child(
-                                div()
-                                    .id("diff-review-cancel")
-                                    .debug_selector(|| "diff-review-cancel".into())
-                                    .role(Role::Button)
-                                    .aria_label("Cancel")
-                                    .h(px(28.))
-                                    .px(px(10.))
-                                    .flex()
-                                    .items_center()
-                                    .rounded_md()
-                                    .text_size(px(12.))
-                                    .text_color(content(0.7))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(content(0.08)))
-                                    .child("Cancel")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.cancel_editor(window, cx)
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("diff-review-save")
-                                    .debug_selector(|| "diff-review-save".into())
-                                    .role(Role::Button)
-                                    .aria_label(if editing {
-                                        "Save comment"
-                                    } else {
-                                        "Add review comment"
-                                    })
-                                    .h(px(28.))
-                                    .px(px(10.))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .rounded_md()
-                                    .bg(content(1.))
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(crate::theme::background_base())
-                                    .when(!can_save, |d| d.opacity(0.4))
-                                    .child(
-                                        icon("comment-add", 14.)
-                                            .text_color(crate::theme::background_base()),
-                                    )
-                                    .child(if editing {
-                                        "Save"
-                                    } else {
-                                        "Add review comment"
-                                    })
-                                    .when(can_save, |d| {
-                                        d.cursor_pointer().on_click(cx.listener(
-                                            |this, _, window, cx| this.save_editor(window, cx),
-                                        ))
-                                    }),
-                            ),
-                    )
-                    .when_some(polish_error, |d, error| {
-                        d.child(
-                            div()
-                                .debug_selector(|| "diff-polish-error".into())
-                                .text_size(px(11.5))
-                                .text_color(gpui::rgb(0xfda4af))
-                                .child(error),
-                        )
-                    }),
-            );
+        if editor_here && let Some(editor_box) = self.editor_box(cx) {
+            column = column.child(editor_box);
         }
         div()
             .id(("diff-thread", at.0 * 100_000 + at.1))
             .debug_selector(move || format!("diff-thread-{file}-{}-{}", at.0, at.1))
-            .h(px(height))
+            .min_h(px(height.min(40.)))
             .w_full()
             .overflow_hidden()
             .border_t_1()

@@ -13,8 +13,10 @@ pub(super) fn action(id: impl Into<SharedString>, label: impl Into<SharedString>
 fn plain_action(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
     let id: SharedString = id.into();
     let label = label.into();
+    let selector = id.clone();
     div()
         .id(id)
+        .debug_selector(move || selector.to_string())
         .role(Role::Button)
         .aria_label(label.clone())
         .h(px(28.))
@@ -137,6 +139,28 @@ fn review_event(comment: &model::Comment) -> bool {
 pub(super) enum Activity {
     Comment(std::sync::Arc<model::Comment>),
     Commits(Vec<model::Commit>),
+    /// A run of bot comments, folded to one line until opened.
+    Bots(Vec<std::sync::Arc<model::Comment>>),
+}
+
+/// Folds each run of bot comments into one [`Activity::Bots`].
+fn fold_bots(entries: Vec<Activity>) -> Vec<Activity> {
+    let mut out: Vec<Activity> = Vec::new();
+    for entry in entries {
+        match entry {
+            Activity::Comment(comment)
+                if super::replies::is_bot_comment(&comment) && !review_event(&comment) =>
+            {
+                if let Some(Activity::Bots(run)) = out.last_mut() {
+                    run.push(comment);
+                } else {
+                    out.push(Activity::Bots(vec![comment]));
+                }
+            }
+            entry => out.push(entry),
+        }
+    }
+    out
 }
 #[derive(Default)]
 pub(super) struct SummaryRows {
@@ -1099,19 +1123,19 @@ impl Inbox {
     ) -> AnyElement {
         let nested = matches!(style, CommentStyle::Reply);
         let timeline = matches!(style, CommentStyle::Timeline);
+        if !nested
+            && comment.resolved
+            && comment.resolvable
+            && !self.replies.open.contains(&comment.id)
+        {
+            return self.resolved_line(item, comment, cx);
+        }
         let has_body = !comment.body.trim().is_empty();
         let has_replies = !nested && !comment.replies.is_empty();
         let author = if comment.author.is_empty() {
             "ghost"
         } else {
             &comment.author
-        };
-        let reply_id = if item.provider == "linear" {
-            comment.id.clone()
-        } else if item.provider == "github" {
-            comment.thread_id.clone()
-        } else {
-            String::new()
         };
         let state = comment.state.trim().to_uppercase();
         let review_color = if state == "APPROVED" {
@@ -1204,21 +1228,6 @@ impl Inbox {
                         }
                     }),
                 )
-            })
-            .when(!reply_id.is_empty(), |d| {
-                let name = author.to_string();
-                d.child("·").child(
-                    action(format!("inbox-reply-{}", comment.id), "Reply")
-                        .h_auto()
-                        .px_0()
-                        .text_color(content(0.5))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.reply = Some((reply_id.clone(), name.clone()));
-                            this.summary_scroll.scroll_to_end();
-                            window.focus(&this.comment.focus_handle(cx), cx);
-                            cx.notify();
-                        })),
-                )
             });
         div()
             .w_full()
@@ -1282,25 +1291,62 @@ impl Inbox {
                 )
             })
             .when(has_replies, |d| {
+                // A long thread shows its last replies; the rest fold.
+                let hidden = if self.replies.open.contains(&comment.id) {
+                    0
+                } else {
+                    comment
+                        .replies
+                        .len()
+                        .saturating_sub(super::replies::SHOWN_REPLIES)
+                };
+                let root = comment.id.clone();
                 d.child(
                     div()
                         .border_t_1()
                         .border_color(content(0.07))
                         .px(px(12.))
-                        .children(comment.replies.iter().enumerate().map(|(ix, reply)| {
-                            div()
-                                .py(px(10.))
-                                .when(ix > 0, |d| d.border_t_1().border_color(content(0.07)))
-                                .child(self.comment_card(
-                                    item,
-                                    reply,
-                                    CommentStyle::Reply,
-                                    (width - px(26.)).max(px(1.)),
-                                    window,
-                                    cx,
-                                ))
-                        })),
+                        .when(hidden > 0, |d| {
+                            d.child(
+                                div().pt(px(10.)).child(
+                                    action(
+                                        format!("inbox-earlier-replies-{root}"),
+                                        format!(
+                                            "Show {hidden} earlier {}",
+                                            if hidden == 1 { "reply" } else { "replies" }
+                                        ),
+                                    )
+                                    .debug_selector({
+                                        let root = root.clone();
+                                        move || format!("inbox-earlier-replies-{root}")
+                                    })
+                                    .h(px(24.))
+                                    .text_color(accent_color())
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| this.toggle_fold(&root, cx),
+                                    )),
+                                ),
+                            )
+                        })
+                        .children(comment.replies.iter().skip(hidden).enumerate().map(
+                            |(ix, reply)| {
+                                div()
+                                    .py(px(10.))
+                                    .when(ix > 0, |d| d.border_t_1().border_color(content(0.07)))
+                                    .child(self.comment_card(
+                                        item,
+                                        reply,
+                                        CommentStyle::Reply,
+                                        (width - px(26.)).max(px(1.)),
+                                        window,
+                                        cx,
+                                    ))
+                            },
+                        )),
                 )
+            })
+            .when(!nested && !review_event(comment), |d| {
+                d.child(self.thread_footer(item, comment, width, cx))
             })
             .into_any_element()
     }
@@ -1377,15 +1423,17 @@ impl Inbox {
                     entry => groups.push(entry),
                 }
             }
-            self.activity = groups;
+            self.activity = fold_bots(groups);
         } else {
-            self.activity = thread
-                .comments
-                .iter()
-                .cloned()
-                .map(std::sync::Arc::new)
-                .map(Activity::Comment)
-                .collect();
+            self.activity = fold_bots(
+                thread
+                    .comments
+                    .iter()
+                    .cloned()
+                    .map(std::sync::Arc::new)
+                    .map(Activity::Comment)
+                    .collect(),
+            );
         }
         self.summary_scroll.remeasure();
     }
@@ -1400,6 +1448,48 @@ impl Inbox {
         let entry = self.activity[ix].clone();
         let timeline = item.kind == "pr" && item.provider == "github";
         let width = self.summary_body_width();
+        if let Activity::Bots(run) = &entry {
+            let open = self.replies.open.contains(&run[0].id);
+            let body = if open {
+                let key = run[0].id.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .children(run.iter().map(|comment| {
+                        self.comment_card(
+                            item,
+                            comment,
+                            if timeline {
+                                CommentStyle::Timeline
+                            } else {
+                                CommentStyle::Plain
+                            },
+                            width,
+                            window,
+                            cx,
+                        )
+                    }))
+                    .child(
+                        action(format!("inbox-bots-hide-{key}"), "Hide bot comments")
+                            .h(px(24.))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.toggle_fold(&key, cx)),
+                            ),
+                    )
+                    .into_any_element()
+            } else {
+                self.bots_line(item, run, window, cx)
+            };
+            return div()
+                .pb(px(if ix + 1 == self.activity.len() {
+                    0.
+                } else {
+                    8.
+                }))
+                .child(body)
+                .into_any_element();
+        }
         if !timeline {
             let Activity::Comment(comment) = entry else {
                 unreachable!()
@@ -1417,6 +1507,7 @@ impl Inbox {
         let last = ix + 1 == self.activity.len();
         let mut activity = Vec::new();
         match entry {
+            Activity::Bots(_) => unreachable!("a run of bots is drawn above"),
             Activity::Comment(comment) => {
                 let event = review_event(&comment);
                 let state = comment.state.to_uppercase();
@@ -1688,14 +1779,38 @@ impl Inbox {
             || rows.discussion != discussion
         {
             let mut keys: Vec<SharedString> = vec!["intro".into()];
+            // A row holding an open reply box keeps its field's focus.
+            let mut focus: Vec<Option<gpui::FocusHandle>> = vec![None];
             if discussion {
                 keys.push("activity".into());
-                keys.extend(self.activity.iter().map(|activity| match activity {
-                    Activity::Comment(comment) => format!("comment:{}", comment.id).into(),
-                    Activity::Commits(commits) => format!("push:{}", commits[0].oid).into(),
-                }));
+                focus.push(None);
+                for activity in &self.activity {
+                    let (key, boxed) = match activity {
+                        Activity::Comment(comment) => (
+                            format!(
+                                "comment:{}:{}",
+                                comment.id,
+                                self.replies.state_key(&comment.id)
+                            ),
+                            self.replies.boxes.get(&comment.id),
+                        ),
+                        Activity::Commits(commits) => (format!("push:{}", commits[0].oid), None),
+                        Activity::Bots(run) => (
+                            format!(
+                                "bots:{}:{}:{}",
+                                run[0].id,
+                                run.len(),
+                                self.replies.state_key(&run[0].id)
+                            ),
+                            None,
+                        ),
+                    };
+                    keys.push(key.into());
+                    focus.push(boxed.map(|b| b.input.focus_handle(cx)));
+                }
             }
             keys.push("composer".into());
+            focus.push(Some(self.comment.focus_handle(cx)));
             // Retain unchanged prefix/suffix rows so refreshes preserve the
             // reader's item and pixel offset, including a focused composer.
             let prefix = rows
@@ -1712,8 +1827,7 @@ impl Inbox {
                 .count();
             self.summary_scroll.splice_focusable(
                 prefix..rows.keys.len() - suffix,
-                (prefix..keys.len() - suffix)
-                    .map(|ix| (ix + 1 == count).then(|| self.comment.focus_handle(cx))),
+                (prefix..keys.len() - suffix).map(|ix| focus[ix].clone()),
             );
             *rows = SummaryRows {
                 revision: self.activity_revision,
@@ -1762,150 +1876,122 @@ impl Inbox {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let can_post = !self.posting && !self.comment.read(cx).content.trim().is_empty();
-        let body = if ix == 0 {
-            glass::card()
-                .debug_selector(|| "inbox-description-card".into())
-                .mb(px(20.))
-                .px(px(20.))
-                .py(px(18.))
-                .flex()
-                .flex_col()
-                .gap(px(14.))
-                .child(glass::eyebrow("Description"))
-                .when(!item.labels.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(px(4.))
-                            .children(item.labels.iter().map(|label| label_badge(label, false))),
-                    )
-                })
-                .when(self.detail_loading && self.details.is_none(), |d| {
-                    d.child(
-                        loading("Loading description…")
-                            .debug_selector(|| "inbox-loading-description".into()),
-                    )
-                })
-                .when(
-                    self.details
-                        .as_ref()
-                        .is_some_and(|d| d.body.trim().is_empty()),
-                    |d| {
+        let body =
+            if ix == 0 {
+                glass::card()
+                    .debug_selector(|| "inbox-description-card".into())
+                    .mb(px(20.))
+                    .px(px(20.))
+                    .py(px(18.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.))
+                    .child(glass::eyebrow("Description"))
+                    .when(!item.labels.is_empty(), |d| {
                         d.child(
-                            div()
-                                .text_size(px(13.))
-                                .text_color(content(0.45))
-                                .child("No description"),
+                            div().flex().flex_wrap().gap(px(4.)).children(
+                                item.labels.iter().map(|label| label_badge(label, false)),
+                            ),
                         )
-                    },
-                )
-                .when_some(self.document.clone(), |d, document| {
-                    d.child(
-                        div().w_full().flex_shrink_0().child(
-                            document::DocumentElement::new(
-                                document,
-                                // The description card's padding and border.
-                                (self.summary_body_width() - px(42.)).max(px(1.)),
-                                None,
-                            )
-                            .selectable(&self.text, 0),
-                        ),
-                    )
-                })
-                .when(self.thread.is_none(), |d| {
-                    d.when_some(self.thread_error.clone(), |d, text| d.child(error(text)))
-                })
-                .into_any_element()
-        } else if ix + 1 == count {
-            div()
-                .pb(px(20.))
-                .child(
-                    div()
-                        .w_full()
-                        .flex_shrink_0()
-                        .border_t_1()
-                        .border_color(content(0.07))
-                        .pt(px(20.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .when_some(self.reply.clone(), |d, (_, author)| {
+                    })
+                    .when(self.detail_loading && self.details.is_none(), |d| {
+                        d.child(
+                            loading("Loading description…")
+                                .debug_selector(|| "inbox-loading-description".into()),
+                        )
+                    })
+                    .when(
+                        self.details
+                            .as_ref()
+                            .is_some_and(|d| d.body.trim().is_empty()),
+                        |d| {
                             d.child(
                                 div()
+                                    .text_size(px(13.))
+                                    .text_color(content(0.45))
+                                    .child("No description"),
+                            )
+                        },
+                    )
+                    .when_some(self.document.clone(), |d, document| {
+                        d.child(
+                            div().w_full().flex_shrink_0().child(
+                                document::DocumentElement::new(
+                                    document,
+                                    // The description card's padding and border.
+                                    (self.summary_body_width() - px(42.)).max(px(1.)),
+                                    None,
+                                )
+                                .selectable(&self.text, 0),
+                            ),
+                        )
+                    })
+                    .when(self.thread.is_none(), |d| {
+                        d.when_some(self.thread_error.clone(), |d, text| d.child(error(text)))
+                    })
+                    .into_any_element()
+            } else if ix + 1 == count {
+                div()
+                    .pb(px(20.))
+                    .child(
+                        div()
+                            .w_full()
+                            .flex_shrink_0()
+                            .border_t_1()
+                            .border_color(content(0.07))
+                            .pt(px(20.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .rounded(px(6.))
+                                    .border_1()
+                                    .border_color(content(0.1))
+                                    .bg(content(0.05))
                                     .flex()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .text_size(px(12.))
-                                    .text_color(content(0.5))
+                                    .flex_col()
                                     .child(
                                         div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .child(format!("Replying to {author}")),
+                                            .px(px(12.))
+                                            .py(px(8.))
+                                            .when(self.posting, |d| d.opacity(0.4))
+                                            .child(self.comment.clone()),
                                     )
                                     .child(
-                                        icon_button("inbox-cancel-reply", "Cancel reply", "close")
-                                            .size(px(20.))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.reply = None;
-                                                this.post_error = None;
-                                                cx.notify();
-                                            })),
-                                    ),
-                            )
-                        })
-                        .child(
-                            div()
-                                .rounded(px(6.))
-                                .border_1()
-                                .border_color(content(0.1))
-                                .bg(content(0.05))
-                                .flex()
-                                .flex_col()
-                                .child(
-                                    div()
-                                        .px(px(12.))
-                                        .py(px(8.))
-                                        .when(self.posting, |d| d.opacity(0.4))
-                                        .child(self.comment.clone()),
-                                )
-                                .child(
-                                    div().px(px(8.)).pb(px(8.)).flex().justify_end().child(
-                                        action(
-                                            "inbox-post-comment",
-                                            if self.posting {
-                                                "Posting..."
-                                            } else if self.reply.is_some() {
-                                                "Reply"
-                                            } else {
-                                                "Comment"
-                                            },
-                                        )
-                                        .px(px(12.))
-                                        .bg(content(1.))
-                                        .text_color(shell_fill())
-                                        .when(!can_post, |d| d.opacity(0.4))
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.post_comment(cx)),
+                                        div().px(px(8.)).pb(px(8.)).flex().justify_end().child(
+                                            action(
+                                                "inbox-post-comment",
+                                                if self.posting {
+                                                    "Posting..."
+                                                } else {
+                                                    "Comment"
+                                                },
+                                            )
+                                            .px(px(12.))
+                                            .bg(content(1.))
+                                            .text_color(shell_fill())
+                                            .when(!can_post, |d| d.opacity(0.4))
+                                            .on_click(
+                                                cx.listener(|this, _, _, cx| this.post_comment(cx)),
+                                            ),
                                         ),
                                     ),
-                                ),
-                        )
-                        .when_some(self.post_error.clone(), |d, text| d.child(error(text))),
-                )
-                .into_any_element()
-        } else if discussion && ix == 1 {
-            div()
-                .pb(px(if self.activity.is_empty() { 20. } else { 12. }))
-                .children(self.discussion_heading(item, window, cx))
-                .into_any_element()
-        } else {
-            div()
-                .pb(px(if ix + 2 == count { 20. } else { 0. }))
-                .child(self.discussion_row(item, ix - 2, window, cx))
-                .into_any_element()
-        };
+                            )
+                            .when_some(self.post_error.clone(), |d, text| d.child(error(text))),
+                    )
+                    .into_any_element()
+            } else if discussion && ix == 1 {
+                div()
+                    .pb(px(if self.activity.is_empty() { 20. } else { 12. }))
+                    .children(self.discussion_heading(item, window, cx))
+                    .into_any_element()
+            } else {
+                div()
+                    .pb(px(if ix + 2 == count { 20. } else { 0. }))
+                    .child(self.discussion_row(item, ix - 2, window, cx))
+                    .into_any_element()
+            };
         div()
             .id(("inbox-summary-row", ix))
             .w_full()
@@ -2372,7 +2458,7 @@ impl gpui::Render for Inbox {
             window.focus(&self.review_body.focus_handle(cx), cx);
         }
         self.sync_arrivals(cx);
-        let list = self.list_view(cx);
+        let list = self.list_view(window, cx);
         let detail = self.detail_view(window, cx);
         let ask = self.ask_panel(window, cx);
         div()
@@ -2586,7 +2672,7 @@ mod tests {
             .unwrap();
     }
     #[gpui::test]
-    fn long_discussion_materializes_only_viewport_comments_and_reply_focus_reaches_composer(
+    fn long_discussion_materializes_only_viewport_comments_and_composer_keeps_focus(
         cx: &mut TestAppContext,
     ) {
         let window = fixture(cx);
@@ -2612,7 +2698,6 @@ mod tests {
             .update(cx, |fixture, window, cx| {
                 fixture.inbox.update(cx, |inbox, cx| {
                     assert!(inbox.summary_scroll.logical_scroll_top().item_ix > 3);
-                    inbox.reply = Some(("thread-1".into(), "Reviewer".into()));
                     inbox.summary_scroll.remeasure_items(102..103);
                     inbox.summary_scroll.scroll_to_end();
                     window.focus(&inbox.comment.focus_handle(cx), cx);
@@ -2627,7 +2712,7 @@ mod tests {
                     assert!(inbox.comment.focus_handle(cx).is_focused(window));
                     inbox
                         .comment
-                        .update(cx, |input, cx| input.set_text("A reply\n".repeat(8), cx));
+                        .update(cx, |input, cx| input.set_text("A comment\n".repeat(8), cx));
                 })
             })
             .unwrap();

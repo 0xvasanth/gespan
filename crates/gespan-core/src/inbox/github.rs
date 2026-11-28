@@ -84,6 +84,8 @@ pub struct GitHubWorkItemComment {
     pub resolved: bool,
     pub thread_id: String,
     pub replies: Vec<GitHubWorkItemComment>,
+    pub author_bot: bool,
+    pub resolvable: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -711,7 +713,7 @@ query InboxIssueThread($owner: String!, $name: String!, $number: Int!) {
         totalCount
         nodes {
           id
-          author { login }
+          author { login __typename }
           authorAssociation
           body
           createdAt
@@ -750,7 +752,7 @@ query InboxPullRequestThread($owner: String!, $name: String!, $number: Int!) {
         totalCount
         nodes {
           id
-          author { login }
+          author { login __typename }
           authorAssociation
           body
           createdAt
@@ -762,7 +764,7 @@ query InboxPullRequestThread($owner: String!, $name: String!, $number: Int!) {
         totalCount
         nodes {
           id
-          author { login }
+          author { login __typename }
           authorAssociation
           body
           state
@@ -781,7 +783,7 @@ query InboxPullRequestThread($owner: String!, $name: String!, $number: Int!) {
             totalCount
             nodes {
               id
-              author { login }
+              author { login __typename }
               authorAssociation
               body
               createdAt
@@ -900,6 +902,50 @@ pub(super) fn git_github_work_item_comment_for(
         )?;
         github_url_from_output(&output, "GitHub did not return a comment URL")
     })
+}
+
+const GITHUB_RESOLVE_THREAD_MUTATION: &str = r#"
+mutation InboxResolveThread($threadId: ID!) {
+  resolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } }
+}
+"#;
+
+const GITHUB_UNRESOLVE_THREAD_MUTATION: &str = r#"
+mutation InboxUnresolveThread($threadId: ID!) {
+  unresolveReviewThread(input: { threadId: $threadId }) { thread { isResolved } }
+}
+"#;
+
+/// The `gh api graphql` arguments that mark a review thread resolved, or
+/// open again.
+pub(super) fn github_resolve_args(thread_id: &str, resolved: bool) -> Result<Vec<String>, String> {
+    if !valid_github_node_id(thread_id) {
+        return Err("Invalid review thread".into());
+    }
+    let mutation = if resolved {
+        GITHUB_RESOLVE_THREAD_MUTATION
+    } else {
+        GITHUB_UNRESOLVE_THREAD_MUTATION
+    };
+    Ok(vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        format!("query={mutation}"),
+        "-F".into(),
+        format!("threadId={thread_id}"),
+    ])
+}
+
+pub(super) fn git_github_resolve_thread_for(
+    root: &Path,
+    thread_id: &str,
+    resolved: bool,
+) -> Result<(), String> {
+    let args = github_resolve_args(thread_id, resolved)?;
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    gh_checked(root, &args)?;
+    Ok(())
 }
 
 pub(super) fn git_github_review_reply_for(
@@ -1170,6 +1216,13 @@ struct GithubGraphqlReviewThread {
 struct GithubGraphqlActor {
     #[serde(default)]
     login: String,
+    /// `User`, `Bot`, `Mannequin`… when the query asks for it.
+    #[serde(default, rename = "__typename")]
+    typename: String,
+}
+
+fn github_actor_is_bot(actor: &Option<GithubGraphqlActor>) -> bool {
+    actor.as_ref().is_some_and(|a| a.typename == "Bot")
 }
 
 fn parse_github_work_item_thread(json: &str, kind: &str) -> Result<GitHubWorkItemThread, String> {
@@ -1306,6 +1359,7 @@ fn github_mapped_comment(
     if comment.is_minimized {
         return None;
     }
+    let author_bot = github_actor_is_bot(&comment.author);
     let author = github_actor_login(comment.author);
     let created_at = comment.created_at.trim().to_string();
     let path = if comment.path.trim().is_empty() {
@@ -1329,6 +1383,8 @@ fn github_mapped_comment(
         resolved,
         thread_id: String::new(),
         replies: Vec::new(),
+        author_bot,
+        resolvable: false,
     })
 }
 
@@ -1350,6 +1406,7 @@ fn github_review_comment(review: GithubGraphqlReview) -> Option<GitHubWorkItemCo
     if created_at.is_empty() {
         return None;
     }
+    let author_bot = github_actor_is_bot(&review.author);
     let author = github_actor_login(review.author);
     Some(GitHubWorkItemComment {
         id: github_comment_id("review", &review.id, &author, &created_at),
@@ -1367,6 +1424,8 @@ fn github_review_comment(review: GithubGraphqlReview) -> Option<GitHubWorkItemCo
         resolved: false,
         thread_id: String::new(),
         replies: Vec::new(),
+        author_bot,
+        resolvable: false,
     })
 }
 
@@ -1388,6 +1447,7 @@ fn github_review_thread(thread: GithubGraphqlReviewThread) -> Option<GitHubWorkI
     });
     let mut first = mapped.next()?;
     first.thread_id = thread_id.clone();
+    first.resolvable = !thread_id.is_empty();
     first.replies = mapped
         .map(|mut reply| {
             reply.thread_id = thread_id.clone();
@@ -2097,7 +2157,7 @@ mod automation_event_tests {
         // Every query that lists comments asks for it.
         for query in [GITHUB_PR_THREAD_QUERY, GITHUB_ISSUE_THREAD_QUERY] {
             assert_eq!(
-                query.matches("author { login }").count(),
+                query.matches("author { login __typename }").count(),
                 query.matches("authorAssociation").count()
             );
         }
@@ -2316,5 +2376,69 @@ mod automation_event_tests {
         assert!(merged[9].ends_with("mergedAt,mergedBy"));
         assert_eq!(merged.len(), 10, "a blank search is left out");
         assert!(github_pr_states_args("not a repo", "open", "", 20).is_err());
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+
+    #[test]
+    fn bots_are_flagged_and_only_review_threads_can_be_resolved() {
+        let json = r#"{"data":{"repository":{"pullRequest":{
+            "reviewDecision":"","baseRefName":"main","headRefName":"x",
+            "commits":{"totalCount":0,"nodes":[]},
+            "comments":{"totalCount":2,"nodes":[
+              {"id":"IC_1","author":{"login":"github-actions","__typename":"Bot"},"body":"Preview pushed","createdAt":"2026-11-20T10:00:00Z","url":"u1"},
+              {"id":"IC_2","author":{"login":"lee","__typename":"User"},"body":"Looks good","createdAt":"2026-11-20T11:00:00Z","url":"u2"}
+            ]},
+            "reviews":{"totalCount":0,"nodes":[]},
+            "reviewThreads":{"totalCount":1,"nodes":[
+              {"id":"PRRT_kwDO1","isResolved":false,"path":"src/a.rs","diffSide":"RIGHT","comments":{"totalCount":2,"nodes":[
+                {"id":"PRRC_1","author":{"login":"marko","__typename":"User"},"body":"Index this?","createdAt":"2026-11-20T12:00:00Z","url":"u3","line":4},
+                {"id":"PRRC_2","author":{"login":"dana","__typename":"User"},"body":"Done","createdAt":"2026-11-20T13:00:00Z","url":"u4","line":4}
+              ]}}
+            ]}
+        }}}}"#;
+        let thread = parse_github_work_item_thread(json, "pr").unwrap();
+        let by_author = |login: &str| {
+            thread
+                .comments
+                .iter()
+                .find(|c| c.author == login)
+                .unwrap_or_else(|| panic!("{login} missing: {:?}", thread.comments))
+        };
+        assert!(by_author("github-actions").author_bot);
+        assert!(!by_author("lee").author_bot);
+        // A general comment has no thread on GitHub: a reply quotes it.
+        assert!(by_author("lee").thread_id.is_empty());
+        assert!(!by_author("lee").resolvable);
+        let review = by_author("marko");
+        assert_eq!(review.thread_id, "PRRT_kwDO1");
+        assert!(review.resolvable);
+        assert_eq!(review.replies.len(), 1);
+        assert!(
+            !review.replies[0].resolvable,
+            "the thread resolves, not each reply"
+        );
+    }
+
+    #[test]
+    fn the_thread_queries_ask_who_wrote_each_comment() {
+        for query in [GITHUB_ISSUE_THREAD_QUERY, GITHUB_PR_THREAD_QUERY] {
+            assert!(!query.contains("author { login }\n"), "{query}");
+            assert!(query.contains("author { login __typename }"));
+        }
+    }
+
+    #[test]
+    fn resolving_and_reopening_send_their_own_mutation_for_a_real_thread_only() {
+        let resolve = github_resolve_args("PRRT_kwDO1", true).unwrap();
+        assert!(resolve[3].contains("resolveReviewThread(") && !resolve[3].contains("unresolve"));
+        assert_eq!(resolve[5], "threadId=PRRT_kwDO1");
+        let reopen = github_resolve_args("PRRT_kwDO1", false).unwrap();
+        assert!(reopen[3].contains("unresolveReviewThread("));
+        assert!(github_resolve_args("", true).is_err());
+        assert!(github_resolve_args("x; rm -rf /", true).is_err());
     }
 }

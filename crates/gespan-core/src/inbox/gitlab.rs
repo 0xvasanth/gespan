@@ -96,6 +96,8 @@ pub struct GitlabWorkItemComment {
     pub resolved: bool,
     pub thread_id: String,
     pub replies: Vec<GitlabWorkItemComment>,
+    pub author_bot: bool,
+    pub resolvable: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -255,16 +257,43 @@ fn parse_current_user(value: &Value) -> Result<String, String> {
         .ok_or_else(|| "GitLab did not say which account is connected".to_string())
 }
 
+/// A comment on a merge request or issue: in the discussion `reply_to`
+/// names, or a new one when it is empty.
 pub fn gitlab_work_item_comment(
     app: PathBuf,
     repo: String,
     kind: String,
     number: i64,
     body: String,
+    reply_to: String,
 ) -> Result<String, String> {
     let config = require_config(&app)?;
     let repo = validate_repo(&repo)?;
-    gitlab_work_item_comment_for(&config, &repo, &kind, number, &body)
+    gitlab_work_item_comment_for(&config, &repo, &kind, number, &body, reply_to.trim())
+}
+
+/// Marks a discussion resolved, or open again.
+pub fn gitlab_resolve_thread(
+    app: PathBuf,
+    repo: String,
+    kind: String,
+    number: i64,
+    discussion: String,
+    resolved: bool,
+) -> Result<(), String> {
+    let config = require_config(&app)?;
+    let repo = validate_repo(&repo)?;
+    validate_item(&kind, number)?;
+    if discussion.trim().is_empty() {
+        return Err("No thread to resolve".into());
+    }
+    gitlab_send(
+        &config,
+        "PUT",
+        &resolve_path(&repo, &kind, number, discussion.trim(), resolved),
+        None,
+    )?;
+    Ok(())
 }
 
 pub fn gitlab_mr_diff(app: PathBuf, repo: String, number: i64) -> Result<GitlabMrDiff, String> {
@@ -687,7 +716,7 @@ pub fn gitlab_submit_review(
         Verdict::Comment => {}
     }
     if !body.trim().is_empty() {
-        gitlab_work_item_comment_for(&config, &repo, "pr", number, body)?;
+        gitlab_work_item_comment_for(&config, &repo, "pr", number, body, "")?;
     } else if verdict != Verdict::Approve && comments.is_empty() {
         return Err("Write a comment before sending it.".into());
     }
@@ -826,12 +855,9 @@ fn gitlab_work_item_thread_for(
     number: i64,
 ) -> Result<GitlabWorkItemThread, String> {
     validate_item(kind, number)?;
-    let path = format!(
-        "{}/notes?order_by=created_at&sort=desc&per_page=100",
-        item_path(repo, kind, number)
-    );
+    let path = format!("{}/discussions?per_page=100", item_path(repo, kind, number));
     let response = gitlab_get(config, &path)?;
-    parse_work_item_thread(
+    parse_discussions(
         &response.value,
         &config.url,
         repo,
@@ -847,13 +873,18 @@ fn gitlab_work_item_comment_for(
     kind: &str,
     number: i64,
     body: &str,
+    reply_to: &str,
 ) -> Result<String, String> {
     validate_item(kind, number)?;
     let body = body.trim();
     if body.is_empty() {
         return Err("Comment cannot be empty".into());
     }
-    let path = format!("{}/notes", item_path(repo, kind, number));
+    let path = if reply_to.is_empty() {
+        format!("{}/notes", item_path(repo, kind, number))
+    } else {
+        reply_path(repo, kind, number, reply_to)
+    };
     let response = gitlab_post_form(config, &path, &[("body", body)])?;
     let id = response
         .value
@@ -1043,7 +1074,10 @@ fn parse_work_item_details(value: &Value, kind: &str) -> Result<GitlabWorkItemDe
     })
 }
 
-fn parse_work_item_thread(
+/// A merge request's or issue's discussions, oldest first: each one's first
+/// note with the rest as its replies, so a reply goes back into it. Notes
+/// GitLab writes itself ("added 2 commits") are left out.
+fn parse_discussions(
     value: &Value,
     base_url: &str,
     repo: &str,
@@ -1054,38 +1088,74 @@ fn parse_work_item_thread(
     let rows = value
         .as_array()
         .ok_or_else(|| "GitLab did not return comments".to_string())?;
-    let mut comments: Vec<GitlabWorkItemComment> = rows
-        .iter()
-        .filter(|row| !row.get("system").and_then(Value::as_bool).unwrap_or(false))
-        .filter_map(|row| {
-            let id = row.get("id").and_then(Value::as_i64)?;
-            let author = row.get("author");
-            Some(GitlabWorkItemComment {
-                id: id.to_string(),
-                kind: "comment".into(),
-                author: author
-                    .and_then(|author| string_field(author, "username"))
-                    .or_else(|| author.and_then(|author| string_field(author, "name")))
-                    .unwrap_or_default(),
-                author_avatar_url: author
-                    .and_then(|author| string_field(author, "avatar_url"))
-                    .unwrap_or_default(),
-                body: string_field(row, "body").unwrap_or_default(),
-                created_at: string_field(row, "created_at").unwrap_or_default(),
-                url: note_url(base_url, repo, kind, number, id),
-                state: String::new(),
-                path: String::new(),
-                line: None,
-                resolved: row
-                    .get("resolved")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                thread_id: String::new(),
-                replies: Vec::new(),
-            })
+    let note = |row: &Value, discussion: &str| {
+        let id = row.get("id").and_then(Value::as_i64)?;
+        let author = row.get("author");
+        let position = row.get("position");
+        Some(GitlabWorkItemComment {
+            id: id.to_string(),
+            kind: if position.is_some_and(|p| !p.is_null()) {
+                "review_comment".into()
+            } else {
+                "comment".into()
+            },
+            author: author
+                .and_then(|author| string_field(author, "username"))
+                .or_else(|| author.and_then(|author| string_field(author, "name")))
+                .unwrap_or_default(),
+            author_avatar_url: author
+                .and_then(|author| string_field(author, "avatar_url"))
+                .unwrap_or_default(),
+            body: string_field(row, "body").unwrap_or_default(),
+            created_at: string_field(row, "created_at").unwrap_or_default(),
+            url: note_url(base_url, repo, kind, number, id),
+            state: String::new(),
+            path: position
+                .and_then(|p| string_field(p, "new_path").or_else(|| string_field(p, "old_path")))
+                .unwrap_or_default(),
+            line: position.and_then(|p| {
+                p.get("new_line")
+                    .and_then(Value::as_i64)
+                    .or_else(|| p.get("old_line").and_then(Value::as_i64))
+            }),
+            resolved: row
+                .get("resolved")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            thread_id: discussion.to_string(),
+            replies: Vec::new(),
+            author_bot: author
+                .and_then(|author| author.get("bot"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            resolvable: row
+                .get("resolvable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         })
-        .collect();
-    comments.reverse();
+    };
+    let mut comments = Vec::new();
+    for discussion in rows {
+        let id = string_field(discussion, "id").unwrap_or_default();
+        let notes: Vec<GitlabWorkItemComment> = discussion
+            .get("notes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|row| !row.get("system").and_then(Value::as_bool).unwrap_or(false))
+            .filter_map(|row| note(row, &id))
+            .collect();
+        let mut notes = notes.into_iter();
+        let Some(mut first) = notes.next() else {
+            continue;
+        };
+        first.replies = notes.collect();
+        // A thread is resolved only once every resolvable note in it is.
+        first.resolved = first.resolvable
+            && first.resolved
+            && first.replies.iter().all(|r| !r.resolvable || r.resolved);
+        comments.push(first);
+    }
     Ok(GitlabWorkItemThread {
         comments,
         truncated: has_next_page,
@@ -1093,6 +1163,30 @@ fn parse_work_item_thread(
         base_ref_name: String::new(),
         head_ref_name: String::new(),
     })
+}
+
+/// Where a reply to a discussion is posted.
+pub(super) fn reply_path(repo: &str, kind: &str, number: i64, discussion: &str) -> String {
+    format!(
+        "{}/discussions/{}/notes",
+        item_path(repo, kind, number),
+        encode_path_component(discussion)
+    )
+}
+
+/// Where a discussion is marked resolved, or open again.
+pub(super) fn resolve_path(
+    repo: &str,
+    kind: &str,
+    number: i64,
+    discussion: &str,
+    resolved: bool,
+) -> String {
+    format!(
+        "{}/discussions/{}?resolved={resolved}",
+        item_path(repo, kind, number),
+        encode_path_component(discussion)
+    )
 }
 
 fn parse_mr_diff(value: &Value, has_next_page: bool) -> Result<GitlabMrDiff, String> {
@@ -1787,5 +1881,67 @@ mod review_tests {
         );
         assert_eq!(rerun_notice(1, "job"), "Rerun requested for 1 failed job.");
         assert_eq!(rerun_notice(2, "job"), "Rerun requested for 2 failed jobs.");
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn discussions_become_threads_with_their_replies_and_leave_system_notes_out() {
+        let value = json!([
+            {"id": "d-system", "individual_note": true, "notes": [
+                {"id": 1, "system": true, "body": "added 1 commit", "author": {"username": "dana"}}
+            ]},
+            {"id": "d-general", "individual_note": true, "notes": [
+                {"id": 2, "body": "Looks good", "created_at": "2026-11-20T10:00:00Z",
+                 "author": {"username": "lee", "avatar_url": "https://gitlab.com/lee.png"}}
+            ]},
+            {"id": "d-review", "individual_note": false, "notes": [
+                {"id": 3, "body": "Index this?", "created_at": "2026-11-20T11:00:00Z",
+                 "author": {"username": "marko"}, "resolvable": true, "resolved": true,
+                 "position": {"new_path": "src/a.rs", "new_line": 14}},
+                {"id": 4, "body": "Done", "created_at": "2026-11-20T12:00:00Z",
+                 "author": {"username": "renovate-bot", "bot": true}, "resolvable": true, "resolved": false}
+            ]}
+        ]);
+        let thread =
+            parse_discussions(&value, "https://gitlab.com", "acme/web", "pr", 7, false).unwrap();
+        assert_eq!(thread.comments.len(), 2, "the system note is left out");
+        let general = &thread.comments[0];
+        assert_eq!(
+            general.thread_id, "d-general",
+            "even a lone note takes replies"
+        );
+        assert!(!general.resolvable && general.path.is_empty());
+        let review = &thread.comments[1];
+        assert_eq!(review.thread_id, "d-review");
+        assert_eq!((review.path.as_str(), review.line), ("src/a.rs", Some(14)));
+        assert!(review.resolvable);
+        assert!(!review.resolved, "one open note keeps the thread open");
+        assert_eq!(review.replies.len(), 1);
+        assert!(review.replies[0].author_bot);
+        assert_eq!(
+            review.url,
+            "https://gitlab.com/acme/web/-/merge_requests/7#note_3"
+        );
+    }
+
+    #[test]
+    fn replies_and_resolving_go_to_the_discussion() {
+        assert_eq!(
+            reply_path("group/sub/web", "pr", 7, "abc123"),
+            "/projects/group%2Fsub%2Fweb/merge_requests/7/discussions/abc123/notes"
+        );
+        assert_eq!(
+            resolve_path("acme/web", "pr", 7, "abc123", true),
+            "/projects/acme%2Fweb/merge_requests/7/discussions/abc123?resolved=true"
+        );
+        assert_eq!(
+            resolve_path("acme/web", "issue", 3, "abc123", false),
+            "/projects/acme%2Fweb/issues/3/discussions/abc123?resolved=false"
+        );
     }
 }

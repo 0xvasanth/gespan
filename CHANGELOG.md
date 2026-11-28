@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another line's "+", to comment on a range. Saved comments stay under their
   lines as pending cards with Edit and Delete until the review is sent, and
   ranges reach GitHub, GitLab and Azure DevOps.
+- **Review threads in Files read and reply like GitHub:** a thread under
+  its line shows avatars and rendered Markdown, folds a `<details>` block
+  to its summary and clamps a long comment with Show more. Reply opens the
+  same box as a review comment, Tone and Polish included, inside the
+  thread, and posts at once instead of with your review; Resolve sits on
+  the thread. Resolved threads start folded to one line, any thread folds
+  by hand, an outdated one sits at the top of its file saying where it
+  was, and several threads on a line say which is which. Lines with
+  threads light their number, and each file counts its open threads.
+  GitLab and Azure DevOps threads now show in Files too.
+- **Reply right under the comment:** every comment on a pull request's
+  Overview has Reply. The box opens under that comment with Tone and
+  Polish, not in the composer at the bottom. Review threads, GitLab
+  discussions and Azure DevOps threads take the reply in the thread; a
+  GitHub general comment gets a quote reply, a new comment that quotes it
+  and mentions its author. Several boxes can be open at once. A reply shows
+  under its thread while it sends, and keeps Retry and Edit there if it
+  fails. Threads can be resolved and reopened on GitHub, GitLab and Azure
+  DevOps; resolved threads fold to one line, long threads fold their
+  earlier replies, and runs of bot comments fold together.
+- **Polish works quietly in the background:** a review comment's rewrite
+  no longer opens the Ask panel or adds a turn to the pull request's Ask
+  chat. It's a one-off request with no tools and no session; the rewrite
+  just appears in the comment box. Use and Keep mine leave the cursor in
+  the comment, so ⌘↩ saves it straight away, and a comment box in a narrow
+  diff puts its buttons on a second row instead of past its edge.
 - **Tone and Polish on every review comment:** each comment box in Files has
   its own Direct / Friendly / Suggestion tone and Polish, and the rewrite
   shows in that box to Use, Try again or Keep mine.

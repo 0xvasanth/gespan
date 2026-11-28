@@ -105,6 +105,8 @@ pub struct AzureDevOpsWorkItemComment {
     pub resolved: bool,
     pub thread_id: String,
     pub replies: Vec<AzureDevOpsWorkItemComment>,
+    pub author_bot: bool,
+    pub resolvable: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -236,15 +238,94 @@ pub fn azure_devops_work_item_thread(
     azure_devops_work_item_thread_for(&config, &repo, &kind, number)
 }
 
+/// A comment on a pull request or work item: in the pull request thread
+/// `reply_to` names, or a new one when it is empty.
 pub fn azure_devops_work_item_comment(
     app: PathBuf,
     repo: String,
     kind: String,
     number: i64,
     body: String,
+    reply_to: String,
 ) -> Result<String, String> {
     let config = require_config(&app)?;
+    let reply_to = reply_to.trim();
+    if !reply_to.is_empty() && kind == "pr" {
+        validate_item(&kind, number)?;
+        let body = body.trim();
+        if body.is_empty() {
+            return Err("Comment cannot be empty".into());
+        }
+        let (project, repo_name) = split_repo(&repo)?;
+        let (path, payload) = reply_request(&project, &repo_name, number, reply_to, body)?;
+        azure_send_json(&config, "POST", &path, Some(payload))?;
+        return Ok(pr_web_url(&config, &project, &repo_name, number));
+    }
     azure_devops_work_item_comment_for(&config, &repo, &kind, number, &body)
+}
+
+/// Marks a pull request thread resolved ("fixed"), or active again.
+pub fn azure_devops_resolve_thread(
+    app: PathBuf,
+    repo: String,
+    number: i64,
+    thread: String,
+    resolved: bool,
+) -> Result<(), String> {
+    let config = require_config(&app)?;
+    validate_item("pr", number)?;
+    let (project, repo_name) = split_repo(&repo)?;
+    let (path, payload) = resolve_request(&project, &repo_name, number, thread.trim(), resolved)?;
+    azure_send_json(&config, "PATCH", &path, Some(payload))?;
+    Ok(())
+}
+
+fn thread_number(thread: &str) -> Result<i64, String> {
+    thread
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id > 0)
+        .ok_or_else(|| "Invalid Azure DevOps thread".to_string())
+}
+
+/// Where a reply in a pull request thread is posted, and its body.
+pub(super) fn reply_request(
+    project: &str,
+    repo: &str,
+    number: i64,
+    thread: &str,
+    body: &str,
+) -> Result<(String, Value), String> {
+    let thread = thread_number(thread)?;
+    Ok((
+        format!(
+            "/{}/_apis/git/repositories/{}/pullrequests/{number}/threads/{thread}/comments?api-version={}",
+            encode_segment(project),
+            encode_segment(repo),
+            API_VERSION
+        ),
+        json!({ "content": body, "parentCommentId": 1, "commentType": 1 }),
+    ))
+}
+
+/// Where a pull request thread's status is set, and its body.
+pub(super) fn resolve_request(
+    project: &str,
+    repo: &str,
+    number: i64,
+    thread: &str,
+    resolved: bool,
+) -> Result<(String, Value), String> {
+    let thread = thread_number(thread)?;
+    Ok((
+        format!(
+            "/{}/_apis/git/repositories/{}/pullrequests/{number}/threads/{thread}?api-version={}",
+            encode_segment(project),
+            encode_segment(repo),
+            API_VERSION
+        ),
+        json!({ "status": if resolved { "fixed" } else { "active" } }),
+    ))
 }
 
 pub fn azure_devops_mr_diff(
@@ -1262,6 +1343,9 @@ fn parse_pr_details(value: &Value) -> Result<AzureDevOpsWorkItemDetails, String>
     })
 }
 
+/// A pull request's threads, oldest first: each one's first comment with
+/// the rest as its replies, so a reply goes back into it. Deleted comments,
+/// empty ones and notes Azure DevOps writes itself are left out.
 fn parse_pr_thread(
     value: &Value,
     pr_url: &str,
@@ -1273,6 +1357,13 @@ fn parse_pr_thread(
         .ok_or_else(|| "Azure DevOps did not return comments".to_string())?;
     let mut comments: Vec<AzureDevOpsWorkItemComment> = Vec::new();
     for thread in rows {
+        if thread
+            .get("isDeleted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let thread_id = thread
             .get("id")
             .and_then(Value::as_i64)
@@ -1281,22 +1372,33 @@ fn parse_pr_thread(
         let status = string_field(thread, "status").unwrap_or_default();
         let resolved = matches!(
             status.to_ascii_lowercase().as_str(),
-            "fixed" | "closed" | "resolved"
+            "fixed" | "closed" | "resolved" | "wontfix" | "bydesign"
         );
+        let context = thread.get("threadContext").filter(|c| !c.is_null());
+        let path = context
+            .and_then(|c| string_field(c, "filePath"))
+            .map(|p| p.trim_start_matches('/').to_string())
+            .unwrap_or_default();
+        let line = context.and_then(|c| {
+            ["rightFileStart", "leftFileStart"]
+                .iter()
+                .find_map(|side| c.get(*side)?.get("line")?.as_i64())
+        });
         let Some(thread_comments) = thread.get("comments").and_then(Value::as_array) else {
             continue;
         };
-        for comment in thread_comments {
+        let mapped = thread_comments.iter().filter_map(|comment| {
             if comment
                 .get("isDeleted")
                 .and_then(Value::as_bool)
                 .unwrap_or(false)
+                || string_field(comment, "commentType").as_deref() == Some("system")
             {
-                continue;
+                return None;
             }
             let body = string_field(comment, "content").unwrap_or_default();
             if body.is_empty() {
-                continue;
+                return None;
             }
             let author = comment.get("author");
             let comment_id = comment
@@ -1304,13 +1406,17 @@ fn parse_pr_thread(
                 .and_then(Value::as_i64)
                 .map(|id| id.to_string())
                 .unwrap_or_default();
-            comments.push(AzureDevOpsWorkItemComment {
+            Some(AzureDevOpsWorkItemComment {
                 id: if thread_id.is_empty() {
                     comment_id.clone()
                 } else {
                     format!("{thread_id}-{comment_id}")
                 },
-                kind: "comment".into(),
+                kind: if path.is_empty() {
+                    "comment".into()
+                } else {
+                    "review_comment".into()
+                },
                 author: author
                     .and_then(|user| string_field(user, "displayName"))
                     .unwrap_or_default(),
@@ -1323,13 +1429,25 @@ fn parse_pr_thread(
                     .unwrap_or_default(),
                 url: pr_url.into(),
                 state: String::new(),
-                path: String::new(),
-                line: None,
+                path: path.clone(),
+                line,
                 resolved,
                 thread_id: thread_id.clone(),
                 replies: Vec::new(),
-            });
-        }
+                author_bot: false,
+                resolvable: !thread_id.is_empty(),
+            })
+        });
+        // Azure DevOps doesn't promise its order: the thread starts with
+        // its oldest comment.
+        let mut mapped: Vec<AzureDevOpsWorkItemComment> = mapped.collect();
+        mapped.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        let mut mapped = mapped.into_iter();
+        let Some(mut first) = mapped.next() else {
+            continue;
+        };
+        first.replies = mapped.collect();
+        comments.push(first);
     }
     comments.sort_by(|a, b| a.created_at.cmp(&b.created_at));
     Ok(AzureDevOpsWorkItemThread {
@@ -1427,6 +1545,8 @@ fn parse_wit_thread(value: &Value, truncated: bool) -> Result<AzureDevOpsWorkIte
                 resolved: false,
                 thread_id: String::new(),
                 replies: Vec::new(),
+                author_bot: false,
+                resolvable: false,
             })
         })
         .collect();
@@ -2663,5 +2783,85 @@ mod review_tests {
             [("Proj/App".to_string(), "Proj project".to_string())]
         );
         assert_eq!(parse_repo_hits(&repos, "proj/").len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_pull_requests_threads_keep_their_replies_and_leave_system_notes_out() {
+        let value = json!({"value": [
+            {"id": 6, "comments": [
+                {"id": 1, "commentType": "system", "content": "dana pushed 1 commit",
+                 "publishedDate": "2026-11-20T09:00:00Z"}
+            ]},
+            {"id": 5, "status": "fixed",
+             "threadContext": {"filePath": "/src/a.rs", "rightFileStart": {"line": 12}, "rightFileEnd": {"line": 14}},
+             "comments": [
+                {"id": 2, "content": "Done", "publishedDate": "2026-11-20T12:00:00Z",
+                 "author": {"displayName": "Dana"}},
+                {"id": 1, "content": "Index this?", "publishedDate": "2026-11-20T11:00:00Z",
+                 "author": {"displayName": "Marko"}},
+                {"id": 3, "content": "gone", "isDeleted": true}
+             ]},
+            {"id": 4, "status": "active", "comments": [
+                {"id": 1, "content": "Looks good", "publishedDate": "2026-11-20T10:00:00Z",
+                 "author": {"displayName": "Lee"}}
+            ]}
+        ]});
+        let thread = parse_pr_thread(
+            &value,
+            "https://dev.azure.com/a/p/_git/r/pullrequest/7",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            thread.comments.len(),
+            2,
+            "one root per thread, the system one left out"
+        );
+        let general = &thread.comments[0];
+        assert_eq!(
+            (general.author.as_str(), general.thread_id.as_str()),
+            ("Lee", "4")
+        );
+        assert!(general.resolvable && !general.resolved && general.path.is_empty());
+        let review = &thread.comments[1];
+        assert_eq!(review.thread_id, "5");
+        assert_eq!((review.path.as_str(), review.line), ("src/a.rs", Some(12)));
+        assert!(review.resolved);
+        assert_eq!(review.replies.len(), 1, "the deleted comment is left out");
+        assert_eq!(review.replies[0].body, "Done");
+        assert_eq!(review.replies[0].id, "5-2");
+    }
+
+    #[test]
+    fn a_reply_and_a_resolve_go_to_their_thread() {
+        let (path, body) = reply_request("My Project", "web", 7, "5", "Thanks").unwrap();
+        assert_eq!(
+            path,
+            format!("/My%20Project/_apis/git/repositories/web/pullrequests/7/threads/5/comments?api-version={API_VERSION}")
+        );
+        assert_eq!(
+            body,
+            json!({"content": "Thanks", "parentCommentId": 1, "commentType": 1})
+        );
+        let (path, body) = resolve_request("p", "web", 7, "5", true).unwrap();
+        assert!(path.ends_with(&format!(
+            "/pullrequests/7/threads/5?api-version={API_VERSION}"
+        )));
+        assert_eq!(body, json!({"status": "fixed"}));
+        assert_eq!(
+            resolve_request("p", "web", 7, "5", false).unwrap().1,
+            json!({"status": "active"})
+        );
+        assert!(
+            reply_request("p", "web", 7, "5-2", "x").is_err(),
+            "a comment id isn't a thread"
+        );
+        assert!(reply_request("p", "web", 7, "", "x").is_err());
     }
 }

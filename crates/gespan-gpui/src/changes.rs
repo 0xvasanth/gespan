@@ -1902,7 +1902,7 @@ fn text_settings() -> Settings {
         ..Default::default()
     }
 }
-fn text_prompt(
+pub(crate) fn text_prompt(
     kind: Kind,
     binary: PathBuf,
     cwd: PathBuf,

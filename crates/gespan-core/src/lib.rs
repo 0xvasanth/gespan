@@ -39,6 +39,7 @@ pub mod project_actions;
 pub mod project_appearance;
 pub mod project_location;
 pub mod provider;
+pub mod pull_requests;
 pub use gespan_tracker_client::provider_boards;
 pub mod remote;
 pub mod resources;

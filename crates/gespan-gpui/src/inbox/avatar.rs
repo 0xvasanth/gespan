@@ -15,10 +15,65 @@ impl Asset for Avatar {
         _: &mut App,
     ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
         async move {
-            model::avatar_png(&url)
-                .map(|bytes| Arc::new(Image::from_bytes(ImageFormat::Png, bytes)))
+            #[cfg(test)]
+            let fetched = test_avatars::get(&url);
+            #[cfg(not(test))]
+            let fetched = model::avatar_png(&url);
+            fetched.map(|bytes| Arc::new(Image::from_bytes(ImageFormat::Png, bytes)))
         }
     }
+}
+
+/// Tests never reach the network for a picture: they load from here.
+#[cfg(test)]
+pub(crate) mod test_avatars {
+    use std::sync::Mutex;
+    static AVATARS: Mutex<Vec<(String, Vec<u8>)>> = Mutex::new(Vec::new());
+    /// A 1×1 PNG.
+    pub(crate) const PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    pub(crate) fn serve(url: &str) {
+        AVATARS.lock().unwrap().push((url.to_owned(), PNG.to_vec()));
+    }
+    pub(crate) fn get(url: &str) -> Result<Vec<u8>, String> {
+        AVATARS
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(u, _)| u == url)
+            .map(|(_, bytes)| bytes.clone())
+            .ok_or_else(|| "Avatar unavailable".into())
+    }
+}
+
+/// The picture to load for an account: the host's own URL, or on GitHub
+/// the account's picture by its login (an app's by its name).
+pub(super) fn source(provider: &str, name: &str, url: &str) -> Option<String> {
+    let url = url.trim();
+    if !url.is_empty() {
+        return Some(url.to_owned());
+    }
+    let login = name.trim().trim_start_matches("app/");
+    (provider == "github" && !login.is_empty())
+        .then(|| format!("https://github.com/{login}.png?size=64"))
+}
+
+/// The account's picture once it has loaded; None while it loads, or when
+/// there is none.
+pub(super) fn loaded(
+    provider: &str,
+    name: &str,
+    url: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Arc<Image>> {
+    let url = source(provider, name, url)?;
+    window.use_asset::<Avatar>(&url, cx).and_then(Result::ok)
 }
 
 pub(crate) fn image(
@@ -29,15 +84,7 @@ pub(crate) fn image(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let url = if url.trim().is_empty() && provider == "github" && !name.trim().is_empty() {
-        format!("https://github.com/{}.png?size=64", name.trim())
-    } else {
-        url.trim().to_string()
-    };
-    let image = (!url.is_empty())
-        .then(|| window.use_asset::<Avatar>(&url, cx))
-        .flatten()
-        .and_then(Result::ok);
+    let image = loaded(provider, name, url, window, cx);
     let initial = name
         .trim()
         .chars()
@@ -83,4 +130,27 @@ pub(super) fn person(
         .child(avatar)
         .child(div().min_w_0().truncate().child(name.to_string()))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_picture_comes_from_the_host_or_on_github_from_the_login() {
+        use super::source;
+        assert_eq!(
+            source("gitlab", "dana", " https://gitlab.com/uploads/dana.png "),
+            Some("https://gitlab.com/uploads/dana.png".into())
+        );
+        assert_eq!(
+            source("github", " dana ", ""),
+            Some("https://github.com/dana.png?size=64".into())
+        );
+        assert_eq!(
+            source("github", "app/dependabot", ""),
+            Some("https://github.com/dependabot.png?size=64".into())
+        );
+        assert_eq!(source("github", "  ", ""), None);
+        assert_eq!(source("gitlab", "dana", ""), None);
+        assert_eq!(source("azuredevops", "dana@acme.com", ""), None);
+    }
 }
