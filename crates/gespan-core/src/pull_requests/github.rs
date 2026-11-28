@@ -62,6 +62,27 @@ fn remote_login(project: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// A link in a remote session, read by its machine's account. A machine
+/// that can't answer leaves it to the local `gh`, which still reads public
+/// links.
+fn remote_link<T: DeserializeOwned>(
+    cwd: &Path,
+    command: &str,
+    repo: &str,
+    kind: &str,
+    number: i64,
+) -> Option<T> {
+    remote_workspace::is_remote(cwd)
+        .then(|| {
+            remote_workspace::command(
+                command,
+                json!({"cwd": cwd, "repo": repo, "kind": kind, "number": number}),
+            )
+            .ok()
+        })
+        .flatten()
+}
+
 /// What `gh` searches for `kind` under `filters`, or `None` when nothing of
 /// that kind can match: review requests are never issues.
 pub(crate) fn search_for(filters: &Filters, kind: &str) -> Option<&'static str> {
@@ -331,6 +352,38 @@ impl PullRequestHost for GitHub {
             },
         )
         .map(drop)
+    }
+
+    fn linked_item(&self, cwd: &Path, repo: &str, kind: &str, number: i64) -> Result<Item, String> {
+        let mut item: Item = match remote_link(cwd, "git_github_work_item", repo, kind, number) {
+            Some(item) => item,
+            None => inbox::convert(gh::git_github_work_item_for(
+                &inbox::gh_root(cwd),
+                repo,
+                kind,
+                number,
+            )?)?,
+        };
+        item.provider = "github".into();
+        Ok(item)
+    }
+
+    fn linked_details(
+        &self,
+        cwd: &Path,
+        repo: &str,
+        kind: &str,
+        number: i64,
+    ) -> Result<Details, String> {
+        match remote_link(cwd, "git_github_work_item_details", repo, kind, number) {
+            Some(details) => Ok(details),
+            None => inbox::convert(gh::git_github_work_item_details_for(
+                &inbox::gh_root(cwd),
+                repo,
+                kind,
+                number,
+            )?),
+        }
     }
 
     fn open_pull_requests(

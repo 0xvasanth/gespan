@@ -34,7 +34,7 @@ use crate::{
 };
 use chrono::{Datelike, Local, TimeZone};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::json;
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
@@ -1294,59 +1294,6 @@ impl Service {
 pub(super) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
     run_command("git", root, args, true)
 }
-/// githubWorkItem: one GitHub issue or pull request a message links to,
-/// looked up with `gh` from `cwd` (any folder, when the session's is gone).
-pub fn github_work_item(cwd: &Path, repo: &str, kind: &str, number: i64) -> Result<Item, String> {
-    let host = host_lookup(cwd, "git_github_work_item", repo, kind, number);
-    let mut item: Item = match host {
-        Some(item) => item,
-        None => convert(github::git_github_work_item_for(
-            &gh_root(cwd),
-            repo,
-            kind,
-            number,
-        )?)?,
-    };
-    item.provider = "github".into();
-    Ok(item)
-}
-/// githubWorkItemDetails for [`github_work_item`]'s item.
-pub fn github_work_item_details(
-    cwd: &Path,
-    repo: &str,
-    kind: &str,
-    number: i64,
-) -> Result<Details, String> {
-    let host = host_lookup(cwd, "git_github_work_item_details", repo, kind, number);
-    match host {
-        Some(details) => Ok(details),
-        None => convert(github::git_github_work_item_details_for(
-            &gh_root(cwd),
-            repo,
-            kind,
-            number,
-        )?),
-    }
-}
-/// A link in a remote session, read by its machine's account. A host that
-/// can't answer leaves it to the local `gh`, which still reads public links.
-fn host_lookup<T: DeserializeOwned>(
-    cwd: &Path,
-    command: &str,
-    repo: &str,
-    kind: &str,
-    number: i64,
-) -> Option<T> {
-    remote_workspace::is_remote(cwd)
-        .then(|| {
-            remote_workspace::command(
-                command,
-                json!({"cwd": cwd, "repo": repo, "kind": kind, "number": number}),
-            )
-            .ok()
-        })
-        .flatten()
-}
 pub(crate) fn gh_root(cwd: &Path) -> PathBuf {
     let cwd = crate::scm::expand_home(cwd);
     if cwd.is_dir() {
@@ -2150,7 +2097,7 @@ mod self_activity_tests {
 mod remote_github_tests {
     use super::*;
     use crate::files::remote::TEST_HOST;
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use std::{cell::RefCell, rc::Rc};
 
     const PROJECT: &str = "remote://env/home/me/web";
@@ -2518,7 +2465,12 @@ mod remote_github_tests {
             assert_eq!(command, "git_github_work_item");
             Ok(host_item())
         });
-        let item = github_work_item(Path::new(PROJECT), "acme/web", "pr", 42).unwrap();
+        let item = service()
+            .hosts()
+            .require("github")
+            .unwrap()
+            .linked_item(Path::new(PROJECT), "acme/web", "pr", 42)
+            .unwrap();
         TEST_HOST.set(None);
         assert_eq!(item.provider, "github");
         assert_eq!(item.title, "Remote PR");

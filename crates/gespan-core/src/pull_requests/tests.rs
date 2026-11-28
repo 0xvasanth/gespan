@@ -264,3 +264,56 @@ fn the_service_reaches_git_hosts_only_through_the_factory() {
         "status asks the host"
     );
 }
+
+#[test]
+fn a_link_in_a_remote_session_is_read_by_its_machine() {
+    let calls = remote_host(|command| match command {
+        "git_github_work_item" => json!({
+            "kind": "pr", "repo": "acme/web", "number": 9, "title": "Linked",
+            "url": "", "state": "open", "createdAt": "", "updatedAt": "",
+        }),
+        "git_github_work_item_details" => json!({"body": "Fixes the cache", "author": "dana"}),
+        other => panic!("unexpected {other}"),
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let github = factory(dir.path()).require("github").unwrap();
+    let item = github
+        .linked_item(Path::new(REMOTE), "acme/web", "pr", 9)
+        .unwrap();
+    assert_eq!(
+        (item.title.as_str(), item.provider.as_str()),
+        ("Linked", "github")
+    );
+    let details = github
+        .linked_details(Path::new(REMOTE), "acme/web", "pr", 9)
+        .unwrap();
+    assert_eq!(details.body, "Fixes the cache");
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 2);
+    for (_, args) in calls.iter() {
+        assert_eq!(
+            (
+                args["repo"].as_str(),
+                args["kind"].as_str(),
+                args["number"].as_i64()
+            ),
+            (Some("acme/web"), Some("pr"), Some(9))
+        );
+    }
+}
+
+#[test]
+fn only_github_previews_links() {
+    let dir = tempfile::tempdir().unwrap();
+    for provider in ["gitlab", "azuredevops"] {
+        let host = factory(dir.path()).require(provider).unwrap();
+        assert_eq!(
+            host.linked_item(Path::new("/tmp"), "acme/web", "pr", 1)
+                .unwrap_err(),
+            "This host's links can't be previewed yet"
+        );
+        assert!(host
+            .linked_details(Path::new("/tmp"), "acme/web", "pr", 1)
+            .is_err());
+    }
+}

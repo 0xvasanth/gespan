@@ -84,6 +84,24 @@ pub trait PullRequestHost {
         Err("Rerun GitHub checks with their workflow runs".into())
     }
 
+    /// The issue or pull request a link in a session points at, read from
+    /// `cwd` (any folder, when the session's is gone).
+    fn linked_item(&self, cwd: &Path, repo: &str, kind: &str, number: i64) -> Result<Item, String> {
+        let _ = (cwd, repo, kind, number);
+        Err("This host's links can't be previewed yet".into())
+    }
+    /// The body, branches and review state behind [`Self::linked_item`].
+    fn linked_details(
+        &self,
+        cwd: &Path,
+        repo: &str,
+        kind: &str,
+        number: i64,
+    ) -> Result<Details, String> {
+        let _ = (cwd, repo, kind, number);
+        Err("This host's links can't be previewed yet".into())
+    }
+
     /// Open pull requests of `repo` with their checks, for automations.
     fn open_pull_requests(
         &self,
