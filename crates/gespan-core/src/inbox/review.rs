@@ -4,9 +4,10 @@
 //!
 //! GitHub, GitLab and Azure DevOps fill the same shapes, so the Pull requests page
 //! groups and words every host's requests the same way.
-use super::{azure_devops, github, gitlab, Item, Service};
+use super::{Item, Service};
+use crate::pull_requests::GIT_HOSTS;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+
 use std::{
     collections::HashMap,
     path::Path,
@@ -178,7 +179,7 @@ pub enum Verdict {
 }
 
 impl Verdict {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Comment => "comment",
             Self::RequestChanges => "request_changes",
@@ -400,51 +401,9 @@ impl Service {
             return Err("Only pull requests can be reviewed".into());
         }
         check_review_body(verdict, body, comments)?;
-        match item.provider.as_str() {
-            "gitlab" => gitlab::gitlab_submit_review(
-                self.data_dir.clone(),
-                &item.repo,
-                item.number,
-                verdict,
-                body,
-                comments,
-            ),
-            "azuredevops" => azure_devops::azure_devops_submit_review(
-                self.data_dir.clone(),
-                &item.repo,
-                item.number,
-                verdict,
-                body,
-                comments,
-            ),
-            "github" => {
-                let project = self.project(item);
-                let root = super::gh_root(project);
-                super::github_call::<serde_json::Value, _>(
-                    project,
-                    "git_github_pr_review",
-                    json!({
-                        "repo": item.repo,
-                        "number": item.number,
-                        "verdict": verdict.as_str(),
-                        "body": body,
-                        "comments": comments,
-                    }),
-                    || {
-                        github::git_github_pr_review_for(
-                            &root,
-                            &item.repo,
-                            item.number,
-                            verdict,
-                            body,
-                            comments,
-                        )
-                        .map(|()| serde_json::Value::Null)
-                    },
-                )
-                .map(drop)
-            }
-            _ => Err("Reviews are not available for this host".into()),
+        match self.hosts().host(&item.provider) {
+            Some(host) => host.submit_review(item, verdict, body, comments),
+            None => Err("Reviews are not available for this host".into()),
         }
     }
 
@@ -455,42 +414,20 @@ impl Service {
         if item.kind != "pr" {
             return Err("Only pull requests have checks to rerun".into());
         }
-        match item.provider.as_str() {
-            "gitlab" => gitlab::gitlab_rerun_failed(self.data_dir.clone(), &item.repo, item.number),
-            "azuredevops" => azure_devops::azure_devops_rerun_failed(
-                self.data_dir.clone(),
-                &item.repo,
-                item.number,
-            ),
-            _ => Err("Rerun GitHub checks with their workflow runs".into()),
+        match self.hosts().host(&item.provider) {
+            Some(host) => host.rerun_failed(item),
+            None => Err("Rerun GitHub checks with their workflow runs".into()),
         }
     }
 
     /// The open pull requests of a repository added by hand in Settings ›
     /// Git, which no open project points at. Rows have no `project_path`.
     pub fn list_added_repo(&self, provider: &str, repo: &str) -> Result<Vec<Item>, String> {
-        let rows: Vec<Item> = match provider {
-            "github" => super::convert(github::git_github_work_items_for(
-                &super::gh_root(&self.cwd),
-                repo,
-                "pr",
-                false,
-                "open",
-                "",
-                40,
-            )?)?,
-            "gitlab" => super::convert(gitlab::gitlab_list_repo_prs(
-                self.data_dir.clone(),
-                repo,
-                40,
-            )?)?,
-            "azuredevops" => super::convert(azure_devops::azure_devops_list_repo_prs(
-                self.data_dir.clone(),
-                repo,
-                40,
-            )?)?,
-            _ => return Err(format!("{provider} repositories can't be added")),
-        };
+        let rows = self
+            .hosts()
+            .host(provider)
+            .ok_or_else(|| format!("{provider} repositories can't be added"))?
+            .repo_pull_requests(repo)?;
         Ok(rows
             .into_iter()
             .map(|mut item| {
@@ -531,19 +468,14 @@ impl Service {
     /// are left out.
     pub(crate) fn other_review_requests_by_host(&self, known: &[(String, String)]) -> HostRows {
         let mut out = Vec::new();
-        for provider in ["github", "gitlab", "azuredevops"] {
-            if !self.status(provider).is_ok_and(|status| status.connected) {
+        for provider in GIT_HOSTS {
+            let Some(host) = self.hosts().host(provider) else {
+                continue;
+            };
+            if !host.status().is_ok_and(|status| status.connected) {
                 continue;
             }
-            let rows: Result<Vec<Item>, String> = match provider {
-                "github" => github::git_github_review_requests_for(&super::gh_root(&self.cwd))
-                    .and_then(super::convert),
-                "gitlab" => {
-                    gitlab::gitlab_review_requests(self.data_dir.clone()).and_then(super::convert)
-                }
-                _ => azure_devops::azure_devops_review_requests(self.data_dir.clone())
-                    .and_then(super::convert),
-            };
+            let rows = host.review_requests();
             let rows = rows.map(|rows: Vec<Item>| {
                 let rows = rows
                     .into_iter()
@@ -571,15 +503,14 @@ impl Service {
         let mut hits = Vec::new();
         let mut first_error = None;
         let mut any_ok = false;
-        for provider in ["github", "gitlab", "azuredevops"] {
-            if !self.status(provider).is_ok_and(|status| status.connected) {
+        for provider in GIT_HOSTS {
+            let Some(host) = self.hosts().host(provider) else {
+                continue;
+            };
+            if !host.status().is_ok_and(|status| status.connected) {
                 continue;
             }
-            let found = match provider {
-                "github" => github::git_github_search_repos_for(&super::gh_root(&self.cwd), query),
-                "gitlab" => gitlab::gitlab_search_repos(self.data_dir.clone(), query),
-                _ => azure_devops::azure_devops_search_repos(self.data_dir.clone(), query),
-            };
+            let found = host.search_repos(query);
             match found {
                 Ok(found) => {
                     any_ok = true;
@@ -678,6 +609,7 @@ pub(crate) fn merge_git(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
 
     #[test]
     fn the_review_notice_says_when_gitlab_could_not_request_changes() {
@@ -899,7 +831,7 @@ mod tests {
     #[test]
     fn line_comments_land_on_their_lines_on_github() {
         let (new, old, range) = sample();
-        let github = super::github::github_review_payload(
+        let github = crate::inbox::github::github_review_payload(
             Verdict::Comment,
             "",
             &[new.clone(), old.clone(), range],
@@ -918,7 +850,8 @@ mod tests {
             "no summary is sent when there is none"
         );
         assert_eq!(
-            super::github::github_review_payload(Verdict::RequestChanges, " fix it ", &[])["body"],
+            crate::inbox::github::github_review_payload(Verdict::RequestChanges, " fix it ", &[])
+                ["body"],
             "fix it"
         );
     }
@@ -927,16 +860,16 @@ mod tests {
     fn line_comments_land_on_their_lines_on_gitlab() {
         let (new, old, range) = sample();
         let refs = json!({"base_sha": "b", "start_sha": "s", "head_sha": "h"});
-        let gitlab = super::gitlab::gitlab_line_discussion(&refs, &new).unwrap();
+        let gitlab = crate::inbox::gitlab::gitlab_line_discussion(&refs, &new).unwrap();
         assert_eq!(gitlab["body"], "test comment");
         assert_eq!(gitlab["position"]["new_line"], 100);
         assert!(gitlab["position"].get("old_line").is_none());
         assert!(gitlab["position"].get("line_range").is_none());
         assert_eq!(gitlab["position"]["head_sha"], "h");
-        let gitlab_old = super::gitlab::gitlab_line_discussion(&refs, &old).unwrap();
+        let gitlab_old = crate::inbox::gitlab::gitlab_line_discussion(&refs, &old).unwrap();
         assert_eq!(gitlab_old["position"]["old_line"], 7);
         assert!(gitlab_old["position"].get("new_line").is_none());
-        let multi = super::gitlab::gitlab_line_discussion(&refs, &range).unwrap();
+        let multi = crate::inbox::gitlab::gitlab_line_discussion(&refs, &range).unwrap();
         let lines = &multi["position"]["line_range"];
         assert_eq!(multi["position"]["new_line"], 12);
         assert_eq!(
@@ -972,7 +905,7 @@ mod tests {
             end: LineRef::new(Some(9), Some(10), 9, 10),
             ..range.clone()
         };
-        let one = super::gitlab::gitlab_line_discussion(
+        let one = crate::inbox::gitlab::gitlab_line_discussion(
             &refs,
             &LineComment {
                 start: None,
@@ -987,26 +920,26 @@ mod tests {
             ),
             (json!(9), json!(10))
         );
-        assert!(super::gitlab::gitlab_line_discussion(&json!({}), &new).is_err());
+        assert!(crate::inbox::gitlab::gitlab_line_discussion(&json!({}), &new).is_err());
     }
 
     #[test]
     fn line_comments_land_on_their_lines_on_azure_devops() {
         let (new, old, range) = sample();
-        let ado = super::azure_devops::azure_line_thread(&new);
+        let ado = crate::inbox::azure_devops::azure_line_thread(&new);
         assert_eq!(ado["threadContext"]["filePath"], "/docs/hackathon.md");
         assert_eq!(
             ado["threadContext"]["rightFileStart"],
             json!({"line": 100, "offset": 1})
         );
         assert!(ado["threadContext"].get("leftFileStart").is_none());
-        let ado_old = super::azure_devops::azure_line_thread(&old);
+        let ado_old = crate::inbox::azure_devops::azure_line_thread(&old);
         assert_eq!(
             ado_old["threadContext"]["leftFileEnd"],
             json!({"line": 7, "offset": 1})
         );
         assert_eq!(ado_old["comments"][0]["content"], "why remove this?");
-        let ado_range = super::azure_devops::azure_line_thread(&range);
+        let ado_range = crate::inbox::azure_devops::azure_line_thread(&range);
         assert_eq!(
             ado_range["threadContext"]["rightFileStart"],
             json!({"line": 10, "offset": 1})

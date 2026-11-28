@@ -433,15 +433,6 @@ impl LiveEvents {
             access: HashMap::new(),
         }
     }
-    fn local(project: &str) -> Result<&Path, String> {
-        let path = Path::new(project);
-        if crate::files::remote::is_remote(path) {
-            return Err(format!(
-                "{project} is on another machine: only its comments are watched"
-            ));
-        }
-        Ok(path)
-    }
 }
 
 impl LiveEvents {
@@ -461,21 +452,14 @@ impl LiveEvents {
             comment.permission = permission.clone();
             return;
         }
-        let found = match item.provider.as_str() {
-            "gitlab" => super::gitlab::gitlab_member_access(
-                self.service.data_dir.clone(),
-                item.repo.clone(),
-                author,
-            )
-            .map(gitlab_permission),
-            _ => Self::local(&item.project_path).and_then(|project| {
-                super::github::git_github_permission_for(
-                    &super::gh_root(project),
-                    &item.repo,
-                    &author,
-                )
-            }),
-        };
+        // A provider that isn't a git host is asked as GitHub, as before.
+        let found = self
+            .service
+            .hosts()
+            .host(&item.provider)
+            .or_else(|| self.service.hosts().host("github"))
+            .expect("GitHub is a git host")
+            .permission(item, &author);
         let permission = found.unwrap_or_else(|error| {
             tracing::warn!(%error, repo = %item.repo, "a comment author's permission was not found");
             String::new()
@@ -499,10 +483,11 @@ pub fn gitlab_permission(level: i64) -> String {
 
 impl EventSource for LiveEvents {
     fn login(&mut self, provider: &str, project: &str) -> Result<String, String> {
-        match provider {
-            "gitlab" => super::gitlab::gitlab_current_user(self.service.data_dir.clone()),
-            _ => super::github::git_github_login_for(&super::gh_root(Self::local(project)?)),
-        }
+        let host = match provider {
+            "gitlab" => self.service.hosts().require("gitlab")?,
+            _ => self.service.hosts().require("github")?,
+        };
+        host.current_user(Path::new(project))
     }
     fn comments(&mut self, item: &Item) -> Result<Vec<Comment>, String> {
         let mut comments = self.service.thread(item)?.comments;
@@ -523,47 +508,25 @@ impl EventSource for LiveEvents {
         repo: &str,
         review_requested: bool,
     ) -> Result<Vec<(Item, Checks)>, String> {
-        let root = super::gh_root(Self::local(project)?);
-        let search = if review_requested {
-            "review-requested:@me"
-        } else {
-            ""
-        };
-        super::github::git_github_pr_states_for(&root, repo, "open", search, OPEN_LIMIT)?
-            .into_iter()
-            .map(|pr| {
-                Ok((
-                    super::convert(pr.item)?,
-                    Checks {
-                        head_oid: pr.head_oid,
-                        checks: super::convert(pr.checks)?,
-                    },
-                ))
-            })
-            .collect()
+        self.service.hosts().require("github")?.open_pull_requests(
+            Path::new(project),
+            repo,
+            review_requested,
+            OPEN_LIMIT,
+        )
     }
     fn merged_pull_requests(
         &mut self,
         project: &str,
         repo: &str,
     ) -> Result<Vec<(Item, String, String)>, String> {
-        let root = super::gh_root(Self::local(project)?);
-        super::github::git_github_pr_states_for(&root, repo, "merged", "", MERGED_LIMIT)?
-            .into_iter()
-            .map(|pr| Ok((super::convert(pr.item)?, pr.merged_at, pr.merged_by)))
-            .collect()
+        self.service
+            .hosts()
+            .require("github")?
+            .merged_pull_requests(Path::new(project), repo, MERGED_LIMIT)
     }
     fn assigned_issues(&mut self, project: &str, repo: &str) -> Result<Vec<Item>, String> {
-        let root = super::gh_root(Self::local(project)?);
-        super::convert(super::github::git_github_work_items_for(
-            &root,
-            repo,
-            "issue",
-            true,
-            "open",
-            "",
-            ASSIGNED_LIMIT,
-        )?)
+        crate::pull_requests::github_assigned_issues(Path::new(project), repo, ASSIGNED_LIMIT)
     }
 }
 

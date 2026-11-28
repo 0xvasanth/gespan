@@ -169,17 +169,18 @@ pub fn prefetch_context(
         Forge::GitHub => prefetch_with(target, |args| crate::inbox::run_gh(cwd, args, true)),
         Forge::GitLab => {
             let number = i64::try_from(target.number).map_err(|e| e.to_string())?;
-            let details = crate::inbox::gitlab::gitlab_work_item_details(
-                data_dir.to_path_buf(),
-                target.repo.clone(),
-                "pr".into(),
+            let mr = crate::inbox::Item {
+                provider: "gitlab".into(),
+                kind: "pr".into(),
+                repo: target.repo.clone(),
                 number,
-            )?;
-            let diff = crate::inbox::gitlab::gitlab_mr_diff(
-                data_dir.to_path_buf(),
-                target.repo.clone(),
-                number,
-            )?;
+                ..Default::default()
+            };
+            let gitlab =
+                crate::pull_requests::HostFactory::new(data_dir.to_path_buf(), cwd.to_path_buf())
+                    .require("gitlab")?;
+            let details = gitlab.details(&mr)?;
+            let diff = gitlab.diff(&mr, false)?;
             Ok(context_text(
                 target,
                 "",

@@ -140,7 +140,8 @@ pub(crate) fn github_probe() -> GithubProbe {
         GithubCheck {
             installed: status.installed,
             authenticated: status.authenticated,
-            repos: gespan_core::inbox::github_repositories(path).unwrap_or_default(),
+            repos: gespan_core::inbox::project_repositories(&PathBuf::new(), "github", path)
+                .unwrap_or_default(),
             remote: false,
         }
     })

@@ -413,12 +413,12 @@ impl TranscriptView {
         let fetch_item = item.is_none().then(|| {
             let (cwd, repo) = (cwd.clone(), repo.clone());
             executor.spawn(async move {
-                gespan_core::inbox::github_work_item(Path::new(&cwd), &repo, kind, number)
+                github_links(&cwd)?.linked_item(Path::new(&cwd), &repo, kind, number)
             })
         });
         let fetch_details = details.is_none().then(|| {
             executor.spawn(async move {
-                gespan_core::inbox::github_work_item_details(Path::new(&cwd), &repo, kind, number)
+                github_links(&cwd)?.linked_details(Path::new(&cwd), &repo, kind, number)
             })
         });
         cx.spawn(async move |this, cx| {
@@ -861,6 +861,12 @@ fn skeleton() -> AnyElement {
         .child(bar(gpui::relative(1.), 8., 0.07))
         .child(bar(gpui::relative(2. / 3.), 8., 0.07))
         .into_any_element()
+}
+
+/// The host that reads GitHub links, from `cwd`.
+fn github_links(cwd: &str) -> Result<Box<dyn gespan_core::pull_requests::PullRequestHost>, String> {
+    gespan_core::pull_requests::HostFactory::new(std::path::PathBuf::new(), cwd.into())
+        .require("github")
 }
 
 #[cfg(test)]

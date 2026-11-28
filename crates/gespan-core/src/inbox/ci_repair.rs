@@ -549,7 +549,7 @@ pub fn check_details_with(
 impl Service {
     pub fn check_details(&self, item: &Item, job_id: &str) -> Result<CheckDetails, String> {
         let root = self.project(item);
-        super::github_call(
+        crate::pull_requests::github_call(
             root,
             "git_github_check_details",
             serde_json::json!({ "repo": item.repo, "jobId": job_id }),
@@ -569,7 +569,7 @@ impl Service {
         for run in run_ids {
             let args = rerun_args(&item.repo, run)?;
             let refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-            super::github_call::<(), _>(
+            crate::pull_requests::github_call::<(), _>(
                 root,
                 "git_github_run_rerun_failed",
                 serde_json::json!({ "repo": item.repo, "runId": run }),

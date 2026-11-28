@@ -26,12 +26,15 @@ pub mod linear;
 pub use gespan_tracker_client::credentials::plane;
 
 use crate::{
-    desktop_preferences::DesktopPreferences, files::remote as remote_workspace,
-    session_groups::GithubWorkItem, store::Store,
+    desktop_preferences::DesktopPreferences,
+    files::remote as remote_workspace,
+    pull_requests::{HostFactory, PullRequestHost},
+    session_groups::GithubWorkItem,
+    store::Store,
 };
 use chrono::{Datelike, Local, TimeZone};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, Value};
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
@@ -798,7 +801,7 @@ const NOT_ON_GITHUB: &str = "GitHub did not return a repository";
 
 /// Each machine signs in to GitHub on its own, so one that can't read a
 /// repository says nothing about another.
-fn github_account(project: &Path) -> &str {
+pub(crate) fn github_account(project: &Path) -> &str {
     project
         .to_str()
         .and_then(|path| path.strip_prefix(crate::remote::REMOTE_PATH_PREFIX))
@@ -816,21 +819,6 @@ fn github_reachable(signed_in: bool, projects: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Runs a GitHub Inbox operation with the project's own `gh`: a remote
-/// project's checkout and account are on its machine.
-fn github_call<T: DeserializeOwned, L: Serialize>(
-    project: &Path,
-    command: &str,
-    mut args: Value,
-    local: impl FnOnce() -> Result<L, String>,
-) -> Result<T, String> {
-    if remote_workspace::is_remote(project) {
-        args["cwd"] = json!(project);
-        return remote_workspace::command(command, args);
-    }
-    convert(local()?)
-}
-
 /// The repositories `provider` reports for `project`, its own first: what an
 /// automation's Repository is prefilled with. GitHub adds a fork's parent.
 pub fn project_repositories(
@@ -838,99 +826,14 @@ pub fn project_repositories(
     provider: &str,
     project: &Path,
 ) -> Result<Vec<String>, String> {
-    let project_text = project.to_string_lossy().into_owned();
-    match provider {
-        "github" => github_repositories(project),
-        "gitlab" => gitlab::gitlab_repo(data_dir.to_path_buf(), project_text).map(|r| vec![r]),
-        "azuredevops" => {
-            azure_devops::azure_devops_repo(data_dir.to_path_buf(), project_text).map(|r| vec![r])
-        }
-        _ => Ok(Vec::new()),
+    match HostFactory::new(data_dir.to_path_buf(), project.to_path_buf()).host(provider) {
+        Some(host) => host.repositories(project),
+        None => Ok(Vec::new()),
     }
-}
-
-/// The GitHub repositories a project's checkout points at, local or remote.
-pub fn github_repositories(project: &Path) -> Result<Vec<String>, String> {
-    github_call(project, "git_github_repositories", json!({}), || {
-        github::git_github_repositories_for(project)
-    })
 }
 
 /// The `gh --search` that lists only pull requests asking for your review.
-pub const REVIEW_REQUESTED_SEARCH: &str = "review-requested:@me";
-
-fn github_work_items(
-    project: &Path,
-    repo: &str,
-    kind: &str,
-    filters: &Filters,
-    state: &str,
-    limit: u32,
-) -> Result<Vec<Item>, String> {
-    let Some(search) = github_search(filters, kind) else {
-        return Ok(vec![]);
-    };
-    let assigned_to_me = filters.assigned_to_me;
-    let mut items: Vec<Item> = github_call(
-        project,
-        "git_github_work_items",
-        json!({
-            "repo": repo,
-            "kind": kind,
-            "assignedToMe": assigned_to_me,
-            "state": state,
-            "search": search,
-            "limit": limit,
-        }),
-        || {
-            github::git_github_work_items_for(
-                project,
-                repo,
-                kind,
-                assigned_to_me,
-                state,
-                search,
-                limit,
-            )
-        },
-    )?;
-    // Another machine signs in with its own account; a host that can't say
-    // which leaves `viewer` empty rather than failing the list.
-    if kind == "pr"
-        && remote_workspace::is_remote(project)
-        && items.iter().any(|i| i.viewer.is_empty())
-    {
-        let viewer = remote_github_login(project);
-        for item in items.iter_mut().filter(|i| i.viewer.is_empty()) {
-            item.viewer = viewer.clone();
-        }
-    }
-    Ok(items)
-}
-
-/// The login of the `gh` account on a remote project's machine, cached per
-/// machine for a few minutes; empty when its host can't say.
-fn remote_github_login(project: &Path) -> String {
-    static LOGINS: review::TtlCache<String> = review::TtlCache::new(
-        std::time::Duration::from_secs(300),
-        std::time::Duration::from_secs(120),
-    );
-    LOGINS
-        .get(github_account(project), || {
-            remote_workspace::command::<String>("git_github_login", json!({"cwd": project}))
-        })
-        .unwrap_or_default()
-}
-
-/// What `gh` searches for `kind` under `filters`, or `None` when nothing of
-/// that kind can match: review requests are never issues.
-fn github_search(filters: &Filters, kind: &str) -> Option<&'static str> {
-    match (filters.review_requested, kind) {
-        (true, "pr") => Some(REVIEW_REQUESTED_SEARCH),
-        (true, _) => None,
-        (false, _) => Some(""),
-    }
-}
+pub use crate::pull_requests::REVIEW_REQUESTED_SEARCH;
 
 fn collect_repo_items(
     provider: &str,
@@ -1100,7 +1003,7 @@ fn plane_connection(status: plane::PlaneStatus) -> Result<Status, String> {
         ..Default::default()
     })
 }
-fn convert<T: Serialize, U: DeserializeOwned>(value: T) -> Result<U, String> {
+pub(crate) fn convert<T: Serialize, U: DeserializeOwned>(value: T) -> Result<U, String> {
     serde_json::from_value(serde_json::to_value(value).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
 }
@@ -1109,26 +1012,21 @@ impl Service {
         match provider {
             "linear" => convert(linear::linear_status(self.data_dir.clone())?),
             "jira" => convert(jira::jira_status(self.data_dir.clone())?),
-            "gitlab" => convert(gitlab::gitlab_status(self.data_dir.clone())?),
-            "azuredevops" => convert(azure_devops::azure_devops_status(self.data_dir.clone())?),
             "plane" => plane_connection(plane::plane_status(self.data_dir.clone())?),
-            _ => {
-                let installed = crate::scm::resolve_gui_binary("gh").is_some();
-                let authenticated = installed
-                    && run_gh(
-                        &gh_root(&self.cwd),
-                        &["auth", "status", "--active", "--hostname", "github.com"],
-                        true,
-                    )
-                    .is_ok();
-                Ok(Status {
-                    installed,
-                    authenticated,
-                    connected: authenticated,
-                    ..Default::default()
-                })
-            }
+            // Anything else is a git host; an unknown name asks GitHub.
+            _ => self
+                .git_host(provider)
+                .or_else(|| self.git_host("github"))
+                .expect("GitHub is a git host")
+                .status(),
         }
+    }
+    /// Hands out git hosts for this service's data folder and cwd.
+    pub fn hosts(&self) -> HostFactory {
+        HostFactory::new(self.data_dir.clone(), self.cwd.clone())
+    }
+    fn git_host(&self, provider: &str) -> Option<Box<dyn PullRequestHost>> {
+        self.hosts().host(provider)
     }
     pub fn connect(
         &self,
@@ -1145,16 +1043,6 @@ impl Service {
                 email,
                 token,
             )?),
-            "gitlab" => convert(gitlab::gitlab_set_config(
-                self.data_dir.clone(),
-                url,
-                token,
-            )?),
-            "azuredevops" => convert(azure_devops::azure_devops_set_config(
-                self.data_dir.clone(),
-                url,
-                token,
-            )?),
             // Plane takes a workspace as well, which rides in the email slot.
             "plane" => plane_connection(plane::plane_set_config(
                 self.data_dir.clone(),
@@ -1162,7 +1050,10 @@ impl Service {
                 email,
                 token,
             )?),
-            _ => self.status("github"),
+            _ => match self.git_host(provider) {
+                Some(host) => host.connect(url, token),
+                None => self.status("github"),
+            },
         }
     }
     pub fn list(&self, projects: &[PathBuf], state: &ViewState) -> Snapshot {
@@ -1233,70 +1124,29 @@ impl Service {
                         Some(limit),
                     )?);
                 }
-                let mut items = Vec::new();
-                if state.filters.assigned_to_me && provider != "github" {
-                    for kind in ["issue", "pr"] {
-                        let rows: Vec<Item> = if provider == "gitlab" {
-                            convert(gitlab::gitlab_list_todos(
-                                self.data_dir.clone(),
-                                kind.into(),
-                                Some(limit),
-                            )?)?
-                        } else {
-                            convert(azure_devops::azure_devops_list_todos(
-                                self.data_dir.clone(),
-                                kind.into(),
-                                Some(limit),
-                            )?)?
-                        };
-                        items.extend(rows.into_iter().map(|mut item| {
-                            item.provider = provider.into();
-                            item
-                        }));
+                let host = self.hosts().require(provider)?;
+                if state.filters.assigned_to_me {
+                    if let Some(assigned) = ["issue", "pr"]
+                        .into_iter()
+                        .map(|kind| host.assigned(kind, limit))
+                        .collect::<Option<Result<Vec<_>, _>>>()
+                    {
+                        return assigned.map(|rows| rows.concat());
                     }
-                    return Ok(items);
                 }
                 let fetch = collect_repo_items(
                     provider,
                     &active_first(github.as_deref().unwrap_or(projects), &self.cwd),
-                    |project| match provider {
-                        "github" => github_repositories(project),
-                        "gitlab" => gitlab::gitlab_repo(
-                            self.data_dir.clone(),
-                            project.to_string_lossy().into_owned(),
-                        )
-                        .map(|r| vec![r]),
-                        _ => azure_devops::azure_devops_repo(
-                            self.data_dir.clone(),
-                            project.to_string_lossy().into_owned(),
-                        )
-                        .map(|r| vec![r]),
-                    },
-                    |project, repo, kind| match provider {
-                        "github" => github_work_items(
+                    |project| host.repositories(project),
+                    |project, repo, kind| {
+                        host.work_items(
                             project,
                             repo,
                             kind,
                             &state.filters,
                             state.filters.fetch_state(),
                             limit,
-                        ),
-                        "gitlab" => convert(gitlab::gitlab_list_work_items(
-                            self.data_dir.clone(),
-                            project.to_string_lossy().into_owned(),
-                            kind.into(),
-                            false,
-                            state.filters.fetch_state().into(),
-                            Some(limit),
-                        )?),
-                        _ => convert(azure_devops::azure_devops_list_work_items(
-                            self.data_dir.clone(),
-                            project.to_string_lossy().into_owned(),
-                            kind.into(),
-                            false,
-                            state.filters.fetch_state().into(),
-                            Some(limit),
-                        )?),
+                        )
                     },
                 )?;
                 if !fetch.fetched.is_empty() {
@@ -1373,32 +1223,14 @@ impl Service {
                 self.data_dir.clone(),
                 item.identifier.clone(),
             )?),
-            "gitlab" => convert(gitlab::gitlab_work_item_details(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.kind.clone(),
-                item.number,
-            )?),
-            "azuredevops" => convert(azure_devops::azure_devops_work_item_details(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.kind.clone(),
-                item.number,
-            )?),
-            _ => github_call(
-                self.project(item),
-                "git_github_work_item_details",
-                json!({"repo": item.repo, "kind": item.kind, "number": item.number}),
-                || {
-                    github::git_github_work_item_details_for(
-                        self.project(item),
-                        &item.repo,
-                        &item.kind,
-                        item.number,
-                    )
-                },
-            ),
+            _ => self.host_of(item).details(item),
         }
+    }
+    /// The git host an item is on; an item with no provider is GitHub's.
+    fn host_of(&self, item: &Item) -> Box<dyn PullRequestHost> {
+        self.git_host(&item.provider)
+            .or_else(|| self.git_host("github"))
+            .expect("GitHub is a git host")
     }
     fn project<'a>(&'a self, item: &'a Item) -> &'a Path {
         if item.project_path.is_empty() {
@@ -1417,31 +1249,7 @@ impl Service {
                 self.data_dir.clone(),
                 item.identifier.clone(),
             )?),
-            "gitlab" => convert(gitlab::gitlab_work_item_thread(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.kind.clone(),
-                item.number,
-            )?),
-            "azuredevops" => convert(azure_devops::azure_devops_work_item_thread(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.kind.clone(),
-                item.number,
-            )?),
-            _ => github_call(
-                self.project(item),
-                "git_github_work_item_thread",
-                json!({"repo": item.repo, "kind": item.kind, "number": item.number}),
-                || {
-                    github::git_github_work_item_thread_for(
-                        self.project(item),
-                        &item.repo,
-                        &item.kind,
-                        item.number,
-                    )
-                },
-            ),
+            _ => self.host_of(item).thread(item),
         }
     }
     pub fn comment(&self, item: &Item, body: String, reply_to: String) -> Result<String, String> {
@@ -1452,43 +1260,7 @@ impl Service {
             "jira" => {
                 jira::jira_issue_comment(self.data_dir.clone(), item.identifier.clone(), body)
             }
-            "gitlab" => gitlab::gitlab_work_item_comment(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.kind.clone(),
-                item.number,
-                body,
-                reply_to,
-            ),
-            "azuredevops" => azure_devops::azure_devops_work_item_comment(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.kind.clone(),
-                item.number,
-                body,
-                reply_to,
-            ),
-            _ => github_call(
-                self.project(item),
-                "git_github_work_item_comment",
-                json!({
-                    "repo": item.repo,
-                    "kind": item.kind,
-                    "number": item.number,
-                    "body": body,
-                    "inReplyTo": reply_to,
-                }),
-                || {
-                    github::git_github_work_item_comment_for(
-                        self.project(item),
-                        &item.repo,
-                        &item.kind,
-                        item.number,
-                        &body,
-                        &reply_to,
-                    )
-                },
-            ),
+            _ => self.host_of(item).comment(item, body, reply_to),
         }
     }
     /// Marks a review thread resolved, or open again, on its host.
@@ -1498,152 +1270,31 @@ impl Service {
         thread_id: &str,
         resolved: bool,
     ) -> Result<(), String> {
-        match item.provider.as_str() {
-            "gitlab" => gitlab::gitlab_resolve_thread(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.kind.clone(),
-                item.number,
-                thread_id.to_owned(),
-                resolved,
-            ),
-            "azuredevops" if item.kind == "pr" => azure_devops::azure_devops_resolve_thread(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.number,
-                thread_id.to_owned(),
-                resolved,
-            ),
-            "github" if item.kind == "pr" => {
-                if remote_workspace::is_remote(self.project(item)) {
-                    return Err(
-                        "Resolve this thread on GitHub: the project is on another machine".into(),
-                    );
-                }
-                github::git_github_resolve_thread_for(
-                    &gh_root(self.project(item)),
-                    thread_id,
-                    resolved,
-                )
-            }
-            _ => Err("This host has no resolving".into()),
+        match self.git_host(&item.provider) {
+            Some(host) => host.resolve_thread(item, thread_id, resolved),
+            None => Err("This host has no resolving".into()),
         }
     }
     pub fn diff(&self, item: &Item) -> Result<Diff, String> {
         self.diff_context(item, false)
     }
     pub fn diff_context(&self, item: &Item, full_context: bool) -> Result<Diff, String> {
-        match item.provider.as_str() {
-            "gitlab" => convert(gitlab::gitlab_mr_diff(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.number,
-            )?),
-            "azuredevops" => convert(azure_devops::azure_devops_mr_diff(
-                self.data_dir.clone(),
-                item.repo.clone(),
-                item.number,
-            )?),
-            "github" => github_call(
-                self.project(item),
-                "git_github_pr_diff",
-                json!({"repo": item.repo, "number": item.number, "fullContext": full_context}),
-                || {
-                    github::git_github_pr_diff_for(
-                        self.project(item),
-                        &item.repo,
-                        item.number,
-                        full_context,
-                    )
-                },
-            ),
-            _ => Err("This issue has no pull request diff".into()),
+        match self.git_host(&item.provider) {
+            Some(host) => host.diff(item, full_context),
+            None => Err("This issue has no pull request diff".into()),
         }
     }
     pub fn checks(&self, item: &Item) -> Result<Checks, String> {
-        github_call(
-            self.project(item),
-            "git_github_pr_checks",
-            json!({"repo": item.repo, "number": item.number}),
-            || github::git_github_pr_checks_for(self.project(item), &item.repo, item.number),
-        )
+        self.host_of(item).checks(item)
     }
     pub fn action(&self, item: &Item, action: &str) -> Result<Item, String> {
-        let mut updated: Item = github_call(
-            self.project(item),
-            "git_github_pr_action",
-            json!({"repo": item.repo, "number": item.number, "action": action}),
-            || {
-                github::git_github_pr_action_for(
-                    self.project(item),
-                    &item.repo,
-                    item.number,
-                    action,
-                )
-            },
-        )?;
-        updated.provider = item.provider.clone();
-        updated.project_path = item.project_path.clone();
-        Ok(updated)
+        self.host_of(item).action(item, action)
     }
 }
 pub(super) fn run_git(root: &Path, args: &[&str]) -> Result<String, String> {
     run_command("git", root, args, true)
 }
-/// githubWorkItem: one GitHub issue or pull request a message links to,
-/// looked up with `gh` from `cwd` (any folder, when the session's is gone).
-pub fn github_work_item(cwd: &Path, repo: &str, kind: &str, number: i64) -> Result<Item, String> {
-    let host = host_lookup(cwd, "git_github_work_item", repo, kind, number);
-    let mut item: Item = match host {
-        Some(item) => item,
-        None => convert(github::git_github_work_item_for(
-            &gh_root(cwd),
-            repo,
-            kind,
-            number,
-        )?)?,
-    };
-    item.provider = "github".into();
-    Ok(item)
-}
-/// githubWorkItemDetails for [`github_work_item`]'s item.
-pub fn github_work_item_details(
-    cwd: &Path,
-    repo: &str,
-    kind: &str,
-    number: i64,
-) -> Result<Details, String> {
-    let host = host_lookup(cwd, "git_github_work_item_details", repo, kind, number);
-    match host {
-        Some(details) => Ok(details),
-        None => convert(github::git_github_work_item_details_for(
-            &gh_root(cwd),
-            repo,
-            kind,
-            number,
-        )?),
-    }
-}
-/// A link in a remote session, read by its machine's account. A host that
-/// can't answer leaves it to the local `gh`, which still reads public links.
-fn host_lookup<T: DeserializeOwned>(
-    cwd: &Path,
-    command: &str,
-    repo: &str,
-    kind: &str,
-    number: i64,
-) -> Option<T> {
-    remote_workspace::is_remote(cwd)
-        .then(|| {
-            remote_workspace::command(
-                command,
-                json!({"cwd": cwd, "repo": repo, "kind": kind, "number": number}),
-            )
-            .ok()
-        })
-        .flatten()
-}
-fn gh_root(cwd: &Path) -> PathBuf {
+pub(crate) fn gh_root(cwd: &Path) -> PathBuf {
     let cwd = crate::scm::expand_home(cwd);
     if cwd.is_dir() {
         cwd
@@ -1730,11 +1381,20 @@ mod review_requested_view_tests {
             review_requested: true,
             ..Default::default()
         };
-        assert_eq!(github_search(&review, "pr"), Some(REVIEW_REQUESTED_SEARCH));
+        assert_eq!(
+            crate::pull_requests::github_search(&review, "pr"),
+            Some(REVIEW_REQUESTED_SEARCH)
+        );
         // Issues never ask for a review, so none are fetched.
-        assert_eq!(github_search(&review, "issue"), None);
-        assert_eq!(github_search(&Filters::default(), "pr"), Some(""));
-        assert_eq!(github_search(&Filters::default(), "issue"), Some(""));
+        assert_eq!(crate::pull_requests::github_search(&review, "issue"), None);
+        assert_eq!(
+            crate::pull_requests::github_search(&Filters::default(), "pr"),
+            Some("")
+        );
+        assert_eq!(
+            crate::pull_requests::github_search(&Filters::default(), "issue"),
+            Some("")
+        );
 
         // A cached issue hides at once, before the refetch lands; other
         // sources ignore the view.
@@ -2437,6 +2097,7 @@ mod self_activity_tests {
 mod remote_github_tests {
     use super::*;
     use crate::files::remote::TEST_HOST;
+    use serde_json::{json, Value};
     use std::{cell::RefCell, rc::Rc};
 
     const PROJECT: &str = "remote://env/home/me/web";
@@ -2804,7 +2465,12 @@ mod remote_github_tests {
             assert_eq!(command, "git_github_work_item");
             Ok(host_item())
         });
-        let item = github_work_item(Path::new(PROJECT), "acme/web", "pr", 42).unwrap();
+        let item = service()
+            .hosts()
+            .require("github")
+            .unwrap()
+            .linked_item(Path::new(PROJECT), "acme/web", "pr", 42)
+            .unwrap();
         TEST_HOST.set(None);
         assert_eq!(item.provider, "github");
         assert_eq!(item.title, "Remote PR");
