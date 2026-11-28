@@ -201,7 +201,22 @@ fn read(path: &Path) -> Result<Vec<StoredMachine>, String> {
     }
 }
 
+/// Bumped each time a connection store is written, so a reader can keep
+/// the machine list in memory and reload it only when this changes.
+static STORE_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times a connection store has been written in this process.
+pub fn store_writes() -> u64 {
+    STORE_WRITES.load(std::sync::atomic::Ordering::Acquire)
+}
+
 fn write(path: &Path, machines: &[StoredMachine]) -> Result<(), String> {
+    let written = write_store(path, machines);
+    STORE_WRITES.fetch_add(1, std::sync::atomic::Ordering::Release);
+    written
+}
+
+fn write_store(path: &Path, machines: &[StoredMachine]) -> Result<(), String> {
     let parent = path.parent().ok_or("Missing connection directory")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let temporary = parent.join(format!("remote-machines-{}.tmp", uuid::Uuid::new_v4()));
@@ -771,6 +786,22 @@ mod tests {
             }
         });
         (endpoint, receiver, server)
+    }
+
+    #[test]
+    fn every_store_write_is_counted_so_readers_know_to_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("remote-machines.json"),
+            r#"[{"id":"vm","name":"devbox","endpoint":"https://host.example","environmentId":"env","token":"t"}]"#,
+        )
+        .unwrap();
+        let connections = Connections::new(dir.path());
+        let before = store_writes();
+        connections.disconnect("vm").unwrap();
+        // Other tests write stores in parallel, so this is at least one more.
+        assert!(store_writes() > before);
+        assert!(connections.list().unwrap().is_empty());
     }
 
     #[test]

@@ -1419,6 +1419,180 @@ mod tests {
         );
     }
 
+    /// The switcher's machine chip beside the name: "This Mac" for a project
+    /// here, "Other machine" for one on a connected machine, so two projects
+    /// with one name differ. The switcher keeps its two lines.
+    #[gpui::test]
+    fn the_switcher_names_the_machine_beside_the_project(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        let place = |visual: &mut gpui::VisualTestContext| {
+            window
+                .update(visual, |shell, _, _| {
+                    let (_, sessions) = shell.sidebar_list.summary;
+                    let place = crate::pickers::project_place(&shell.workspace.project);
+                    let line = rail_plan::switcher_line(&place.path, sessions);
+                    (place, line)
+                })
+                .unwrap()
+        };
+        let check = |visual: &mut gpui::VisualTestContext| {
+            let switcher = visual.debug_bounds("sidebar-project-button").unwrap();
+            let name = visual.debug_bounds("sidebar-project-name").unwrap();
+            let chip = visual
+                .debug_bounds("sidebar-project-machine")
+                .expect("the machine chip");
+            let summary = visual.debug_bounds("sidebar-project-summary").unwrap();
+            let more = visual.debug_bounds("sidebar-project-actions").unwrap();
+            assert_eq!(switcher.size.height, px(44.), "still two lines");
+            assert_eq!(chip.size.height, px(18.));
+            assert_eq!(chip.left() - name.right(), px(6.), "beside the name");
+            assert!(chip.right() <= more.left(), "clear of \"…\"");
+            assert!(chip.bottom() <= summary.top(), "on the name's line");
+            assert_eq!(chip.center().y, name.center().y, "centred on the name");
+            chip.size.width
+        };
+
+        let (here, line) = place(visual);
+        assert!(!here.other_machine);
+        assert_eq!(here.machine, crate::pickers::THIS_MACHINE);
+        assert!(line.starts_with(&here.path), "{line}");
+        assert!(
+            !line.contains(crate::pickers::THIS_MACHINE),
+            "the chip says it"
+        );
+        let this_mac = check(visual);
+
+        let remote = gespan_core::remote::remote_path("box", "/home/dev/gespan");
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.projects.push(remote.clone());
+                shell.workspace.project = remote.clone();
+                shell.invalidate_chrome(cx);
+                cx.notify();
+            })
+            .unwrap();
+        visual.refresh().unwrap();
+        visual.run_until_parked();
+        let (there, line) = place(visual);
+        assert!(there.other_machine);
+        assert!(line.starts_with("~/gespan · "), "{line}");
+        let other = check(visual);
+        assert!(other > this_mac, "\"Other machine\" is the longer chip");
+    }
+
+    /// The picker's rows carry the same chip, with the folder on a second
+    /// line: every row a chip, and only the remote one says "Other machine".
+    #[gpui::test]
+    fn the_picker_rows_name_each_projects_machine_and_folder(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        let remote = gespan_core::remote::remote_path("box", "/home/dev/gespan");
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.projects.push(remote.clone());
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        click(visual, "sidebar-project-button");
+        let bounds = |visual: &mut gpui::VisualTestContext, what: &str, ix: usize| {
+            visual.debug_bounds(Box::leak(
+                format!("project-picker-{what}-{ix}").into_boxed_str(),
+            ))
+        };
+        let mut widths = Vec::new();
+        for ix in 0..3 {
+            let row = bounds(visual, "project", ix).unwrap_or_else(|| panic!("row {ix}"));
+            let place = bounds(visual, "place", ix).unwrap();
+            let chip = bounds(visual, "machine", ix).expect("every row names its machine");
+            assert_eq!(row.size.height, px(crate::pickers::PICKER_ROW_HEIGHT));
+            assert!(row.top() < place.top() && place.bottom() <= row.bottom());
+            assert!(
+                chip.bottom() <= place.top(),
+                "the chip is on the name's line"
+            );
+            widths.push(chip.size.width);
+        }
+        assert!(bounds(visual, "project", 3).is_none(), "three projects");
+        let widest = widths
+            .iter()
+            .copied()
+            .fold(px(0.), |a, b| if b > a { b } else { a });
+        assert_eq!(
+            widths.iter().filter(|w| **w == widest).count(),
+            1,
+            "only the remote project says \"Other machine\": {widths:?}"
+        );
+    }
+
+    /// The popup's All / This Mac / Other machine pills narrow the list to
+    /// where projects live, and show only once a project lives elsewhere.
+    #[gpui::test]
+    fn the_picker_filters_projects_by_machine(cx: &mut TestAppContext) {
+        let (window, _, _) = super::super::tests::window(cx);
+        let visual = &mut gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.run_until_parked();
+        click(visual, "sidebar-project-button");
+        assert!(
+            visual.debug_bounds("project-filters").is_none(),
+            "every project is here: nothing to filter"
+        );
+        // Close, add a project on a connected machine, open again.
+        click(visual, "sidebar-project-button");
+        let remote = gespan_core::remote::remote_path("box", "/home/dev/gespan");
+        window
+            .update(visual, |shell, _, cx| {
+                shell.workspace.projects.push(remote.clone());
+                cx.notify();
+            })
+            .unwrap();
+        visual.run_until_parked();
+        if visual.debug_bounds("project-picker").is_none() {
+            click(visual, "sidebar-project-button");
+        }
+        let rows = |visual: &mut gpui::VisualTestContext| {
+            visual.refresh().unwrap();
+            (0..5)
+                .take_while(|ix| {
+                    visual
+                        .debug_bounds(Box::leak(
+                            format!("project-picker-project-{ix}").into_boxed_str(),
+                        ))
+                        .is_some()
+                })
+                .count()
+        };
+        let filters = visual.debug_bounds("project-filters").expect("the pills");
+        let list = visual.debug_bounds("project-picker-project-0").unwrap();
+        assert!(
+            filters.bottom() <= list.top(),
+            "the pills sit above the list"
+        );
+        assert_eq!(rows(visual), 3, "All");
+
+        click(visual, "project-filter-elsewhere");
+        assert_eq!(rows(visual), 1, "only the remote project");
+        let chip = visual.debug_bounds("project-picker-machine-0").unwrap();
+        let here_chip_width = {
+            click(visual, "project-filter-here");
+            assert_eq!(rows(visual), 2, "only this computer's projects");
+            visual
+                .debug_bounds("project-picker-machine-0")
+                .unwrap()
+                .size
+                .width
+        };
+        assert!(
+            chip.size.width > here_chip_width,
+            "the remote chip was the one shown"
+        );
+
+        click(visual, "project-filter-all");
+        assert_eq!(rows(visual), 3);
+    }
+
     fn click(visual: &mut gpui::VisualTestContext, selector: &'static str) {
         visual.refresh().unwrap();
         let bounds = visual
