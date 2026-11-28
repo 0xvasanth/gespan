@@ -1,0 +1,23 @@
+crates/gespan-gpui/src/shell/rail_plan.rs
+  s_5464f69916eb5b::t_88df2c43fe6017 492
+crates/gespan-gpui/src/shell/sidebar_list.rs
+  s_5464f69916eb5b::t_88df2c43fe6017 1453,1461-1464,1512-1515,1519-1522
+crates/gespan-gpui/src/pickers.rs
+  s_5464f69916eb5b::t_88df2c43fe6017 1607-1610,1743
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7cc91071c2adf6b41261e775a9fcceadbead54e2",
+  "prompts": {},
+  "sessions": {
+    "s_5464f69916eb5b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "33b1b23e-aed1-4029-9e25-6b70cfcc659a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "vasanth <itsparser@gmail.com>"
+    }
+  }
+}
