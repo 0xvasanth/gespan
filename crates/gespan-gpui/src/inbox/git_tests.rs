@@ -901,3 +901,131 @@ fn settings_lists_your_repos_hides_them_and_adds_one_found_by_search(cx: &mut Te
             .all(|r| r.repo != "acme/website")
     );
 }
+
+/// A row shows its author's picture, as the detail does, once it has loaded;
+/// an author with no picture keeps their initials, and so does one on a host
+/// that names none.
+#[gpui::test]
+fn rows_show_the_authors_picture_and_keep_initials_without_one(cx: &mut TestAppContext) {
+    super::avatar::test_avatars::serve("https://github.com/dana.png?size=64");
+    super::avatar::test_avatars::serve("https://github.com/renovate.png?size=64");
+    let pictured = pr("acme/web", 1, "dana");
+    let bot = pr("acme/web", 2, "app/renovate");
+    let unpictured = pr("acme/web", 3, "nobody-here");
+    let gitlab = Item {
+        provider: "gitlab".into(),
+        url: "https://gitlab.com/acme/web/-/merge_requests/4".into(),
+        ..pr("acme/web", 4, "dana")
+    };
+    let items = vec![
+        pictured.clone(),
+        bot.clone(),
+        unpictured.clone(),
+        gitlab.clone(),
+    ];
+    let window = open(store(), cx, move |inbox| {
+        inbox.snapshot.items = items;
+        // Bots are listed, not folded, so the app's row shows.
+        inbox.state.prefs.fold_bots = false;
+        inbox.snapshot.connections.insert(
+            "gitlab".into(),
+            Status {
+                connected: true,
+                ..Default::default()
+            },
+        );
+    });
+    let mut visual = visual(window, cx);
+    click(&mut visual, "git-view-all");
+    // The pictures load in the background; the next frame shows them.
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    for item in [&pictured, &bot, &unpictured, &gitlab] {
+        assert!(shown(&mut visual, &row(item)), "{} is listed", item.key());
+    }
+    let photo = |visual: &mut VisualTestContext, item: &Item| {
+        shown(visual, &format!("git-row-photo-{}", item.key()))
+    };
+    assert!(photo(&mut visual, &pictured), "dana's picture");
+    assert!(photo(&mut visual, &bot), "the app's picture, by its name");
+    assert!(!photo(&mut visual, &unpictured), "no picture: initials");
+    assert!(
+        !photo(&mut visual, &gitlab),
+        "GitLab names no picture here: initials"
+    );
+}
+
+/// The Repos filter reaches past the repos you watch: "Find a repo" searches
+/// every repo you can access, offers the ones you don't watch yet, and
+/// picking one adds it to your repos and its list.
+#[gpui::test]
+fn the_repos_filter_finds_a_repo_you_dont_watch_and_adds_it(cx: &mut TestAppContext) {
+    let window = open(store(), cx, |inbox| {
+        inbox.snapshot.items = vec![asked("acme/web", 1)];
+        inbox.snapshot.repos = vec![model::ProjectRepo {
+            provider: "github".into(),
+            repo: "acme/web".into(),
+            project_path: "/work/web".into(),
+        }];
+        inbox.canned_repo_hits = Some(vec![
+            RepoHit {
+                provider: "github".into(),
+                repo: "acme/web".into(),
+                description: String::new(),
+            },
+            RepoHit {
+                provider: "github".into(),
+                repo: "acme/billing".into(),
+                description: String::new(),
+            },
+        ]);
+    });
+    let mut visual = visual(window, cx);
+    click(&mut visual, "git-filters");
+    click(&mut visual, "git-filter-repos");
+    assert!(shown(&mut visual, "git-filter-find-repo"));
+    assert!(shown(&mut visual, "git-filter-repo-0"), "acme/web, watched");
+    assert!(!shown(&mut visual, "git-filter-repo-1"));
+    assert!(
+        !shown(&mut visual, "git-filter-find-hit-0"),
+        "nothing is searched before you type"
+    );
+
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox
+                .repo_search_input
+                .update(cx, |input, cx| input.set_text("acme".into(), cx))
+        })
+        .unwrap();
+    visual.run_until_parked();
+    visual.refresh().unwrap();
+    assert!(shown(&mut visual, "git-filter-find-hit-0"));
+    assert!(
+        !shown(&mut visual, "git-filter-find-hit-1"),
+        "acme/web is already watched, so only acme/billing is offered"
+    );
+
+    click(&mut visual, "git-filter-find-hit-0");
+    let (added, query) = window
+        .update(&mut visual, |inbox, _, cx| {
+            (
+                inbox.your_repos(),
+                inbox.repo_search_input.read(cx).content.to_string(),
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        added,
+        vec![
+            ("github".to_string(), "acme/web".to_string()),
+            ("github".to_string(), "acme/billing".to_string()),
+        ]
+    );
+    assert!(query.is_empty(), "the search clears once a repo is added");
+    assert!(
+        shown(&mut visual, "git-filter-repo-1"),
+        "acme/billing, now watched and ticked"
+    );
+    assert!(!shown(&mut visual, "git-filter-find-hit-0"));
+}

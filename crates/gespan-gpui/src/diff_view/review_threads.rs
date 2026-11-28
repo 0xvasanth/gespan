@@ -49,9 +49,11 @@ pub(super) struct Editor {
 }
 
 impl Editor {
-    /// The box grows by the rewrite card or the error line.
-    fn height(&self) -> f32 {
+    /// The box grows by the rewrite card or the error line, and by a second
+    /// row of controls when it is narrow.
+    fn height(&self, narrow: bool) -> f32 {
         EDITOR
+            + if narrow { NARROW_ROW } else { 0. }
             + self
                 .polished
                 .as_ref()
@@ -68,6 +70,9 @@ pub(super) struct Review {
     /// A drag from a "+" in progress.
     pub picking: Option<Pick>,
     pub editor: Option<Editor>,
+    /// The box is too narrow for its controls in one row, as the diff was
+    /// last laid out.
+    pub narrow: bool,
 }
 
 /// A review thread already on the pull request, read-only in the diff.
@@ -114,6 +119,11 @@ fn line_at(blocks: &[Block], side: gespan_core::inbox::Side, number: u32) -> Opt
 const PAD: f32 = 8.;
 const GAP: f32 = 6.;
 const EDITOR: f32 = 160.;
+/// The second row of controls a narrow box adds: the buttons and a gap.
+const NARROW_ROW: f32 = 36.;
+/// The width the box's controls need in one row: Tone, its three choices,
+/// Polish, Cancel and Add review comment.
+const ONE_ROW: f32 = 470.;
 /// The rewrite card above the box's field, for one line of text.
 const POLISHED: f32 = 98.;
 const CARD: f32 = 58.;
@@ -253,7 +263,10 @@ impl DiffView {
             remote
                 + cards.iter().sum::<f32>()
                 + if editor {
-                    self.review.editor.as_ref().map_or(EDITOR, Editor::height)
+                    self.review
+                        .editor
+                        .as_ref()
+                        .map_or(EDITOR, |e| e.height(self.review.narrow))
                 } else {
                     0.
                 }
@@ -447,6 +460,34 @@ impl DiffView {
                 .update(cx, |input, cx| input.set_text(text, cx));
         }
         self.rebuild(cx);
+    }
+    /// The box's field takes the keyboard again, after a button took it.
+    pub(super) fn focus_editor(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(editor) = self.review.editor.as_ref() {
+            window.focus(&editor.input.read(cx).focus_handle(cx), cx);
+        }
+    }
+    /// Whether the box at this diff width needs its controls in two rows:
+    /// the column's width less the gutter and the padding, under [`ONE_ROW`].
+    pub(super) fn narrow_at(&self, width: f32) -> bool {
+        let gutter = self.gutter_width();
+        let column = width.min(gutter + 760.);
+        // The column's padding (12 + 24) and the box's own (12 + 12).
+        column - gutter - 36. - 24. < ONE_ROW
+    }
+    /// Lays the diff out again when the box's width crosses [`ONE_ROW`], so
+    /// its row is as tall as its controls need.
+    pub(super) fn sync_narrow(&mut self, cx: &mut Context<Self>) {
+        let narrow = self
+            .viewport
+            .get()
+            .is_some_and(|b| self.narrow_at(b.size.width.as_f32()));
+        if narrow != self.review.narrow {
+            self.review.narrow = narrow;
+            if self.review.editor.is_some() {
+                self.rebuild(cx);
+            }
+        }
     }
     pub(super) fn keep_mine(&mut self, cx: &mut Context<Self>) {
         if let Some(editor) = self.review.editor.as_mut() {
@@ -698,7 +739,8 @@ impl DiffView {
             };
             let can_save = !editor.input.read(cx).content.trim().is_empty();
             let editing = editor.editing.is_some();
-            let box_height = editor.height();
+            let narrow = self.review.narrow;
+            let box_height = editor.height(narrow);
             let tone = editor.tone;
             let polishing = editor.polishing;
             let violet: Hsla = gpui::rgb(0xc0affc).into();
@@ -740,17 +782,23 @@ impl DiffView {
                             .justify_end()
                             .gap(px(6.))
                             .child(
-                                small_button("diff-polish-keep", "Keep mine", false)
-                                    .on_click(cx.listener(|this, _, _, cx| this.keep_mine(cx))),
+                                small_button("diff-polish-keep", "Keep mine", false).on_click(
+                                    cx.listener(|this, _, window, cx| {
+                                        this.keep_mine(cx);
+                                        this.focus_editor(window, cx);
+                                    }),
+                                ),
                             )
                             .child(
                                 small_button("diff-polish-again", "Try again", false)
                                     .on_click(cx.listener(|this, _, _, cx| this.polish_editor(cx))),
                             )
-                            .child(
-                                small_button("diff-polish-use", "Use", true)
-                                    .on_click(cx.listener(|this, _, _, cx| this.use_polished(cx))),
-                            ),
+                            .child(small_button("diff-polish-use", "Use", true).on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.use_polished(cx);
+                                    this.focus_editor(window, cx);
+                                }),
+                            )),
                     )
             });
             let polish_error = editor.polish_error.clone();
@@ -850,17 +898,19 @@ impl DiffView {
                                     .text_color(content(0.55))
                                     .child(format!("{} · {label}", diff.path)),
                             )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_size(px(10.5))
-                                    .text_color(content(0.4))
-                                    .child(if cfg!(target_os = "macos") {
-                                        "⌘↩ to save · Esc to cancel"
-                                    } else {
-                                        "Ctrl+↩ to save · Esc to cancel"
-                                    }),
-                            ),
+                            .when(!narrow, |d| {
+                                d.child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(10.5))
+                                        .text_color(content(0.4))
+                                        .child(if cfg!(target_os = "macos") {
+                                            "⌘↩ to save · Esc to cancel"
+                                        } else {
+                                            "Ctrl+↩ to save · Esc to cancel"
+                                        }),
+                                )
+                            }),
                     )
                     .children(polished)
                     .child(
@@ -876,20 +926,28 @@ impl DiffView {
                             .text_size(px(13.))
                             .child(editor.input.clone()),
                     )
-                    .child(
-                        div()
+                    .map(|d| {
+                        // Narrow, the tones get a row of their own (the group
+                        // still says "Tone" to a screen reader) and Polish joins
+                        // the buttons on the next.
+                        let tone_row = div()
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(11.5))
-                                    .text_color(content(0.5))
-                                    .child("Tone"),
-                            )
-                            .child(tones)
-                            .child(polish_button)
-                            .child(div().flex_1())
+                            .when(!narrow, |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(content(0.5))
+                                        .child("Tone"),
+                                )
+                            })
+                            .child(tones);
+                        let actions = div()
+                            .debug_selector(|| "diff-review-actions".into())
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
                             .child(
                                 div()
                                     .id("diff-review-cancel")
@@ -937,6 +995,8 @@ impl DiffView {
                                     )
                                     .child(if editing {
                                         "Save"
+                                    } else if narrow {
+                                        "Add"
                                     } else {
                                         "Add review comment"
                                     })
@@ -945,8 +1005,30 @@ impl DiffView {
                                             |this, _, window, cx| this.save_editor(window, cx),
                                         ))
                                     }),
-                            ),
-                    )
+                            );
+                        if narrow {
+                            // Two rows, so nothing runs past the box.
+                            d.child(tone_row).child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(polish_button)
+                                    .child(div().flex_1())
+                                    .child(actions),
+                            )
+                        } else {
+                            d.child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child(tone_row.child(polish_button))
+                                    .child(div().flex_1())
+                                    .child(actions),
+                            )
+                        }
+                    })
                     .when_some(polish_error, |d, error| {
                         d.child(
                             div()

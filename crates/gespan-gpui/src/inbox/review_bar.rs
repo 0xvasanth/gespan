@@ -1,45 +1,53 @@
 //! The review bar under a pull request's files: a comment, its tone, Polish,
 //! and Comment / Request changes / Approve.
 //!
-//! Polish asks the pull request's Ask agent for a rewrite in the chosen tone.
-//! The Ask panel opens on that conversation, so the turn is visible and can be
-//! stopped like any other; the rewrite comes back as a card to Use, Try again
-//! or Keep mine.
+//! Polish asks for a rewrite in the chosen tone as a one-off agent turn in the
+//! background: no tools, no session, and nothing opens on screen. The rewrite
+//! comes back as a card to Use, Try again or Keep mine.
 use super::*;
-use crate::conversation::Conversation;
 use crate::glass;
 use gespan_core::inbox::{
     Verdict,
     polish::{self, Tone},
     queue,
 };
-use gpui::{AnyElement, FontWeight, Role, SharedString, Subscription, div, prelude::*, px, rgb};
+use gpui::{AnyElement, FontWeight, Role, SharedString, div, prelude::*, px, rgb};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
-/// A Polish turn: sent once the Ask conversation is hosted, answered once
-/// the turn it started has finished.
 /// Where a rewrite goes: the review bar's comment, or the comment box open
 /// on a line in Files.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PolishTarget {
     Bar,
     Line,
+    /// The reply box with this id, under a comment on the Overview.
+    Reply(u64),
 }
 
-struct Pending {
-    target: PolishTarget,
+/// A Polish turn running in the background: the pull request it was asked
+/// on, and a flag that stops it.
+struct PolishJob {
     key: String,
-    prompt: String,
-    tone: Tone,
-    sent: bool,
-    /// The conversation was busy with this turn at some point.
-    started: bool,
-    _observe: Option<Subscription>,
+    cancel: Arc<AtomicBool>,
+}
+impl Drop for PolishJob {
+    /// A job dropped before it answers (another pull request, a reset) stops
+    /// its turn rather than leaving it to run.
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::SeqCst);
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct ReviewBar {
     pub(super) tone: Tone,
-    pending: Option<Pending>,
+    polish_job: Option<PolishJob>,
     /// The rewrite on offer, and the tone it was written in.
     pub(super) polished: Option<(Tone, String)>,
     pub(super) polish_error: Option<String>,
@@ -67,7 +75,7 @@ impl ReviewBar {
         self.notice = None;
     }
     pub(super) fn polishing(&self) -> bool {
-        self.pending.is_some()
+        self.polish_job.is_some()
     }
 }
 
@@ -95,6 +103,9 @@ impl Inbox {
             .clone()
             .map(Ok)
             .or_else(|| self.review.polish_error.clone().map(Err))
+    }
+    pub(crate) fn polishing_for_test(&self) -> bool {
+        self.review.polishing()
     }
     pub(crate) fn use_polish_for_test(&mut self, cx: &mut Context<Self>) -> String {
         self.use_polish(cx);
@@ -206,7 +217,7 @@ impl Inbox {
 
     /// Polish asked from a comment box on a line in Files.
     pub(super) fn polish_line(&mut self, draft: String, tone: Tone, cx: &mut Context<Self>) {
-        if self.review.pending.is_some() {
+        if self.review.polish_job.is_some() {
             self.diff_view.update(cx, |view, cx| {
                 view.polish_result(Err("A rewrite is already on its way.".into()), cx)
             });
@@ -215,7 +226,7 @@ impl Inbox {
         self.start_polish(PolishTarget::Line, draft.trim().to_string(), tone, cx);
     }
 
-    fn start_polish(
+    pub(super) fn start_polish(
         &mut self,
         target: PolishTarget,
         draft: String,
@@ -225,94 +236,59 @@ impl Inbox {
         let Some(item) = self.item() else {
             return;
         };
-        if draft.is_empty() || self.review.pending.is_some() {
+        if draft.is_empty() || self.review.polish_job.is_some() {
             return;
         }
         if target == PolishTarget::Bar {
             self.review.polished = None;
             self.review.polish_error = None;
         }
-        self.review.pending = Some(Pending {
-            target,
-            key: model::ask::key(&item),
-            prompt: polish::prompt(&draft, tone),
-            tone,
-            sent: false,
-            started: false,
-            _observe: None,
+        let key = item.key();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.review.polish_job = Some(PolishJob {
+            key: key.clone(),
+            cancel: cancel.clone(),
         });
-        self.open_ask(cx);
-        self.send_polish(cx);
-        cx.notify();
-    }
-
-    /// Sends a waiting Polish turn once its conversation is on screen.
-    pub(super) fn send_polish(&mut self, cx: &mut Context<Self>) {
-        let Some(view) = self.ask_conversation() else {
-            return;
-        };
-        let Some(hosted) = self.ask_hosted_key() else {
-            return;
-        };
-        let Some(pending) = self.review.pending.as_mut() else {
-            return;
-        };
-        if pending.key != hosted {
-            return;
-        }
-        if pending._observe.is_none() {
-            pending._observe =
-                Some(cx.observe(&view, |this, view, cx| this.watch_polish(view, cx)));
-        }
-        self.watch_polish(view, cx);
-    }
-
-    /// Sends the Polish turn once the conversation can take it (its history
-    /// loaded, no turn running), then waits for that turn to end.
-    fn watch_polish(&mut self, view: Entity<Conversation>, cx: &mut Context<Self>) {
-        let Some(pending) = self.review.pending.as_mut() else {
-            return;
-        };
-        if !pending.sent {
-            // Words in the Ask composer are the user's: never send over them.
-            if !view.read(cx).input.read(cx).content.trim().is_empty() {
-                let target = pending.target;
-                self.review.pending = None;
-                self.finish_polish(
-                    target,
-                    Err(
-                        "Ask has a message you haven't sent. Send or clear it, then Polish again."
-                            .into(),
-                    ),
-                    cx,
-                );
-                return;
-            }
-            if !view.read(cx).ready_for_external(cx) {
-                return;
-            }
-            pending.sent = true;
-            let prompt = pending.prompt.clone();
-            view.update(cx, |conversation, cx| {
-                conversation.send_worker_turn(prompt, cx)
+        let prompt = polish::prompt(&pull_request_label(&item), &draft, tone);
+        let cwd = Some(PathBuf::from(&item.project_path))
+            .filter(|path| !item.project_path.is_empty() && path.is_dir())
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(std::env::temp_dir);
+        #[cfg(test)]
+        let agent = crate::e2e::background_agent(&self.store);
+        #[cfg(not(test))]
+        let agent: Option<PathBuf> = None;
+        // Its own thread: the turn blocks on the agent's process.
+        let (tx, rx) = async_channel::bounded(1);
+        std::thread::spawn(move || {
+            let _ = tx.send_blocking(polish_turn(prompt, cwd, agent, cancel));
+        });
+        cx.spawn(async move |this, cx| {
+            let reply = rx
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("Polish stopped before it answered.".into()));
+            let _ = this.update(cx, |this, cx| {
+                // Only the job that asked, on the pull request still open.
+                let current = this
+                    .review
+                    .polish_job
+                    .as_ref()
+                    .is_some_and(|job| job.key == key);
+                if !current || this.selected.as_deref() != Some(key.as_str()) {
+                    return;
+                }
+                this.review.polish_job = None;
+                let result = reply.and_then(|reply| {
+                    polish::extract(&reply)
+                        .map(|text| (tone, text))
+                        .ok_or_else(|| "The agent did not return a rewrite. Try again.".to_string())
+                });
+                this.finish_polish(target, result, cx);
             });
-            return;
-        }
-        if view.read(cx).external_submission_pending() {
-            pending.started = true;
-            return;
-        }
-        if !pending.started {
-            return;
-        }
-        let tone = pending.tone;
-        let target = pending.target;
-        self.review.pending = None;
-        let reply = view.read(cx).last_reply(cx);
-        let result = polish::extract(&reply)
-            .map(|text| (tone, text))
-            .ok_or_else(|| "The agent did not return a rewrite. Try again.".to_string());
-        self.finish_polish(target, result, cx);
+        })
+        .detach();
+        cx.notify();
     }
 
     /// Hands a rewrite, or why there is none, to whoever asked.
@@ -327,6 +303,7 @@ impl Inbox {
                 Ok(polished) => self.review.polished = Some(polished),
                 Err(error) => self.review.polish_error = Some(error),
             },
+            PolishTarget::Reply(id) => self.reply_polished(id, result, cx),
             PolishTarget::Line => {
                 #[cfg(test)]
                 {
@@ -780,4 +757,29 @@ impl Inbox {
                 .into_any_element(),
         )
     }
+}
+
+/// "acme/web#562 "Title" (https://…)": which pull request a comment is on.
+fn pull_request_label(item: &Item) -> String {
+    format!(
+        "{}#{} \"{}\" ({})",
+        item.repo, item.number, item.title, item.url
+    )
+}
+
+/// One tool-less agent turn for Polish, with no session: the agent the test
+/// chose, or the installed provider CLI Gespan writes commit messages with.
+/// Blocking. Its reply's text, or why there is none.
+fn polish_turn(
+    prompt: String,
+    cwd: PathBuf,
+    agent: Option<PathBuf>,
+    cancel: Arc<AtomicBool>,
+) -> Result<String, String> {
+    let (kind, binary) = match agent {
+        Some(binary) => (gespan_core::provider::Kind::Claude, binary),
+        None => crate::changes::pick_text_harness(crate::changes::TEXT_HARNESS)
+            .ok_or("No agent CLI is installed to polish with.")?,
+    };
+    crate::changes::text_prompt(kind, binary, cwd, prompt, cancel)
 }

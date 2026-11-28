@@ -1553,6 +1553,7 @@ fn tool_button(
 
 impl Render for DiffView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_narrow(cx);
         if self.files.is_empty() {
             return div()
                 .id("diff-review")
@@ -1834,6 +1835,17 @@ mod tests {
         std::rc::Rc<std::cell::RefCell<Vec<String>>>,
         gpui::Subscription,
     ) {
+        review_window_sized(cx, 1100.)
+    }
+    /// [`review_window`] in a window `width` wide.
+    fn review_window_sized(
+        cx: &mut gpui::TestAppContext,
+        width: f32,
+    ) -> (
+        gpui::WindowHandle<DiffView>,
+        std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        gpui::Subscription,
+    ) {
         let mut model = file("CHANGELOG.md", "a\nb\nc\nd\ne\n", "a\nB\nC\nd\ne\n");
         model.path = "CHANGELOG.md".into();
         let window = cx.update(|cx| {
@@ -1841,7 +1853,7 @@ mod tests {
                 gpui::WindowOptions {
                     window_bounds: Some(gpui::WindowBounds::Windowed(Bounds::new(
                         gpui::point(px(0.), px(0.)),
-                        gpui::size(px(1100.), px(800.)),
+                        gpui::size(px(width), px(800.)),
                     ))),
                     ..Default::default()
                 },
@@ -1887,6 +1899,156 @@ mod tests {
                     .map(|i| (b, i))
             })
             .unwrap()
+    }
+
+    /// The comment box on line B, laid out, and the height of its row.
+    fn open_box(
+        window: gpui::WindowHandle<DiffView>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (gpui::VisualTestContext, f32) {
+        window
+            .update(cx, |view, window, cx| {
+                let b = added(view, "B");
+                view.press_line(0, b, false, cx);
+                view.release_pick(window, cx);
+            })
+            .unwrap();
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        // The first frame measures the diff; the next lays the box out for it.
+        for _ in 0..3 {
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+        }
+        let height = window
+            .update(&mut visual, |view, _, _| {
+                view.rows
+                    .iter()
+                    .find(|r| matches!(r.kind, RowKind::Thread { .. }))
+                    .map(|r| r.height)
+                    .unwrap()
+            })
+            .unwrap();
+        (visual, height)
+    }
+
+    /// A wide diff keeps the box's controls on one row, all inside the box.
+    #[gpui::test]
+    fn a_wide_box_keeps_its_controls_on_one_row(cx: &mut gpui::TestAppContext) {
+        let (window, _, _subscription) = review_window_sized(cx, 1100.);
+        let (mut visual, _) = open_box(window, cx);
+        let editor = visual.debug_bounds("diff-review-editor").unwrap();
+        let polish = visual.debug_bounds("diff-polish").unwrap();
+        let save = visual.debug_bounds("diff-review-save").unwrap();
+        assert!(save.right() <= editor.right(), "{save:?} in {editor:?}");
+        assert!(
+            (save.center().y - polish.center().y).abs() < px(4.),
+            "one row: {save:?} beside {polish:?}"
+        );
+        assert!(
+            window
+                .update(&mut visual, |v, _, _| !v.review.narrow)
+                .unwrap()
+        );
+    }
+
+    /// A narrow diff, as when Ask opens beside the pull request, moves Cancel
+    /// and Add review comment to a second row instead of past the box's edge,
+    /// and the row under the line grows to hold it.
+    #[gpui::test]
+    fn a_narrow_box_puts_its_buttons_on_a_second_row_inside_it(cx: &mut gpui::TestAppContext) {
+        let (wide, _, _wide_subscription) = review_window_sized(cx, 1100.);
+        let (_, wide_height) = open_box(wide, cx);
+        let (window, _, _subscription) = review_window_sized(cx, 420.);
+        let (mut visual, height) = open_box(window, cx);
+        assert!(
+            window
+                .update(&mut visual, |v, _, _| v.review.narrow)
+                .unwrap()
+        );
+        let editor = visual.debug_bounds("diff-review-editor").unwrap();
+        let polish = visual.debug_bounds("diff-polish").unwrap();
+        let save = visual.debug_bounds("diff-review-save").unwrap();
+        let cancel = visual.debug_bounds("diff-review-cancel").unwrap();
+        for (name, bounds) in [("save", save), ("cancel", cancel), ("polish", polish)] {
+            assert!(
+                bounds.right() <= editor.right() && bounds.bottom() <= editor.bottom(),
+                "{name} {bounds:?} inside {editor:?}"
+            );
+        }
+        let tones = visual.debug_bounds("diff-review-tone").unwrap();
+        assert!(
+            tones.right() <= editor.right(),
+            "{tones:?} inside {editor:?}"
+        );
+        assert!(
+            save.top() >= tones.bottom(),
+            "second row: {save:?} under {tones:?}"
+        );
+        assert!(
+            polish.top() >= tones.bottom(),
+            "Polish joins the buttons: {polish:?}"
+        );
+        assert_eq!(height, wide_height + 36., "the row makes room for it");
+        // The save button still saves.
+        window
+            .update(&mut visual, |view, _, cx| {
+                let input = view.review.editor.as_ref().unwrap().input.clone();
+                input.update(cx, |input, cx| input.set_text("narrow".into(), cx));
+            })
+            .unwrap();
+        visual.run_until_parked();
+        visual.refresh().unwrap();
+        let save = visual.debug_bounds("diff-review-save").unwrap();
+        visual.simulate_click(save.center(), Default::default());
+        visual.run_until_parked();
+        let drafts = window
+            .update(&mut visual, |view, _, _| view.review.drafts.len())
+            .unwrap();
+        assert_eq!(drafts, 1);
+    }
+
+    /// Use and Keep mine are buttons, but the words stay yours to edit: the
+    /// field has the keyboard again, so ⌘↩ saves straight away.
+    #[gpui::test]
+    fn use_and_keep_mine_give_the_field_the_keyboard_back(cx: &mut gpui::TestAppContext) {
+        use gespan_core::inbox::polish::Tone;
+        let (window, _, _subscription) = review_window(cx);
+        let (mut visual, _) = open_box(window, cx);
+        let focused = |visual: &mut gpui::VisualTestContext| {
+            window
+                .update(visual, |view, window, cx| {
+                    view.review
+                        .editor
+                        .as_ref()
+                        .unwrap()
+                        .input
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                })
+                .unwrap()
+        };
+        for button in ["diff-polish-use", "diff-polish-keep"] {
+            window
+                .update(&mut visual, |view, window, cx| {
+                    let input = view.review.editor.as_ref().unwrap().input.clone();
+                    input.update(cx, |input, cx| input.set_text("fix this".into(), cx));
+                    view.polish_result(Ok((Tone::Friendly, "Could you fix this?".into())), cx);
+                    // Something else had the keyboard, as the button does.
+                    window.focus(&view.focus, cx);
+                })
+                .unwrap();
+            visual.run_until_parked();
+            visual.refresh().unwrap();
+            assert!(!focused(&mut visual));
+            let bounds = visual.debug_bounds(button).unwrap();
+            visual.simulate_click(bounds.center(), Default::default());
+            visual.run_until_parked();
+            assert!(
+                focused(&mut visual),
+                "{button} hands the field the keyboard"
+            );
+        }
     }
 
     /// Each comment box has its own tone and Polish: the owner gets the

@@ -75,10 +75,25 @@ pub(crate) fn agent_binary(store: &Database, session: i64) -> Option<PathBuf> {
     Some(binary)
 }
 
+/// The store setting pointing one-off background turns (Polish) at a test
+/// agent.
+const BACKGROUND_KEY: &str = "e2e:background-agent";
+
+/// The agent an end-to-end test chose for one-off background turns, such as
+/// Polish, which run without a session. The app asks this before resolving
+/// the provider's CLI the normal way.
+pub(crate) fn background_agent(store: &Database) -> Option<PathBuf> {
+    let db = locked(store).ok()?;
+    db.setting(BACKGROUND_KEY).ok().flatten().map(PathBuf::from)
+}
+
 /// A folder of its own for `session`'s agent, holding a copy of the fake
 /// agent and, in real mode, the `proxy` file naming the real CLI.
 fn provision(root: &Path, session: i64, harness: Kind) -> PathBuf {
-    let dir = root.join(session.to_string());
+    provision_in(root, &session.to_string(), harness)
+}
+fn provision_in(root: &Path, name: &str, harness: Kind) -> PathBuf {
+    let dir = root.join(name);
     std::fs::create_dir_all(&dir).unwrap();
     let binary = dir.join(format!(
         "{}{}",
@@ -181,6 +196,38 @@ impl E2e {
             .unwrap_or_default();
         queue.push(turns);
         std::fs::write(path, serde_json::to_vec(&queue).unwrap()).unwrap();
+    }
+
+    /// Points one-off background turns (Polish) at an agent of their own,
+    /// scripted like [`E2e::script_frames`]: one entry per turn.
+    pub(crate) fn script_background(&self, turns: Value, cx: &mut TestAppContext) {
+        let binary = provision_in(self.agents.path(), "background", Kind::Claude);
+        std::fs::write(
+            self.agents.path().join("background").join("replies.json"),
+            serde_json::to_vec(&turns).unwrap(),
+        )
+        .unwrap();
+        locked(&self.store(cx))
+            .unwrap()
+            .save_setting(BACKGROUND_KEY, &binary.to_string_lossy())
+            .unwrap();
+    }
+    /// The text of every prompt the background agent received, in order.
+    pub(crate) fn background_prompts(&self) -> Vec<String> {
+        read_lines(&self.agents.path().join("background").join("received.jsonl"))
+            .into_iter()
+            .filter(|frame| frame["type"] == "user")
+            .map(|frame| prompt_text(&frame["message"]["content"]))
+            .collect()
+    }
+
+    /// Lets a background turn scripted with `"wait": true` go on.
+    pub(crate) fn release_background(&self) {
+        let _ = std::fs::write(self.agents.path().join("background").join("release"), b"");
+    }
+    /// Every start of the background agent: `{"argv","cwd","env"}`.
+    pub(crate) fn background_launches(&self) -> Vec<Value> {
+        read_lines(&self.agents.path().join("background").join("launches.jsonl"))
     }
 
     /// Every call the session's agent made to Gespan's own tools, in order:

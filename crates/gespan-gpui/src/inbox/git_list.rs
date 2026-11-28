@@ -224,7 +224,7 @@ impl Inbox {
         }
     }
 
-    pub(super) fn list_view(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn list_view(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let prefs = &self.state.prefs;
         let search_text = self.search.read(cx).content.to_string();
         let rows = prefs.visible(&self.snapshot.items, &search_text);
@@ -444,13 +444,13 @@ impl Inbox {
                     )
                     .into_any_element(),
             );
-            list.extend(items.iter().map(|item| self.git_row(item, cx)));
+            list.extend(items.iter().map(|item| self.git_row(item, window, cx)));
         }
         if page.groups.is_empty() {
             list.push(self.empty_list(&connected, cx));
         }
         if page.index + 1 == page.pages {
-            list.extend(self.other_repos_fold(cx));
+            list.extend(self.other_repos_fold(window, cx));
         }
         let hidden_bots = prefs.hidden_bots(&self.snapshot.items);
         if !page.groups.is_empty() || hidden_bots > 0 {
@@ -679,7 +679,7 @@ impl Inbox {
 
     /// One pull request: its title (bold while unread), why it is here, where
     /// it lives, and its checks and size.
-    fn git_row(&self, item: &Item, cx: &mut Context<Self>) -> AnyElement {
+    fn git_row(&self, item: &Item, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let key = item.key();
         let active = self.selected.as_ref() == Some(&key);
         let unread = self.state.feed.seen.unseen(item);
@@ -742,7 +742,26 @@ impl Inbox {
                     .child(super::ui::provider_mark(&item.provider).size(px(12.)))
                     .into_any_element()
             } else {
-                super::menu::initials_avatar(item.author.trim_start_matches("app/"))
+                // The author's picture, as the detail shows it; their initials
+                // while it loads, or when the host has none.
+                let login = item.author.trim_start_matches("app/");
+                match super::avatar::loaded(&item.provider, &item.author, "", window, cx) {
+                    Some(photo) => div()
+                        .debug_selector({
+                            let key = key.clone();
+                            move || format!("git-row-photo-{key}")
+                        })
+                        .flex_none()
+                        .size(px(22.))
+                        .child(
+                            gpui::img(photo)
+                                .size(px(22.))
+                                .rounded_full()
+                                .object_fit(gpui::ObjectFit::Cover),
+                        )
+                        .into_any_element(),
+                    None => super::menu::initials_avatar(login),
+                }
             }))
             .child(
                 div()
@@ -961,7 +980,7 @@ impl Inbox {
     }
 
     /// "N review requests in other repos": folded until Show, with Add repo.
-    fn other_repos_fold(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn other_repos_fold(&self, window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         if !self.state.prefs.other_repos {
             return vec![];
         }
@@ -1027,7 +1046,7 @@ impl Inbox {
                 .into_any_element(),
         ];
         if self.others_open {
-            out.extend(rows.into_iter().map(|item| self.git_row(item, cx)));
+            out.extend(rows.into_iter().map(|item| self.git_row(item, window, cx)));
         }
         out
     }
@@ -1564,6 +1583,78 @@ impl Inbox {
         .into_any_element()
     }
 
+    /// "Find a repo" at the top of the open Repos filter: the same search
+    /// as Settings › Pull requests' Add a repo, over every repository you can
+    /// reach. A repo you don't watch yet is offered with "+"; picking it adds
+    /// it to your repos, which fetches its pull requests. Nothing is asked of
+    /// the host until you type.
+    fn repo_finder(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let git = self.git_settings();
+        let mut out = vec![
+            div()
+                .debug_selector(|| "git-filter-find-repo".into())
+                .mx(px(8.))
+                .my(px(4.))
+                .child(
+                    crate::glass::field()
+                        .child(
+                            icon(if git.searching { "loader" } else { "search" }, 13.)
+                                .text_color(content(0.55)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(self.repo_search_input.clone()),
+                        ),
+                )
+                .into_any_element(),
+        ];
+        out.extend(git.hits.into_iter().enumerate().map(|(ix, hit)| {
+            let label = format!("Add {}", hit.repo);
+            div()
+                .id(SharedString::from(format!("git-filter-find-hit-{ix}")))
+                .debug_selector(move || format!("git-filter-find-hit-{ix}"))
+                .role(Role::Button)
+                .aria_label(label)
+                .ml(px(16.))
+                .mr(px(4.))
+                .h(px(30.))
+                .px(px(8.))
+                .rounded_md()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .cursor_pointer()
+                .hover(|s| s.bg(content(0.06)))
+                .text_size(px(12.5))
+                .child(icon("plus", 13.).text_color(accent_color()))
+                .child(div().flex_1().min_w_0().truncate().child(hit.repo.clone()))
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(content(0.45))
+                        .child(model::provider_label(&hit.provider)),
+                )
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.add_searched_repo(hit.clone(), cx)),
+                )
+                .into_any_element()
+        }));
+        if let Some(error) = git.search_error {
+            out.push(
+                div()
+                    .ml(px(16.))
+                    .px(px(8.))
+                    .text_size(px(12.))
+                    .text_color(crate::glass::Tone::Bad.ink())
+                    .child(error)
+                    .into_any_element(),
+            );
+        }
+        out
+    }
+
     /// The choices under an open filter row.
     fn filter_options(
         &self,
@@ -1595,24 +1686,26 @@ impl Inbox {
             out
         };
         match row {
-            FilterRow::Repos => self
-                .your_repos()
-                .into_iter()
-                .enumerate()
-                .map(|(ix, (provider, repo))| {
-                    let key = q::repo_key(&provider, &repo);
-                    let on = !filters.hidden_repos.contains(&key);
-                    option(format!("git-filter-repo-{ix}"), repo, on)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let key = key.clone();
-                            this.change_filters(
-                                move |f| super::ui::toggle(&mut f.hidden_repos, key),
-                                cx,
-                            )
-                        }))
-                        .into_any_element()
-                })
-                .collect(),
+            FilterRow::Repos => {
+                self.repo_finder(cx)
+                    .into_iter()
+                    .chain(self.your_repos().into_iter().enumerate().map(
+                        |(ix, (provider, repo))| {
+                            let key = q::repo_key(&provider, &repo);
+                            let on = !filters.hidden_repos.contains(&key);
+                            option(format!("git-filter-repo-{ix}"), repo, on)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let key = key.clone();
+                                    this.change_filters(
+                                        move |f| super::ui::toggle(&mut f.hidden_repos, key),
+                                        cx,
+                                    )
+                                }))
+                                .into_any_element()
+                        },
+                    ))
+                    .collect()
+            }
             FilterRow::Host => HOSTS
                 .into_iter()
                 .map(|host| {

@@ -12,6 +12,9 @@ mod git_settings;
 #[cfg(test)]
 mod git_tests;
 mod menu;
+mod replies;
+#[cfg(test)]
+mod replies_tests;
 mod review_bar;
 mod ui;
 pub(crate) use avatar::image as avatar_image;
@@ -156,6 +159,12 @@ pub(crate) struct Inbox {
     /// What a test's repository search finds.
     #[cfg(test)]
     pub(crate) canned_repo_hits: Option<Vec<gespan_core::inbox::RepoHit>>,
+    /// What a test's replies and resolves get from the host.
+    #[cfg(test)]
+    pub(crate) canned_reply_result: Option<Result<String, String>>,
+    /// Every reply a test sent: its body and the thread it went to.
+    #[cfg(test)]
+    pub(crate) posted_replies: std::cell::RefCell<Vec<(String, String)>>,
     /// When the last refresh landed.
     synced_ms: Option<i64>,
     /// What waited on you after the last refresh, so only newcomers notify.
@@ -200,7 +209,8 @@ pub(crate) struct Inbox {
     post_error: Option<String>,
     thread_error: Option<String>,
     expanded_comments: std::collections::HashSet<String>,
-    reply: Option<(String, String)>,
+    /// Reply boxes under comments, sent replies, and folds.
+    replies: replies::Replies,
     generation: u64,
     detail_generation: u64,
     extra_request: u64,
@@ -535,6 +545,10 @@ impl Inbox {
             repo_search: Default::default(),
             #[cfg(test)]
             canned_repo_hits: None,
+            #[cfg(test)]
+            canned_reply_result: None,
+            #[cfg(test)]
+            posted_replies: Default::default(),
             synced_ms: None,
             waiting_on_you: None,
             #[cfg(test)]
@@ -572,7 +586,7 @@ impl Inbox {
             post_error: None,
             thread_error: None,
             expanded_comments: Default::default(),
-            reply: None,
+            replies: Default::default(),
             generation: 0,
             detail_generation: 0,
             extra_request: 0,
@@ -1072,7 +1086,7 @@ impl Inbox {
         self.thread = None;
         self.document = None;
         self.comments.clear();
-        self.reply = None;
+        self.replies.clear();
         self.post_error = None;
         self.thread_error = None;
         self.expanded_comments.clear();
@@ -1177,6 +1191,7 @@ impl Inbox {
                             }
                         }
                         this.comments = rows;
+                        this.replies.thread_loaded();
                         let threads = remote_threads(&thread);
                         this.diff_view
                             .update(cx, |view, cx| view.set_threads(threads, cx));
@@ -1275,11 +1290,10 @@ impl Inbox {
         self.post_error = None;
         let key = item.key();
         let service = self.service.clone();
-        let reply = self.reply.as_ref().map(|r| r.0.clone()).unwrap_or_default();
         let target = gespan_core::inbox::SelfTarget::of(&item);
         let task = cx
             .background_executor()
-            .spawn(async move { service.comment(&item, body, reply) });
+            .spawn(async move { service.comment(&item, body, String::new()) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
@@ -1294,7 +1308,6 @@ impl Inbox {
                             .record(target, gespan_core::time::now_ms());
                         this.comment
                             .update(cx, |input, cx| input.set_text(String::new(), cx));
-                        this.reply = None;
                         this.load_detail(false, cx);
                         this.refresh(cx);
                     }

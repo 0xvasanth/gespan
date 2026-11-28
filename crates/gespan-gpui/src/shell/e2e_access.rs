@@ -26,17 +26,6 @@ impl Shell {
         self.show_app_view(app_views::AppView::Inbox, window, cx);
         inbox
     }
-    /// New sessions in the project, Ask conversations among them, start
-    /// with `kind`.
-    pub(crate) fn e2e_project_provider(&mut self, kind: Kind) {
-        let project = self.workspace.project.clone();
-        self.workspace
-            .preferences
-            .project_providers
-            .entry(project)
-            .or_default()
-            .provider = Some(kind.id().into());
-    }
     /// The sidebar's New chat.
     pub(crate) fn e2e_create(&mut self, kind: Kind, cx: &mut Context<Self>) {
         self.create(kind, cx);
