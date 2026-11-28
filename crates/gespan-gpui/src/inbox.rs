@@ -273,32 +273,60 @@ enum Offline {
 /// The inbox opens scoped to the project it was opened from.
 /// The pull request's review threads that sit on the current diff, for the
 /// Files tab: a thread whose line is outdated stays in the discussion only.
-fn remote_threads(thread: &Thread) -> Vec<crate::diff_view::RemoteThread> {
+/// The pull request's review threads, for Files: each on its line (or,
+/// outdated, at the top of its file) with the replies sent from here.
+fn remote_threads(
+    item: Option<&Item>,
+    thread: &Thread,
+    replies: &replies::Replies,
+) -> Vec<crate::diff_view::RemoteThread> {
+    use crate::diff_view::{PendingReply, RemoteComment, RemoteThread};
     use gespan_core::inbox::Side;
+    let github = item.is_some_and(|i| i.provider == "github");
     thread
         .comments
         .iter()
-        .filter(|c| c.kind == "review_comment" && !c.path.is_empty())
+        .filter(|c| !c.path.is_empty())
         .filter_map(|first| {
-            let side = match first.side.as_str() {
-                "RIGHT" => Side::New,
-                "LEFT" => Side::Old,
-                _ => return None,
-            };
             let line = u32::try_from(first.line?).ok().filter(|l| *l > 0)?;
-            Some(crate::diff_view::RemoteThread {
+            // GitHub names the side only while the line is on the diff; other
+            // hosts don't name it and their lines are the new file's.
+            let (side, outdated) = match first.side.as_str() {
+                "RIGHT" => (Side::New, false),
+                "LEFT" => (Side::Old, false),
+                _ => (Side::New, github),
+            };
+            Some(RemoteThread {
+                root: first.id.clone(),
                 path: first.path.clone(),
                 line,
                 side,
                 resolved: first.resolved,
+                resolvable: first.resolvable && !first.thread_id.is_empty(),
+                outdated,
                 comments: std::iter::once(first)
                     .chain(first.replies.iter())
-                    .map(|c| crate::diff_view::RemoteComment {
+                    .map(|c| RemoteComment {
                         author: c.author.clone(),
                         when: ui::relative_time(&c.created_at),
                         body: c.body.trim().to_string(),
+                        avatar_url: c.author_avatar_url.clone(),
+                        bot: c.author_bot || model::queue::is_bot(&c.author),
                     })
                     .collect(),
+                pending: replies
+                    .sent
+                    .get(&first.id)
+                    .map(|sent| {
+                        sent.iter()
+                            .map(|s| PendingReply {
+                                text: s.text.clone(),
+                                error: s.error.clone(),
+                                posted: s.posted,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             })
         })
         .collect()
@@ -443,6 +471,25 @@ impl Inbox {
                 this.post_comment(cx)
             }),
             cx.subscribe(&diff_view, |this, _, event: &DiffEvent, cx| {
+                match event {
+                    DiffEvent::Reply { root, body } => {
+                        this.reply_from_files(root, body, cx);
+                        return;
+                    }
+                    DiffEvent::Resolve { root, resolved } => {
+                        this.resolve_thread(root, *resolved, cx);
+                        return;
+                    }
+                    DiffEvent::RetryReply { root, ix } => {
+                        this.retry_reply(root, *ix, cx);
+                        return;
+                    }
+                    DiffEvent::DropReply { root, ix } => {
+                        this.drop_reply(root, *ix, cx);
+                        return;
+                    }
+                    _ => {}
+                }
                 if let DiffEvent::Refresh = event {
                     this.refresh_files(cx);
                     return;
@@ -1192,7 +1239,7 @@ impl Inbox {
                         }
                         this.comments = rows;
                         this.replies.thread_loaded();
-                        let threads = remote_threads(&thread);
+                        let threads = remote_threads(this.item().as_ref(), &thread, &this.replies);
                         this.diff_view
                             .update(cx, |view, cx| view.set_threads(threads, cx));
                         this.thread = Some(thread);
@@ -1574,8 +1621,10 @@ impl Inbox {
 mod tests {
     use super::*;
 
-    /// Only review comments on the current diff become threads in Files,
-    /// each with its replies, on its side.
+    /// Review comments become threads in Files, each with its replies, on
+    /// its side. GitHub's outdated ones come too, marked outdated; general
+    /// comments stay in the discussion. Other hosts' lines are the new
+    /// file's, and a reply sent from here shows in its thread.
     #[test]
     fn the_pull_requests_review_threads_go_to_their_lines() {
         let comment =
@@ -1599,6 +1648,8 @@ mod tests {
             "RIGHT",
         )];
         current.resolved = true;
+        current.resolvable = true;
+        current.thread_id = "PRRT_1".into();
         let thread = Thread {
             comments: vec![
                 current,
@@ -1609,21 +1660,51 @@ mod tests {
             ],
             ..Default::default()
         };
-        let threads = remote_threads(&thread);
-        assert_eq!(
-            threads.len(),
-            2,
-            "outdated and general comments stay in the discussion"
+        let github = item("github", 1);
+        let mut replies = replies::Replies::default();
+        replies.sent.insert(
+            "c1".into(),
+            vec![replies::SentReply {
+                text: "Thanks".into(),
+                target: replies::ReplyTarget::Thread("PRRT_1".into()),
+                author: "cubic".into(),
+                error: Some("Could not reach GitHub".into()),
+                posted: false,
+            }],
         );
+        let threads = remote_threads(Some(&github), &thread, &replies);
+        assert_eq!(threads.len(), 3, "general comments stay in the discussion");
         assert_eq!(threads[0].path, "CHANGELOG.md");
+        assert_eq!(threads[0].root, "c1");
         assert_eq!(
             (threads[0].line, threads[0].side),
             (12, gespan_core::inbox::Side::New)
         );
-        assert!(threads[0].resolved);
+        assert!(threads[0].resolved && threads[0].resolvable && !threads[0].outdated);
         assert_eq!(threads[0].comments.len(), 2);
         assert_eq!(threads[0].comments[0].body, "c1 body");
+        assert_eq!(
+            threads[0].pending.len(),
+            1,
+            "the reply sent from here shows"
+        );
+        assert_eq!(
+            threads[0].pending[0].error.as_deref(),
+            Some("Could not reach GitHub")
+        );
         assert_eq!(threads[1].side, gespan_core::inbox::Side::Old);
+        assert!(
+            threads[2].outdated,
+            "GitHub without a side: the line changed"
+        );
+        assert!(!threads[2].resolvable, "no host thread to resolve");
+
+        let gitlab = item("gitlab", 2);
+        let threads = remote_threads(Some(&gitlab), &thread, &replies::Replies::default());
+        assert!(
+            !threads[2].outdated && threads[2].side == gespan_core::inbox::Side::New,
+            "GitLab names no side: its lines are the new file's"
+        );
     }
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
 

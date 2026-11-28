@@ -231,10 +231,63 @@ impl Inbox {
         }
     }
 
-    /// A reply box's or sent reply's look changed: its row is laid out again.
+    /// A reply box's or sent reply's look changed: its row is laid out
+    /// again, and Files shows the same threads.
     pub(super) fn replies_changed(&mut self, cx: &mut Context<Self>) {
         self.activity_revision += 1;
+        if let Some(thread) = &self.thread {
+            let threads = super::remote_threads(self.item().as_ref(), thread, &self.replies);
+            self.diff_view
+                .update(cx, |view, cx| view.set_threads(threads, cx));
+        }
         cx.notify();
+    }
+
+    /// A reply written in Files, into the thread `root` starts.
+    pub(super) fn reply_from_files(&mut self, root: &str, text: &str, cx: &mut Context<Self>) {
+        let Some(item) = self.item() else {
+            return;
+        };
+        let Some(comment) = self
+            .thread
+            .as_ref()
+            .and_then(|t| t.comments.iter().find(|c| c.id == root))
+            .cloned()
+        else {
+            return;
+        };
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        let reply = SentReply {
+            text,
+            target: target(&item, &comment),
+            author: comment.author.clone(),
+            error: None,
+            posted: false,
+        };
+        self.replies
+            .sent
+            .entry(root.to_owned())
+            .or_default()
+            .push(reply.clone());
+        self.post_reply(root.to_owned(), reply, cx);
+        self.replies_changed(cx);
+    }
+
+    /// A failed reply went back in Files' box to be edited.
+    pub(super) fn drop_reply(&mut self, root: &str, ix: usize, cx: &mut Context<Self>) {
+        if let Some(sent) = self.replies.sent.get_mut(root)
+            && ix < sent.len()
+            && sent[ix].error.is_some()
+        {
+            sent.remove(ix);
+            if sent.is_empty() {
+                self.replies.sent.remove(root);
+            }
+            self.replies_changed(cx);
+        }
     }
 
     /// Sends the box under `root`: into its thread, or as a quote reply.

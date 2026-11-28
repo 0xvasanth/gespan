@@ -9,6 +9,7 @@
 use super::*;
 use gespan_core::inbox::{LineComment, LineRef, polish::Tone};
 use gpui::Entity;
+use std::collections::{HashMap, HashSet};
 
 /// A line by where it sits in its file's diff: block, then line.
 pub(super) type At = (usize, usize);
@@ -38,6 +39,8 @@ pub(super) struct Editor {
     pub pick: Pick,
     /// The draft being edited, or `None` for a new one.
     pub editing: Option<usize>,
+    /// A reply in the remote thread with this root, instead of a draft.
+    pub reply: Option<String>,
     pub input: Entity<Input>,
     /// Polish: the tone asked for, a rewrite on its way, the one offered, or
     /// why there is none.
@@ -51,7 +54,7 @@ pub(super) struct Editor {
 impl Editor {
     /// The box grows by the rewrite card or the error line, and by a second
     /// row of controls when it is narrow.
-    fn height(&self, narrow: bool) -> f32 {
+    pub(super) fn height(&self, narrow: bool) -> f32 {
         EDITOR
             + if narrow { NARROW_ROW } else { 0. }
             + self
@@ -73,37 +76,54 @@ pub(super) struct Review {
     /// The box is too narrow for its controls in one row, as the diff was
     /// last laid out.
     pub narrow: bool,
+    /// Each remote comment's body, parsed once: `root:comment`.
+    pub bodies: HashMap<String, Vec<super::remote_threads::BodyPart>>,
+    /// Threads opened though resolved, by root.
+    pub opened: HashSet<String>,
+    /// Threads folded though open, by root.
+    pub closed: HashSet<String>,
+    /// Long comments shown whole: `root:comment`.
+    pub more: HashSet<String>,
+    /// `<details>` opened: `root:comment:part`.
+    pub details: HashSet<String>,
 }
 
-/// A review thread already on the pull request, read-only in the diff.
+/// A review thread already on the pull request, shown on its line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RemoteThread {
+    /// Its first comment's id: what replies, folds and resolving key on.
+    pub root: String,
     pub path: String,
     pub line: u32,
     pub side: gespan_core::inbox::Side,
     pub resolved: bool,
+    /// The host can resolve it.
+    pub resolvable: bool,
+    /// Its line changed after it was written: it sits at the top of its
+    /// file, saying where it was.
+    pub outdated: bool,
     pub comments: Vec<RemoteComment>,
+    /// Replies sent from here: on their way, sent, or failed.
+    pub pending: Vec<PendingReply>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RemoteComment {
     pub author: String,
     /// "12m ago": how long ago, already worded.
     pub when: String,
     pub body: String,
+    pub avatar_url: String,
+    pub bot: bool,
 }
-
-/// A thread card's height: its header and each comment's lines.
-fn remote_height(thread: &RemoteThread) -> f32 {
-    20. + thread
-        .comments
-        .iter()
-        .map(|c| CARD_LINE + card_height(&c.body) - CARD + CARD_LINE + 6.)
-        .sum::<f32>()
-        + 16.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingReply {
+    pub text: String,
+    pub error: Option<String>,
+    pub posted: bool,
 }
 
 /// The line a `side`/`line` pair sits on in a file's diff.
-fn line_at(blocks: &[Block], side: gespan_core::inbox::Side, number: u32) -> Option<At> {
+pub(super) fn line_at(blocks: &[Block], side: gespan_core::inbox::Side, number: u32) -> Option<At> {
     blocks.iter().enumerate().find_map(|(b, block)| {
         block.lines().iter().enumerate().find_map(|(i, line)| {
             let here = match side {
@@ -211,11 +231,9 @@ impl DiffView {
             .filter(|(_, draft)| draft_at(&diff.blocks, draft) == Some(at))
             .map(|(ix, _)| ix)
             .collect();
-        let editor = self
-            .review
-            .editor
-            .as_ref()
-            .is_some_and(|editor| editor.pick.file == file && editor.pick.range().1 == at);
+        let editor = self.review.editor.as_ref().is_some_and(|editor| {
+            editor.reply.is_none() && editor.pick.file == file && editor.pick.range().1 == at
+        });
         (drafts, editor)
     }
     /// A thread row's height, or `None` when nothing sits under the line.
@@ -229,14 +247,20 @@ impl DiffView {
             .iter()
             .enumerate()
             .filter(|(_, t)| {
-                t.path == diff.path && line_at(&diff.blocks, t.side, t.line) == Some(at)
+                t.path == diff.path
+                    && super::remote_threads::thread_anchor(&diff.blocks, t) == Some(at)
             })
             .map(|(ix, _)| ix)
             .collect()
     }
+    #[cfg(test)]
+    pub(crate) fn threads_for_test(&self) -> &[RemoteThread] {
+        &self.review.threads
+    }
     /// Shows the pull request's review threads on their lines.
     pub(crate) fn set_threads(&mut self, threads: Vec<RemoteThread>, cx: &mut Context<Self>) {
         if self.review.threads != threads {
+            self.review.bodies = super::remote_threads::parse_bodies(&threads);
             self.review.threads = threads;
             self.rebuild(cx);
         }
@@ -246,7 +270,7 @@ impl DiffView {
         let remote: f32 = self
             .remote_at(file, at)
             .iter()
-            .map(|ix| remote_height(&self.review.threads[*ix]) + GAP)
+            .map(|ix| self.remote_height(*ix) + GAP)
             .sum();
         let (drafts, editor) = self.thread_at(file, at);
         let editing = self.review.editor.as_ref().and_then(|e| e.editing);
@@ -347,7 +371,7 @@ impl DiffView {
         self.open_editor(pick, None, String::new(), window, cx);
     }
 
-    fn open_editor(
+    pub(super) fn open_editor(
         &mut self,
         pick: Pick,
         editing: Option<usize>,
@@ -378,6 +402,7 @@ impl DiffView {
         self.review.editor = Some(Editor {
             pick,
             editing,
+            reply: None,
             input,
             tone,
             polishing: false,
@@ -532,6 +557,13 @@ impl DiffView {
         if body.is_empty() {
             return;
         }
+        if let Some(root) = editor.reply.clone() {
+            self.review.editor = None;
+            window.focus(&self.focus, cx);
+            cx.emit(DiffEvent::Reply { root, body });
+            self.rebuild(cx);
+            return;
+        }
         let pick = editor.pick;
         let editing = editor.editing;
         let Some(file) = self.files.get(pick.file) else {
@@ -558,183 +590,32 @@ impl DiffView {
         self.rebuild(cx);
     }
 
-    /// The row under a line: its pending drafts, then the box when it is open
-    /// there.
-    pub(super) fn thread_row(
-        &mut self,
-        file: usize,
-        at: At,
-        height: f32,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let (drafts, editor_here) = self.thread_at(file, at);
-        let editing = self.review.editor.as_ref().and_then(|e| e.editing);
-        let gutter = self.gutter_width();
-        let mut column = div()
-            .flex()
-            .flex_col()
-            .gap(px(GAP))
-            .py(px(PAD))
-            .pl(px(gutter + 12.))
-            .pr(px(24.))
-            .max_w(px(gutter + 760.));
-        for ix in self.remote_at(file, at) {
-            let thread = &self.review.threads[ix];
-            column = column.child(
-                div()
-                    .debug_selector(move || format!("diff-remote-thread-{ix}"))
-                    .h(px(remote_height(thread)))
-                    .flex_none()
-                    .overflow_hidden()
-                    .px(px(12.))
-                    .py(px(8.))
-                    .rounded(px(10.))
-                    .bg(content(0.035))
-                    .border_1()
-                    .border_color(content(0.08))
-                    .when(thread.resolved, |d| d.opacity(0.7))
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .text_size(px(11.))
-                            .text_color(content(0.5))
-                            .child(icon("message-square", 11.).text_color(content(0.5)))
-                            .child(format!(
-                                "{} comment{} on line {}",
-                                thread.comments.len(),
-                                if thread.comments.len() == 1 { "" } else { "s" },
-                                thread.line
-                            ))
-                            .when(thread.resolved, |d| {
-                                d.child(
-                                    div()
-                                        .px(px(6.))
-                                        .rounded_full()
-                                        .bg(content(0.08))
-                                        .text_color(content(0.65))
-                                        .child("Resolved"),
-                                )
-                            }),
-                    )
-                    .children(thread.comments.iter().map(|comment| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .text_size(px(11.5))
-                                    .line_height(px(CARD_LINE))
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(content(0.9))
-                                            .child(comment.author.clone()),
-                                    )
-                                    .child(
-                                        div().text_color(content(0.45)).child(comment.when.clone()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .line_height(px(CARD_LINE))
-                                    .text_color(content(0.88))
-                                    .child(comment.body.clone()),
-                            )
-                    })),
-            );
-        }
-        for ix in drafts {
-            if Some(ix) == editing {
-                continue;
-            }
-            let draft = &self.review.drafts[ix];
-            column = column.child(
-                div()
-                    .debug_selector(move || format!("diff-draft-{ix}"))
-                    .h(px(card_height(&draft.body)))
-                    .flex_none()
-                    .overflow_hidden()
-                    .px(px(12.))
-                    .py(px(8.))
-                    .rounded(px(10.))
-                    .bg(content(0.05))
-                    .border_1()
-                    .border_color(content(0.1))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .text_size(px(11.5))
-                            .text_color(content(0.6))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(content(0.9))
-                                    .child("You"),
-                            )
-                            .child(
-                                div()
-                                    .px(px(6.))
-                                    .rounded_full()
-                                    .bg(rgb(0xe8c547).into_hsla_opacity(0.18))
-                                    .text_color(rgb(0xe8c547))
-                                    .text_size(px(10.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("Pending"),
-                            )
-                            .child(draft.lines_label())
-                            .child(div().flex_1())
-                            .child(
-                                tool_button_owned(
-                                    format!("diff-draft-edit-{ix}"),
-                                    "Edit comment",
-                                    "pencil-line",
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, window, cx| this.edit_draft(ix, window, cx),
-                                )),
-                            )
-                            .child(
-                                tool_button_owned(
-                                    format!("diff-draft-delete-{ix}"),
-                                    "Delete comment",
-                                    "trash",
-                                )
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.delete_draft(ix, cx)),
-                                ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .line_height(px(CARD_LINE))
-                            .text_color(content(0.92))
-                            .child(draft.body.clone()),
-                    ),
-            );
-        }
-        if editor_here && let Some(editor) = self.review.editor.as_ref() {
+    /// The open comment box: a new or edited draft under its lines, or a
+    /// reply inside a review thread.
+    pub(super) fn editor_box(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let editor = self.review.editor.as_ref()?;
+        {
             let diff = &self.files[editor.pick.file];
             let (start, end) = editor.pick.range();
-            let label = match (line_ref(&diff.blocks, start), line_ref(&diff.blocks, end)) {
-                (Some(start), Some(end)) if start != end => {
+            let reply = editor.reply.is_some();
+            let replying_to = editor.reply.as_ref().and_then(|root| {
+                self.review
+                    .threads
+                    .iter()
+                    .find(|t| &t.root == root)
+                    .and_then(|t| t.comments.last())
+                    .map(|c| c.author.clone())
+            });
+            let label = match (
+                replying_to,
+                line_ref(&diff.blocks, start),
+                line_ref(&diff.blocks, end),
+            ) {
+                (Some(author), _, _) => format!("Reply to {author} · in this thread"),
+                (None, Some(start), Some(end)) if start != end => {
                     format!("Comment on lines {} to {}", start.line, end.line)
                 }
-                (_, Some(end)) => format!("Comment on line {}", end.line),
+                (None, _, Some(end)) => format!("Comment on line {}", end.line),
                 _ => "Comment".into(),
             };
             let can_save = !editor.input.read(cx).content.trim().is_empty();
@@ -863,7 +744,7 @@ impl DiffView {
                 })
                 .child(if polishing { "Polishing…" } else { "Polish" })
                 .child(icon("sparkles", 12.).text_color(violet));
-            column = column.child(
+            Some(
                 div()
                     .debug_selector(|| "diff-review-editor".into())
                     .h(px(box_height))
@@ -973,7 +854,9 @@ impl DiffView {
                                     .id("diff-review-save")
                                     .debug_selector(|| "diff-review-save".into())
                                     .role(Role::Button)
-                                    .aria_label(if editing {
+                                    .aria_label(if reply {
+                                        "Reply"
+                                    } else if editing {
                                         "Save comment"
                                     } else {
                                         "Add review comment"
@@ -993,7 +876,9 @@ impl DiffView {
                                         icon("comment-add", 14.)
                                             .text_color(crate::theme::background_base()),
                                     )
-                                    .child(if editing {
+                                    .child(if reply {
+                                        "Reply"
+                                    } else if editing {
                                         "Save"
                                     } else if narrow {
                                         "Add"
@@ -1037,13 +922,118 @@ impl DiffView {
                                 .text_color(gpui::rgb(0xfda4af))
                                 .child(error),
                         )
-                    }),
+                    })
+                    .into_any_element(),
+            )
+        }
+    }
+
+    /// The row under a line: its pending drafts, then the box when it is open
+    /// there.
+    pub(super) fn thread_row(
+        &mut self,
+        file: usize,
+        at: At,
+        height: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (drafts, editor_here) = self.thread_at(file, at);
+        let editing = self.review.editor.as_ref().and_then(|e| e.editing);
+        let gutter = self.gutter_width();
+        let mut column = div()
+            .flex()
+            .flex_col()
+            .gap(px(GAP))
+            .py(px(PAD))
+            .pl(px(gutter + 12.))
+            .pr(px(24.))
+            .max_w(px(gutter + 760.));
+        for ix in self.remote_at(file, at) {
+            column = column.child(self.remote_card(file, at, ix, window, cx));
+        }
+        for ix in drafts {
+            if Some(ix) == editing {
+                continue;
+            }
+            let draft = &self.review.drafts[ix];
+            column = column.child(
+                div()
+                    .debug_selector(move || format!("diff-draft-{ix}"))
+                    .h(px(card_height(&draft.body)))
+                    .flex_none()
+                    .overflow_hidden()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .rounded(px(10.))
+                    .bg(content(0.05))
+                    .border_1()
+                    .border_color(content(0.1))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .text_size(px(11.5))
+                            .text_color(content(0.6))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(content(0.9))
+                                    .child("You"),
+                            )
+                            .child(
+                                div()
+                                    .px(px(6.))
+                                    .rounded_full()
+                                    .bg(rgb(0xe8c547).into_hsla_opacity(0.18))
+                                    .text_color(rgb(0xe8c547))
+                                    .text_size(px(10.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Pending"),
+                            )
+                            .child(draft.lines_label())
+                            .child(div().flex_1())
+                            .child(
+                                tool_button_owned(
+                                    format!("diff-draft-edit-{ix}"),
+                                    "Edit comment",
+                                    "pencil-line",
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| this.edit_draft(ix, window, cx),
+                                )),
+                            )
+                            .child(
+                                tool_button_owned(
+                                    format!("diff-draft-delete-{ix}"),
+                                    "Delete comment",
+                                    "trash",
+                                )
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.delete_draft(ix, cx)),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .line_height(px(CARD_LINE))
+                            .text_color(content(0.92))
+                            .child(draft.body.clone()),
+                    ),
             );
+        }
+        if editor_here && let Some(editor_box) = self.editor_box(cx) {
+            column = column.child(editor_box);
         }
         div()
             .id(("diff-thread", at.0 * 100_000 + at.1))
             .debug_selector(move || format!("diff-thread-{file}-{}-{}", at.0, at.1))
-            .h(px(height))
+            .min_h(px(height.min(40.)))
             .w_full()
             .overflow_hidden()
             .border_t_1()

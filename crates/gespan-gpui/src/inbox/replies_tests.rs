@@ -536,3 +536,67 @@ fn replies_go_where_each_host_threads_them() {
         ReplyTarget::Quote { .. }
     ));
 }
+
+/// A reply written in Files goes into the same host thread as one from the
+/// Overview, and shows in Files while it's on its way; Resolve from Files
+/// resolves the thread everywhere.
+#[gpui::test]
+fn files_replies_and_resolves_reach_the_thread(cx: &mut TestAppContext) {
+    let on_line = model::Comment {
+        side: "RIGHT".into(),
+        ..review_thread()
+    };
+    let (window, mut visual) = open(cx, vec![on_line], Err("Could not reach GitHub".into()));
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.diff_view.update(cx, |_, cx| {
+                cx.emit(crate::diff_view::DiffEvent::Reply {
+                    root: "r1".into(),
+                    body: "Pushed the fix".into(),
+                })
+            })
+        })
+        .unwrap();
+    settle(&mut visual);
+    assert_eq!(
+        posted(window, &mut visual),
+        vec![("Pushed the fix".to_string(), "PRRT_1".to_string())]
+    );
+    let pending = window
+        .update(&mut visual, |inbox, _, cx| {
+            let view = inbox.diff_view.read(cx);
+            view.threads_for_test()
+                .iter()
+                .find(|t| t.root == "r1")
+                .map(|t| t.pending.clone())
+                .unwrap_or_default()
+        })
+        .unwrap();
+    assert_eq!(pending.len(), 1, "Files shows the reply in its thread");
+    assert_eq!(pending[0].error.as_deref(), Some("Could not reach GitHub"));
+
+    window
+        .update(&mut visual, |inbox, _, cx| {
+            inbox.canned_reply_result = Some(Ok(String::new()));
+            inbox.diff_view.update(cx, |_, cx| {
+                cx.emit(crate::diff_view::DiffEvent::Resolve {
+                    root: "r1".into(),
+                    resolved: true,
+                })
+            })
+        })
+        .unwrap();
+    settle(&mut visual);
+    let (resolved, in_files) = window
+        .update(&mut visual, |inbox, _, cx| {
+            (
+                inbox.thread.as_ref().unwrap().comments[0].resolved,
+                inbox.diff_view.read(cx).threads_for_test()[0].resolved,
+            )
+        })
+        .unwrap();
+    assert!(
+        resolved && in_files,
+        "resolved on the Overview and in Files"
+    );
+}

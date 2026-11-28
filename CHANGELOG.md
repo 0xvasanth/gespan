@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another line's "+", to comment on a range. Saved comments stay under their
   lines as pending cards with Edit and Delete until the review is sent, and
   ranges reach GitHub, GitLab and Azure DevOps.
+- **Review threads in Files read and reply like GitHub:** a thread under
+  its line shows avatars and rendered Markdown, folds a `<details>` block
+  to its summary and clamps a long comment with Show more. Reply opens the
+  same box as a review comment, Tone and Polish included, inside the
+  thread, and posts at once instead of with your review; Resolve sits on
+  the thread. Resolved threads start folded to one line, any thread folds
+  by hand, an outdated one sits at the top of its file saying where it
+  was, and several threads on a line say which is which. Lines with
+  threads light their number, and each file counts its open threads.
+  GitLab and Azure DevOps threads now show in Files too.
 - **Reply right under the comment:** every comment on a pull request's
   Overview has Reply. The box opens under that comment with Tone and
   Polish, not in the composer at the bottom. Review threads, GitLab

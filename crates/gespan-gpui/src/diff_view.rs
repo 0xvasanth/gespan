@@ -18,8 +18,9 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, Pixels, Role, ScrollWheelEvent, SharedString, StyledText,
     Subscription, Task, Window, actions, canvas, div, list, prelude::*, px, rgb,
 };
+mod remote_threads;
 mod review_threads;
-pub(crate) use review_threads::{RemoteComment, RemoteThread};
+pub(crate) use review_threads::{PendingReply, RemoteComment, RemoteThread};
 
 use std::{
     borrow::Cow,
@@ -106,6 +107,26 @@ pub(crate) enum DiffEvent {
     },
     /// The Files toolbar's refresh: load the diff and its comments again.
     Refresh,
+    /// A reply in the remote thread `root` starts, to post now.
+    Reply {
+        root: String,
+        body: String,
+    },
+    /// Resolve the remote thread `root` starts, or open it again.
+    Resolve {
+        root: String,
+        resolved: bool,
+    },
+    /// Send the failed reply `ix` under `root` again.
+    RetryReply {
+        root: String,
+        ix: usize,
+    },
+    /// The failed reply `ix` under `root` went back in its box to edit.
+    DropReply {
+        root: String,
+        ix: usize,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -1070,6 +1091,31 @@ impl DiffView {
                     })
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle(file, cx))),
             )
+            .when(
+                self.review_comments && self.open_threads(&f.path) > 0,
+                |d| {
+                    let open = self.open_threads(&f.path);
+                    d.child(
+                        div()
+                            .debug_selector(move || format!("diff-open-threads-{file}"))
+                            .flex_none()
+                            .h(px(20.))
+                            .px(px(8.))
+                            .rounded_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(5.))
+                            .text_size(px(11.))
+                            .text_color(accent_color())
+                            .bg(accent_color().opacity(0.12))
+                            .child(icon("message-square", 11.).text_color(accent_color()))
+                            .child(format!(
+                                "{open} open {}",
+                                if open == 1 { "thread" } else { "threads" }
+                            )),
+                    )
+                },
+            )
             .child(diff_counts(f.additions, f.deletions))
             .when(f.can_discard, |d| {
                 d.child(
@@ -1108,7 +1154,7 @@ impl DiffView {
         match row.kind {
             RowKind::File => self.file_header(row.file, false, cx),
             RowKind::Thread { block, line } => {
-                self.thread_row(row.file, (block, line), row.height, cx)
+                self.thread_row(row.file, (block, line), row.height, window, cx)
             }
             RowKind::Notice(text) => div()
                 .h(px(NOTICE))
@@ -1210,6 +1256,11 @@ impl DiffView {
                 let at = (block, line);
                 let picked = review && self.picked(file_ix, at);
                 let drafted = review && self.has_draft(file_ix, at);
+                let threaded = if review {
+                    self.line_threads(file_ix, at)
+                } else {
+                    None
+                };
                 div()
                     .id(("diff-line", ix))
                     .debug_selector(move || format!("diff-line-{ix}"))
@@ -1253,9 +1304,20 @@ impl DiffView {
                                     .when_some(ink, |d, ink| d.bg(ink.opacity(0.55))),
                             )
                             .child(numbers(l.old_number, hovered))
-                            .child(numbers(l.new_number, false).when(drafted, |d| {
-                                d.text_color(accent).font_weight(FontWeight::SEMIBOLD)
-                            }))
+                            .child(
+                                numbers(l.new_number, false)
+                                    .when_some(threaded, |d, resolved| {
+                                        d.text_color(if resolved {
+                                            Hsla::from(gpui::rgb(0x6ee7b7))
+                                        } else {
+                                            accent
+                                        })
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                    })
+                                    .when(drafted, |d| {
+                                        d.text_color(accent).font_weight(FontWeight::SEMIBOLD)
+                                    }),
+                            )
                             .child(
                                 div()
                                     .w(px(24.))
@@ -1824,7 +1886,7 @@ impl Render for DiffView {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     /// A review diff with "a/B/C/d/e", B and C added, and its events.
@@ -1838,7 +1900,7 @@ mod tests {
         review_window_sized(cx, 1100.)
     }
     /// [`review_window`] in a window `width` wide.
-    fn review_window_sized(
+    pub(super) fn review_window_sized(
         cx: &mut gpui::TestAppContext,
         width: f32,
     ) -> (
@@ -1879,6 +1941,10 @@ mod tests {
                     DiffEvent::Polish { text, tone } => format!("polish {tone:?} {text}"),
                     DiffEvent::Refresh => "refresh".into(),
                     DiffEvent::DraftsChanged => "drafts".into(),
+                    DiffEvent::Reply { root, body } => format!("reply {root} {body}"),
+                    DiffEvent::Resolve { root, resolved } => format!("resolve {root} {resolved}"),
+                    DiffEvent::RetryReply { root, ix } => format!("retry {root} {ix}"),
+                    DiffEvent::DropReply { root, ix } => format!("drop {root} {ix}"),
                     _ => "other".into(),
                 })
             })
@@ -2159,22 +2225,28 @@ mod tests {
         use gespan_core::inbox::Side;
         let (window, events, _subscription) = review_window(cx);
         let thread = |line, side, resolved| RemoteThread {
+            root: format!("t{line}"),
             path: "CHANGELOG.md".into(),
             line,
             side,
             resolved,
+            resolvable: true,
+            outdated: false,
             comments: vec![
                 RemoteComment {
                     author: "cubic".into(),
                     when: "2h ago".into(),
                     body: "Missing an index".into(),
+                    ..Default::default()
                 },
                 RemoteComment {
                     author: "me".into(),
                     when: "1h ago".into(),
                     body: "Added".into(),
+                    ..Default::default()
                 },
             ],
+            pending: vec![],
         };
         window
             .update(cx, |view, _, cx| {
