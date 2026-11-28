@@ -12,7 +12,7 @@ const GITHUB_CLI_URL: &str = "https://cli.github.com";
 const ANY_REPO: &str = "any repo in this project";
 const CHOOSE_REPO: &str = "Choose a repository…";
 
-const WHICH: [(WhichPrs, &str, &str); 4] = [
+pub(super) const WHICH: [(WhichPrs, &str, &str); 4] = [
     (
         WhichPrs::ReviewRequested,
         "review-requested",
@@ -157,7 +157,7 @@ pub(crate) struct ReviewSetup {
     check: Option<GithubCheck>,
 }
 
-fn which_label(which: WhichPrs) -> &'static str {
+pub(super) fn which_label(which: WhichPrs) -> &'static str {
     WHICH
         .iter()
         .find(|(value, ..)| *value == which)

@@ -90,6 +90,92 @@ fn split_repo(repo: &str) -> Result<(&str, &str), String> {
     }
 }
 
+/// When `repo` reviews: the choices its host can start on.
+pub fn which_choices(repo: &str) -> &'static [WhichPrs] {
+    match split_repo(&normalize(repo)) {
+        Ok(("gitlab", _)) => &[WhichPrs::Opened, WhichPrs::CommentCommand],
+        _ => &[
+            WhichPrs::ReviewRequested,
+            WhichPrs::Opened,
+            WhichPrs::OpenedAndDrafts,
+            WhichPrs::CommentCommand,
+        ],
+    }
+}
+
+/// The triggers that review `repo`'s pull or merge requests `which` way.
+pub fn review_triggers(repo: &str, which: WhichPrs) -> Result<Vec<AutomationTrigger>, String> {
+    let repo = normalize(repo);
+    let (provider, name) = split_repo(&repo)?;
+    if !which_choices(&repo).contains(&which) {
+        return Err(
+            "GitLab can't tell Gespan when your review is asked for. Pick another time to review."
+                .into(),
+        );
+    }
+    if provider == "gitlab" {
+        let event = match which {
+            WhichPrs::CommentCommand => GITLAB_REVIEW_COMMAND_EVENT,
+            _ => "merge_request_opened",
+        };
+        let mut trigger = AutomationTrigger::new("gitlab", event);
+        trigger.repos = vec![name.into()];
+        return Ok(vec![trigger]);
+    }
+    let draft = review_draft(&ReviewSetupInput {
+        cwd: String::new(),
+        repo: Some(name.into()),
+        which,
+        harness: String::new(),
+        model: String::new(),
+        results: ReviewResults::Gespan,
+    });
+    // The comment command also adds a GitLab trigger; this repo is on GitHub.
+    Ok(draft
+        .triggers
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|trigger| trigger.kind == "github")
+        .collect())
+}
+
+/// When a code review automation reviews, read back from its triggers.
+pub fn which_of(automation: &Automation) -> Option<WhichPrs> {
+    let events: Vec<String> = automation.triggers().into_iter().map(|t| t.event).collect();
+    let has = |event: &str| events.iter().any(|e| e == event);
+    if has(GITHUB_REVIEW_COMMAND_EVENT) || has(GITLAB_REVIEW_COMMAND_EVENT) {
+        Some(WhichPrs::CommentCommand)
+    } else if has(REVIEW_REQUESTED_EVENT) {
+        Some(WhichPrs::ReviewRequested)
+    } else if has("draft_opened") {
+        Some(WhichPrs::OpenedAndDrafts)
+    } else if has("pull_request_opened") || has("merge_request_opened") {
+        Some(WhichPrs::Opened)
+    } else {
+        None
+    }
+}
+
+/// The repo a code review automation reviews.
+pub fn reviewed_repo(automation: &Automation) -> Option<&str> {
+    match &automation.system {
+        Some(SystemRole::CodeReview { repo }) => Some(repo),
+        None => None,
+    }
+}
+
+/// A code review automation's settings, to change one of them.
+pub fn settings_of(automation: &Automation) -> Option<ReviewSettings> {
+    reviewed_repo(automation)?;
+    Some(ReviewSettings {
+        which: which_of(automation)?,
+        harness: automation.harness.clone(),
+        model: automation.model.clone(),
+        results: automation.review_results?,
+        enabled: automation.enabled,
+    })
+}
+
 /// The automation that reviews `repo` in `cwd` with `settings`.
 fn review_upsert(
     repo: &str,
@@ -97,30 +183,16 @@ fn review_upsert(
     settings: &ReviewSettings,
 ) -> Result<AutomationUpsert, String> {
     let repo = normalize(repo);
-    let (provider, name) = split_repo(&repo)?;
+    let triggers = review_triggers(&repo, settings.which)?;
     let mut draft = review_draft(&ReviewSetupInput {
         cwd: cwd.into(),
-        repo: Some(name.into()),
+        repo: None,
         which: settings.which,
         harness: settings.harness.clone(),
         model: settings.model.clone(),
         results: settings.results,
     });
-    if provider == "gitlab" {
-        let event = match settings.which {
-            WhichPrs::Opened | WhichPrs::OpenedAndDrafts => "merge_request_opened",
-            WhichPrs::CommentCommand => GITLAB_REVIEW_COMMAND_EVENT,
-            WhichPrs::ReviewRequested => {
-                return Err("GitLab can't tell Gespan when your review is asked for. Pick another time to review.".into())
-            }
-        };
-        let mut trigger = AutomationTrigger::new("gitlab", event);
-        trigger.repos = vec![name.into()];
-        draft.triggers = Some(vec![trigger]);
-    } else if let Some(triggers) = &mut draft.triggers {
-        // The comment command also adds a GitLab trigger; this repo is on GitHub.
-        triggers.retain(|trigger| trigger.kind == "github");
-    }
+    draft.triggers = Some(triggers);
     draft.id = review_id(&repo);
     draft.name = REVIEW_NAME.into();
     draft.enabled = settings.enabled;
@@ -491,6 +563,58 @@ mod tests {
             "no catch-all GitLab trigger"
         );
         assert_eq!(triggers[0].event, GITHUB_REVIEW_COMMAND_EVENT);
+    }
+
+    #[test]
+    fn settings_read_back_the_way_they_were_saved() {
+        let (_dir, mut service) = service();
+        for which in which_choices("github:acme/app") {
+            let saved = service
+                .ensure_code_review("github:acme/app", "/work/app", &settings(*which))
+                .unwrap();
+            assert_eq!(settings_of(&saved), Some(settings(*which)), "{which:?}");
+        }
+        for which in which_choices("gitlab:acme/platform") {
+            let saved = service
+                .ensure_code_review("gitlab:acme/platform", "/work/platform", &settings(*which))
+                .unwrap();
+            assert_eq!(which_of(&saved), Some(*which), "gitlab {which:?}");
+        }
+        // A user's own automation has no review settings.
+        let mut own = AutomationUpsert::new("/work/app".into(), "claude".into(), "m".into());
+        own.name = "Mine".into();
+        own.prompt = "Do it".into();
+        assert_eq!(settings_of(&service.upsert(own).unwrap()), None);
+    }
+
+    #[test]
+    fn every_kind_of_review_can_be_run_on_a_pull_request_by_hand() {
+        let (_dir, mut service) = service();
+        for (repo, which) in [
+            ("github:acme/app", WhichPrs::ReviewRequested),
+            ("github:acme/app", WhichPrs::Opened),
+            ("github:acme/app", WhichPrs::OpenedAndDrafts),
+            ("github:acme/app", WhichPrs::CommentCommand),
+            ("gitlab:acme/platform", WhichPrs::Opened),
+            ("gitlab:acme/platform", WhichPrs::CommentCommand),
+        ] {
+            let review = service
+                .ensure_code_review(repo, "/work/app", &settings(which))
+                .unwrap();
+            let (provider, name) = repo.split_once(':').unwrap();
+            let item = crate::inbox::Item {
+                provider: provider.into(),
+                kind: "pr".into(),
+                number: 7,
+                repo: name.into(),
+                project_path: "/work/app".into(),
+                title: "Fix it".into(),
+                ..Default::default()
+            };
+            let due = crate::automations::run_on_item(&mut service, &review.id, &item, 1)
+                .unwrap_or_else(|e| panic!("{repo} {which:?}: {e}"));
+            assert_eq!(due.automation.id, review.id);
+        }
     }
 
     #[test]

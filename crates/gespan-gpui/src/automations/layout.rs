@@ -361,11 +361,29 @@ impl Automations {
                                     .flex_col()
                                     .child(
                                         div()
-                                            .truncate()
-                                            .text_size(px(13.))
-                                            .line_height(px(18.))
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .child(automation.name.clone()),
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(6.))
+                                            .child(
+                                                div()
+                                                    .truncate()
+                                                    .text_size(px(13.))
+                                                    .line_height(px(18.))
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .child(automation.name.clone()),
+                                            )
+                                            .when(automation.system.is_some(), |d| {
+                                                // Made by Gespan: see the editor's lock.
+                                                d.child(
+                                                    div()
+                                                        .debug_selector(|| {
+                                                            "automation-card-system".into()
+                                                        })
+                                                        .flex_none()
+                                                        .text_color(content(0.6))
+                                                        .child(icon("lock", 11.)),
+                                                )
+                                            }),
                                     )
                                     .child(
                                         div()

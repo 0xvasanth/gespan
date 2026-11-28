@@ -79,6 +79,17 @@ pub(crate) struct SettingsContext {
     pub mobile: Option<gespan_core::mobile::Status>,
     /// The pairing code on show.
     pub mobile_invite: Option<gespan_core::mobile::Invite>,
+    /// The repos Gespan reviews: their system code review automations.
+    pub code_reviews: Vec<CodeReviewRow>,
+}
+/// One repo's system code review, as Settings › Git shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CodeReviewRow {
+    /// `repo_key`, e.g. `github:acme/app`.
+    pub repo: String,
+    pub id: String,
+    pub cwd: String,
+    pub enabled: bool,
 }
 /// Which sidebar entries the workspace shows. Notes, Board and Pilots are
 /// the `notes`, `board` and `pilots` preferences and travel with the
@@ -111,11 +122,20 @@ impl PartialEq for SettingsContext {
             && self.linear_teams == other.linear_teams
             && self.mobile == other.mobile
             && self.mobile_invite == other.mobile_invite
+            && self.code_reviews == other.code_reviews
     }
 }
 gpui::actions!(settings, [FocusSettingsSearch]);
 
 pub(crate) enum SettingsEvent {
+    /// Turn a repo's code review on or off, reviewing in `folder`.
+    CodeReview {
+        repo: String,
+        folder: String,
+        on: bool,
+    },
+    /// Open a system automation in Automations.
+    OpenAutomation(String),
     WhatsNew,
     CheckAppUpdates,
     CheckHarnessUpdates,

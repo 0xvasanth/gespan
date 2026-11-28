@@ -2106,10 +2106,12 @@ fn pull_request_trigger(
     automation: &Automation,
     item: &crate::inbox::Item,
 ) -> Option<AutomationTrigger> {
-    automation
-        .triggers()
-        .into_iter()
-        .find(|trigger| trigger.kind == item.provider && is_pull_request_event(&trigger.event))
+    // A review that waits for the `/gespan review` comment can still be run
+    // on a pull request by hand.
+    automation.triggers().into_iter().find(|trigger| {
+        trigger.kind == item.provider
+            && (is_pull_request_event(&trigger.event) || is_review_command_event(&trigger.event))
+    })
 }
 
 /// The project's automations a pull request can be run through by hand:

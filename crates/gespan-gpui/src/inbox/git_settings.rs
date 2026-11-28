@@ -33,6 +33,8 @@ pub(crate) struct GitSettings {
     pub search_error: Option<String>,
     /// Still listing repositories for the first time.
     pub loading: bool,
+    /// Each GitHub and GitLab repo and the project folders that could review it.
+    pub review_repos: Vec<gespan_core::code_review::RepoFolder>,
 }
 
 /// The "Add a repo" search: its field, the last query and what it found.
@@ -114,7 +116,37 @@ impl Inbox {
             searching: self.repo_search.searching,
             search_error: self.repo_search.error.clone(),
             loading: self.loading && self.snapshot.repos.is_empty(),
+            review_repos: gespan_core::code_review::repo_folders(
+                &self
+                    .snapshot
+                    .repos
+                    .iter()
+                    .filter(|repo| matches!(repo.provider.as_str(), "github" | "gitlab"))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                &prefs.review_folders,
+            ),
         }
+    }
+    /// The repos the open projects point at, as a refresh would find them.
+    #[cfg(test)]
+    pub(crate) fn seed_repos(&mut self, repos: Vec<model::ProjectRepo>, cx: &mut Context<Self>) {
+        self.snapshot.repos = repos;
+        cx.notify();
+    }
+    /// Settings › Git's pick of the folder that reviews `repo`.
+    pub(crate) fn pick_review_folder(
+        &mut self,
+        repo: String,
+        folder: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.change_git_prefs(
+            |prefs| {
+                prefs.review_folders.insert(repo, folder);
+            },
+            cx,
+        );
     }
     /// The "Add a repo" field Settings › Pull requests draws.
     pub(crate) fn repo_search_input(&self) -> Entity<Input> {

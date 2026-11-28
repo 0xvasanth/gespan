@@ -1750,3 +1750,130 @@ fn a_gallery_card_opens_on_a_click_but_a_drag_across_it_selects(cx: &mut TestApp
     click(visual, "automation-scratch");
     assert!(!gallery(visual), "a click still opens it");
 }
+
+/// A repo's system code review, made the way Settings › Git makes it.
+fn save_code_review(page: &Page, repo: &str, cwd: &str) -> Automation {
+    use gespan_core::automations::{review_setup::WhichPrs, system::ReviewSettings};
+    page.service
+        .lock()
+        .unwrap()
+        .ensure_code_review(
+            repo,
+            cwd,
+            &ReviewSettings {
+                which: WhichPrs::ReviewRequested,
+                harness: "codex".into(),
+                model: "gpt-5.5".into(),
+                results: ReviewResults::Gespan,
+                enabled: true,
+            },
+        )
+        .unwrap()
+}
+
+#[gpui::test]
+fn a_system_review_shows_only_what_can_change(cx: &mut TestAppContext) {
+    let page = page();
+    let review = save_code_review(&page, "github:acme/app", "/work/app");
+    let own = save(
+        &page,
+        "Nightly triage",
+        "/work/app",
+        AutomationTrigger::new("time", "daily"),
+    );
+    let (_window, mut visual) = open(&page, "/work/app", cx);
+
+    // The list marks the system review, and only it.
+    assert!(visual.drawn("automation-card-system").is_some());
+    click(&mut visual, &format!("automation-card-{}", own.id));
+    assert!(visual.drawn("automation-system-badge").is_none());
+    assert!(visual.drawn("automation-delete-menu").is_some());
+
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    // Locked: no delete, no editable name, no project picker, no prompt.
+    assert!(visual.drawn("automation-system-badge").is_some());
+    assert!(visual.drawn("automation-system-name").is_some());
+    assert!(visual.drawn("automation-system-folder").is_some());
+    assert!(visual.drawn("automation-delete-menu").is_none());
+    assert!(visual.drawn("automation-system-locked").is_some());
+    assert!(visual.drawn("automation-add-trigger").is_none());
+    // What can change: when it reviews, the reviewer and where findings go.
+    assert!(visual.drawn("automation-review-when").is_some());
+    assert!(visual.drawn("automation-model").is_some());
+    assert!(visual.drawn("automation-results").is_some());
+}
+
+#[gpui::test]
+fn changing_when_and_where_saves_and_keeps_it_a_system_review(cx: &mut TestAppContext) {
+    use gespan_core::automations::{review_setup::WhichPrs, system};
+    let page = page();
+    let review = save_code_review(&page, "github:acme/app", "/work/app");
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", review.id));
+
+    click(&mut visual, "automation-review-when");
+    let labels: Vec<_> = menu_options(&window, &visual)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "review-requested",
+            "opened",
+            "opened-and-drafts",
+            "comment-command"
+        ]
+    );
+    window
+        .update(&mut visual, |view, _, cx| {
+            view.apply_choice(Choice::ReviewWhen, "opened".into(), cx);
+            view.apply_choice(Choice::Results, "pending".into(), cx);
+            view.save(cx);
+        })
+        .unwrap();
+    visual.run_until_parked();
+    let saved = stored(&page, &review.id);
+    assert_eq!(system::which_of(&saved), Some(WhichPrs::Opened));
+    assert_eq!(saved.review_results, Some(ReviewResults::Pending));
+    assert_eq!(saved.prompt, review.prompt, "the prompt stays Gespan's");
+    assert!(saved.system.is_some());
+    assert!(
+        saved
+            .triggers()
+            .iter()
+            .all(|t| t.repos == vec!["acme/app".to_string()]),
+        "it still reviews only its repo"
+    );
+}
+
+#[gpui::test]
+fn a_gitlab_review_offers_only_what_gitlab_can_start_on(cx: &mut TestAppContext) {
+    let page = page();
+    let review = {
+        use gespan_core::automations::{review_setup::WhichPrs, system::ReviewSettings};
+        page.service
+            .lock()
+            .unwrap()
+            .ensure_code_review(
+                "gitlab:acme/platform",
+                "/work/app",
+                &ReviewSettings {
+                    which: WhichPrs::Opened,
+                    harness: "codex".into(),
+                    model: "gpt-5.5".into(),
+                    results: ReviewResults::Gespan,
+                    enabled: true,
+                },
+            )
+            .unwrap()
+    };
+    let (window, mut visual) = open(&page, "/work/app", cx);
+    click(&mut visual, &format!("automation-card-{}", review.id));
+    click(&mut visual, "automation-review-when");
+    let ids: Vec<_> = menu_options(&window, &visual)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(ids, ["opened", "comment-command"]);
+}

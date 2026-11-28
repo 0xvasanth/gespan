@@ -84,6 +84,11 @@ pub(super) struct State {
     pub(super) review_drafts: Vec<automations::review_drafts::SavedDraft>,
     /// Drafts whose answer is being sent, so a second click does nothing.
     pub(super) deciding_drafts: HashSet<String>,
+    /// The system code reviews, one per reviewed repo, for Settings › Git.
+    pub(super) code_reviews: Vec<gespan_core::automations::Automation>,
+    /// A Settings › Git switch flipped before automations opened: (repo,
+    /// folder, on), applied once they do.
+    pub(super) pending_code_review: Option<(String, String, bool)>,
 }
 
 impl Default for State {
@@ -110,6 +115,8 @@ impl Default for State {
             listed: Vec::new(),
             review_drafts: Vec::new(),
             deciding_drafts: HashSet::new(),
+            code_reviews: Vec::new(),
+            pending_code_review: None,
         }
     }
 }
@@ -183,6 +190,13 @@ impl Shell {
                         this.poll_automations(cx);
                         this.load_review_drafts(cx);
                         this.refresh_rail_runs(cx);
+                        if let Some((repo, folder, on)) =
+                            this.automation_state.pending_code_review.take()
+                        {
+                            this.set_code_review(repo, folder, on, cx);
+                        } else {
+                            this.refresh_code_reviews(cx);
+                        }
                         let runs = this
                             .automation_state
                             .runs_requested

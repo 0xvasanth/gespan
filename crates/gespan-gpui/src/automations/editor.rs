@@ -557,6 +557,25 @@ impl Automations {
                     editor.draft.review_results = Some(results);
                 }
             }
+            Choice::ReviewWhen => {
+                let repo = self
+                    .automations
+                    .iter()
+                    .find(|automation| Some(&automation.id) == self.selected.as_ref())
+                    .and_then(|automation| system::reviewed_repo(automation).map(str::to_string));
+                let which = review_setup::WHICH
+                    .iter()
+                    .find(|(_, id, _)| *id == value)
+                    .map(|(which, ..)| *which);
+                if let (Some(repo), Some(which)) = (repo, which)
+                    && let Ok(triggers) = system::review_triggers(&repo, which)
+                {
+                    editor.draft.triggers = Some(triggers);
+                    editor
+                        .draft
+                        .sync_triggers(gespan_core::time::now_ms() as i64);
+                }
+            }
         }
         editor.dirty = true;
         self.choice = None;
@@ -810,6 +829,7 @@ impl Automations {
     pub(super) fn render_editor(&self, cx: &mut Context<Self>) -> AnyElement {
         let editor = self.editor.as_ref().expect("editor");
         let draft = &editor.draft;
+        let system = self.selected_review_repo().is_some();
         let valid = !editor.name.read(cx).content.trim().is_empty()
             && !editor.prompt.read(cx).content.trim().is_empty()
             && !draft.cwd.trim().is_empty()
@@ -900,8 +920,19 @@ impl Automations {
                                             .min_w_0()
                                             .text_size(px(20.))
                                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .child(editor.name.clone()),
-                                    ),
+                                            .map(|d| {
+                                                // A system automation's name is Gespan's.
+                                                if system {
+                                                    d.debug_selector(|| {
+                                                        "automation-system-name".into()
+                                                    })
+                                                    .child(draft.name.clone())
+                                                } else {
+                                                    d.child(editor.name.clone())
+                                                }
+                                            }),
+                                    )
+                                    .when(system, |d| d.child(system_badge())),
                             )
                             .child(actions),
                     )
@@ -925,14 +956,26 @@ impl Automations {
                             ))
                             .child(if draft.enabled { "Active" } else { "Inactive" })
                             .child(div().ml(px(8.)).h(px(12.)).w(px(1.)).bg(content(0.15)))
-                            .child(self.render_project_control(cx))
-                            .when(editor.saved, |d| {
+                            .map(|d| {
+                                // Its folder is the repo's; moving it happens in Settings › Git.
+                                if system {
+                                    d.child(
+                                        div()
+                                            .debug_selector(|| "automation-system-folder".into())
+                                            .child(project_name(&draft.cwd)),
+                                    )
+                                } else {
+                                    d.child(self.render_project_control(cx))
+                                }
+                            })
+                            .when(editor.saved && !system, |d| {
                                 d.child(
                                     icon_button(
                                         "automation-delete-menu",
                                         "Delete automation",
                                         "trash",
                                     )
+                                    .debug_selector(|| "automation-delete-menu".into())
                                     .on_click(cx.listener(
                                         |this, _, window, cx| this.ask_delete(window, cx),
                                     )),
@@ -1133,6 +1176,10 @@ impl Automations {
                 .px(px(6.))
                 .text_size(px(11.)),
             );
+        }
+        // A system code review shows only what its role lets the user change.
+        if let Some(repo) = self.selected_review_repo() {
+            return self.render_system_settings(repo, controls, cx);
         }
         let instructions = div()
             .child(section("Instructions"))
@@ -1631,4 +1678,195 @@ pub(super) fn next_run_preview(timestamp: i64) -> String {
         }
     }
     format!("Next run {} {zone}", date.format("%a %-d %b, %H:%M"))
+}
+
+/// The lock shown beside a system automation's name, here and in the list.
+pub(super) fn system_badge() -> gpui::Stateful<gpui::Div> {
+    div()
+        .id("automation-system-badge")
+        .debug_selector(|| "automation-system-badge".into())
+        .role(Role::Note)
+        .aria_label("System automation, made by Gespan")
+        .flex_none()
+        .h(px(20.))
+        .px(px(8.))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .text_size(px(10.5))
+        .font_weight(gpui::FontWeight::BOLD)
+        .text_color(content(0.84))
+        .bg(content(0.07))
+        .border_1()
+        .border_color(content(0.14))
+        .child(icon("lock", 10.))
+        .child("SYSTEM")
+}
+
+impl Automations {
+    /// The repo the selected automation reviews, when it is a system code
+    /// review.
+    pub(super) fn selected_review_repo(&self) -> Option<String> {
+        let selected = self.selected.as_ref()?;
+        self.automations
+            .iter()
+            .find(|automation| &automation.id == selected)
+            .and_then(|automation| system::reviewed_repo(automation).map(str::to_string))
+    }
+
+    /// A system code review's settings: when it reviews, the reviewer and
+    /// where findings go, then what Gespan keeps locked.
+    fn render_system_settings(
+        &self,
+        repo: String,
+        reviewer: gpui::Div,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let editor = self.editor.as_ref().expect("editor");
+        let draft = &editor.draft;
+        let which_now = self
+            .automations
+            .iter()
+            .find(|automation| Some(&automation.id) == self.selected.as_ref())
+            .and_then(system::which_of);
+        // The draft's triggers change before Save; read the choice from them.
+        let which = draft
+            .triggers
+            .as_ref()
+            .and_then(|triggers| {
+                let probe = Automation {
+                    triggers: Some(triggers.clone()),
+                    ..self
+                        .automations
+                        .iter()
+                        .find(|automation| Some(&automation.id) == self.selected.as_ref())?
+                        .clone()
+                };
+                system::which_of(&probe)
+            })
+            .or(which_now);
+        let which_options: Vec<(String, String)> = system::which_choices(&repo)
+            .iter()
+            .filter_map(|choice| review_setup::WHICH.iter().find(|(w, ..)| w == choice))
+            .map(|(_, id, label)| (id.to_string(), format!("When a pull request {label}")))
+            .collect();
+        let which_label = which
+            .map(|which| format!("When a pull request {}", review_setup::which_label(which)))
+            .unwrap_or_else(|| "Choose when".into());
+        let results = draft
+            .review_results
+            .unwrap_or(gespan_core::review_policy::ReviewResults::Gespan);
+        let allowed = review_setup::results_for(&draft.harness);
+        let results_control = self
+            .select_control(
+                "automation-results",
+                review_setup::results_label(results).into(),
+                Choice::Results,
+                review_setup::RESULTS
+                    .iter()
+                    .filter(|(r, ..)| allowed.contains(r))
+                    .map(|(_, id, label)| (id.to_string(), label.to_string()))
+                    .collect(),
+                cx,
+            )
+            .debug_selector(|| "automation-results".into());
+        let warning = review_setup::post_warning(results).map(|text| {
+            div()
+                .debug_selector(|| "automation-results-post-warning".into())
+                .px(px(16.))
+                .pb(px(10.))
+                .text_size(px(11.))
+                .text_color(content(0.6))
+                .child(text)
+        });
+        let change = div().child(section("You can change")).child(
+            panel()
+                .mt(px(12.))
+                .debug_selector(|| "automation-system-settings".into())
+                .child(settings_row(
+                    "Reviews when",
+                    "What starts a review of this repo",
+                    self.select_control(
+                        "automation-review-when",
+                        which_label,
+                        Choice::ReviewWhen,
+                        which_options,
+                        cx,
+                    )
+                    .debug_selector(|| "automation-review-when".into()),
+                ))
+                .child(settings_row("Reviewer", "Provider and model", reviewer))
+                .child(
+                    settings_row(
+                        "Findings go",
+                        "Where each review's findings land",
+                        results_control,
+                    )
+                    .border_b_0(),
+                )
+                .children(warning),
+        );
+        let locked_row = |label: &'static str, value: String| {
+            div()
+                .min_h(px(44.))
+                .px(px(16.))
+                .border_b_1()
+                .border_color(glass::hairline())
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .text_size(px(12.5))
+                .text_color(content(0.62))
+                .child(icon("lock", 12.))
+                .child(label)
+                .child(div().ml_auto().text_color(content(0.82)).child(value))
+        };
+        let (host, name) = repo.split_once(':').unwrap_or(("", repo.as_str()));
+        let locked = div().child(section("Set by Gespan")).child(
+            panel()
+                .mt(px(12.))
+                .debug_selector(|| "automation-system-locked".into())
+                .child(locked_row("Instructions", "Gespan's review prompt".into()))
+                .child(locked_row(
+                    "Repo and folder",
+                    format!("{name} on {host} · {}", project_name(&draft.cwd)),
+                ))
+                .child(locked_row(
+                    "Run mode",
+                    "Read-only, strict command policy".into(),
+                ))
+                .child(locked_row("Name and delete", "Not available".into()).border_b_0()),
+        );
+        let note = div()
+            .debug_selector(|| "automation-system-note".into())
+            .px(px(4.))
+            .text_size(px(12.))
+            .text_color(content(0.55))
+            .child("Gespan made this for the repo's code review. Turn it off for good in Settings › Git.");
+        let frame = |section: gpui::Div| {
+            div()
+                .w_full()
+                .max_w(px(1024.))
+                .mx_auto()
+                .px(px(36.))
+                .child(section)
+        };
+        div()
+            .id("automation-settings-scroll")
+            .debug_selector(|| "automation-settings-scroll".into())
+            .track_scroll(&self.settings_scroll)
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .pt(px(20.))
+            .pb(px(40.))
+            .flex()
+            .flex_col()
+            .gap(px(32.))
+            .child(frame(change))
+            .child(frame(locked))
+            .child(frame(note))
+            .into_any_element()
+    }
 }

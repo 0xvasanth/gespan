@@ -9,6 +9,7 @@ mod diff;
 mod document;
 mod git_list;
 mod git_settings;
+pub(crate) use git_settings::GitSettings;
 #[cfg(test)]
 mod git_tests;
 mod menu;

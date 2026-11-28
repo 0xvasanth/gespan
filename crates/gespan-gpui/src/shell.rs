@@ -10,6 +10,7 @@ mod automation_runs;
 mod automation_runs_tests;
 #[cfg(test)]
 mod browser_tabs_tests;
+mod code_review;
 #[cfg(test)]
 mod content_selection_tests;
 mod continue_outside;

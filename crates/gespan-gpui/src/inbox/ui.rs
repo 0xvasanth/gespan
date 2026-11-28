@@ -611,6 +611,19 @@ impl Inbox {
                 }
             }))
         });
+        // Review runs the repo's code review on this pull request at once.
+        let review = (is_pr && matches!(item.provider.as_str(), "github" | "gitlab")).then(|| {
+            let reviewed = item.clone();
+            glass::button("inbox-review", "Review", glass::Button::Glass)
+                .debug_selector(|| "inbox-review".into())
+                .h(px(30.))
+                .role(Role::Button)
+                .aria_label("Review this pull request with an agent")
+                .child(icon("sparkles", 13.))
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    cx.emit(Event::ReviewWithAgent(Box::new(reviewed.clone())))
+                }))
+        });
         let choose_project = (!is_pr && item.project_path.is_empty()).then(|| {
             icon_action(
                 "inbox-choose-project",
@@ -772,6 +785,7 @@ impl Inbox {
                             .gap(px(8.))
                             .children(choose_project)
                             .children(start_session)
+                            .children(review)
                             .child(more),
                     ),
             )
