@@ -58,9 +58,18 @@ pub(super) fn source(provider: &str, name: &str, url: &str) -> Option<String> {
     if !url.is_empty() {
         return Some(url.to_owned());
     }
-    let login = name.trim().trim_start_matches("app/");
-    (provider == "github" && !login.is_empty())
-        .then(|| format!("https://github.com/{login}.png?size=64"))
+    // The avatars host serves users and apps alike by login; github.com's
+    // `<login>.png` redirect fails for apps such as review bots.
+    let login = name
+        .trim()
+        .trim_start_matches("app/")
+        .trim_end_matches("[bot]");
+    let safe = !login.is_empty()
+        && login
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    (provider == "github" && safe)
+        .then(|| format!("https://avatars.githubusercontent.com/{login}?s=64"))
 }
 
 /// The account's picture once it has loaded; None while it loads, or when
@@ -143,11 +152,22 @@ mod tests {
         );
         assert_eq!(
             source("github", " dana ", ""),
-            Some("https://github.com/dana.png?size=64".into())
+            Some("https://avatars.githubusercontent.com/dana?s=64".into())
         );
         assert_eq!(
             source("github", "app/dependabot", ""),
-            Some("https://github.com/dependabot.png?size=64".into())
+            Some("https://avatars.githubusercontent.com/dependabot?s=64".into()),
+            "an app by its name"
+        );
+        assert_eq!(
+            source("github", "cubic-dev-ai[bot]", ""),
+            Some("https://avatars.githubusercontent.com/cubic-dev-ai?s=64".into()),
+            "a bot by its app's name"
+        );
+        assert_eq!(
+            source("github", "../x?y", ""),
+            None,
+            "nothing that isn't a login goes in the URL"
         );
         assert_eq!(source("github", "  ", ""), None);
         assert_eq!(source("gitlab", "dana", ""), None);

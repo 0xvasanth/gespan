@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Long pull requests open in Files:** GitHub refuses a diff past 20,000
+  lines, so Files showed an HTTP 406 error. The diff now loads file by
+  file, and a file GitHub sends no patch for says it's too large.
+- **A reply in Files says who it answers:** the reply box in a review
+  thread reads "Reply to …, in this thread", where it showed the file path
+  and cut the name off.
+- **Review threads in Files look as designed:** a "Prompt for AI agents"
+  block opens in one click and shows its code, cards run across the pane,
+  Show more is a link, and review bots' pictures load.
+
 ## [0.3.5] - 2026-11-28
 
 ### Changed
